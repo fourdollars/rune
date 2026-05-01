@@ -58,6 +58,9 @@ impl Agent {
     }
 
     /// Reset conversation state for a new run (keeps system prompt).
+
+    pub fn tokens_used(&self) -> u32 { self.tokens_used }
+    pub fn step_count(&self) -> u32 { self.step_count }
     pub fn reset(&mut self) {
         let system = self.messages.first().cloned();
         self.messages.clear();

@@ -76,7 +76,8 @@ fn print_help() {
     println!("  {}     Show version info", "/version".green());
     println!("  {}        Clear the screen", "/clear".green());
     println!("  {}       Reset conversation history", "/reset".green());
-    println!("  {}        Show sandbox & permissions info", "/info".green());
+    println!("  {}      Show current session status (model, context, skills)", "/info".green());
+    println!("  {}    Show sandbox policy & permissions", "/policy".green());
     println!("  {}   Show this help", "/help".green());
     println!("  {}  Exit the CLI", "/exit | /quit".green());
     println!();
@@ -180,9 +181,78 @@ fn show_skills(cfg: &config::RuneConfig) {
     let _ = loader;
 }
 
-/// Display sandbox permissions and security info.
-fn show_info(cfg: &config::RuneConfig) {
-    use crate::sandbox::SandboxConfig;
+/// Display current session state: model, context usage, skills, MCP.
+fn show_info(cfg: &config::RuneConfig, agent: &crate::agent::Agent) {
+    println!("{}", "Session Info:".bold());
+    println!();
+
+    // LLM Provider
+    println!("  {}", "LLM Provider:".bold());
+    if let Some(ref key) = cfg.api_key {
+        let provider = if key.starts_with("ghu_") || key.starts_with("ghp_") {
+            "GitHub Copilot"
+        } else if key.starts_with("AIza") {
+            "Google Gemini"
+        } else if key.starts_with("sk-or-") {
+            "OpenRouter"
+        } else if key.starts_with("sk-") {
+            "OpenAI"
+        } else {
+            "Custom"
+        };
+        println!("    {} provider: {}", "\u{2022}".dimmed(), provider.green());
+    } else {
+        println!("    {} provider: {}", "\u{2022}".dimmed(), "(not configured)".red());
+    }
+    println!("    {} model: {}", "\u{2022}".dimmed(), cfg.model.green());
+    if let Some(ref url) = cfg.base_url {
+        println!("    {} endpoint: {}", "\u{2022}".dimmed(), url.dimmed());
+    }
+    println!();
+
+    // Context / Token usage
+    println!("  {}", "Context:".bold());
+    println!("    {} tokens used: {} / {} (budget)", "\u{2022}".dimmed(), agent.tokens_used(), cfg.token_budget);
+    println!("    {} steps: {} / {} (max)", "\u{2022}".dimmed(), agent.step_count(), cfg.max_steps);
+    println!("    {} timeout: {}s", "\u{2022}".dimmed(), cfg.timeout_secs);
+    println!();
+
+    // Skills
+    println!("  {}", "Skills:".bold());
+    let skill_dir = std::path::Path::new(&cfg.skills_dir);
+    if skill_dir.exists() {
+        if let Ok(entries) = std::fs::read_dir(skill_dir) {
+            let skills: Vec<String> = entries
+                .filter_map(|e| e.ok())
+                .filter(|e| e.file_type().map(|ft| ft.is_dir()).unwrap_or(false))
+                .filter_map(|e| e.file_name().into_string().ok())
+                .collect();
+            if skills.is_empty() {
+                println!("    {} (none found in {})", "\u{2022}".dimmed(), cfg.skills_dir);
+            } else {
+                for s in &skills {
+                    println!("    {} @{}", "\u{2022}".dimmed(), s.green());
+                }
+            }
+        }
+    } else {
+        println!("    {} (dir {} does not exist)", "\u{2022}".dimmed(), cfg.skills_dir);
+    }
+    println!();
+
+    // MCP
+    println!("  {}", "MCP Servers:".bold());
+    println!("    {} (none configured)", "\u{2022}".dimmed());
+    println!();
+
+    // Policy mode (brief)
+    println!("  {}", "Policy:".bold());
+    println!("    {} mode: {}", "\u{2022}".dimmed(), cfg.policy.mode.cyan());
+    println!("    {} (use /policy for full details)", "\u{2022}".dimmed());
+}
+
+/// Display sandbox policy & permissions.
+fn show_policy(cfg: &config::RuneConfig) {
 
     println!("{}", "Sandbox & Permissions Info:".bold());
     println!();
@@ -388,7 +458,8 @@ pub async fn run() {
                 agent.reset();
                 println!("{}", "Conversation reset.".green());
             }
-            "/info" => show_info(&cfg),
+            "/info" => show_info(&cfg, &agent),
+            "/policy" => show_policy(&cfg),
             "/multi" => {
                 if let Some(input) = read_multiline().await {
                     execute_prompt(&mut agent, &input).await;
