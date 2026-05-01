@@ -9,6 +9,7 @@ mod mcp;
 mod precommands;
 mod provider;
 mod sandbox;
+mod setup;
 mod skills;
 mod tools;
 mod trace;
@@ -17,6 +18,13 @@ use tracing_subscriber::EnvFilter;
 
 #[tokio::main]
 async fn main() {
+    // Check for subcommands BEFORE clap parses args
+    let args: Vec<String> = env::args().collect();
+    if args.len() > 1 && args[1] == "init" {
+        setup::run_setup().await;
+        return;
+    }
+
     let cfg = config::load().unwrap_or_else(|e| {
         eprintln!("warning: config load failed: {}", e);
         config::RuneConfig::default()
