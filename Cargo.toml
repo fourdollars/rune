@@ -2,6 +2,7 @@
 name = "rune"
 version = "0.1.0"
 edition = "2021"
+description = "High-performance zero-trust AI Agent"
 
 [dependencies]
 serde = { version = "1.0", features = ["derive"] }
@@ -13,3 +14,4 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }
 anyhow = "1.0"
 tokio = { version = "1", features = ["full"] }
+indicatif = "0.17"

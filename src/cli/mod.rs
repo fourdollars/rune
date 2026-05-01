@@ -1,41 +1,253 @@
+use colored::Colorize;
+use indicatif::{ProgressBar, ProgressStyle};
+use std::time::Duration;
+
+use crate::agent::{Agent, StopReason};
+use crate::config;
+use crate::skills::SkillLoader;
+use crate::tools::ToolRegistry;
+
+const VERSION: &str = env!("CARGO_PKG_VERSION");
+
+/// Print the startup banner.
+fn print_banner() {
+    let rune_art = r#"
+  ┌─────────────────────────────────────────┐
+  │  ᚱ  R U N E   v{version}                    │
+  │  High-performance Zero-Trust AI Agent   │
+  └─────────────────────────────────────────┘"#;
+    let banner = rune_art.replace("{version}", VERSION);
+    println!("{}", banner.cyan());
+    println!();
+}
+
+/// Print available commands.
+fn print_help() {
+    println!("{}", "Commands:".bold());
+    println!("  {}         Run a prompt through the agent", "run <text>".green());
+    println!("  {}    Enter multi-line mode (end with ';;' on its own line)", "/multi".green());
+    println!("  {}      Show current configuration", "/config".green());
+    println!("  {}       List available built-in tools", "/tools".green());
+    println!("  {}      List loaded skills", "/skills".green());
+    println!("  {}       Show trace output directory", "/trace".green());
+    println!("  {}     Show version info", "/version".green());
+    println!("  {}        Clear the screen", "/clear".green());
+    println!("  {}   Show this help", "help | /help".green());
+    println!("  {}  Exit the CLI", "exit | quit".green());
+    println!();
+    println!("{}", "Tips:".dimmed());
+    println!("  {} Type your prompt directly (without 'run') for quick execution", "•".dimmed());
+    println!("  {} Use @skill_name in prompts to load skill context", "•".dimmed());
+    println!("  {} Ctrl+C interrupts the current agent run", "•".dimmed());
+}
+
+/// Create a spinner for LLM thinking.
+fn create_spinner(msg: &str) -> ProgressBar {
+    let pb = ProgressBar::new_spinner();
+    pb.set_style(
+        ProgressStyle::default_spinner()
+            .tick_strings(&["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"])
+            .template("{spinner:.cyan} {msg}")
+            .expect("invalid spinner template"),
+    );
+    pb.set_message(msg.to_string());
+    pb.enable_steady_tick(Duration::from_millis(80));
+    pb
+}
+
+/// Format and display the agent's stop reason.
+fn display_result(reason: &StopReason) {
+    match reason {
+        StopReason::FinalAnswer(ans) => {
+            println!();
+            println!("{}", "─".repeat(60).dimmed());
+            println!("{}", ans);
+            println!("{}", "─".repeat(60).dimmed());
+        }
+        StopReason::MaxSteps => {
+            println!("\n{}", "⚠ Stopped: maximum steps reached".yellow());
+        }
+        StopReason::TokenBudgetExhausted => {
+            println!("\n{}", "⚠ Stopped: token budget exhausted".yellow());
+        }
+        StopReason::Error(e) => {
+            println!("\n{} {}", "✗ Error:".red().bold(), e);
+        }
+        StopReason::UserInterrupt => {
+            println!("\n{}", "⚡ Interrupted by user".yellow());
+        }
+    }
+}
+
+/// Display configuration summary.
+fn show_config(cfg: &config::RuneConfig) {
+    println!("{}", "Current Configuration:".bold());
+    println!("  {}  {}", "model:".dimmed(), cfg.model.green());
+    println!("  {}  {}", "api_key:".dimmed(), 
+        if cfg.api_key.is_some() { "***".to_string() } else { "(not set)".dimmed().to_string() });
+    println!("  {}  {}", "skills_dir:".dimmed(), cfg.skills_dir);
+    println!("  {}  {}", "log_level:".dimmed(), cfg.log_level);
+    println!("  {}  {}", "max_steps:".dimmed(), cfg.max_steps);
+    println!("  {}  {}", "token_budget:".dimmed(), cfg.token_budget);
+    println!("  {}  {}", "timeout_secs:".dimmed(), cfg.timeout_secs);
+}
+
+/// Display available tools.
+fn show_tools() {
+    let registry = ToolRegistry::new(vec![]);
+    let defs = registry.tool_definitions();
+    println!("{} ({} available)", "Built-in Tools:".bold(), defs.len());
+    for def in &defs {
+        if let Some(func) = def.get("function") {
+            let name = func.get("name").and_then(|v| v.as_str()).unwrap_or("?");
+            let desc = func.get("description").and_then(|v| v.as_str()).unwrap_or("");
+            println!("  {} — {}", name.green(), desc.dimmed());
+        }
+    }
+}
+
+/// Display loaded skills.
+fn show_skills(cfg: &config::RuneConfig) {
+    let search_paths = vec![
+        std::path::PathBuf::from(&cfg.skills_dir),
+    ];
+    let loader = SkillLoader::new(search_paths);
+    println!("{}", "Skill Loader:".bold());
+    println!("  {} {}", "search_dir:".dimmed(), cfg.skills_dir);
+    println!("  {} Use @skill_name in prompts to load skills", "usage:".dimmed());
+    // List skills from directory if it exists
+    let skill_dir = std::path::Path::new(&cfg.skills_dir);
+    if skill_dir.exists() {
+        if let Ok(entries) = std::fs::read_dir(skill_dir) {
+            let mut skills: Vec<String> = entries
+                .filter_map(|e| e.ok())
+                .filter(|e| e.file_type().map(|ft| ft.is_dir()).unwrap_or(false))
+                .filter_map(|e| e.file_name().into_string().ok())
+                .collect();
+            skills.sort();
+            if !skills.is_empty() {
+                println!("  {} {}", "found:".dimmed(), skills.join(", ").green());
+            } else {
+                println!("  {} (no skills found)", "found:".dimmed());
+            }
+        }
+    } else {
+        println!("  {} (directory does not exist)", "status:".dimmed());
+    }
+    let _ = loader; // suppress unused warning
+}
+
+/// Read multi-line input until ";;" on its own line.
+async fn read_multiline() -> Option<String> {
+    use tokio::io::{self, AsyncBufReadExt};
+    println!("{}", "Multi-line mode. Enter ';;' on its own line to submit:".dimmed());
+    println!("{}", "─".repeat(40).dimmed());
+
+    let stdin = io::stdin();
+    let reader = io::BufReader::new(stdin);
+    let mut lines = reader.lines();
+    let mut buffer = Vec::new();
+
+    while let Ok(Some(line)) = lines.next_line().await {
+        if line.trim() == ";;" {
+            break;
+        }
+        buffer.push(line);
+    }
+
+    if buffer.is_empty() {
+        None
+    } else {
+        Some(buffer.join("\n"))
+    }
+}
+
+/// Run a prompt through the agent with spinner feedback.
+async fn execute_prompt(agent: &mut Agent, input: &str) {
+    let spinner = create_spinner("Thinking...");
+    let result = agent.run(input).await;
+    spinner.finish_and_clear();
+    display_result(&result);
+}
+
+/// Main CLI entry point.
 pub async fn run() {
-    const GREEN: &str = "\x1b[32m";
-    const CYAN: &str = "\x1b[36m";
-    const RESET: &str = "\x1b[0m";
+    print_banner();
 
-    println!("{}=== rune CLI ==={}", GREEN, RESET);
-    println!("{}Welcome to the rune CLI!{}", CYAN, RESET);
-    println!("Type 'help' for commands, 'exit' or Ctrl-D to quit.");
+    let cfg = config::load().unwrap_or_default();
+    let mut agent = Agent::new(cfg.clone());
+    agent.set_system_prompt("You are Rune, a high-performance AI agent. Be concise, accurate, and helpful.");
 
-    let config = crate::config::load().unwrap_or_default();
-    let mut agent = crate::agent::Agent::new(config);
-    agent.set_system_prompt("You are an AI agent. Respond concisely.");
+    println!("{} Type {} for commands.", "Ready.".green().bold(), "help".bold());
+    println!();
 
     use tokio::io::{self, AsyncBufReadExt};
     let stdin = io::stdin();
     let reader = io::BufReader::new(stdin);
     let mut lines = reader.lines();
 
-    while let Ok(Some(line)) = lines.next_line().await {
-        let cmd = line.trim().to_string();
-        if cmd == "exit" || cmd == "quit" {
-            println!("Goodbye!");
-            break;
-        }
-        if cmd == "help" {
-            println!("Available: help, exit, run <text>");
-            continue;
-        }
-        if let Some(input) = cmd.strip_prefix("run ") {
-            match agent.run(input).await {
-                crate::agent::StopReason::FinalAnswer(ans) => println!("Final answer: {}", ans),
-                crate::agent::StopReason::MaxSteps => println!("Stopped: max steps reached"),
-                crate::agent::StopReason::TokenBudgetExhausted => println!("Stopped: token budget exhausted"),
-                crate::agent::StopReason::Error(e) => println!("Error: {}", e),
-                crate::agent::StopReason::UserInterrupt => println!("Interrupted by user"),
+    loop {
+        // Print prompt
+        eprint!("{} ", "ᚱ›".cyan().bold());
+
+        match lines.next_line().await {
+            Ok(Some(line)) => {
+                let cmd = line.trim().to_string();
+                if cmd.is_empty() {
+                    continue;
+                }
+
+                match cmd.as_str() {
+                    "exit" | "quit" | "/exit" | "/quit" => {
+                        println!("{}", "Goodbye! ᚱ".cyan());
+                        break;
+                    }
+                    "help" | "/help" | "/h" | "?" => {
+                        print_help();
+                    }
+                    "/config" => {
+                        show_config(&cfg);
+                    }
+                    "/tools" => {
+                        show_tools();
+                    }
+                    "/skills" => {
+                        show_skills(&cfg);
+                    }
+                    "/trace" => {
+                        println!("{} {}", "Trace dir:".bold(), ".rune/traces/");
+                        println!("{} Use --trace flag to enable trace recording", "Note:".dimmed());
+                    }
+                    "/version" => {
+                        println!("{} v{}", "Rune".cyan().bold(), VERSION);
+                        println!("  {} {}", "edition:".dimmed(), "2021");
+                        println!("  {} {}", "model:".dimmed(), cfg.model.green());
+                    }
+                    "/clear" => {
+                        print!("\x1B[2J\x1B[1;1H");
+                        print_banner();
+                    }
+                    "/multi" => {
+                        if let Some(input) = read_multiline().await {
+                            execute_prompt(&mut agent, &input).await;
+                        }
+                    }
+                    _ => {
+                        // Strip "run " prefix if present, otherwise treat entire line as prompt
+                        let input = cmd.strip_prefix("run ").unwrap_or(&cmd);
+                        execute_prompt(&mut agent, input).await;
+                    }
+                }
             }
-            continue;
+            Ok(None) => {
+                // EOF
+                println!("\n{}", "EOF — Goodbye! ᚱ".cyan());
+                break;
+            }
+            Err(e) => {
+                eprintln!("{} {}", "Read error:".red(), e);
+                break;
+            }
         }
-        println!("Unknown command: {}", cmd);
     }
 }
