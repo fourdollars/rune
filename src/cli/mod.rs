@@ -12,13 +12,31 @@ const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 /// Print the startup banner.
 fn print_banner() {
-    let rune_art = r#"
-  ┌─────────────────────────────────────────┐
-  │  ᚱ  R U N E   v{version}                    │
-  │  High-performance Zero-Trust AI Agent   │
-  └─────────────────────────────────────────┘"#;
-    let banner = rune_art.replace("{version}", VERSION);
-    println!("{}", banner.cyan());
+    // Runic ASCII art banner with mystical colors
+    let line1 = "        ᛟ ᚺ ᛊ ᛏ ᛒ ᛖ ᚹ ᛗ ᛚ ᛝ ᛟ";
+    let line2 = r#"    ┌───────────────────────────────────┐"#;
+    let line3 = r#"    │                                   │"#;
+    let line4 = r#"    │    ᚱ  ᚢ  ᚾ  ᛖ                    │"#;
+    let line5 = r#"    │                                   │"#;
+    let line6 = r#"    │    Zero-Trust AI Agent            │"#;
+    let line7 = r#"    │    ══════════════════             │"#;
+    let line8 = format!("    │    v{:<6}⚡ sandboxed            │", VERSION);
+    let line9 = r#"    │                                   │"#;
+    let line10 = r#"    └───────────────────────────────────┘"#;
+    let line11 = "        ᛟ ᚺ ᛊ ᛏ ᛒ ᛖ ᚹ ᛗ ᛚ ᛝ ᛟ";
+
+    println!();
+    println!("{}", line1.dimmed());
+    println!("{}", line2.magenta());
+    println!("{}", line3.magenta());
+    println!("{}", line4.bright_cyan().bold());
+    println!("{}", line5.magenta());
+    println!("{}", line6.white());
+    println!("{}", line7.dimmed());
+    println!("{}", line8.green());
+    println!("{}", line9.magenta());
+    println!("{}", line10.magenta());
+    println!("{}", line11.dimmed());
     println!();
 }
 
