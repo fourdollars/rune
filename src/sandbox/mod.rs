@@ -242,8 +242,20 @@ impl SandboxExecutor {
     /// For actual BPF filtering, we'd need a helper binary; for now we use
     /// no_new_privs as the baseline seccomp protection.
     async fn build_seccomp_wrapper(&self) -> Option<String> {
-        // setpriv --no-new-privs prevents privilege escalation
-        // This is the simplest seccomp-like protection without a custom BPF loader
+        // Try rune-seccomp binary first (real BPF seccomp filter)
+        let rune_seccomp = Command::new("which")
+            .arg("rune-seccomp")
+            .output()
+            .await
+            .map(|o| o.status.success())
+            .unwrap_or(false);
+
+        if rune_seccomp {
+            info!("sandbox: seccomp via rune-seccomp (BPF filter: ptrace,mount,unshare,kexec_load,bpf,setns)");
+            return Some("rune-seccomp".to_string());
+        }
+
+        // Fallback: setpriv --no-new-privs (weaker but still useful)
         let has_setpriv = Command::new("which")
             .arg("setpriv")
             .output()
@@ -252,6 +264,7 @@ impl SandboxExecutor {
             .unwrap_or(false);
 
         if has_setpriv {
+            debug!("sandbox: seccomp fallback to setpriv --no-new-privs");
             Some("setpriv --no-new-privs --".to_string())
         } else {
             None
