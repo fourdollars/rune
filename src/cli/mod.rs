@@ -175,7 +175,7 @@ fn init_provider(cfg: &config::RuneConfig) -> ProviderRegistry {
         let provider = OpenAiProvider::new(
             "openai".to_string(),
             key.clone(),
-            None, // defaults to OpenAI; can be overridden via config later
+            cfg.base_url.clone(),
         );
         registry.register(Box::new(provider));
     }

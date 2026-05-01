@@ -14,6 +14,7 @@ pub struct RuneConfig {
     pub max_steps: u32,
     pub token_budget: u32,
     pub timeout_secs: u64,
+    pub base_url: Option<String>,
 }
 
 impl Default for RuneConfig {
@@ -26,6 +27,7 @@ impl Default for RuneConfig {
             max_steps: 100,
             token_budget: 4096,
             timeout_secs: 60,
+            base_url: None,
         }
     }
 }
@@ -40,6 +42,7 @@ struct PartialConfig {
     max_steps: Option<u32>,
     token_budget: Option<u32>,
     timeout_secs: Option<u64>,
+    base_url: Option<String>,
 }
 
 /// CLI argument overrides.
@@ -60,6 +63,8 @@ struct CliArgs {
     token_budget: Option<u32>,
     #[arg(long)]
     timeout_secs: Option<u64>,
+    #[arg(long)]
+    base_url: Option<String>,
 }
 
 /// Pick the first Some value from a chain of options, falling back to a default.
@@ -95,6 +100,7 @@ pub fn load() -> anyhow::Result<RuneConfig> {
         max_steps: env::var("RUNE_MAX_STEPS").ok().and_then(|v| v.parse().ok()),
         token_budget: env::var("RUNE_TOKEN_BUDGET").ok().and_then(|v| v.parse().ok()),
         timeout_secs: env::var("RUNE_TIMEOUT_SECS").ok().and_then(|v| v.parse().ok()),
+        base_url: env::var("RUNE_BASE_URL").ok(),
     };
 
     // Project-local config: .rune/rune.toml
@@ -142,5 +148,9 @@ pub fn load() -> anyhow::Result<RuneConfig> {
             &[&cli.timeout_secs, &env_partial.timeout_secs, &lc.and_then(|c| c.timeout_secs), &uc.and_then(|c| c.timeout_secs)],
             defaults.timeout_secs,
         ),
+        base_url: cli.base_url
+            .or(env_partial.base_url)
+            .or(lc.and_then(|c| c.base_url.clone()))
+            .or(uc.and_then(|c| c.base_url.clone())),
     })
 }
