@@ -77,7 +77,7 @@ fn print_help() {
     println!("  {}        Clear the screen", "/clear".green());
     println!("  {}       Reset conversation history", "/reset".green());
     println!("  {}      Show current session status (model, context, skills)", "/info".green());
-    println!("  {}    Show sandbox policy & permissions", "/policy".green());
+    println!("  {}    Show policy summary (use /policy full for details)", "/policy".green());
     println!("  {}   Show this help", "/help".green());
     println!("  {}  Exit the CLI", "/exit | /quit".green());
     println!();
@@ -200,21 +200,21 @@ fn show_info(cfg: &config::RuneConfig, agent: &crate::agent::Agent) {
         } else {
             "Custom"
         };
-        println!("    {} provider: {}", "\u{2022}".dimmed(), provider.green());
+        println!("    {} provider: {}", "•".dimmed(), provider.green());
     } else {
-        println!("    {} provider: {}", "\u{2022}".dimmed(), "(not configured)".red());
+        println!("    {} provider: {}", "•".dimmed(), "(not configured)".red());
     }
-    println!("    {} model: {}", "\u{2022}".dimmed(), cfg.model.green());
+    println!("    {} model: {}", "•".dimmed(), cfg.model.green());
     if let Some(ref url) = cfg.base_url {
-        println!("    {} endpoint: {}", "\u{2022}".dimmed(), url.dimmed());
+        println!("    {} endpoint: {}", "•".dimmed(), url.dimmed());
     }
     println!();
 
     // Context / Token usage
     println!("  {}", "Context:".bold());
-    println!("    {} tokens used: {} / {} (budget)", "\u{2022}".dimmed(), agent.tokens_used(), cfg.token_budget);
-    println!("    {} steps: {} / {} (max)", "\u{2022}".dimmed(), agent.step_count(), cfg.max_steps);
-    println!("    {} timeout: {}s", "\u{2022}".dimmed(), cfg.timeout_secs);
+    println!("    {} tokens used: {} / {} (budget)", "•".dimmed(), agent.tokens_used(), cfg.token_budget);
+    println!("    {} steps: {} / {} (max)", "•".dimmed(), agent.step_count(), cfg.max_steps);
+    println!("    {} timeout: {}s", "•".dimmed(), cfg.timeout_secs);
     println!();
 
     // Skills
@@ -228,31 +228,46 @@ fn show_info(cfg: &config::RuneConfig, agent: &crate::agent::Agent) {
                 .filter_map(|e| e.file_name().into_string().ok())
                 .collect();
             if skills.is_empty() {
-                println!("    {} (none found in {})", "\u{2022}".dimmed(), cfg.skills_dir);
+                println!("    {} (none found in {})", "•".dimmed(), cfg.skills_dir);
             } else {
                 for s in &skills {
-                    println!("    {} @{}", "\u{2022}".dimmed(), s.green());
+                    println!("    {} @{}", "•".dimmed(), s.green());
                 }
             }
         }
     } else {
-        println!("    {} (dir {} does not exist)", "\u{2022}".dimmed(), cfg.skills_dir);
+        println!("    {} (dir {} does not exist)", "•".dimmed(), cfg.skills_dir);
     }
     println!();
 
     // MCP
     println!("  {}", "MCP Servers:".bold());
-    println!("    {} (none configured)", "\u{2022}".dimmed());
+    println!("    {} (none configured)", "•".dimmed());
     println!();
 
     // Policy mode (brief)
     println!("  {}", "Policy:".bold());
-    println!("    {} mode: {}", "\u{2022}".dimmed(), cfg.policy.mode.cyan());
-    println!("    {} (use /policy for full details)", "\u{2022}".dimmed());
+    println!("    {} mode: {}", "•".dimmed(), cfg.policy.mode.cyan());
+    println!("    {} (use /policy for full details)", "•".dimmed());
 }
 
 /// Display sandbox policy & permissions.
-fn show_policy(cfg: &config::RuneConfig) {
+fn show_policy_summary(cfg: &config::RuneConfig) {
+    let p = &cfg.policy;
+    println!("{}", "Policy Summary:".bold());
+    println!("  {} mode: {}", "•".dimmed(), p.mode.cyan());
+    println!("  {} allowed commands: {}", "•".dimmed(), if p.allowed_commands.is_empty() { "(none — all blocked in allowlist mode)".to_string() } else { format!("{}", p.allowed_commands.join(", ")) });
+    println!("  {} allowed domains: {}", "•".dimmed(), if p.allowed_domains.is_empty() { "(none — network blocked)".to_string() } else { p.allowed_domains.join(", ") });
+    println!("  {} denied syscalls: {}", "•".dimmed(), p.denied_syscalls.join(", "));
+    println!("  {} paths rw: {}", "•".dimmed(), p.allowed_paths_rw.join(", "));
+    println!("  {} paths ro: {}", "•".dimmed(), p.allowed_paths_ro.join(", "));
+    println!("  {} denied paths: {}", "•".dimmed(), p.denied_paths.join(", "));
+    println!("  {} memory limit: {}MB | max pids: {}", "•".dimmed(), p.max_memory_mb, p.max_pids);
+    println!();
+    println!("  {} Use {} for full sandbox status", "ℹ".cyan(), "/policy full".bold());
+}
+
+fn show_policy_full(cfg: &config::RuneConfig) {
 
     println!("{}", "Sandbox & Permissions Info:".bold());
     println!();
@@ -459,7 +474,8 @@ pub async fn run() {
                 println!("{}", "Conversation reset.".green());
             }
             "/info" => show_info(&cfg, &agent),
-            "/policy" => show_policy(&cfg),
+            "/policy" => show_policy_summary(&cfg),
+            "/policy full" => show_policy_full(&cfg),
             "/multi" => {
                 if let Some(input) = read_multiline().await {
                     execute_prompt(&mut agent, &input).await;
