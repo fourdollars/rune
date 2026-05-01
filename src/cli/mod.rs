@@ -373,7 +373,7 @@ pub async fn run() {
             "/skills" => show_skills(&cfg),
             "/trace" => {
                 println!("{} {}", "Trace dir:".bold(), ".rune/traces/");
-                println!("{} Use --trace flag to enable trace recording", "Note:".dimmed());
+                println!("  {} {}", "status:".dimmed(), if cfg.trace { "enabled".green().to_string() } else { "disabled (use --trace to enable)".dimmed().to_string() });
             }
             "/version" => {
                 println!("{} v{}", "Rune".cyan().bold(), VERSION);

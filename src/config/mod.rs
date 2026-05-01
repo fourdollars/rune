@@ -15,6 +15,7 @@ pub struct RuneConfig {
     pub token_budget: u32,
     pub timeout_secs: u64,
     pub base_url: Option<String>,
+    pub trace: bool,
 }
 
 impl Default for RuneConfig {
@@ -28,6 +29,7 @@ impl Default for RuneConfig {
             token_budget: 4096,
             timeout_secs: 60,
             base_url: None,
+            trace: false,
         }
     }
 }
@@ -43,6 +45,7 @@ struct PartialConfig {
     token_budget: Option<u32>,
     timeout_secs: Option<u64>,
     base_url: Option<String>,
+    trace: Option<bool>,
 }
 
 /// CLI argument overrides.
@@ -95,8 +98,11 @@ struct CliArgs {
     /// Default command timeout in seconds
     #[arg(long, env = "RUNE_TIMEOUT_SECS")]
     timeout_secs: Option<u64>,
-}
 
+    /// Enable trace recording to .rune/traces/
+    #[arg(long, env = "RUNE_TRACE")]
+    trace: Option<bool>,
+}
 /// Pick the first Some value from a chain of options, falling back to a default.
 fn pick<T: Clone>(sources: &[&Option<T>], default: T) -> T {
     for src in sources {
@@ -131,6 +137,7 @@ pub fn load() -> anyhow::Result<RuneConfig> {
         token_budget: env::var("RUNE_TOKEN_BUDGET").ok().and_then(|v| v.parse().ok()),
         timeout_secs: env::var("RUNE_TIMEOUT_SECS").ok().and_then(|v| v.parse().ok()),
         base_url: env::var("RUNE_BASE_URL").ok(),
+        trace: env::var("RUNE_TRACE").ok().and_then(|v| v.parse().ok()),
     };
 
     // Project-local config: .rune/rune.toml
@@ -182,5 +189,10 @@ pub fn load() -> anyhow::Result<RuneConfig> {
             .or(env_partial.base_url)
             .or(lc.and_then(|c| c.base_url.clone()))
             .or(uc.and_then(|c| c.base_url.clone())),
+        trace: cli.trace
+            .or(env_partial.trace)
+            .or(lc.and_then(|c| c.trace))
+            .or(uc.and_then(|c| c.trace))
+            .unwrap_or(defaults.trace),
     })
 }
