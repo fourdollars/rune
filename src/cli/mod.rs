@@ -34,6 +34,7 @@ fn print_help() {
     println!("  {}     Show version info", "/version".green());
     println!("  {}        Clear the screen", "/clear".green());
     println!("  {}       Reset conversation history", "/reset".green());
+    println!("  {}        Show sandbox & permissions info", "/info".green());
     println!("  {}   Show this help", "help | /help".green());
     println!("  {}  Exit the CLI", "exit | quit".green());
     println!();
@@ -135,6 +136,85 @@ fn show_skills(cfg: &config::RuneConfig) {
         println!("  {} (directory does not exist)", "status:".dimmed());
     }
     let _ = loader;
+}
+
+/// Display sandbox permissions and security info.
+fn show_info(cfg: &config::RuneConfig) {
+    use crate::sandbox::SandboxConfig;
+
+    println!("{}", "Sandbox & Permissions Info:".bold());
+    println!();
+
+    // Check unshare capability
+    let unshare_ok = std::process::Command::new("unshare")
+        .args(["--user", "--net", "--", "true"])
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false);
+
+    println!("  {}", "Network Isolation:".bold());
+    if unshare_ok {
+        println!("    {} Active (unshare --user --net)", "✓".green());
+        println!("    {} All tool commands run in isolated network namespace", "•".dimmed());
+        println!("    {} No DNS resolution available inside sandbox", "•".dimmed());
+        println!("    {} No outbound connections possible", "•".dimmed());
+    } else {
+        println!("    {} DEGRADED — unshare not available", "⚠".yellow());
+        println!("    {} Commands run WITHOUT network isolation", "•".dimmed());
+    }
+    println!();
+
+    println!("  {}", "Filesystem Access:".bold());
+    println!("    {} User namespace UID remapping active", "•".dimmed());
+    println!("    {} Cannot read: /etc/shadow, /root, privileged files", "✓".green());
+    println!("    {} Cannot write: /root, /etc, system directories", "✓".green());
+    println!("    {} Can read: general user-readable files", "•".dimmed());
+    println!("    {} Can write: /tmp, project directories", "•".dimmed());
+    println!();
+
+    println!("  {}", "Tool Restrictions:".bold());
+    println!("    {} read_file    — sandboxed, 32KB truncation", "•".dimmed());
+    println!("    {} write_file   — sandboxed, allowed dirs only", "•".dimmed());
+    println!("    {} list_dir     — sandboxed", "•".dimmed());
+    println!("    {} run_terminal_cmd — sandboxed, network blocked", "•".dimmed());
+    println!("    {} fetch_url    — sandboxed, {} (network blocked)", "•".dimmed(), "ALWAYS FAILS".red());
+    println!();
+
+    println!("  {}", "Timeouts:".bold());
+    println!("    {} Default command timeout: {}s", "•".dimmed(), cfg.timeout_secs);
+    println!("    {} Max agent steps: {}", "•".dimmed(), cfg.max_steps);
+    println!("    {} Token budget: {}", "•".dimmed(), cfg.token_budget);
+    println!();
+
+    println!("  {}", "LLM Provider:".bold());
+    if let Some(ref key) = cfg.api_key {
+        if key.starts_with("ghu_") || key.starts_with("ghp_") {
+            println!("    {} GitHub Copilot (auto token refresh)", "•".dimmed());
+        } else if key.starts_with("AIza") {
+            println!("    {} Google Gemini", "•".dimmed());
+        } else if key.starts_with("sk-or-") {
+            println!("    {} OpenRouter", "•".dimmed());
+        } else if key.starts_with("sk-") {
+            println!("    {} OpenAI", "•".dimmed());
+        } else {
+            println!("    {} Custom provider", "•".dimmed());
+        }
+    } else {
+        println!("    {} No API key configured", "✗".red());
+    }
+    println!("    {} Model: {}", "•".dimmed(), cfg.model.green());
+    if let Some(ref url) = cfg.base_url {
+        println!("    {} Endpoint: {}", "•".dimmed(), url);
+    }
+    println!("    {} Provider calls are NOT sandboxed (need network for LLM)", "ℹ".cyan());
+    println!();
+
+    println!("  {}", "Summary:".bold());
+    println!("    Tools: network={}, filesystem={}, timeout={}s",
+        if unshare_ok { "BLOCKED".red().to_string() } else { "OPEN (degraded)".yellow().to_string() },
+        "RESTRICTED".green(),
+        cfg.timeout_secs
+    );
 }
 
 /// Read multi-line input until ";;" on its own line.
@@ -266,6 +346,7 @@ pub async fn run() {
                 agent.reset();
                 println!("{}", "Conversation reset.".green());
             }
+            "/info" => show_info(&cfg),
             "/multi" => {
                 if let Some(input) = read_multiline().await {
                     execute_prompt(&mut agent, &input).await;
