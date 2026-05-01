@@ -13,7 +13,19 @@ const VERSION: &str = env!("CARGO_PKG_VERSION");
 /// Print the startup banner.
 fn print_banner() {
     // Runic ASCII art banner with mystical colors
-    let line1 = "        ᛟ ᚺ ᛊ ᛏ ᛒ ᛖ ᚹ ᛗ ᛚ ᛝ ᛟ";
+    let rune_border = format!("        {} {} {} {} {} {} {} {} {} {} {}",
+        "ᛟ".magenta(),
+        "ᚺ".bright_cyan(),
+        "ᛊ".blue(),
+        "ᛏ".bright_magenta(),
+        "ᛒ".cyan(),
+        "ᛖ".bright_blue(),
+        "ᚹ".magenta(),
+        "ᛗ".bright_cyan(),
+        "ᛚ".blue(),
+        "ᛝ".bright_magenta(),
+        "ᛟ".cyan(),
+    );
     let line2 = r#"    ┌───────────────────────────────────┐"#;
     let line3 = r#"    │                                   │"#;
     let line4 = r#"    │    ᚱ  ᚢ  ᚾ  ᛖ                    │"#;
@@ -23,10 +35,22 @@ fn print_banner() {
     let line8 = format!("    │    v{:<6}⚡ sandboxed            │", VERSION);
     let line9 = r#"    │                                   │"#;
     let line10 = r#"    └───────────────────────────────────┘"#;
-    let line11 = "        ᛟ ᚺ ᛊ ᛏ ᛒ ᛖ ᚹ ᛗ ᛚ ᛝ ᛟ";
+    let rune_border2 = format!("        {} {} {} {} {} {} {} {} {} {} {}",
+        "ᛟ".cyan(),
+        "ᚺ".bright_magenta(),
+        "ᛊ".blue(),
+        "ᛏ".bright_cyan(),
+        "ᛒ".magenta(),
+        "ᛖ".bright_blue(),
+        "ᚹ".cyan(),
+        "ᛗ".bright_magenta(),
+        "ᛚ".magenta(),
+        "ᛝ".bright_cyan(),
+        "ᛟ".blue(),
+    );
 
     println!();
-    println!("{}", line1.dimmed());
+    println!("{}", rune_border);
     println!("{}", line2.magenta());
     println!("{}", line3.magenta());
     println!("{}", line4.bright_cyan().bold());
@@ -36,7 +60,7 @@ fn print_banner() {
     println!("{}", line8.green());
     println!("{}", line9.magenta());
     println!("{}", line10.magenta());
-    println!("{}", line11.dimmed());
+    println!("{}", rune_border2);
     println!();
 }
 
