@@ -24,15 +24,16 @@ impl ToolOutput {
 
 /// Tool registry — all tools execute through the sandbox.
 pub struct ToolRegistry {
-    command_policy: String,
-    allowed_commands: Vec<String>,
+    policy_mode: String,
+    policy_allowed_commands: Vec<String>,
+    policy_denied_syscalls: Vec<String>,
     allowed_dirs: Vec<PathBuf>,
     allowed_domains: Vec<String>,
 }
 
 impl ToolRegistry {
     pub fn new(allowed_dirs: Vec<PathBuf>) -> Self {
-        Self { allowed_dirs, allowed_domains: Vec::new(), command_policy: "confirm".to_string(), allowed_commands: Vec::new() }
+        Self { allowed_dirs, allowed_domains: Vec::new(), policy_mode: "confirm".to_string(), policy_allowed_commands: Vec::new(), policy_denied_syscalls: Vec::new() }
     }
 
     /// Set allowed network domains (for fetch_url / run_terminal_cmd network access).
@@ -41,9 +42,11 @@ impl ToolRegistry {
     }
 
     /// Set command execution policy.
-    pub fn set_command_policy(&mut self, policy: String, allowed: Vec<String>) {
-        self.command_policy = policy;
-        self.allowed_commands = allowed;
+        pub fn set_policy(&mut self, policy: &crate::config::PolicyConfig) {
+        self.policy_mode = policy.mode.clone();
+        self.policy_allowed_commands = policy.allowed_commands.clone();
+        self.policy_denied_syscalls = policy.denied_syscalls.clone();
+        self.allowed_domains = policy.allowed_domains.clone();
     }
 
     /// Create a sandbox executor with the registry's config.
@@ -244,10 +247,10 @@ impl ToolRegistry {
         info!(cmd = %cmd, timeout_secs, "run_terminal_cmd (sandboxed)");
 
         // Command policy enforcement
-        if self.command_policy == "allowlist" {
+        if self.policy_mode == "allowlist" {
             let first_token = cmd.split_whitespace().next().unwrap_or("");
             let binary = first_token.rsplit("/").next().unwrap_or(first_token);
-            if !self.allowed_commands.iter().any(|a| a == binary || a == "*") {
+            if !self.policy_allowed_commands.iter().any(|a| a == binary || a == "*") {
                 return ToolOutput::err(format!(
                     "BLOCKED by policy: command '{}' is not in allowed_commands. Policy: allowlist",
                     binary
