@@ -188,6 +188,16 @@ impl Agent {
 
         eprintln!("  {} {}", "⚙".dimmed(), format!("{}({})", tc.function.name, &tc.function.arguments[..tc.function.arguments.len().min(80)]).dimmed());
 
+        // Confirm mode: ask user before executing dangerous tools
+        if self.config.policy.mode == "confirm" && Self::is_dangerous_tool(&tc.function.name) {
+            eprint!("  {} Execute? [Y/n] ", "⚠".yellow());
+            if !Self::prompt_confirm() {
+                eprintln!("{}", "denied".red());
+                return "DENIED: user rejected tool execution".to_string();
+            }
+            eprintln!("{}", "approved".green());
+        }
+
         let output = self.tools.execute(&tc.function.name, args).await;
 
         if output.is_error {
@@ -197,5 +207,27 @@ impl Agent {
         }
 
         output.content
+    }
+
+    /// Tools that modify state or execute arbitrary commands.
+    fn is_dangerous_tool(name: &str) -> bool {
+        matches!(name, "run_terminal_cmd" | "write_file" | "fetch_url")
+    }
+
+    /// Prompt user for Y/n confirmation via /dev/tty (bypasses stdin pipe).
+    fn prompt_confirm() -> bool {
+        use std::io::{BufRead, Write};
+        // Try /dev/tty first (works even when stdin is piped)
+        if let Ok(tty) = std::fs::File::open("/dev/tty") {
+            let mut reader = std::io::BufReader::new(tty);
+            std::io::stderr().flush().ok();
+            let mut input = String::new();
+            if reader.read_line(&mut input).is_ok() {
+                let trimmed = input.trim().to_lowercase();
+                return trimmed.is_empty() || trimmed == "y" || trimmed == "yes";
+            }
+        }
+        // Fallback: if no tty available, default to allow (non-interactive)
+        true
     }
 }
