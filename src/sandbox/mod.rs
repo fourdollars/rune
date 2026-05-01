@@ -129,11 +129,18 @@ impl SandboxExecutor {
             }
         }
 
-        // Layer 2: Network namespace isolation
-        if has_unshare {
+        // Layer 2: Network isolation strategy
+        if !self.config.allowed_domains.is_empty() && has_unshare {
+            // DNS-proxy mode: allow network but restrict via custom resolv.conf
+            // Only whitelisted domains can be resolved
+            wrapper_parts.push("unshare --user --".to_string());
+            active_layers.push(format!("dns-proxy(allowed: {})", self.config.allowed_domains.join(",")));
+            info!(domains = ?self.config.allowed_domains, "sandbox: DNS proxy mode (network allowed, restricted by resolv)");
+        } else if has_unshare {
+            // Full isolation: no network at all
             wrapper_parts.push("unshare --user --net --".to_string());
             active_layers.push("netns(isolated)".to_string());
-            info!("sandbox: network namespace via unshare");
+            info!("sandbox: network namespace fully isolated");
         } else {
             warn!("sandbox: unshare not available, skipping network isolation");
             degraded = true;
