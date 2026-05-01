@@ -210,7 +210,9 @@ impl Agent {
 
         // Confirm mode: ask user before executing dangerous tools
         if self.config.policy.mode == "confirm" && Self::is_dangerous_tool(&tc.function.name) && !self.auto_approve {
-            eprint!("  {} Execute? [Y/n/A(lways)] ", "⚠".yellow());
+            eprint!("
+  {} Execute? [Y/n/A(lways)] ", "⚠".yellow().bold());
+            std::io::Write::flush(&mut std::io::stderr()).ok();
             match Self::prompt_confirm_with_always() {
                 ConfirmResult::Yes => eprintln!("{}", "approved".green()),
                 ConfirmResult::Always => {

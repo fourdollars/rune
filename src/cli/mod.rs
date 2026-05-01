@@ -367,9 +367,9 @@ async fn read_multiline() -> Option<String> {
 
 /// Run a prompt through the agent with spinner feedback.
 async fn execute_prompt(agent: &mut Agent, input: &str) {
-    let spinner = create_spinner("Thinking...");
+    let spinner = if agent.config.policy.mode == "confirm" { None } else { Some(create_spinner("Thinking...")) };
     let result = agent.run(input).await;
-    spinner.finish_and_clear();
+    if let Some(s) = spinner { s.finish_and_clear(); }
     display_result(&result);
     // Show executed commands summary
     let cmds = agent.executed_commands();
