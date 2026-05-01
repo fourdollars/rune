@@ -67,7 +67,7 @@ fn print_banner() {
 /// Print available commands.
 fn print_help() {
     println!("{}", "Commands:".bold());
-    println!("  {}         Run a prompt through the agent", "run <text>".green());
+    println!("  {}      Send a prompt to the agent", "<text>".green());
     println!("  {}    Enter multi-line mode (end with ';;' on its own line)", "/multi".green());
     println!("  {}      Show current configuration", "/config".green());
     println!("  {}       List available built-in tools", "/tools".green());
@@ -77,8 +77,8 @@ fn print_help() {
     println!("  {}        Clear the screen", "/clear".green());
     println!("  {}       Reset conversation history", "/reset".green());
     println!("  {}        Show sandbox & permissions info", "/info".green());
-    println!("  {}   Show this help", "help | /help".green());
-    println!("  {}  Exit the CLI", "exit | quit".green());
+    println!("  {}   Show this help", "/help".green());
+    println!("  {}  Exit the CLI", "/exit | /quit".green());
     println!();
     println!("{}", "Tips:".dimmed());
     println!("  {} Type your prompt directly (without 'run') for quick execution", "•".dimmed());
@@ -335,7 +335,7 @@ pub async fn run() {
          Use them when needed. Be concise and accurate."
     );
 
-    println!("{} Type {} for commands.", "Ready.".green().bold(), "help".bold());
+    println!("{} Type {} for commands.", "Ready.".green().bold(), "/help".bold());
     println!();
 
     use tokio::io::{self, AsyncBufReadExt};
@@ -363,11 +363,11 @@ pub async fn run() {
         if cmd.is_empty() { continue; }
 
         match cmd.as_str() {
-            "exit" | "quit" | "/exit" | "/quit" => {
+            "/exit" | "/quit" => {
                 println!("{}", "Goodbye! ᚱ".cyan());
                 break;
             }
-            "help" | "/help" | "/h" | "?" => print_help(),
+            "/help" | "/h" => print_help(),
             "/config" => show_config(&cfg),
             "/tools" => show_tools(),
             "/skills" => show_skills(&cfg),
@@ -395,7 +395,7 @@ pub async fn run() {
                 }
             }
             _ => {
-                let input = cmd.strip_prefix("run ").unwrap_or(&cmd);
+                let input = &cmd;
                 execute_prompt(&mut agent, input).await;
             }
         }
