@@ -28,7 +28,7 @@ fn print_banner() {
     );
     let line2 = r#"    ┌───────────────────────────────────┐"#;
     let line3 = r#"    │                                   │"#;
-    let line4 = r#"    │    ᚱ  ᚢ  ᚾ  ᛖ                    │"#;
+    let line4 = r#"    │    ᚱ  ᚢ  ᚾ  ᛖ                     │"#;
     let line5 = r#"    │                                   │"#;
     let line6 = r#"    │    Zero-Trust AI Agent            │"#;
     let line7 = r#"    │    ══════════════════             │"#;
