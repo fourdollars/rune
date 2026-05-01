@@ -81,6 +81,7 @@ impl ToolRegistry {
             "list_dir" => self.list_dir(args).await,
             "run_terminal_cmd" => self.run_terminal_cmd(args).await,
             "fetch_url" => self.fetch_url(args).await,
+            "inspect_process" => self.inspect_process(args).await,
             other => ToolOutput::err(format!("unknown tool: {}", other)),
         }
     }
@@ -152,6 +153,18 @@ impl ToolRegistry {
                         "type": "object",
                         "properties": { "url": { "type": "string" } },
                         "required": ["url"]
+                    }
+                }
+            }),
+            serde_json::json!({
+                "type": "function",
+                "function": {
+                    "name": "inspect_process",
+                    "description": "Inspect a running process by PID (sandboxed).",
+                    "parameters": {
+                        "type": "object",
+                        "properties": { "pid": { "type": "integer" } },
+                        "required": ["pid"]
                     }
                 }
             }),
@@ -253,6 +266,15 @@ impl ToolRegistry {
         } else {
             result
         }
+    }
+
+    async fn inspect_process(&self, args: serde_json::Value) -> ToolOutput {
+        let pid = match args.get("pid").and_then(|v| v.as_u64()) {
+            Some(p) => p,
+            None => return ToolOutput::err("missing required argument: pid"),
+        };
+        let cmd = format!("ps -p {} -o pid,comm,%cpu,%mem,stat,etime --no-headers 2>/dev/null || echo process_not_found", pid);
+        self.sandboxed_cmd(&cmd, 5).await
     }
 }
 
