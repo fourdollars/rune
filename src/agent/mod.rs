@@ -17,6 +17,13 @@ pub enum StopReason {
     UserInterrupt,
 }
 
+/// Result of user confirmation prompt.
+enum ConfirmResult {
+    Yes,
+    No,
+    Always,
+}
+
 /// The AI Agent — orchestrates LLM calls and tool execution.
 pub struct Agent {
     pub config: RuneConfig,
@@ -26,6 +33,8 @@ pub struct Agent {
     provider: ProviderRegistry,
     tools: ToolRegistry,
     skill_loader: SkillLoader,
+    auto_approve: bool,
+    executed_commands: Vec<String>,
 }
 
 impl Agent {
@@ -40,6 +49,8 @@ impl Agent {
             provider,
             tools,
             skill_loader,
+            auto_approve: false,
+            executed_commands: Vec::new(),
         }
     }
 
@@ -182,20 +193,35 @@ impl Agent {
     }
 
     /// Execute a single tool call.
-    async fn execute_tool_call(&self, tc: &LlmToolCall) -> String {
+    async fn execute_tool_call(&mut self, tc: &LlmToolCall) -> String {
         let args: serde_json::Value = serde_json::from_str(&tc.function.arguments)
             .unwrap_or(serde_json::Value::Object(serde_json::Map::new()));
 
         eprintln!("  {} {}", "⚙".dimmed(), format!("{}({})", tc.function.name, &tc.function.arguments[..tc.function.arguments.len().min(80)]).dimmed());
 
         // Confirm mode: ask user before executing dangerous tools
-        if self.config.policy.mode == "confirm" && Self::is_dangerous_tool(&tc.function.name) {
-            eprint!("  {} Execute? [Y/n] ", "⚠".yellow());
-            if !Self::prompt_confirm() {
-                eprintln!("{}", "denied".red());
-                return "DENIED: user rejected tool execution".to_string();
+        // Track executed commands
+        if tc.function.name == "execute_cmd" {
+            if let Some(cmd) = serde_json::from_str::<serde_json::Value>(&tc.function.arguments)
+                .ok().and_then(|a| a.get("cmd").and_then(|c| c.as_str()).map(|s| s.to_string())) {
+                self.executed_commands.push(cmd);
             }
-            eprintln!("{}", "approved".green());
+        }
+
+        // Confirm mode: ask user before executing dangerous tools
+        if self.config.policy.mode == "confirm" && Self::is_dangerous_tool(&tc.function.name) && !self.auto_approve {
+            eprint!("  {} Execute? [Y/n/A(lways)] ", "⚠".yellow());
+            match Self::prompt_confirm_with_always() {
+                ConfirmResult::Yes => eprintln!("{}", "approved".green()),
+                ConfirmResult::Always => {
+                    self.auto_approve = true;
+                    eprintln!("{}", "always approve (session)".green());
+                }
+                ConfirmResult::No => {
+                    eprintln!("{}", "denied".red());
+                    return "DENIED: user rejected tool execution".to_string();
+                }
+            }
         }
 
         let output = self.tools.execute(&tc.function.name, args).await;
@@ -211,23 +237,33 @@ impl Agent {
 
     /// Tools that modify state or execute arbitrary commands.
     fn is_dangerous_tool(name: &str) -> bool {
-        matches!(name, "run_terminal_cmd" | "write_file" | "fetch_url")
+        matches!(name, "execute_cmd" | "write_file" | "fetch_url")
     }
 
     /// Prompt user for Y/n confirmation via /dev/tty (bypasses stdin pipe).
-    fn prompt_confirm() -> bool {
+    fn prompt_confirm_with_always() -> ConfirmResult {
         use std::io::{BufRead, Write};
-        // Try /dev/tty first (works even when stdin is piped)
         if let Ok(tty) = std::fs::File::open("/dev/tty") {
             let mut reader = std::io::BufReader::new(tty);
             std::io::stderr().flush().ok();
             let mut input = String::new();
             if reader.read_line(&mut input).is_ok() {
                 let trimmed = input.trim().to_lowercase();
-                return trimmed.is_empty() || trimmed == "y" || trimmed == "yes";
+                if trimmed == "a" || trimmed == "always" {
+                    return ConfirmResult::Always;
+                }
+                if trimmed == "n" || trimmed == "no" {
+                    return ConfirmResult::No;
+                }
+                return ConfirmResult::Yes; // empty or y/yes
             }
         }
-        // Fallback: if no tty available, default to allow (non-interactive)
-        true
+        // Non-interactive fallback: auto-approve
+        ConfirmResult::Yes
+    }
+
+    /// Get the list of commands executed during this session.
+    pub fn executed_commands(&self) -> &[String] {
+        &self.executed_commands
     }
 }

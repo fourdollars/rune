@@ -36,7 +36,7 @@ impl ToolRegistry {
         Self { allowed_dirs, allowed_domains: Vec::new(), policy_mode: "confirm".to_string(), policy_allowed_commands: Vec::new(), policy_denied_syscalls: Vec::new() }
     }
 
-    /// Set allowed network domains (for fetch_url / run_terminal_cmd network access).
+    /// Set allowed network domains (for fetch_url / execute_cmd network access).
     pub fn set_allowed_domains(&mut self, domains: Vec<String>) {
         self.allowed_domains = domains;
     }
@@ -90,7 +90,7 @@ impl ToolRegistry {
             "read_file" => self.read_file(args).await,
             "write_file" => self.write_file(args).await,
             "list_dir" => self.list_dir(args).await,
-            "run_terminal_cmd" => self.run_terminal_cmd(args).await,
+            "execute_cmd" => self.execute_cmd(args).await,
             "fetch_url" => self.fetch_url(args).await,
             "inspect_process" => self.inspect_process(args).await,
             other => ToolOutput::err(format!("unknown tool: {}", other)),
@@ -142,7 +142,7 @@ impl ToolRegistry {
             serde_json::json!({
                 "type": "function",
                 "function": {
-                    "name": "run_terminal_cmd",
+                    "name": "execute_cmd",
                     "description": "Execute a shell command (sandboxed, network isolated by default).",
                     "parameters": {
                         "type": "object",
@@ -235,7 +235,7 @@ impl ToolRegistry {
         self.sandboxed_cmd(&cmd, 10).await
     }
 
-    async fn run_terminal_cmd(&self, args: serde_json::Value) -> ToolOutput {
+    async fn execute_cmd(&self, args: serde_json::Value) -> ToolOutput {
         let cmd = match args.get("cmd").and_then(|v| v.as_str()) {
             Some(c) => c.to_string(),
             None => return ToolOutput::err("missing required argument: cmd"),
@@ -244,7 +244,7 @@ impl ToolRegistry {
             .and_then(|v| v.as_u64())
             .unwrap_or(30);
 
-        info!(cmd = %cmd, timeout_secs, "run_terminal_cmd (sandboxed)");
+        info!(cmd = %cmd, timeout_secs, "execute_cmd (sandboxed)");
 
         // Command policy enforcement
         if self.policy_mode == "allowlist" {

@@ -303,7 +303,7 @@ fn show_policy_full(cfg: &config::RuneConfig) {
     println!("    {} read_file    — sandboxed, 32KB truncation", "•".dimmed());
     println!("    {} write_file   — sandboxed, allowed dirs only", "•".dimmed());
     println!("    {} list_dir     — sandboxed", "•".dimmed());
-    println!("    {} run_terminal_cmd — sandboxed, network blocked", "•".dimmed());
+    println!("    {} execute_cmd — sandboxed, network blocked", "•".dimmed());
     println!("    {} fetch_url    — sandboxed, {} (network blocked)", "•".dimmed(), "ALWAYS FAILS".red());
     println!();
 
@@ -371,6 +371,14 @@ async fn execute_prompt(agent: &mut Agent, input: &str) {
     let result = agent.run(input).await;
     spinner.finish_and_clear();
     display_result(&result);
+    // Show executed commands summary
+    let cmds = agent.executed_commands();
+    if !cmds.is_empty() {
+        println!("  {} commands executed: {}", "📋".dimmed(), cmds.len());
+        for c in cmds {
+            println!("    {} {}", "▸".dimmed(), c.dimmed());
+        }
+    }
 }
 
 /// Initialize the provider registry from config.
@@ -416,7 +424,7 @@ pub async fn run() {
     let mut agent = Agent::new(cfg.clone(), provider);
     agent.set_system_prompt(
         "You are Rune, a high-performance AI agent running in a terminal. \
-         You have access to tools: read_file, write_file, list_dir, run_terminal_cmd, fetch_url. \
+         You have access to tools: read_file, write_file, list_dir, execute_cmd, fetch_url. \
          Use them when needed. Be concise and accurate."
     );
 
