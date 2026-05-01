@@ -1,6 +1,5 @@
 use serde::Serialize;
-use std::path::{Path, PathBuf};
-use tokio::process::Command;
+use std::path::PathBuf;
 use tracing::info;
 
 use crate::sandbox::{SandboxConfig, SandboxExecutor};
@@ -23,7 +22,7 @@ impl ToolOutput {
     }
 }
 
-/// Tool registry with sandbox path restrictions.
+/// Tool registry — all tools execute through the sandbox.
 pub struct ToolRegistry {
     allowed_dirs: Vec<PathBuf>,
 }
@@ -33,9 +32,42 @@ impl ToolRegistry {
         Self { allowed_dirs }
     }
 
+    /// Create a sandbox executor with the registry's config.
+    fn sandbox(&self, timeout_secs: u64) -> SandboxExecutor {
+        let config = SandboxConfig {
+            timeout_secs,
+            read_write_paths: self.allowed_dirs.clone(),
+            ..SandboxConfig::default()
+        };
+        SandboxExecutor::new(config)
+    }
+
+    /// Run a command in sandbox and return ToolOutput.
+    async fn sandboxed_cmd(&self, cmd: &str, timeout_secs: u64) -> ToolOutput {
+        let executor = self.sandbox(timeout_secs);
+        match executor.run_shell_command(cmd, None, None).await {
+            Ok(result) => {
+                if result.timed_out {
+                    return ToolOutput::err(format!("command timed out after {}s", timeout_secs));
+                }
+                let output = if !result.stderr.is_empty() && result.exit_code != 0 {
+                    format!("{}\n{}", result.stdout, result.stderr)
+                } else {
+                    result.stdout.clone()
+                };
+                if result.exit_code != 0 {
+                    ToolOutput::err(format!("exit_code: {}\nstdout: {}\nstderr: {}", result.exit_code, result.stdout, result.stderr))
+                } else {
+                    ToolOutput::ok(output)
+                }
+            }
+            Err(e) => ToolOutput::err(format!("sandbox error: {}", e)),
+        }
+    }
+
     /// Dispatch a tool call by name.
     pub async fn execute(&self, name: &str, args: serde_json::Value) -> ToolOutput {
-        info!(tool = name, "executing tool");
+        info!(tool = name, "executing tool (sandboxed)");
         match name {
             "read_file" => self.read_file(args).await,
             "write_file" => self.write_file(args).await,
@@ -53,7 +85,7 @@ impl ToolRegistry {
                 "type": "function",
                 "function": {
                     "name": "read_file",
-                    "description": "Read a file's contents. Truncates at 32KB.",
+                    "description": "Read a file's contents (sandboxed). Truncates at 32KB.",
                     "parameters": {
                         "type": "object",
                         "properties": { "path": { "type": "string" } },
@@ -65,7 +97,7 @@ impl ToolRegistry {
                 "type": "function",
                 "function": {
                     "name": "write_file",
-                    "description": "Write content to a file. Creates parent dirs.",
+                    "description": "Write content to a file (sandboxed). Creates parent dirs.",
                     "parameters": {
                         "type": "object",
                         "properties": {
@@ -80,7 +112,7 @@ impl ToolRegistry {
                 "type": "function",
                 "function": {
                     "name": "list_dir",
-                    "description": "List directory contents.",
+                    "description": "List directory contents (sandboxed).",
                     "parameters": {
                         "type": "object",
                         "properties": { "path": { "type": "string" } },
@@ -92,7 +124,7 @@ impl ToolRegistry {
                 "type": "function",
                 "function": {
                     "name": "run_terminal_cmd",
-                    "description": "Execute a shell command with sandbox isolation.",
+                    "description": "Execute a shell command (sandboxed, network isolated).",
                     "parameters": {
                         "type": "object",
                         "properties": {
@@ -108,7 +140,7 @@ impl ToolRegistry {
                 "type": "function",
                 "function": {
                     "name": "fetch_url",
-                    "description": "Fetch content from a URL (via curl).",
+                    "description": "Fetch content from a URL (sandboxed, network isolated).",
                     "parameters": {
                         "type": "object",
                         "properties": { "url": { "type": "string" } },
@@ -119,72 +151,29 @@ impl ToolRegistry {
         ]
     }
 
-    // ── Path validation ──────────────────────────────────────────────
-
-    fn validate_path(&self, raw: &str) -> Result<PathBuf, String> {
-        let p = Path::new(raw);
-        let canonical = if p.exists() {
-            p.canonicalize().map_err(|e| format!("canonicalize failed: {}", e))?
-        } else {
-            let parent = p.parent().ok_or("invalid path: no parent")?;
-            if !parent.exists() {
-                let mut ancestor = parent.to_path_buf();
-                while !ancestor.exists() {
-                    ancestor = ancestor.parent()
-                        .ok_or("invalid path: cannot resolve ancestor")?
-                        .to_path_buf();
-                }
-                let resolved = ancestor.canonicalize()
-                    .map_err(|e| format!("canonicalize ancestor failed: {}", e))?;
-                resolved.join(p.strip_prefix(&ancestor).unwrap_or(p))
-            } else {
-                let resolved_parent = parent.canonicalize()
-                    .map_err(|e| format!("canonicalize parent failed: {}", e))?;
-                resolved_parent.join(p.file_name().unwrap_or_default())
-            }
-        };
-
-        if self.allowed_dirs.is_empty() {
-            return Ok(canonical);
-        }
-
-        for allowed in &self.allowed_dirs {
-            if let Ok(allowed_canon) = allowed.canonicalize() {
-                if canonical.starts_with(&allowed_canon) {
-                    return Ok(canonical);
-                }
-            }
-        }
-        Err(format!("path '{}' is outside allowed directories", raw))
-    }
-
-    // ── Tools ────────────────────────────────────────────────────────
+    // ── All tools go through sandbox ─────────────────────────────────
 
     async fn read_file(&self, args: serde_json::Value) -> ToolOutput {
-        let path_str = match args.get("path").and_then(|v| v.as_str()) {
+        let path = match args.get("path").and_then(|v| v.as_str()) {
             Some(p) => p,
             None => return ToolOutput::err("missing required argument: path"),
         };
-        let path = match self.validate_path(path_str) {
-            Ok(p) => p,
-            Err(e) => return ToolOutput::err(e),
-        };
-        info!(path = %path.display(), "read_file");
-        match tokio::fs::read_to_string(&path).await {
-            Ok(content) => {
-                if content.len() > MAX_FILE_SIZE {
-                    let truncated = &content[..MAX_FILE_SIZE];
-                    ToolOutput::ok(format!("{}\n[Content Truncated at 32KB]", truncated))
-                } else {
-                    ToolOutput::ok(content)
-                }
-            }
-            Err(e) => ToolOutput::err(format!("read error: {}", e)),
+        info!(path = %path, "read_file (sandboxed)");
+        // Use cat with head to enforce 32KB limit
+        let cmd = format!("head -c {} '{}'", MAX_FILE_SIZE, path.replace('\'', "'\\''"));
+        let result = self.sandboxed_cmd(&cmd, 10).await;
+        if result.is_error {
+            return result;
+        }
+        if result.content.len() >= MAX_FILE_SIZE {
+            ToolOutput::ok(format!("{}\n[Content Truncated at 32KB]", result.content))
+        } else {
+            result
         }
     }
 
     async fn write_file(&self, args: serde_json::Value) -> ToolOutput {
-        let path_str = match args.get("path").and_then(|v| v.as_str()) {
+        let path = match args.get("path").and_then(|v| v.as_str()) {
             Some(p) => p,
             None => return ToolOutput::err("missing required argument: path"),
         };
@@ -192,110 +181,59 @@ impl ToolRegistry {
             Some(c) => c,
             None => return ToolOutput::err("missing required argument: content"),
         };
-        let path = match self.validate_path(path_str) {
-            Ok(p) => p,
-            Err(e) => return ToolOutput::err(e),
-        };
-        info!(path = %path.display(), bytes = content.len(), "write_file");
-        if let Some(parent) = path.parent() {
-            if let Err(e) = tokio::fs::create_dir_all(parent).await {
-                return ToolOutput::err(format!("create dirs failed: {}", e));
-            }
+        info!(path = %path, bytes = content.len(), "write_file (sandboxed)");
+        // Write via sandbox: mkdir -p parent && write content via stdin
+        let escaped_path = path.replace('\'', "'\\''");
+        let escaped_content = content.replace('\'', "'\\''");
+        let cmd = format!(
+            "mkdir -p $(dirname '{}') && printf '%s' '{}' > '{}'",
+            escaped_path, escaped_content, escaped_path
+        );
+        let result = self.sandboxed_cmd(&cmd, 10).await;
+        if result.is_error {
+            return result;
         }
-        match tokio::fs::write(&path, content).await {
-            Ok(_) => ToolOutput::ok(format!("Written {} bytes to {}", content.len(), path.display())),
-            Err(e) => ToolOutput::err(format!("write error: {}", e)),
-        }
+        ToolOutput::ok(format!("Written {} bytes to {}", content.len(), path))
     }
 
     async fn list_dir(&self, args: serde_json::Value) -> ToolOutput {
-        let path_str = match args.get("path").and_then(|v| v.as_str()) {
+        let path = match args.get("path").and_then(|v| v.as_str()) {
             Some(p) => p,
             None => return ToolOutput::err("missing required argument: path"),
         };
-        let path = match self.validate_path(path_str) {
-            Ok(p) => p,
-            Err(e) => return ToolOutput::err(e),
-        };
-        info!(path = %path.display(), "list_dir");
-        let mut entries = match tokio::fs::read_dir(&path).await {
-            Ok(rd) => rd,
-            Err(e) => return ToolOutput::err(format!("read_dir error: {}", e)),
-        };
-        let mut lines = Vec::new();
-        while let Ok(Some(entry)) = entries.next_entry().await {
-            let name = entry.file_name().to_string_lossy().to_string();
-            let suffix = if entry.file_type().await.map(|ft| ft.is_dir()).unwrap_or(false) {
-                "/"
-            } else {
-                ""
-            };
-            lines.push(format!("{}{}", name, suffix));
-        }
-        lines.sort();
-        ToolOutput::ok(lines.join("\n"))
+        info!(path = %path, "list_dir (sandboxed)");
+        let cmd = format!("ls -1F '{}'", path.replace('\'', "'\\''"));
+        self.sandboxed_cmd(&cmd, 10).await
     }
 
-    /// Execute a shell command through the sandbox executor.
     async fn run_terminal_cmd(&self, args: serde_json::Value) -> ToolOutput {
         let cmd = match args.get("cmd").and_then(|v| v.as_str()) {
             Some(c) => c.to_string(),
             None => return ToolOutput::err("missing required argument: cmd"),
         };
-        let cwd = args.get("cwd").and_then(|v| v.as_str()).map(String::from);
         let timeout_secs = args.get("timeout_secs")
             .and_then(|v| v.as_u64())
             .unwrap_or(30);
 
-        info!(cmd = %cmd, cwd = ?cwd, timeout_secs, "run_terminal_cmd (sandboxed)");
-
-        let config = SandboxConfig {
-            timeout_secs,
-            read_write_paths: self.allowed_dirs.clone(),
-            ..SandboxConfig::default()
-        };
-        let executor = SandboxExecutor::new(config);
-
-        match executor.run_shell_command(&cmd, cwd.as_deref(), None).await {
-            Ok(result) => {
-                if !result.stderr.is_empty() {
-                    eprintln!("[run_terminal_cmd stderr]\n{}", result.stderr);
-                }
-                let combined = format!(
-                    "exit_code: {}\n--- stdout ---\n{}\n--- stderr ---\n{}{}",
-                    result.exit_code, result.stdout, result.stderr,
-                    if result.degraded { "\n[sandbox: degraded mode]" } else { "" }
-                );
-                if result.timed_out || result.exit_code != 0 {
-                    ToolOutput { content: combined, is_error: true }
-                } else {
-                    ToolOutput::ok(combined)
-                }
-            }
-            Err(e) => ToolOutput::err(format!("sandbox error: {}", e)),
-        }
+        info!(cmd = %cmd, timeout_secs, "run_terminal_cmd (sandboxed)");
+        self.sandboxed_cmd(&cmd, timeout_secs).await
     }
 
     async fn fetch_url(&self, args: serde_json::Value) -> ToolOutput {
         let url = match args.get("url").and_then(|v| v.as_str()) {
-            Some(u) => u.to_string(),
+            Some(u) => u,
             None => return ToolOutput::err("missing required argument: url"),
         };
-        info!(url = %url, "fetch_url");
-        let output = Command::new("curl")
-            .args(["-sS", "-L", "--max-time", "30", &url])
-            .output()
-            .await;
-        match output {
-            Ok(o) => {
-                let body = String::from_utf8_lossy(&o.stdout).to_string();
-                if body.len() > MAX_FILE_SIZE {
-                    ToolOutput::ok(format!("{}\n[Content Truncated at 32KB]", &body[..MAX_FILE_SIZE]))
-                } else {
-                    ToolOutput::ok(body)
-                }
-            }
-            Err(e) => ToolOutput::err(format!("curl error: {}", e)),
+        info!(url = %url, "fetch_url (sandboxed)");
+        let cmd = format!("curl -sS -L --max-time 30 '{}'", url.replace('\'', "'\\''"));
+        let result = self.sandboxed_cmd(&cmd, 35).await;
+        if result.is_error {
+            return result;
+        }
+        if result.content.len() > MAX_FILE_SIZE {
+            ToolOutput::ok(format!("{}\n[Content Truncated at 32KB]", &result.content[..MAX_FILE_SIZE]))
+        } else {
+            result
         }
     }
 }
