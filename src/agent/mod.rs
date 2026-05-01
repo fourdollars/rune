@@ -72,6 +72,64 @@ impl Agent {
 
     pub fn tokens_used(&self) -> u32 { self.tokens_used }
     pub fn step_count(&self) -> u32 { self.step_count }
+
+    /// Get message count by role.
+    pub fn context_summary(&self) -> Vec<(String, usize)> {
+        let mut counts = std::collections::HashMap::new();
+        for m in &self.messages {
+            *counts.entry(m.role.clone()).or_insert(0) += 1;
+        }
+        let mut v: Vec<_> = counts.into_iter().collect();
+        v.sort();
+        v
+    }
+
+    /// Get total message count.
+    pub fn message_count(&self) -> usize { self.messages.len() }
+
+    /// Get estimated context size in chars.
+    pub fn context_chars(&self) -> usize {
+        self.messages.iter().map(|m| m.content.as_ref().map(|c| c.len()).unwrap_or(0)).sum()
+    }
+
+    /// Compact context: keep system prompt + summarize older messages.
+    pub fn compact(&mut self) {
+        if self.messages.len() <= 3 {
+            return; // nothing to compact
+        }
+        let system = self.messages.first().cloned();
+        // Keep last 4 messages (2 exchanges)
+        let keep_last = 4;
+        let total = self.messages.len();
+        let to_summarize = if total > keep_last + 1 { total - keep_last - 1 } else { 0 };
+        if to_summarize == 0 { return; }
+
+        // Build summary of older messages
+        let mut summary_parts: Vec<String> = Vec::new();
+        for m in self.messages.iter().skip(1).take(to_summarize) {
+            let preview = m.content.as_ref().map(|c| c.chars().take(100).collect::<String>()).unwrap_or_default();
+            if !preview.is_empty() {
+                summary_parts.push(format!("[{}]: {}", m.role, preview));
+            }
+        }
+        let summary = format!("[Compacted {} messages]
+{}", to_summarize, summary_parts.join("
+"));
+
+        // Rebuild: system + summary + last N messages
+        let mut new_messages = Vec::new();
+        if let Some(sys) = system {
+            new_messages.push(sys);
+        }
+        new_messages.push(LlmMessage {
+            role: "system".to_string(),
+            content: Some(summary),
+            tool_calls: None,
+            tool_call_id: None,
+        });
+        new_messages.extend(self.messages[total - keep_last..].iter().cloned());
+        self.messages = new_messages;
+    }
     pub fn reset(&mut self) {
         let system = self.messages.first().cloned();
         self.messages.clear();

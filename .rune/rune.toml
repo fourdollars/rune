@@ -1,0 +1,23 @@
+# rune configuration: define runes to fetch Taoyuan weather.
+# - weather_wttr: uses wttr.in via curl (recommended)
+# - weather_open_meteo: uses Open-Meteo (no API key required)
+# - weather_openweather: uses OpenWeatherMap (requires OPENWEATHER_API_KEY env var)
+
+[package]
+name = "rune-weather"
+version = "0.1.0"
+
+[rune.weather_wttr]
+type = "command"
+command = "./.rune/runes/weather_wttr/run.sh"
+description = "Fetch current weather for Taoyuan using wttr.in (curl)"
+
+[rune.weather_open_meteo]
+type = "command"
+command = "./.rune/runes/weather_open_meteo/run.sh"
+description = "Fetch current weather for Taoyuan using Open-Meteo (no API key)"
+
+[rune.weather_openweather]
+type = "command"
+command = "./.rune/runes/weather_openweather/run.sh"
+description = "Fetch current weather for Taoyuan using OpenWeatherMap (requires OPENWEATHER_API_KEY)"

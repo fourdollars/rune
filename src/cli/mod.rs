@@ -76,6 +76,7 @@ fn print_help() {
     println!("  {}     Show version info", "/version".green());
     println!("  {}        Clear the screen", "/clear".green());
     println!("  {}       Reset conversation history", "/reset".green());
+    println!("  {}     Compact (summarize) conversation context", "/compact".green());
     println!("  {}      Show current session status (model, context, skills)", "/info".green());
     println!("  {}    Show policy summary (use /policy full for details)", "/policy".green());
     println!("  {}   Show this help", "/help".green());
@@ -252,6 +253,21 @@ fn show_info(cfg: &config::RuneConfig, agent: &crate::agent::Agent) {
 }
 
 /// Display sandbox policy & permissions.
+
+/// Display context details.
+fn show_context(agent: &crate::agent::Agent) {
+    println!("{}", "Context Details:".bold());
+    println!("  {} messages: {}", "•".dimmed(), agent.message_count());
+    println!("  {} chars: ~{}", "•".dimmed(), agent.context_chars());
+    println!("  {} tokens used: {}", "•".dimmed(), agent.tokens_used());
+    println!();
+    println!("  {}", "By role:".bold());
+    for (role, count) in agent.context_summary() {
+        println!("    {} {}: {}", "•".dimmed(), role, count);
+    }
+    println!();
+    println!("  {} Use /compact to summarize older messages", "ℹ".cyan());
+}
 fn show_policy_summary(cfg: &config::RuneConfig) {
     let p = &cfg.policy;
     println!("{}", "Policy Summary:".bold());
@@ -482,6 +498,13 @@ pub async fn run() {
                 println!("{}", "Conversation reset.".green());
             }
             "/info" => show_info(&cfg, &agent),
+            "/info context" => show_context(&agent),
+            "/compact" => {
+                let before = agent.message_count();
+                agent.compact();
+                let after = agent.message_count();
+                println!("{} Context compacted: {} → {} messages", "✓".green(), before, after);
+            }
             "/policy" => show_policy_summary(&cfg),
             "/policy full" => show_policy_full(&cfg),
             "/multi" => {
