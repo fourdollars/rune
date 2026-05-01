@@ -215,3 +215,66 @@ impl ProviderRegistry {
         Err(anyhow!("provider not found: {}", provider_name))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use anyhow::Result as AnyResult;
+
+    struct FailingProvider {
+        name: String,
+    }
+    impl FailingProvider {
+        fn new(name: &str) -> Self { Self { name: name.to_string() } }
+    }
+    impl Provider for FailingProvider {
+        fn name(&self) -> &str { &self.name }
+        fn chat(&self, _request: LlmRequest) -> Pin<Box<dyn std::future::Future<Output = AnyResult<LlmResponse>> + Send + '_>> {
+            Box::pin(async move { Err(anyhow!("simulated failure")) })
+        }
+    }
+
+    struct SucceedProvider {
+        name: String,
+        resp: LlmResponse,
+    }
+    impl SucceedProvider {
+        fn new(name: &str, resp: LlmResponse) -> Self { Self { name: name.to_string(), resp } }
+    }
+    impl Provider for SucceedProvider {
+        fn name(&self) -> &str { &self.name }
+        fn chat(&self, _request: LlmRequest) -> Pin<Box<dyn std::future::Future<Output = AnyResult<LlmResponse>> + Send + '_>> {
+            let r = self.resp.clone();
+            Box::pin(async move { Ok(r) })
+        }
+    }
+
+    #[tokio::test]
+    async fn test_provider_registry_fallback() {
+        let mut reg = ProviderRegistry::new();
+
+        let fail = FailingProvider::new("fail");
+        reg.register(Box::new(fail));
+
+        let success_resp = LlmResponse { content: Some("ok".to_string()), tool_calls: vec![], usage: TokenUsage::default(), model: "m1".to_string() };
+        let succ = SucceedProvider::new("succ", success_resp.clone());
+        reg.register(Box::new(succ));
+
+        // default_provider is 0 (the failing one), so chat should fallback and return success
+        let req = LlmRequest { model: "m".to_string(), messages: vec![], tools: None, max_tokens: None };
+        let res = reg.chat(req).await.expect("expected success from fallback provider");
+        assert_eq!(res.content, Some("ok".to_string()));
+    }
+
+    #[tokio::test]
+    async fn test_chat_with_specific_provider() {
+        let mut reg = ProviderRegistry::new();
+        let success_resp = LlmResponse { content: Some("hello".to_string()), tool_calls: vec![], usage: TokenUsage::default(), model: "m1".to_string() };
+        let succ = SucceedProvider::new("p1", success_resp.clone());
+        reg.register(Box::new(succ));
+
+        let req = LlmRequest { model: "m".to_string(), messages: vec![], tools: None, max_tokens: None };
+        let res = reg.chat_with("p1", req).await.expect("should find provider p1");
+        assert_eq!(res.content, Some("hello".to_string()));
+    }
+}

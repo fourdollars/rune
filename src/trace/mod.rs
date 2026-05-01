@@ -104,3 +104,38 @@ impl TraceWriter {
         format!("{}-{}-{}", now, pid, nanos)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+    use std::path::PathBuf;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn test_trace_writer_writes_json() {
+        let run_id = "test-run-12345".to_string();
+        let tmp = std::env::temp_dir();
+        let dir = tmp.join(format!("rune-trace-test-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        let output_dir = dir.clone();
+
+        let mut w = TraceWriter::new(run_id.clone(), "m1".to_string(), output_dir.clone(), true);
+        w.record(StepKind::PreCommand { command: "echo hi".to_string(), exit_code: 0, duration_ms: 10 });
+        w.record(StepKind::ToolCall { name: "t1".to_string(), arguments_preview: "{\"a\":1}".to_string() });
+        w.finish(2).expect("finish should succeed");
+
+        let path = output_dir.join(format!("{}.json", run_id));
+        assert!(path.exists(), "trace file should exist");
+
+        let data = fs::read_to_string(&path).expect("read trace");
+        let v: serde_json::Value = serde_json::from_str(&data).expect("parse json");
+        assert_eq!(v.get("run_id").and_then(|x| x.as_str()), Some("test-run-12345"));
+        assert_eq!(v.get("model").and_then(|x| x.as_str()), Some("m1"));
+        assert_eq!(v.get("exit_code").and_then(|x| x.as_i64()), Some(2));
+        assert!(v.get("steps").and_then(|s| s.as_array()).map(|a| a.len()).unwrap_or(0) >= 2);
+
+        // cleanup
+        let _ = fs::remove_dir_all(&dir);
+    }
+}

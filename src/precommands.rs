@@ -57,3 +57,25 @@ pub async fn execute_pre_commands(commands: &[String]) -> Result<Vec<PreCommandR
     }
     Ok(results)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn test_execute_pre_commands_success() {
+        let cmds = vec!["echo hello".to_string(), "echo world".to_string()];
+        let res = execute_pre_commands(&cmds).await.expect("should succeed");
+        assert_eq!(res.len(), 2);
+        assert!(res[0].stdout.contains("hello"));
+        assert_eq!(res[0].exit_code, 0);
+    }
+
+    #[tokio::test]
+    async fn test_execute_pre_commands_failure() {
+        let cmds = vec!["sh -c 'exit 1'".to_string()];
+        let err = execute_pre_commands(&cmds).await.expect_err("should fail");
+        let s = format!("{}", err);
+        assert!(s.contains("pre-command failed"));
+    }
+}

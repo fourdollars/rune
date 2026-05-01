@@ -3,6 +3,8 @@ use std::path::{Path, PathBuf};
 use tokio::process::Command;
 use tracing::info;
 
+use crate::sandbox::{SandboxConfig, SandboxExecutor};
+
 const MAX_FILE_SIZE: usize = 32 * 1024; // 32KB
 
 /// Tool execution result.
@@ -90,7 +92,7 @@ impl ToolRegistry {
                 "type": "function",
                 "function": {
                     "name": "run_terminal_cmd",
-                    "description": "Execute a shell command. Streams output to stderr in real-time.",
+                    "description": "Execute a shell command with sandbox isolation.",
                     "parameters": {
                         "type": "object",
                         "properties": {
@@ -121,14 +123,11 @@ impl ToolRegistry {
 
     fn validate_path(&self, raw: &str) -> Result<PathBuf, String> {
         let p = Path::new(raw);
-        // Canonicalize parent to resolve symlinks / ..
         let canonical = if p.exists() {
             p.canonicalize().map_err(|e| format!("canonicalize failed: {}", e))?
         } else {
-            // For new files, canonicalize parent
             let parent = p.parent().ok_or("invalid path: no parent")?;
             if !parent.exists() {
-                // Will be created by write_file; check the earliest existing ancestor
                 let mut ancestor = parent.to_path_buf();
                 while !ancestor.exists() {
                     ancestor = ancestor.parent()
@@ -198,7 +197,6 @@ impl ToolRegistry {
             Err(e) => return ToolOutput::err(e),
         };
         info!(path = %path.display(), bytes = content.len(), "write_file");
-        // Create parent directories
         if let Some(parent) = path.parent() {
             if let Err(e) = tokio::fs::create_dir_all(parent).await {
                 return ToolOutput::err(format!("create dirs failed: {}", e));
@@ -238,6 +236,7 @@ impl ToolRegistry {
         ToolOutput::ok(lines.join("\n"))
     }
 
+    /// Execute a shell command through the sandbox executor.
     async fn run_terminal_cmd(&self, args: serde_json::Value) -> ToolOutput {
         let cmd = match args.get("cmd").and_then(|v| v.as_str()) {
             Some(c) => c.to_string(),
@@ -248,48 +247,32 @@ impl ToolRegistry {
             .and_then(|v| v.as_u64())
             .unwrap_or(30);
 
-        info!(cmd = %cmd, cwd = ?cwd, timeout_secs, "run_terminal_cmd");
+        info!(cmd = %cmd, cwd = ?cwd, timeout_secs, "run_terminal_cmd (sandboxed)");
 
-        let mut command = Command::new("sh");
-        command.arg("-c").arg(&cmd);
-        if let Some(dir) = &cwd {
-            command.current_dir(dir);
-        }
-        command.stdout(std::process::Stdio::piped());
-        command.stderr(std::process::Stdio::piped());
-
-        let child = match command.spawn() {
-            Ok(c) => c,
-            Err(e) => return ToolOutput::err(format!("spawn error: {}", e)),
+        let config = SandboxConfig {
+            timeout_secs,
+            read_write_paths: self.allowed_dirs.clone(),
+            ..SandboxConfig::default()
         };
+        let executor = SandboxExecutor::new(config);
 
-        // Wait with timeout
-        let result = tokio::time::timeout(
-            std::time::Duration::from_secs(timeout_secs),
-            child.wait_with_output(),
-        ).await;
-
-        match result {
-            Ok(Ok(output)) => {
-                let stdout = String::from_utf8_lossy(&output.stdout);
-                let stderr = String::from_utf8_lossy(&output.stderr);
-                let code = output.status.code().unwrap_or(-1);
-                // Stream stderr to developer (eprintln for real-time visibility)
-                if !stderr.is_empty() {
-                    eprintln!("[run_terminal_cmd stderr]\n{}", stderr);
+        match executor.run_shell_command(&cmd, cwd.as_deref(), None).await {
+            Ok(result) => {
+                if !result.stderr.is_empty() {
+                    eprintln!("[run_terminal_cmd stderr]\n{}", result.stderr);
                 }
                 let combined = format!(
-                    "exit_code: {}\n--- stdout ---\n{}\n--- stderr ---\n{}",
-                    code, stdout, stderr
+                    "exit_code: {}\n--- stdout ---\n{}\n--- stderr ---\n{}{}",
+                    result.exit_code, result.stdout, result.stderr,
+                    if result.degraded { "\n[sandbox: degraded mode]" } else { "" }
                 );
-                if code != 0 {
+                if result.timed_out || result.exit_code != 0 {
                     ToolOutput { content: combined, is_error: true }
                 } else {
                     ToolOutput::ok(combined)
                 }
             }
-            Ok(Err(e)) => ToolOutput::err(format!("command error: {}", e)),
-            Err(_) => ToolOutput::err(format!("command timed out after {}s", timeout_secs)),
+            Err(e) => ToolOutput::err(format!("sandbox error: {}", e)),
         }
     }
 

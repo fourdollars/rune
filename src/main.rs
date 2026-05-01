@@ -8,6 +8,7 @@ mod config;
 mod mcp;
 mod precommands;
 mod provider;
+mod sandbox;
 mod skills;
 mod tools;
 mod trace;
@@ -16,13 +17,11 @@ use tracing_subscriber::EnvFilter;
 
 #[tokio::main]
 async fn main() {
-    // Load config (fall back to defaults on error)
     let cfg = config::load().unwrap_or_else(|e| {
         eprintln!("warning: config load failed: {}", e);
         config::RuneConfig::default()
     });
 
-    // Initialize tracing
     tracing_subscriber::fmt()
         .with_env_filter(
             EnvFilter::try_from_default_env()

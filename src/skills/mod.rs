@@ -231,3 +231,38 @@ fn parse_frontmatter(content: &str, source_path: &Path, default_name: Option<&st
 
     (metadata, content.to_string())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::PathBuf;
+
+    #[test]
+    fn test_extract_skill_refs() {
+        let s = "This references @alpha and @beta-1 and @alpha again.";
+        let refs = SkillLoader::extract_skill_refs(s);
+        assert_eq!(refs, vec!["alpha".to_string(), "beta-1".to_string()]);
+    }
+
+    #[test]
+    fn test_parse_frontmatter_with_frontmatter() {
+        let content = "---\nname: \"my-skill\"\ndescription: 'A skill'\ntools_allow: [a, b]\n---\nSkill body line\nSecond line";
+        let path = PathBuf::from("/tmp/skills/my-skill/SKILL.md");
+        let (meta, body) = parse_frontmatter(content, &path, Some("my-skill"));
+        assert_eq!(meta.name, "my-skill");
+        assert_eq!(meta.description.as_deref(), Some("A skill"));
+        assert_eq!(meta.tools_allow.as_ref().map(|v| v.clone()).unwrap(), vec!["a".to_string(), "b".to_string()]);
+        assert!(body.contains("Skill body line"));
+    }
+
+    #[test]
+    fn test_parse_frontmatter_without_frontmatter() {
+        let content = "No frontmatter here\nJust body";
+        let path = PathBuf::from("/tmp/skills/simple/SKILL.md");
+        let (meta, body) = parse_frontmatter(content, &path, Some("simple"));
+        assert_eq!(meta.name, "simple");
+        assert!(meta.description.is_none());
+        assert_eq!(body, content.to_string());
+    }
+}
+
