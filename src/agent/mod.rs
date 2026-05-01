@@ -116,6 +116,7 @@ impl Agent {
     /// Run the agent loop: send user input → LLM → tools → repeat until done.
     pub async fn run(&mut self, user_input: &str) -> StopReason {
         // Resolve and inject @skill references
+        self.executed_commands.clear();
         self.inject_skills(user_input);
 
         // Add user message
