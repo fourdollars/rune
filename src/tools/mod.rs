@@ -25,11 +25,17 @@ impl ToolOutput {
 /// Tool registry — all tools execute through the sandbox.
 pub struct ToolRegistry {
     allowed_dirs: Vec<PathBuf>,
+    allowed_domains: Vec<String>,
 }
 
 impl ToolRegistry {
     pub fn new(allowed_dirs: Vec<PathBuf>) -> Self {
-        Self { allowed_dirs }
+        Self { allowed_dirs, allowed_domains: Vec::new() }
+    }
+
+    /// Set allowed network domains (for fetch_url / run_terminal_cmd network access).
+    pub fn set_allowed_domains(&mut self, domains: Vec<String>) {
+        self.allowed_domains = domains;
     }
 
     /// Create a sandbox executor with the registry's config.
@@ -37,6 +43,7 @@ impl ToolRegistry {
         let config = SandboxConfig {
             timeout_secs,
             read_write_paths: self.allowed_dirs.clone(),
+            allowed_domains: self.allowed_domains.clone(),
             ..SandboxConfig::default()
         };
         SandboxExecutor::new(config)
@@ -124,7 +131,7 @@ impl ToolRegistry {
                 "type": "function",
                 "function": {
                     "name": "run_terminal_cmd",
-                    "description": "Execute a shell command (sandboxed, network isolated).",
+                    "description": "Execute a shell command (sandboxed, network isolated by default).",
                     "parameters": {
                         "type": "object",
                         "properties": {
@@ -140,7 +147,7 @@ impl ToolRegistry {
                 "type": "function",
                 "function": {
                     "name": "fetch_url",
-                    "description": "Fetch content from a URL (sandboxed, network isolated).",
+                    "description": "Fetch content from a URL (sandboxed, requires domain in allowlist).",
                     "parameters": {
                         "type": "object",
                         "properties": { "url": { "type": "string" } },
@@ -159,7 +166,6 @@ impl ToolRegistry {
             None => return ToolOutput::err("missing required argument: path"),
         };
         info!(path = %path, "read_file (sandboxed)");
-        // Use cat with head to enforce 32KB limit
         let cmd = format!("head -c {} '{}'", MAX_FILE_SIZE, path.replace('\'', "'\\''"));
         let result = self.sandboxed_cmd(&cmd, 10).await;
         if result.is_error {
@@ -182,7 +188,6 @@ impl ToolRegistry {
             None => return ToolOutput::err("missing required argument: content"),
         };
         info!(path = %path, bytes = content.len(), "write_file (sandboxed)");
-        // Write via sandbox: mkdir -p parent && write content via stdin
         let escaped_path = path.replace('\'', "'\\''");
         let escaped_content = content.replace('\'', "'\\''");
         let cmd = format!(
@@ -224,7 +229,20 @@ impl ToolRegistry {
             Some(u) => u,
             None => return ToolOutput::err("missing required argument: url"),
         };
-        info!(url = %url, "fetch_url (sandboxed)");
+
+        // Check domain allowlist
+        if let Some(domain) = extract_domain(url) {
+            let executor = self.sandbox(35);
+            if !executor.is_domain_allowed(&domain) {
+                return ToolOutput::err(format!(
+                    "BLOCKED: domain '{}' is not in allowed_domains. \
+                     Network access requires explicit allowlist configuration.",
+                    domain
+                ));
+            }
+        }
+
+        info!(url = %url, "fetch_url (sandboxed, domain allowed)");
         let cmd = format!("curl -sS -L --max-time 30 '{}'", url.replace('\'', "'\\''"));
         let result = self.sandboxed_cmd(&cmd, 35).await;
         if result.is_error {
@@ -235,5 +253,28 @@ impl ToolRegistry {
         } else {
             result
         }
+    }
+}
+
+/// Extract domain from a URL string.
+fn extract_domain(url: &str) -> Option<String> {
+    // Simple extraction: strip scheme, take host part
+    let without_scheme = url.strip_prefix("https://")
+        .or_else(|| url.strip_prefix("http://"))
+        .unwrap_or(url);
+    let host = without_scheme.split('/').next()?;
+    let domain = host.split(':').next()?; // strip port
+    if domain.is_empty() { None } else { Some(domain.to_string()) }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_extract_domain() {
+        assert_eq!(extract_domain("https://example.com/path"), Some("example.com".to_string()));
+        assert_eq!(extract_domain("http://api.github.com:443/v1"), Some("api.github.com".to_string()));
+        assert_eq!(extract_domain("https://"), None);
     }
 }

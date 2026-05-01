@@ -432,6 +432,7 @@ dependencies = [
  "clap",
  "colored",
  "indicatif",
+ "libc",
  "serde",
  "serde_json",
  "tokio",
