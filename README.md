@@ -140,37 +140,71 @@ This means sandboxed commands **cannot** access the network. This is by design.
 
 ### Sandbox Demo
 
-All tools are sandboxed. Here is a live demonstration:
+All tools are sandboxed with `unshare --user --net`. Here is a live demonstration:
+
+#### ✅ ALLOWED — Operations that succeed inside the sandbox:
 
 ```
-ᚱ› I want to test the sandbox. Please run these 3 commands and report each result:
-    1. echo hello
-    2. curl -s --max-time 3 https://example.com
-    3. cat /etc/shadow
+ᚱ› read_file /etc/hostname
+  ⚙ read_file({"path": "/etc/hostname"})
+  ✓ read_file...ok
+  → Output: "u"
 
-  ⚙ run_terminal_cmd({"cmd":"echo hello"})
+ᚱ› list_dir /tmp
+  ⚙ list_dir({"path": "/tmp"})
+  ✓ list_dir...ok
+  → Output: (directory listing)
+
+ᚱ› run_terminal_cmd: echo hello
+  ⚙ run_terminal_cmd({"cmd": "echo hello"})
   ✓ run_terminal_cmd...ok
+  → Output: "hello"
 
-  ⚙ run_terminal_cmd({"cmd":"curl -s --max-time 3 https://example.com"})
-  ✗ exit_code: 6 — Could not resolve host (network blocked)
-
-  ⚙ run_terminal_cmd({"cmd":"cat /etc/shadow"})
-  ✗ exit_code: 1 — Permission denied
-
-────────────────────────────────────────────────────────────
-Results:
-1. echo hello           → ✅ Succeeded (output: "hello")
-2. curl https://...     → ❌ Failed (exit 6: network isolated, DNS unavailable)
-3. cat /etc/shadow      → ❌ Failed (exit 1: permission denied in user namespace)
-────────────────────────────────────────────────────────────
+ᚱ› write_file to /tmp/rune_test.txt
+  ⚙ write_file({"content": "sandbox test", "path": "/tmp/rune_test.txt"})
+  ✓ write_file...ok
+  → Output: "Written 12 bytes to /tmp/rune_test.txt"
 ```
 
-| Test | Result | Reason |
-|------|--------|--------|
-| Basic command | ✅ Pass | No network or privilege needed |
-| Network access | ❌ Blocked | `unshare --user --net` isolates network namespace |
-| Sensitive file | ❌ Denied | User namespace remaps UID, no root access |
+#### ❌ BLOCKED — Operations that fail due to sandbox restrictions:
 
+```
+ᚱ› fetch_url https://example.com
+  ⚙ fetch_url({"url": "https://example.com"})
+  ✗ exit_code: 6
+  → Error: curl: (6) Could not resolve host: example.com
+  → Reason: Network namespace is isolated, no DNS available
+
+ᚱ› run_terminal_cmd: curl -s --max-time 3 https://1.1.1.1
+  ⚙ run_terminal_cmd({"cmd": "curl -s --max-time 3 https://1.1.1.1"})
+  ✗ exit_code: 7
+  → Error: Failed to connect (no network interface in namespace)
+  → Reason: unshare --user --net removes all network interfaces
+
+ᚱ› read_file /etc/shadow
+  ⚙ read_file({"path": "/etc/shadow"})
+  ✗ exit_code: 1
+  → Error: head: cannot open '/etc/shadow': Permission denied
+  → Reason: User namespace remaps UID, no privileged access
+
+ᚱ› write_file to /root/evil.txt
+  ⚙ write_file({"content": "hack", "path": "/root/evil.txt"})
+  ✗ exit_code: 2
+  → Error: cannot create /root/evil.txt: Permission denied
+  → Reason: User namespace has no write access to /root
+```
+
+#### Summary
+
+| Tool | Allowed | Blocked |
+|------|---------|---------|
+| `read_file` | ✅ Read files in accessible paths | ❌ Cannot read `/etc/shadow` or root-owned files |
+| `write_file` | ✅ Write to `/tmp` or project dirs | ❌ Cannot write to `/root`, `/etc`, system dirs |
+| `list_dir` | ✅ List any readable directory | ❌ Cannot list restricted directories |
+| `run_terminal_cmd` | ✅ Run local commands (no network) | ❌ Cannot make network connections |
+| `fetch_url` | ❌ Always blocked | ❌ DNS resolution fails (no network in namespace) |
+
+**Design principle:** All tool invocations are network-isolated by default. File access is restricted by the user namespace UID remapping. This is enforced at the kernel level, not by the application.
 ## Concourse CI Resource Type
 
 The same binary works as a Concourse resource when invoked as `check`, `in`, or `out`:
