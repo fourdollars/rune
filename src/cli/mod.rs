@@ -208,61 +208,62 @@ pub async fn run() {
 
     use tokio::io::{self, AsyncBufReadExt};
     let stdin = io::stdin();
-    let reader = io::BufReader::new(stdin);
-    let mut lines = reader.lines();
+    let mut reader = io::BufReader::new(stdin);
 
     loop {
         eprint!("{} ", "ᚱ›".cyan().bold());
 
-        match lines.next_line().await {
-            Ok(Some(line)) => {
-                let cmd = line.trim().to_string();
-                if cmd.is_empty() { continue; }
-
-                match cmd.as_str() {
-                    "exit" | "quit" | "/exit" | "/quit" => {
-                        println!("{}", "Goodbye! ᚱ".cyan());
-                        break;
-                    }
-                    "help" | "/help" | "/h" | "?" => print_help(),
-                    "/config" => show_config(&cfg),
-                    "/tools" => show_tools(),
-                    "/skills" => show_skills(&cfg),
-                    "/trace" => {
-                        println!("{} {}", "Trace dir:".bold(), ".rune/traces/");
-                        println!("{} Use --trace flag to enable trace recording", "Note:".dimmed());
-                    }
-                    "/version" => {
-                        println!("{} v{}", "Rune".cyan().bold(), VERSION);
-                        println!("  {} {}", "edition:".dimmed(), "2021");
-                        println!("  {} {}", "model:".dimmed(), cfg.model.green());
-                    }
-                    "/clear" => {
-                        print!("\x1B[2J\x1B[1;1H");
-                        print_banner();
-                    }
-                    "/reset" => {
-                        agent.reset();
-                        println!("{}", "Conversation reset.".green());
-                    }
-                    "/multi" => {
-                        if let Some(input) = read_multiline().await {
-                            execute_prompt(&mut agent, &input).await;
-                        }
-                    }
-                    _ => {
-                        let input = cmd.strip_prefix("run ").unwrap_or(&cmd);
-                        execute_prompt(&mut agent, input).await;
-                    }
-                }
-            }
-            Ok(None) => {
+        // Read raw bytes for full UTF-8 support (including CJK characters)
+        let mut raw_buf = Vec::new();
+        match reader.read_until(b'\n', &mut raw_buf).await {
+            Ok(0) => {
                 println!("\n{}", "EOF — Goodbye! ᚱ".cyan());
                 break;
             }
+            Ok(_) => {}
             Err(e) => {
                 eprintln!("{} {}", "Read error:".red(), e);
                 break;
+            }
+        }
+        let line = String::from_utf8_lossy(&raw_buf);
+        let cmd = line.trim().to_string();
+        if cmd.is_empty() { continue; }
+
+        match cmd.as_str() {
+            "exit" | "quit" | "/exit" | "/quit" => {
+                println!("{}", "Goodbye! ᚱ".cyan());
+                break;
+            }
+            "help" | "/help" | "/h" | "?" => print_help(),
+            "/config" => show_config(&cfg),
+            "/tools" => show_tools(),
+            "/skills" => show_skills(&cfg),
+            "/trace" => {
+                println!("{} {}", "Trace dir:".bold(), ".rune/traces/");
+                println!("{} Use --trace flag to enable trace recording", "Note:".dimmed());
+            }
+            "/version" => {
+                println!("{} v{}", "Rune".cyan().bold(), VERSION);
+                println!("  {} {}", "edition:".dimmed(), "2021");
+                println!("  {} {}", "model:".dimmed(), cfg.model.green());
+            }
+            "/clear" => {
+                print!("\x1B[2J\x1B[1;1H");
+                print_banner();
+            }
+            "/reset" => {
+                agent.reset();
+                println!("{}", "Conversation reset.".green());
+            }
+            "/multi" => {
+                if let Some(input) = read_multiline().await {
+                    execute_prompt(&mut agent, &input).await;
+                }
+            }
+            _ => {
+                let input = cmd.strip_prefix("run ").unwrap_or(&cmd);
+                execute_prompt(&mut agent, input).await;
             }
         }
     }
