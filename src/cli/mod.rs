@@ -4,6 +4,7 @@ use std::time::Duration;
 
 use crate::agent::{Agent, StopReason};
 use crate::config;
+use crate::provider::{OpenAiProvider, ProviderRegistry};
 use crate::skills::SkillLoader;
 use crate::tools::ToolRegistry;
 
@@ -32,12 +33,14 @@ fn print_help() {
     println!("  {}       Show trace output directory", "/trace".green());
     println!("  {}     Show version info", "/version".green());
     println!("  {}        Clear the screen", "/clear".green());
+    println!("  {}       Reset conversation history", "/reset".green());
     println!("  {}   Show this help", "help | /help".green());
     println!("  {}  Exit the CLI", "exit | quit".green());
     println!();
     println!("{}", "Tips:".dimmed());
     println!("  {} Type your prompt directly (without 'run') for quick execution", "•".dimmed());
     println!("  {} Use @skill_name in prompts to load skill context", "•".dimmed());
+    println!("  {} Set RUNE_API_KEY or --api-key to connect to an LLM provider", "•".dimmed());
     println!("  {} Ctrl+C interrupts the current agent run", "•".dimmed());
 }
 
@@ -83,8 +86,8 @@ fn display_result(reason: &StopReason) {
 fn show_config(cfg: &config::RuneConfig) {
     println!("{}", "Current Configuration:".bold());
     println!("  {}  {}", "model:".dimmed(), cfg.model.green());
-    println!("  {}  {}", "api_key:".dimmed(), 
-        if cfg.api_key.is_some() { "***".to_string() } else { "(not set)".dimmed().to_string() });
+    println!("  {}  {}", "api_key:".dimmed(),
+        if cfg.api_key.is_some() { "*** (set)".to_string() } else { "(not set)".red().to_string() });
     println!("  {}  {}", "skills_dir:".dimmed(), cfg.skills_dir);
     println!("  {}  {}", "log_level:".dimmed(), cfg.log_level);
     println!("  {}  {}", "max_steps:".dimmed(), cfg.max_steps);
@@ -108,14 +111,11 @@ fn show_tools() {
 
 /// Display loaded skills.
 fn show_skills(cfg: &config::RuneConfig) {
-    let search_paths = vec![
-        std::path::PathBuf::from(&cfg.skills_dir),
-    ];
+    let search_paths = vec![std::path::PathBuf::from(&cfg.skills_dir)];
     let loader = SkillLoader::new(search_paths);
     println!("{}", "Skill Loader:".bold());
     println!("  {} {}", "search_dir:".dimmed(), cfg.skills_dir);
     println!("  {} Use @skill_name in prompts to load skills", "usage:".dimmed());
-    // List skills from directory if it exists
     let skill_dir = std::path::Path::new(&cfg.skills_dir);
     if skill_dir.exists() {
         if let Ok(entries) = std::fs::read_dir(skill_dir) {
@@ -134,7 +134,7 @@ fn show_skills(cfg: &config::RuneConfig) {
     } else {
         println!("  {} (directory does not exist)", "status:".dimmed());
     }
-    let _ = loader; // suppress unused warning
+    let _ = loader;
 }
 
 /// Read multi-line input until ";;" on its own line.
@@ -155,11 +155,7 @@ async fn read_multiline() -> Option<String> {
         buffer.push(line);
     }
 
-    if buffer.is_empty() {
-        None
-    } else {
-        Some(buffer.join("\n"))
-    }
+    if buffer.is_empty() { None } else { Some(buffer.join("\n")) }
 }
 
 /// Run a prompt through the agent with spinner feedback.
@@ -170,13 +166,42 @@ async fn execute_prompt(agent: &mut Agent, input: &str) {
     display_result(&result);
 }
 
+/// Initialize the provider registry from config.
+fn init_provider(cfg: &config::RuneConfig) -> ProviderRegistry {
+    let mut registry = ProviderRegistry::new();
+
+    if let Some(ref key) = cfg.api_key {
+        // Detect provider from model name or base_url
+        let provider = OpenAiProvider::new(
+            "openai".to_string(),
+            key.clone(),
+            None, // defaults to OpenAI; can be overridden via config later
+        );
+        registry.register(Box::new(provider));
+    }
+
+    registry
+}
+
 /// Main CLI entry point.
 pub async fn run() {
     print_banner();
 
     let cfg = config::load().unwrap_or_default();
-    let mut agent = Agent::new(cfg.clone());
-    agent.set_system_prompt("You are Rune, a high-performance AI agent. Be concise, accurate, and helpful.");
+    let provider = init_provider(&cfg);
+
+    if provider.is_empty() {
+        println!("{}", "⚠ No API key configured. Set RUNE_API_KEY or use --api-key to connect.".yellow());
+        println!("{}", "  The agent will not be able to call an LLM without a key.".dimmed());
+        println!();
+    }
+
+    let mut agent = Agent::new(cfg.clone(), provider);
+    agent.set_system_prompt(
+        "You are Rune, a high-performance AI agent running in a terminal. \
+         You have access to tools: read_file, write_file, list_dir, run_terminal_cmd, fetch_url. \
+         Use them when needed. Be concise and accurate."
+    );
 
     println!("{} Type {} for commands.", "Ready.".green().bold(), "help".bold());
     println!();
@@ -187,33 +212,22 @@ pub async fn run() {
     let mut lines = reader.lines();
 
     loop {
-        // Print prompt
         eprint!("{} ", "ᚱ›".cyan().bold());
 
         match lines.next_line().await {
             Ok(Some(line)) => {
                 let cmd = line.trim().to_string();
-                if cmd.is_empty() {
-                    continue;
-                }
+                if cmd.is_empty() { continue; }
 
                 match cmd.as_str() {
                     "exit" | "quit" | "/exit" | "/quit" => {
                         println!("{}", "Goodbye! ᚱ".cyan());
                         break;
                     }
-                    "help" | "/help" | "/h" | "?" => {
-                        print_help();
-                    }
-                    "/config" => {
-                        show_config(&cfg);
-                    }
-                    "/tools" => {
-                        show_tools();
-                    }
-                    "/skills" => {
-                        show_skills(&cfg);
-                    }
+                    "help" | "/help" | "/h" | "?" => print_help(),
+                    "/config" => show_config(&cfg),
+                    "/tools" => show_tools(),
+                    "/skills" => show_skills(&cfg),
                     "/trace" => {
                         println!("{} {}", "Trace dir:".bold(), ".rune/traces/");
                         println!("{} Use --trace flag to enable trace recording", "Note:".dimmed());
@@ -227,20 +241,22 @@ pub async fn run() {
                         print!("\x1B[2J\x1B[1;1H");
                         print_banner();
                     }
+                    "/reset" => {
+                        agent.reset();
+                        println!("{}", "Conversation reset.".green());
+                    }
                     "/multi" => {
                         if let Some(input) = read_multiline().await {
                             execute_prompt(&mut agent, &input).await;
                         }
                     }
                     _ => {
-                        // Strip "run " prefix if present, otherwise treat entire line as prompt
                         let input = cmd.strip_prefix("run ").unwrap_or(&cmd);
                         execute_prompt(&mut agent, input).await;
                     }
                 }
             }
             Ok(None) => {
-                // EOF
                 println!("\n{}", "EOF — Goodbye! ᚱ".cyan());
                 break;
             }

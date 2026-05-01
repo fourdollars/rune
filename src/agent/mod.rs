@@ -1,29 +1,12 @@
 use crate::config::RuneConfig;
-use serde_json::Value;
+use crate::provider::{LlmMessage, LlmRequest, LlmResponse, LlmToolCall, ProviderRegistry};
+use crate::tools::ToolRegistry;
 use anyhow::Result;
+use colored::Colorize;
+use std::path::PathBuf;
+use tracing::{debug, info};
 
-#[derive(Debug, Clone)]
-pub struct ToolCall {
-    pub id: String,
-    pub name: String,
-    pub arguments: Value,
-}
-
-#[derive(Debug, Clone)]
-pub struct ToolResult {
-    pub id: String,
-    pub content: String,
-    pub is_error: bool,
-}
-
-#[derive(Debug, Clone)]
-pub enum Message {
-    System(String),
-    User(String),
-    Assistant { content: Option<String>, tool_calls: Vec<ToolCall> },
-    ToolResponse(ToolResult),
-}
-
+/// Agent's stop reason.
 #[derive(Debug)]
 pub enum StopReason {
     FinalAnswer(String),
@@ -33,113 +16,154 @@ pub enum StopReason {
     UserInterrupt,
 }
 
+/// The AI Agent — orchestrates LLM calls and tool execution.
 pub struct Agent {
     pub config: RuneConfig,
-    pub messages: Vec<Message>,
-    pub step_count: u32,
-    pub tokens_used: u32,
+    messages: Vec<LlmMessage>,
+    step_count: u32,
+    tokens_used: u32,
+    provider: ProviderRegistry,
+    tools: ToolRegistry,
 }
 
 impl Agent {
-    pub fn new(config: RuneConfig) -> Self {
-        Agent { config, messages: Vec::new(), step_count: 0, tokens_used: 0 }
+    pub fn new(config: RuneConfig, provider: ProviderRegistry) -> Self {
+        let tools = ToolRegistry::new(vec![PathBuf::from("/tmp"), PathBuf::from(".")]);
+        Agent {
+            config,
+            messages: Vec::new(),
+            step_count: 0,
+            tokens_used: 0,
+            provider,
+            tools,
+        }
     }
 
-    /// 設定系統提示
+    /// Set the system prompt.
     pub fn set_system_prompt(&mut self, prompt: &str) {
-        self.messages.push(Message::System(prompt.to_string()));
+        // Insert or replace system message at position 0
+        if self.messages.first().map(|m| m.role == "system").unwrap_or(false) {
+            self.messages[0].content = Some(prompt.to_string());
+        } else {
+            self.messages.insert(0, LlmMessage {
+                role: "system".to_string(),
+                content: Some(prompt.to_string()),
+                tool_calls: None,
+                tool_call_id: None,
+            });
+        }
     }
 
-    /// 執行 agent loop：呼叫 LLM → 取得回應 → 若有 tool calls 就執行 → 重複直到終止
-    pub async fn run(&mut self, user_input: &str) -> StopReason {
-        // 1. 加入 user message
-        self.messages.push(Message::User(user_input.to_string()));
+    /// Reset conversation state for a new run (keeps system prompt).
+    pub fn reset(&mut self) {
+        let system = self.messages.first().cloned();
+        self.messages.clear();
+        if let Some(sys) = system {
+            self.messages.push(sys);
+        }
+        self.step_count = 0;
+        self.tokens_used = 0;
+    }
 
-        // 2. Loop
+    /// Run the agent loop: send user input → LLM → tools → repeat until done.
+    pub async fn run(&mut self, user_input: &str) -> StopReason {
+        // Add user message
+        self.messages.push(LlmMessage {
+            role: "user".to_string(),
+            content: Some(user_input.to_string()),
+            tool_calls: None,
+            tool_call_id: None,
+        });
+
         loop {
-            // d. 檢查 step_count >= max_steps → StopReason::MaxSteps
+            // Check limits
             if self.step_count >= self.config.max_steps {
                 return StopReason::MaxSteps;
             }
-            // e. 檢查 tokens_used >= token_budget → StopReason::TokenBudgetExhausted
             if self.tokens_used >= self.config.token_budget {
                 return StopReason::TokenBudgetExhausted;
             }
 
-            // increment step count for this iteration
-            self.step_count = self.step_count.saturating_add(1);
+            self.step_count += 1;
+            info!(step = self.step_count, tokens = self.tokens_used, "agent loop step");
 
-            // a. 呼叫 LLM (placeholder: call_llm)
-            match self.call_llm().await {
-                Ok(Message::Assistant { content, tool_calls }) => {
-                    // b. 若回應是 final answer → 回傳 StopReason::FinalAnswer
-                    if tool_calls.is_empty() {
-                        if let Some(text) = content {
-                            return StopReason::FinalAnswer(text);
-                        } else {
-                            return StopReason::Error("assistant returned empty content".to_string());
-                        }
-                    }
-
-                    // c. 若有 tool_calls → dispatch 每個 tool → 收集結果 → 加入 messages
-                    for call in tool_calls {
-                        let res = self.dispatch_tool(&call).await;
-                        // account some token usage for tool execution (simple heuristic)
-                        self.tokens_used = self.tokens_used.saturating_add(1);
-                        self.messages.push(Message::ToolResponse(res));
-                    }
-
-                    // continue the loop to call LLM again after tool results are in messages
-                    continue;
-                }
-                Ok(other) => {
-                    // push any non-assistant messages and continue
-                    self.messages.push(other);
-                    continue;
-                }
-                Err(e) => {
-                    return StopReason::Error(format!("call_llm error: {}", e));
-                }
-            }
-        }
-    }
-
-    /// Placeholder: 呼叫 LLM API（目前回傳模擬回應）
-    async fn call_llm(&self) -> Result<Message> {
-        // TODO: 真正的 HTTP 呼叫
-        // 目前模擬 behaviour: 第一次回傳 tool call，第二次回傳 final answer
-        if self.step_count == 1 {
-            let call = ToolCall {
-                id: "1".to_string(),
-                name: "echo".to_string(),
-                arguments: serde_json::json!({ "text": "Hello from tool" }),
+            // Call LLM
+            let response = match self.call_llm().await {
+                Ok(r) => r,
+                Err(e) => return StopReason::Error(format!("LLM call failed: {}", e)),
             };
 
-            Ok(Message::Assistant {
-                content: Some("I will call a tool.".to_string()),
-                tool_calls: vec![call],
-            })
-        } else {
-            Ok(Message::Assistant {
-                content: Some("I've completed the task.".to_string()),
-                tool_calls: vec![],
-            })
+            // Update token usage
+            self.tokens_used += response.usage.total_tokens;
+
+            // If no tool calls, we have our final answer
+            if response.tool_calls.is_empty() {
+                let answer = response.content.unwrap_or_default();
+                // Add assistant message to history
+                self.messages.push(LlmMessage {
+                    role: "assistant".to_string(),
+                    content: Some(answer.clone()),
+                    tool_calls: None,
+                    tool_call_id: None,
+                });
+                return StopReason::FinalAnswer(answer);
+            }
+
+            // We have tool calls — add assistant message with tool_calls
+            self.messages.push(LlmMessage {
+                role: "assistant".to_string(),
+                content: response.content.clone(),
+                tool_calls: Some(response.tool_calls.clone()),
+                tool_call_id: None,
+            });
+
+            // Execute each tool call
+            for tc in &response.tool_calls {
+                let result = self.execute_tool_call(tc).await;
+
+                // Add tool result message
+                self.messages.push(LlmMessage {
+                    role: "tool".to_string(),
+                    content: Some(result),
+                    tool_calls: None,
+                    tool_call_id: Some(tc.id.clone()),
+                });
+            }
+
+            // Loop back to call LLM with the tool results
         }
     }
 
-    /// Dispatch tool call 到對應的 handler
-    async fn dispatch_tool(&self, call: &ToolCall) -> ToolResult {
-        match call.name.as_str() {
-            "echo" => {
-                let text = call
-                    .arguments
-                    .get("text")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("")
-                    .to_string();
-                ToolResult { id: call.id.clone(), content: format!("echo: {}", text), is_error: false }
-            }
-            other => ToolResult { id: call.id.clone(), content: format!("unknown tool: {}", other), is_error: true },
+    /// Call the LLM provider.
+    async fn call_llm(&self) -> Result<LlmResponse> {
+        let tool_defs = self.tools.tool_definitions();
+
+        let request = LlmRequest {
+            model: self.config.model.clone(),
+            messages: self.messages.clone(),
+            tools: if tool_defs.is_empty() { None } else { Some(tool_defs) },
+            max_tokens: None,
+        };
+
+        debug!(model = %self.config.model, messages = self.messages.len(), "calling LLM");
+        self.provider.chat(request).await
+    }
+
+    /// Execute a single tool call and return the result string.
+    async fn execute_tool_call(&self, tc: &LlmToolCall) -> String {
+        let args: serde_json::Value = serde_json::from_str(&tc.function.arguments)
+            .unwrap_or(serde_json::Value::Object(serde_json::Map::new()));
+
+        eprintln!("  {} {}", "⚙".dimmed(), format!("{}({})", tc.function.name, &tc.function.arguments[..tc.function.arguments.len().min(80)]).dimmed());
+
+        let output = self.tools.execute(&tc.function.name, args).await;
+
+        if output.is_error {
+            eprintln!("  {} {}", "✗".red(), output.content[..output.content.len().min(200)].dimmed());
+        } else {
+            eprintln!("  {} {}", "✓".green(), format!("{}...ok", tc.function.name).dimmed());
         }
+
+        output.content
     }
 }

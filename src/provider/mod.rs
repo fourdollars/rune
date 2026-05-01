@@ -5,38 +5,50 @@ use std::pin::Pin;
 use std::future::Future;
 use tokio::process::Command;
 use std::process::Stdio;
+use tracing::{debug, warn};
 
-/// LLM 請求
+/// LLM request payload.
 #[derive(Debug, Clone, Serialize)]
 pub struct LlmRequest {
     pub model: String,
     pub messages: Vec<LlmMessage>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub tools: Option<Vec<serde_json::Value>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub max_tokens: Option<u32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LlmMessage {
-    pub role: String,     // "system", "user", "assistant", "tool"
+    pub role: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub content: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub tool_calls: Option<Vec<LlmToolCall>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub tool_call_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LlmToolCall {
     pub id: String,
+    #[serde(rename = "type", default = "default_tool_type")]
+    pub call_type: String,
     pub function: LlmFunction,
+}
+
+fn default_tool_type() -> String {
+    "function".to_string()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LlmFunction {
     pub name: String,
-    pub arguments: String,  // JSON string
+    pub arguments: String, // JSON string
 }
 
-/// LLM 回應
-#[derive(Debug, Clone, Deserialize)]
+/// LLM response.
+#[derive(Debug, Clone)]
 pub struct LlmResponse {
     pub content: Option<String>,
     pub tool_calls: Vec<LlmToolCall>,
@@ -51,120 +63,125 @@ pub struct TokenUsage {
     pub total_tokens: u32,
 }
 
-/// Provider trait — 不用 async_trait，用手動 Pin<Box<Future>>
+/// Provider trait.
 pub trait Provider: Send + Sync {
     fn name(&self) -> &str;
     fn chat(&self, request: LlmRequest) -> Pin<Box<dyn Future<Output = Result<LlmResponse>> + Send + '_>>;
 }
 
+/// OpenAI-compatible provider (works with OpenAI, Anthropic proxies, local servers).
 pub struct OpenAiProvider {
     pub api_key: String,
-    pub base_url: String, // default: https://api.openai.com/v1
-    pub name: String,
+    pub base_url: String,
+    pub provider_name: String,
 }
 
 impl OpenAiProvider {
     pub fn new(name: String, api_key: String, base_url: Option<String>) -> Self {
         let base = base_url.unwrap_or_else(|| "https://api.openai.com/v1".to_string());
-        OpenAiProvider { api_key, base_url: base, name }
+        OpenAiProvider { api_key, base_url: base, provider_name: name }
     }
 }
 
 impl Provider for OpenAiProvider {
     fn name(&self) -> &str {
-        &self.name
+        &self.provider_name
     }
 
     fn chat(&self, request: LlmRequest) -> Pin<Box<dyn Future<Output = Result<LlmResponse>> + Send + '_>> {
-        // Clone what's needed so the future doesn't borrow &self
         let api_key = self.api_key.clone();
         let base_url = self.base_url.clone();
 
-        // Build a payload compatible with OpenAI chat/completions
-        let mut payload = serde_json::map::Map::new();
-        payload.insert("model".to_string(), serde_json::Value::String(request.model.clone()));
-
-        // messages: map LlmMessage -> { role, content }
-        let msgs: Vec<Value> = request
-            .messages
-            .iter()
-            .map(|m| {
-                let mut mm = serde_json::map::Map::new();
-                mm.insert("role".to_string(), Value::String(m.role.clone()));
-                mm.insert("content".to_string(), Value::String(m.content.clone().unwrap_or_default()));
-                Value::Object(mm)
-            })
-            .collect();
-        payload.insert("messages".to_string(), Value::Array(msgs));
-
-        if let Some(max) = request.max_tokens {
-            payload.insert("max_tokens".to_string(), Value::Number(serde_json::Number::from(max)));
-        }
-
-        // Tools/support for function calling not implemented here; skip
-
-        let payload_json = serde_json::Value::Object(payload).to_string();
-        let url = format!("{}/chat/completions", base_url.trim_end_matches('/'));
-
         Box::pin(async move {
-            // Use a heredoc to safely pass JSON payload to curl
-            let cmd = format!(
-                "curl -s -X POST -H 'Content-Type: application/json' -H \"Authorization: Bearer $OPENAI_API_KEY\" '{url}' -d @- <<'JSON'\n{payload}\nJSON",
-                url = url,
-                payload = payload_json
-            );
+            // Build the full request payload using serde
+            let payload = serde_json::to_string(&request)
+                .map_err(|e| anyhow!("failed to serialize request: {}", e))?;
 
-            let output = Command::new("sh")
-                .arg("-c")
-                .arg(cmd)
-                .env("OPENAI_API_KEY", api_key)
+            let url = format!("{}/chat/completions", base_url.trim_end_matches('/'));
+
+            debug!(url = %url, payload_len = payload.len(), "sending LLM request");
+
+            // Use a temp file to pass the payload to curl (avoids shell escaping issues)
+            let tmp_path = format!("/tmp/rune_llm_req_{}.json", std::process::id());
+            tokio::fs::write(&tmp_path, &payload).await
+                .map_err(|e| anyhow!("failed to write temp payload: {}", e))?;
+
+            let output = Command::new("curl")
+                .args([
+                    "-s", "-S",
+                    "-X", "POST",
+                    "-H", "Content-Type: application/json",
+                    "-H", &format!("Authorization: Bearer {}", api_key),
+                    "-d", &format!("@{}", tmp_path),
+                    "--max-time", "120",
+                    &url,
+                ])
                 .stdout(Stdio::piped())
                 .stderr(Stdio::piped())
                 .output()
                 .await
                 .map_err(|e| anyhow!("failed to spawn curl: {}", e))?;
 
+            // Clean up temp file (best effort)
+            let _ = tokio::fs::remove_file(&tmp_path).await;
+
             let stdout = String::from_utf8_lossy(&output.stdout).to_string();
             let stderr = String::from_utf8_lossy(&output.stderr).to_string();
 
             if !output.status.success() {
-                return Err(anyhow!("curl failed: exit {:?}\nstdout: {}\nstderr: {}", output.status.code(), stdout, stderr));
+                return Err(anyhow!("curl failed (exit {:?}): {}", output.status.code(), stderr));
             }
 
-            // Parse response JSON from OpenAI-like API
-            let v: serde_json::Value = serde_json::from_str(&stdout)
-                .map_err(|e| anyhow!("failed to parse json response: {}\nraw: {}", e, stdout))?;
+            // Parse response JSON
+            let v: Value = serde_json::from_str(&stdout)
+                .map_err(|e| anyhow!("failed to parse response JSON: {}\nraw: {}", e, &stdout[..stdout.len().min(500)]))?;
+
+            // Check for API error
+            if let Some(err) = v.get("error") {
+                let msg = err.get("message").and_then(|m| m.as_str()).unwrap_or("unknown error");
+                return Err(anyhow!("API error: {}", msg));
+            }
 
             // Extract model
             let model = v.get("model").and_then(|m| m.as_str()).unwrap_or("").to_string();
 
-            // Extract content from choices[0].message.content OR choices[0].text
-            let content = v
-                .get("choices")
+            // Extract from choices[0].message
+            let message = v.get("choices")
                 .and_then(|c| c.get(0))
-                .and_then(|first| {
-                    first
-                        .get("message")
-                        .and_then(|m| m.get("content"))
-                        .or_else(|| first.get("text"))
-                })
-                .and_then(|s| s.as_str())
-                .map(|s| s.to_string());
+                .and_then(|first| first.get("message"));
 
-            // Extract usage
-            let usage = v
-                .get("usage")
+            let content = message
+                .and_then(|m| m.get("content"))
+                .and_then(|c| {
+                    if c.is_null() { None } else { c.as_str().map(|s| s.to_string()) }
+                });
+
+            // Parse tool_calls from response
+            let tool_calls: Vec<LlmToolCall> = message
+                .and_then(|m| m.get("tool_calls"))
+                .and_then(|tc| {
+                    if tc.is_array() {
+                        serde_json::from_value::<Vec<LlmToolCall>>(tc.clone()).ok()
+                    } else {
+                        None
+                    }
+                })
+                .unwrap_or_default();
+
+            // Parse usage
+            let usage = v.get("usage")
                 .and_then(|u| serde_json::from_value::<TokenUsage>(u.clone()).ok())
                 .unwrap_or_default();
 
-            // Tool calls - not parsing OpenAI function_call here; leave empty
-            let tool_calls: Vec<LlmToolCall> = Vec::new();
+            debug!(model = %model, content_len = content.as_ref().map(|c| c.len()).unwrap_or(0),
+                   tool_calls = tool_calls.len(), tokens = usage.total_tokens, "LLM response received");
 
             Ok(LlmResponse { content, tool_calls, usage, model })
         })
     }
 }
 
+/// Registry of LLM providers with fallback chain.
 pub struct ProviderRegistry {
     providers: Vec<Box<dyn Provider>>,
     default_provider: usize,
@@ -179,33 +196,36 @@ impl ProviderRegistry {
         self.providers.push(provider);
     }
 
-    /// 呼叫預設 provider，失敗則依序 fallback
+    pub fn is_empty(&self) -> bool {
+        self.providers.is_empty()
+    }
+
+    /// Call default provider, fallback on failure.
     pub async fn chat(&self, request: LlmRequest) -> Result<LlmResponse> {
         if self.providers.is_empty() {
             return Err(anyhow!("no providers registered"));
         }
 
-        // try default first, then fallback sequentially
         let len = self.providers.len();
         let mut idx = self.default_provider.min(len - 1);
+        let mut last_err = anyhow!("no providers");
 
-        for _ in 0..len {
+        for attempt in 0..len {
             let provider = &self.providers[idx];
             match provider.chat(request.clone()).await {
                 Ok(resp) => return Ok(resp),
                 Err(e) => {
-                    // try next
+                    warn!(provider = provider.name(), attempt, error = %e, "provider failed, trying next");
+                    last_err = e;
                     idx = (idx + 1) % len;
-                    // continue
-                    let _ = e; // ignore for now
                 }
             }
         }
 
-        Err(anyhow!("all providers failed"))
+        Err(last_err)
     }
 
-    /// 直接呼叫指定 provider
+    /// Call a specific named provider.
     pub async fn chat_with(&self, provider_name: &str, request: LlmRequest) -> Result<LlmResponse> {
         for p in &self.providers {
             if p.name() == provider_name {
@@ -219,31 +239,21 @@ impl ProviderRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use anyhow::Result as AnyResult;
 
-    struct FailingProvider {
-        name: String,
-    }
-    impl FailingProvider {
-        fn new(name: &str) -> Self { Self { name: name.to_string() } }
-    }
+    struct FailingProvider { name: String }
+    impl FailingProvider { fn new(name: &str) -> Self { Self { name: name.to_string() } } }
     impl Provider for FailingProvider {
         fn name(&self) -> &str { &self.name }
-        fn chat(&self, _request: LlmRequest) -> Pin<Box<dyn std::future::Future<Output = AnyResult<LlmResponse>> + Send + '_>> {
+        fn chat(&self, _request: LlmRequest) -> Pin<Box<dyn Future<Output = Result<LlmResponse>> + Send + '_>> {
             Box::pin(async move { Err(anyhow!("simulated failure")) })
         }
     }
 
-    struct SucceedProvider {
-        name: String,
-        resp: LlmResponse,
-    }
-    impl SucceedProvider {
-        fn new(name: &str, resp: LlmResponse) -> Self { Self { name: name.to_string(), resp } }
-    }
+    struct SucceedProvider { name: String, resp: LlmResponse }
+    impl SucceedProvider { fn new(name: &str, resp: LlmResponse) -> Self { Self { name: name.to_string(), resp } } }
     impl Provider for SucceedProvider {
         fn name(&self) -> &str { &self.name }
-        fn chat(&self, _request: LlmRequest) -> Pin<Box<dyn std::future::Future<Output = AnyResult<LlmResponse>> + Send + '_>> {
+        fn chat(&self, _request: LlmRequest) -> Pin<Box<dyn Future<Output = Result<LlmResponse>> + Send + '_>> {
             let r = self.resp.clone();
             Box::pin(async move { Ok(r) })
         }
@@ -252,29 +262,23 @@ mod tests {
     #[tokio::test]
     async fn test_provider_registry_fallback() {
         let mut reg = ProviderRegistry::new();
+        reg.register(Box::new(FailingProvider::new("fail")));
+        let resp = LlmResponse { content: Some("ok".into()), tool_calls: vec![], usage: TokenUsage::default(), model: "m1".into() };
+        reg.register(Box::new(SucceedProvider::new("succ", resp)));
 
-        let fail = FailingProvider::new("fail");
-        reg.register(Box::new(fail));
-
-        let success_resp = LlmResponse { content: Some("ok".to_string()), tool_calls: vec![], usage: TokenUsage::default(), model: "m1".to_string() };
-        let succ = SucceedProvider::new("succ", success_resp.clone());
-        reg.register(Box::new(succ));
-
-        // default_provider is 0 (the failing one), so chat should fallback and return success
-        let req = LlmRequest { model: "m".to_string(), messages: vec![], tools: None, max_tokens: None };
-        let res = reg.chat(req).await.expect("expected success from fallback provider");
+        let req = LlmRequest { model: "m".into(), messages: vec![], tools: None, max_tokens: None };
+        let res = reg.chat(req).await.expect("fallback should succeed");
         assert_eq!(res.content, Some("ok".to_string()));
     }
 
     #[tokio::test]
     async fn test_chat_with_specific_provider() {
         let mut reg = ProviderRegistry::new();
-        let success_resp = LlmResponse { content: Some("hello".to_string()), tool_calls: vec![], usage: TokenUsage::default(), model: "m1".to_string() };
-        let succ = SucceedProvider::new("p1", success_resp.clone());
-        reg.register(Box::new(succ));
+        let resp = LlmResponse { content: Some("hello".into()), tool_calls: vec![], usage: TokenUsage::default(), model: "m1".into() };
+        reg.register(Box::new(SucceedProvider::new("p1", resp)));
 
-        let req = LlmRequest { model: "m".to_string(), messages: vec![], tools: None, max_tokens: None };
-        let res = reg.chat_with("p1", req).await.expect("should find provider p1");
+        let req = LlmRequest { model: "m".into(), messages: vec![], tools: None, max_tokens: None };
+        let res = reg.chat_with("p1", req).await.expect("should find p1");
         assert_eq!(res.content, Some("hello".to_string()));
     }
 }
