@@ -91,7 +91,7 @@ impl SandboxExecutor {
 
         // Network namespace isolation
         if has_unshare {
-            wrapper_parts.push("unshare -n --".to_string());
+            wrapper_parts.push("unshare --user --net --".to_string());
             info!("sandbox: network namespace via unshare");
         } else {
             warn!("sandbox: unshare not available, skipping network isolation");
@@ -119,7 +119,7 @@ impl SandboxExecutor {
             warn!("sandbox: running in fully degraded mode (no isolation)");
             cmd.to_string()
         } else {
-            // Nest: unshare -n -- setpriv ... -- sh -c "user_cmd"
+            // Nest: unshare --user --net -- setpriv ... -- sh -c "user_cmd"
             let mut full = wrapper_parts.join(" ");
             full.push_str(&format!(" sh -c {}", shell_escape(cmd)));
             full
@@ -190,7 +190,7 @@ async fn probe_tool(name: &str) -> bool {
     if name == "unshare" {
         // Test actual capability, not just existence
         Command::new("unshare")
-            .args(["-n", "--", "true"])
+            .args(["--user", "--net", "--", "true"])
             .output()
             .await
             .map(|o| o.status.success())
