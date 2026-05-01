@@ -16,6 +16,8 @@ pub struct RuneConfig {
     pub timeout_secs: u64,
     pub base_url: Option<String>,
     pub trace: bool,
+    pub command_policy: String,
+    pub allowed_commands: Vec<String>,
 }
 
 impl Default for RuneConfig {
@@ -30,6 +32,8 @@ impl Default for RuneConfig {
             timeout_secs: 60,
             base_url: None,
             trace: false,
+            command_policy: "confirm".to_string(),
+            allowed_commands: vec![],
         }
     }
 }
@@ -46,6 +50,8 @@ struct PartialConfig {
     timeout_secs: Option<u64>,
     base_url: Option<String>,
     trace: Option<bool>,
+    command_policy: Option<String>,
+    allowed_commands: Option<Vec<String>>,
 }
 
 /// CLI argument overrides.
@@ -102,6 +108,9 @@ struct CliArgs {
     /// Enable trace recording to .rune/traces/
     #[arg(long, env = "RUNE_TRACE")]
     trace: Option<bool>,
+    /// Command execution policy: confirm, allowlist, or unrestricted
+    #[arg(long, env = "RUNE_COMMAND_POLICY")]
+    command_policy: Option<String>,
 }
 /// Pick the first Some value from a chain of options, falling back to a default.
 fn pick<T: Clone>(sources: &[&Option<T>], default: T) -> T {
@@ -138,6 +147,8 @@ pub fn load() -> anyhow::Result<RuneConfig> {
         timeout_secs: env::var("RUNE_TIMEOUT_SECS").ok().and_then(|v| v.parse().ok()),
         base_url: env::var("RUNE_BASE_URL").ok(),
         trace: env::var("RUNE_TRACE").ok().and_then(|v| v.parse().ok()),
+        command_policy: env::var("RUNE_COMMAND_POLICY").ok(),
+        allowed_commands: env::var("RUNE_ALLOWED_COMMANDS").ok().map(|v| v.split(",").map(|s| s.trim().to_string()).collect()),
     };
 
     // Project-local config: .rune/rune.toml
@@ -194,5 +205,14 @@ pub fn load() -> anyhow::Result<RuneConfig> {
             .or(lc.and_then(|c| c.trace))
             .or(uc.and_then(|c| c.trace))
             .unwrap_or(defaults.trace),
+        command_policy: cli.command_policy
+            .or(env_partial.command_policy)
+            .or(lc.and_then(|c| c.command_policy.clone()))
+            .or(uc.and_then(|c| c.command_policy.clone()))
+            .unwrap_or(defaults.command_policy),
+        allowed_commands: env_partial.allowed_commands
+            .or(lc.and_then(|c| c.allowed_commands.clone()))
+            .or(uc.and_then(|c| c.allowed_commands.clone()))
+            .unwrap_or(defaults.allowed_commands),
     })
 }

@@ -30,7 +30,7 @@ pub struct Agent {
 
 impl Agent {
     pub fn new(config: RuneConfig, provider: ProviderRegistry) -> Self {
-        let tools = ToolRegistry::new(vec![PathBuf::from("/tmp"), PathBuf::from(".")]);
+        let mut tools = ToolRegistry::new(vec![PathBuf::from("/tmp"), PathBuf::from(".")]); tools.set_command_policy(config.command_policy.clone(), config.allowed_commands.clone());
         let skill_loader = SkillLoader::new(vec![PathBuf::from(&config.skills_dir)]);
         Agent {
             config,
