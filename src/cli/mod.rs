@@ -168,16 +168,26 @@ async fn execute_prompt(agent: &mut Agent, input: &str) {
 
 /// Initialize the provider registry from config.
 fn init_provider(cfg: &config::RuneConfig) -> ProviderRegistry {
+    use crate::provider::CopilotProvider;
+
     let mut registry = ProviderRegistry::new();
 
     if let Some(ref key) = cfg.api_key {
-        // Detect provider from model name or base_url
-        let provider = OpenAiProvider::new(
-            "openai".to_string(),
-            key.clone(),
-            cfg.base_url.clone(),
-        );
-        registry.register(Box::new(provider));
+        // Detect GitHub Copilot PAT (starts with ghu_ or ghp_)
+        let is_copilot = key.starts_with("ghu_") || key.starts_with("ghp_")
+            || cfg.base_url.as_deref().map(|u| u.contains("githubcopilot")).unwrap_or(false);
+
+        if is_copilot {
+            let provider = CopilotProvider::new(key.clone());
+            registry.register(Box::new(provider));
+        } else {
+            let provider = OpenAiProvider::new(
+                "openai".to_string(),
+                key.clone(),
+                cfg.base_url.clone(),
+            );
+            registry.register(Box::new(provider));
+        }
     }
 
     registry

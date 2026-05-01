@@ -5,7 +5,7 @@ use std::pin::Pin;
 use std::future::Future;
 use tokio::process::Command;
 use std::process::Stdio;
-use tracing::{debug, warn};
+use tracing::{debug, info, warn};
 
 /// LLM request payload.
 #[derive(Debug, Clone, Serialize)]
@@ -182,6 +182,163 @@ impl Provider for OpenAiProvider {
 }
 
 /// Registry of LLM providers with fallback chain.
+/// GitHub Copilot provider — auto-refreshes session token from PAT.
+pub struct CopilotProvider {
+    pub pat: String, // GitHub PAT (ghu_...)
+    pub provider_name: String,
+    token_cache: std::sync::Mutex<Option<(String, String, u64)>>, // (token, endpoint, expires_at)
+}
+
+impl CopilotProvider {
+    pub fn new(pat: String) -> Self {
+        CopilotProvider {
+            pat,
+            provider_name: "github-copilot".to_string(),
+            token_cache: std::sync::Mutex::new(None),
+        }
+    }
+
+    /// Refresh the session token if expired or missing.
+    async fn get_token(&self) -> Result<(String, String)> {
+        // Check cache
+        {
+            let cache = self.token_cache.lock().unwrap();
+            if let Some((ref token, ref endpoint, expires_at)) = *cache {
+                let now = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs();
+                if now < expires_at - 60 { // refresh 60s before expiry
+                    return Ok((token.clone(), endpoint.clone()));
+                }
+            }
+        }
+
+        // Fetch new token
+        debug!("refreshing GitHub Copilot session token");
+        let output = Command::new("curl")
+            .args([
+                "-sS",
+                "--max-time", "10",
+                "-H", &format!("Authorization: token {}", self.pat),
+                "-H", "editor-version: vscode/1.96.0",
+                "https://api.github.com/copilot_internal/v2/token",
+            ])
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .output()
+            .await
+            .map_err(|e| anyhow!("failed to refresh copilot token: {}", e))?;
+
+        let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+        if !output.status.success() {
+            return Err(anyhow!("copilot token refresh failed: {}", stdout));
+        }
+
+        let v: serde_json::Value = serde_json::from_str(&stdout)
+            .map_err(|e| anyhow!("failed to parse token response: {}\nraw: {}", e, &stdout[..stdout.len().min(200)]))?;
+
+        let token = v.get("token")
+            .and_then(|t| t.as_str())
+            .ok_or_else(|| anyhow!("no token in response"))?
+            .to_string();
+
+        let expires_at = v.get("expires_at")
+            .and_then(|e| e.as_u64())
+            .unwrap_or(0);
+
+        let endpoint = v.get("endpoints")
+            .and_then(|e| e.get("api"))
+            .and_then(|a| a.as_str())
+            .unwrap_or("https://api.githubcopilot.com")
+            .to_string();
+
+        info!(endpoint = %endpoint, expires_in = expires_at.saturating_sub(
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs()
+        ), "copilot token refreshed");
+
+        // Update cache
+        {
+            let mut cache = self.token_cache.lock().unwrap();
+            *cache = Some((token.clone(), endpoint.clone(), expires_at));
+        }
+
+        Ok((token, endpoint))
+    }
+}
+
+impl Provider for CopilotProvider {
+    fn name(&self) -> &str {
+        &self.provider_name
+    }
+
+    fn chat(&self, request: LlmRequest) -> Pin<Box<dyn Future<Output = Result<LlmResponse>> + Send + '_>> {
+        Box::pin(async move {
+            let (token, endpoint) = self.get_token().await?;
+
+            let payload = serde_json::to_string(&request)
+                .map_err(|e| anyhow!("failed to serialize request: {}", e))?;
+
+            let url = format!("{}/chat/completions", endpoint.trim_end_matches('/'));
+            let tmp_path = format!("/tmp/rune_copilot_req_{}.json", std::process::id());
+            tokio::fs::write(&tmp_path, &payload).await
+                .map_err(|e| anyhow!("failed to write temp payload: {}", e))?;
+
+            let output = Command::new("curl")
+                .args([
+                    "-sS",
+                    "-X", "POST",
+                    "-H", "Content-Type: application/json",
+                    "-H", &format!("Authorization: Bearer {}", token),
+                    "-H", "editor-version: vscode/1.96.0",
+                    "-d", &format!("@{}", tmp_path),
+                    "--max-time", "120",
+                    &url,
+                ])
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .output()
+                .await
+                .map_err(|e| anyhow!("failed to spawn curl: {}", e))?;
+
+            let _ = tokio::fs::remove_file(&tmp_path).await;
+
+            let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+            if !output.status.success() {
+                let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+                return Err(anyhow!("curl failed (exit {:?}): {}", output.status.code(), stderr));
+            }
+
+            let v: serde_json::Value = serde_json::from_str(&stdout)
+                .map_err(|e| anyhow!("failed to parse response: {}\nraw: {}", e, &stdout[..stdout.len().min(500)]))?;
+
+            if let Some(err) = v.get("error") {
+                let msg = err.get("message").and_then(|m| m.as_str()).unwrap_or("unknown error");
+                return Err(anyhow!("Copilot API error: {}", msg));
+            }
+
+            let model = v.get("model").and_then(|m| m.as_str()).unwrap_or("").to_string();
+            let message = v.get("choices")
+                .and_then(|c| c.get(0))
+                .and_then(|first| first.get("message"));
+
+            let content = message
+                .and_then(|m| m.get("content"))
+                .and_then(|c| if c.is_null() { None } else { c.as_str().map(|s| s.to_string()) });
+
+            let tool_calls: Vec<LlmToolCall> = message
+                .and_then(|m| m.get("tool_calls"))
+                .and_then(|tc| serde_json::from_value::<Vec<LlmToolCall>>(tc.clone()).ok())
+                .unwrap_or_default();
+
+            let usage = v.get("usage")
+                .and_then(|u| serde_json::from_value::<TokenUsage>(u.clone()).ok())
+                .unwrap_or_default();
+
+            Ok(LlmResponse { content, tool_calls, usage, model })
+        })
+    }
+}
 pub struct ProviderRegistry {
     providers: Vec<Box<dyn Provider>>,
     default_provider: usize,
