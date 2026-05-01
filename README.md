@@ -137,6 +137,40 @@ unshare --user --net -- sh -c '<command>'
 
 This means sandboxed commands **cannot** access the network. This is by design.
 
+
+### Sandbox Demo
+
+All tools are sandboxed. Here is a live demonstration:
+
+```
+ᚱ› I want to test the sandbox. Please run these 3 commands and report each result:
+    1. echo hello
+    2. curl -s --max-time 3 https://example.com
+    3. cat /etc/shadow
+
+  ⚙ run_terminal_cmd({"cmd":"echo hello"})
+  ✓ run_terminal_cmd...ok
+
+  ⚙ run_terminal_cmd({"cmd":"curl -s --max-time 3 https://example.com"})
+  ✗ exit_code: 6 — Could not resolve host (network blocked)
+
+  ⚙ run_terminal_cmd({"cmd":"cat /etc/shadow"})
+  ✗ exit_code: 1 — Permission denied
+
+────────────────────────────────────────────────────────────
+Results:
+1. echo hello           → ✅ Succeeded (output: "hello")
+2. curl https://...     → ❌ Failed (exit 6: network isolated, DNS unavailable)
+3. cat /etc/shadow      → ❌ Failed (exit 1: permission denied in user namespace)
+────────────────────────────────────────────────────────────
+```
+
+| Test | Result | Reason |
+|------|--------|--------|
+| Basic command | ✅ Pass | No network or privilege needed |
+| Network access | ❌ Blocked | `unshare --user --net` isolates network namespace |
+| Sensitive file | ❌ Denied | User namespace remaps UID, no root access |
+
 ## Concourse CI Resource Type
 
 The same binary works as a Concourse resource when invoked as `check`, `in`, or `out`:
