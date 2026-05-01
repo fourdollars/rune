@@ -1,0 +1,26 @@
+FROM rust:alpine AS builder
+WORKDIR /app
+
+RUN rustup target add x86_64-unknown-linux-musl
+RUN apk add --no-cache build-base musl-dev
+
+COPY Cargo.toml Cargo.lock ./
+COPY src ./src
+RUN cargo build --release --locked --target x86_64-unknown-linux-musl
+
+FROM alpine:latest
+RUN apk add --no-cache ca-certificates
+
+RUN addgroup -g 1000 rune \
+    && adduser -D -u 1000 -G rune -h /home/rune rune \
+    && mkdir -p /opt/resource /home/rune \
+    && ln -sf /usr/local/bin/rune /opt/resource/check \
+    && ln -sf /usr/local/bin/rune /opt/resource/in \
+    && ln -sf /usr/local/bin/rune /opt/resource/out \
+    && chown -R rune:rune /home/rune
+
+COPY --from=builder /app/target/x86_64-unknown-linux-musl/release/rune /usr/local/bin/rune
+RUN chmod 0755 /usr/local/bin/rune
+
+USER rune
+ENTRYPOINT ["/usr/local/bin/rune"]

@@ -1,0 +1,10 @@
+# Example rune configuration
+# Copy this file to ~/.rune/rune.toml or ./ .rune/rune.toml and edit values as needed
+
+model = "gpt-4"
+api_key = "YOUR_API_KEY_HERE"
+skills_dir = "./skills"
+log_level = "info"
+max_steps = 200
+token_budget = 4096
+timeout_secs = 60
