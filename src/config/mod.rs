@@ -47,24 +47,54 @@ struct PartialConfig {
 
 /// CLI argument overrides.
 #[derive(Debug, clap::Parser)]
-#[command(name = "rune", about = "High-performance zero-trust AI Agent")]
+#[command(
+    name = "rune",
+    version,
+    about = "ᚱ Rune — High-performance zero-trust AI Agent",
+    long_about = "ᚱ Rune — High-performance zero-trust AI Agent\n\n\
+        Single binary, dual mode: interactive CLI assistant and Concourse CI resource type.\n\
+        All tool executions are sandboxed with network isolation (unshare --user --net).\n\n\
+        SUBCOMMANDS:\n  \
+        rune init    Interactive setup wizard to configure LLM provider\n\n\
+        EXAMPLES:\n  \
+        rune                 Start interactive CLI\n  \
+        rune init            Run setup wizard\n  \
+        rune --model gpt-4o  Start with a specific model\n\n\
+        CONFIG PRECEDENCE:\n  \
+        CLI flags > env vars (RUNE_*) > .rune/rune.toml > ~/.rune/rune.toml > defaults"
+)]
 struct CliArgs {
-    #[arg(long)]
+    /// LLM model name (e.g. gpt-4o-mini, anthropic/claude-3.5-sonnet)
+    #[arg(long, env = "RUNE_MODEL")]
     model: Option<String>,
-    #[arg(long)]
+
+    /// LLM provider API key
+    #[arg(long, env = "RUNE_API_KEY")]
     api_key: Option<String>,
-    #[arg(long)]
-    skills_dir: Option<String>,
-    #[arg(long)]
-    log_level: Option<String>,
-    #[arg(long)]
-    max_steps: Option<u32>,
-    #[arg(long)]
-    token_budget: Option<u32>,
-    #[arg(long)]
-    timeout_secs: Option<u64>,
-    #[arg(long)]
+
+    /// Provider base URL (default: https://api.openai.com/v1)
+    #[arg(long, env = "RUNE_BASE_URL")]
     base_url: Option<String>,
+
+    /// Directory containing skill definitions
+    #[arg(long, env = "RUNE_SKILLS_DIR")]
+    skills_dir: Option<String>,
+
+    /// Log level: trace, debug, info, warn, error
+    #[arg(long, env = "RUNE_LOG_LEVEL")]
+    log_level: Option<String>,
+
+    /// Maximum agent loop iterations per run
+    #[arg(long, env = "RUNE_MAX_STEPS")]
+    max_steps: Option<u32>,
+
+    /// Maximum tokens per run
+    #[arg(long, env = "RUNE_TOKEN_BUDGET")]
+    token_budget: Option<u32>,
+
+    /// Default command timeout in seconds
+    #[arg(long, env = "RUNE_TIMEOUT_SECS")]
+    timeout_secs: Option<u64>,
 }
 
 /// Pick the first Some value from a chain of options, falling back to a default.
