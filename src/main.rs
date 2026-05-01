@@ -5,7 +5,10 @@ mod agent;
 mod cli;
 mod concourse;
 mod config;
+mod mcp;
 mod precommands;
+mod provider;
+mod skills;
 mod tools;
 mod trace;
 
