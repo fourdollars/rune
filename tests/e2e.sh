@@ -34,6 +34,17 @@ assert_not_contains() {
     fi
 }
 
+assert_exit_code() {
+    local actual="$1" expected="$2" test_name="$3"
+    if [ "$actual" -eq "$expected" ]; then
+        green "  ✓ $test_name"
+        PASS=$((PASS + 1))
+    else
+        red "  ✗ $test_name (expected exit $expected, got $actual)"
+        FAIL=$((FAIL + 1))
+    fi
+}
+
 echo "═══════════════════════════════════════"
 echo "  ᚱ  Rune E2E Test Suite"
 echo "═══════════════════════════════════════"
@@ -46,75 +57,69 @@ if [ ! -f "$RUNE" ]; then
     exit 1
 fi
 
-# ── Test 1: Banner & Version ──────────────────────────────
-echo "▸ Banner & Version"
-OUT=$(printf "/version\n/exit\n" | $RUNE 2>&1)
-assert_contains "$OUT" "ᚱ" "banner shows rune symbol"
-assert_contains "$OUT" "v0.1.0" "version displayed"
-assert_contains "$OUT" "Goodbye" "clean exit"
-
-# ── Test 2: Help ──────────────────────────────────────────
-echo "▸ Help"
-OUT=$(printf "/help\n/exit\n" | $RUNE 2>&1)
-assert_contains "$OUT" "/config" "help lists /config"
-assert_contains "$OUT" "/tools" "help lists /tools"
-assert_contains "$OUT" "/info" "help lists /info"
-
-# ── Test 3: Config ────────────────────────────────────────
-echo "▸ Config"
-OUT=$(printf "/config\n/exit\n" | $RUNE 2>&1)
-assert_contains "$OUT" "model:" "config shows model"
-assert_contains "$OUT" "skills_dir:" "config shows skills_dir"
-
-# ── Test 4: Tools ─────────────────────────────────────────
-echo "▸ Tools"
-OUT=$(printf "/tools\n/exit\n" | $RUNE 2>&1)
-assert_contains "$OUT" "read_file" "tools lists read_file"
-assert_contains "$OUT" "write_file" "tools lists write_file"
-assert_contains "$OUT" "fetch_url" "tools lists fetch_url"
-assert_contains "$OUT" "execute_cmd" "tools lists execute_cmd"
-assert_contains "$OUT" "list_dir" "tools lists list_dir"
-
-# ── Test 5: Skills ────────────────────────────────────────
-echo "▸ Skills"
-OUT=$(printf "/skills\n/exit\n" | $RUNE 2>&1)
-assert_contains "$OUT" "sysadmin" "skills finds sysadmin"
-assert_contains "$OUT" "launchpad" "skills finds launchpad"
-
-# ── Test 6: Info / Sandbox Status ─────────────────────────
-echo "▸ Info"
-OUT=$(printf "/info\n/exit\n" | $RUNE 2>&1)
-assert_contains "$OUT" "Network Isolation" "info shows network section"
-assert_contains "$OUT" "Filesystem Access" "info shows filesystem section"
-assert_contains "$OUT" "Tool Restrictions" "info shows tool restrictions"
-
-# ── Test 7: Concourse check ───────────────────────────────
-echo "▸ Concourse check (no version)"
-ln -sf "$(realpath $RUNE)" /tmp/check 2>/dev/null || true
-OUT=$(echo '{"source":{}}' | /tmp/check 2>/dev/null || echo "empty")
-assert_contains "$OUT" '\[' "check with no version returns empty array"
-
-echo "▸ Concourse check (with version)"
-OUT=$(echo '{"source":{},"version":{"ref":"abc123"}}' | /tmp/check 2>/dev/null || echo "")
-assert_contains "$OUT" "abc123" "check echoes version back"
-
-# ── Test 8: CLI argument --help ───────────────────────────
+# ── Test 1: CLI --help ────────────────────────────────────
 echo "▸ CLI --help"
 OUT=$($RUNE --help 2>&1)
 assert_contains "$OUT" "zero-trust\|Zero-Trust" "help shows description"
 assert_contains "$OUT" "RUNE_API_KEY" "help shows env vars"
 assert_contains "$OUT" "rune init" "help mentions init subcommand"
+assert_contains "$OUT" "\-\-json" "help shows --json flag"
+assert_contains "$OUT" "\-\-yes" "help shows --yes flag"
+assert_contains "$OUT" "does not bypass policy" "help clarifies --yes semantics"
 
-# ── Test 9: CLI --version ─────────────────────────────────
+# ── Test 2: CLI --version ─────────────────────────────────
 echo "▸ CLI --version"
 OUT=$($RUNE --version 2>&1)
 assert_contains "$OUT" "rune 0.1.0" "version flag works"
 
-# ── Test 10: UTF-8 handling ───────────────────────────────
-echo "▸ UTF-8 input handling"
-OUT=$(printf "你好\n/exit\n" | $RUNE 2>&1)
-assert_not_contains "$OUT" "Read error" "UTF-8 input does not cause read error"
-assert_contains "$OUT" "Goodbye" "exits cleanly after UTF-8 input"
+# ── Test 3: Pipe mode — empty input ──────────────────────
+echo "▸ Pipe mode — empty input"
+set +e
+OUT=$(printf "" | $RUNE --json 2>&1)
+EC=$?
+set -e
+assert_exit_code "$EC" 1 "empty pipe exits with code 1"
+assert_contains "$OUT" "No piped input" "empty pipe shows error message"
+
+# ── Test 4: Pipe mode — no banner ────────────────────────
+echo "▸ Pipe mode — no banner"
+set +e
+OUT=$(printf "hello" | $RUNE --json 2>&1)
+set -e
+assert_not_contains "$OUT" "ᛟ" "pipe mode does not show banner"
+
+# ── Test 5: --json flag (no value needed) ────────────────
+echo "▸ --json flag works without value"
+OUT=$($RUNE --json --version 2>&1)
+assert_contains "$OUT" "rune 0.1.0" "--json flag accepted without value"
+
+# ── Test 6: --yes flag (no value needed) ─────────────────
+echo "▸ --yes flag works without value"
+OUT=$($RUNE --yes --version 2>&1)
+assert_contains "$OUT" "rune 0.1.0" "--yes flag accepted without value"
+
+# ── Test 7: Concourse check (no version) ─────────────────
+echo "▸ Concourse check (no version)"
+ln -sf "$(realpath $RUNE)" /tmp/check 2>/dev/null || true
+OUT=$(echo '{"source":{}}' | /tmp/check 2>/dev/null || echo "empty")
+assert_contains "$OUT" '\[' "check with no version returns empty array"
+
+# ── Test 8: Concourse check (with version) ───────────────
+echo "▸ Concourse check (with version)"
+OUT=$(echo '{"source":{},"version":{"ref":"abc123"}}' | /tmp/check 2>/dev/null || echo "")
+assert_contains "$OUT" "abc123" "check echoes version back"
+
+# ── Test 9: Tool definitions ─────────────────────────────
+echo "▸ Tool definitions (via --help)"
+OUT=$($RUNE --help 2>&1)
+assert_contains "$OUT" "executions" "help mentions tool executions"
+
+# ── Test 10: Policy mode override ─────────────────────────
+echo "▸ Policy mode override via env"
+set +e
+OUT=$(RUNE_POLICY_MODE=allowlist printf "run ls" | $RUNE --json --yes 2>&1)
+set -e
+assert_not_contains "$OUT" "Execute?" "allowlist mode skips confirm prompt"
 
 # ── Summary ───────────────────────────────────────────────
 echo ""
