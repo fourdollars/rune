@@ -546,7 +546,7 @@ impl Agent {
 
     /// Tools that modify state or execute arbitrary commands.
     fn is_dangerous_tool(name: &str) -> bool {
-        matches!(name, "execute_cmd" | "write_file" | "fetch_url")
+        matches!(name, "execute_cmd" | "write_file" | "fetch_url" | "read_file")
     }
 
     /// Prompt user for Y/n confirmation via /dev/tty (bypasses stdin pipe).
