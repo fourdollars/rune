@@ -253,15 +253,19 @@ impl ToolRegistry {
 
         info!(cmd = %cmd, timeout_secs, "execute_cmd (sandboxed)");
 
-        // Command policy enforcement
-        if self.policy_mode == "allowlist" {
-            let first_token = cmd.split_whitespace().next().unwrap_or("");
-            let binary = first_token.rsplit("/").next().unwrap_or(first_token);
-            if !self.policy_allowed_commands.iter().any(|a| a == binary || a == "*") {
-                return ToolOutput::err(format!(
-                    "BLOCKED by policy: command '{}' is not in allowed_commands. Policy: allowlist",
-                    binary
-                ));
+        // Command policy enforcement: check ALL commands in the pipeline
+        // Applies in both "allowlist" and "confirm" modes when allowed_commands is set
+        if !self.policy_allowed_commands.is_empty()
+            && !self.policy_allowed_commands.iter().any(|a| a == "*")
+        {
+            let binaries = extract_command_binaries(&cmd);
+            for binary in &binaries {
+                if !self.policy_allowed_commands.iter().any(|a| a == binary) {
+                    return ToolOutput::err(format!(
+                        "BLOCKED by policy: command '{}' is not in allowed_commands",
+                        binary
+                    ));
+                }
             }
         }
         self.sandboxed_cmd(&cmd, timeout_secs).await
@@ -306,6 +310,24 @@ impl ToolRegistry {
         let cmd = format!("ps -p {} -o pid,comm,%cpu,%mem,stat,etime --no-headers 2>/dev/null || echo process_not_found", pid);
         self.sandboxed_cmd(&cmd, 5).await
     }
+}
+
+/// Extract all command binaries from a shell command string.
+/// Handles ; | && || and the first token of each sub-command.
+fn extract_command_binaries(cmd: &str) -> Vec<String> {
+    let mut binaries = Vec::new();
+    // Split on shell separators
+    let parts: Vec<&str> = cmd.split(|c| c == ';' || c == '|' || c == '&')
+        .filter(|s| !s.trim().is_empty())
+        .collect();
+    for part in parts {
+        let first_token = part.trim().split_whitespace().next().unwrap_or("");
+        let binary = first_token.rsplit('/').next().unwrap_or(first_token);
+        if !binary.is_empty() {
+            binaries.push(binary.to_string());
+        }
+    }
+    binaries
 }
 
 /// Extract domain from a URL string.
