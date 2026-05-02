@@ -77,6 +77,8 @@ pub struct RuneConfig {
     pub trace: bool,
     #[serde(default)]
     pub policy: PolicyConfig,
+    #[serde(default)]
+    pub mcp_servers: Vec<crate::mcp::McpServerConfig>,
 }
 
 impl Default for RuneConfig {
@@ -92,6 +94,7 @@ impl Default for RuneConfig {
             base_url: None,
             trace: false,
             policy: PolicyConfig::default(),
+            mcp_servers: Vec::new(),
         }
     }
 }
@@ -109,6 +112,7 @@ struct PartialConfig {
     base_url: Option<String>,
     trace: Option<bool>,
     policy: Option<PolicyConfig>,
+    mcp_servers: Option<Vec<crate::mcp::McpServerConfig>>,
 }
 
 /// CLI argument overrides.
@@ -169,6 +173,10 @@ struct CliArgs {
     /// Policy mode: confirm, allowlist, or unrestricted
     #[arg(long, env = "RUNE_POLICY_MODE")]
     policy_mode: Option<String>,
+
+    /// Output in JSON format (machine-readable)
+    #[arg(long, env = "RUNE_JSON_OUTPUT")]
+    json: Option<bool>,
 }
 
 /// Pick the first Some value from a chain of options, falling back to a default.
@@ -207,6 +215,7 @@ pub fn load() -> anyhow::Result<RuneConfig> {
         base_url: env::var("RUNE_BASE_URL").ok(),
         trace: env::var("RUNE_TRACE").ok().and_then(|v| v.parse().ok()),
         policy: None, // Policy loaded from TOML only (too complex for single env var)
+        mcp_servers: None,
     };
 
     // Project-local config: .rune/rune.toml
@@ -278,5 +287,8 @@ pub fn load() -> anyhow::Result<RuneConfig> {
             .or(uc.and_then(|c| c.trace))
             .unwrap_or(defaults.trace),
         policy,
+        mcp_servers: lc.and_then(|c| c.mcp_servers.clone())
+            .or_else(|| uc.and_then(|c| c.mcp_servers.clone()))
+            .unwrap_or_default(),
     })
 }

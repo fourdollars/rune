@@ -50,7 +50,7 @@ fn read_to_string_from<R: Read>(mut reader: R) -> io::Result<String> {
 /// otherwise return an empty array.
 pub fn handle_check<R: Read>(reader: R) -> anyhow::Result<CheckResponse> {
     let s = read_to_string_from(reader)?;
-    let req: CheckRequest = serde_json::from_str(&s).map_err(|e| anyhow::anyhow!(e))?;
+    let req: CheckRequest = serde_json::from_str(&s).map_err(|e| anyhow::anyhow!("invalid JSON payload (schema validation failed): {}", e))?;
 
     if let Some(v) = req.version {
         Ok(CheckResponse(vec![v]))
@@ -62,7 +62,7 @@ pub fn handle_check<R: Read>(reader: R) -> anyhow::Result<CheckResponse> {
 /// Handle `in` mode: return a version (echoed or generated), some metadata and the current path.
 pub fn handle_in<R: Read>(reader: R) -> anyhow::Result<InResponse> {
     let s = read_to_string_from(reader)?;
-    let req: CheckRequest = serde_json::from_str(&s).map_err(|e| anyhow::anyhow!(e))?;
+    let req: CheckRequest = serde_json::from_str(&s).map_err(|e| anyhow::anyhow!("invalid JSON payload (schema validation failed): {}", e))?;
 
     let version = req
         .version
@@ -87,7 +87,7 @@ pub fn handle_in<R: Read>(reader: R) -> anyhow::Result<InResponse> {
 /// Handle `out` mode: return a version (echoed or generated) and metadata.
 pub fn handle_out<R: Read>(reader: R) -> anyhow::Result<OutResponse> {
     let s = read_to_string_from(reader)?;
-    let req: CheckRequest = serde_json::from_str(&s).map_err(|e| anyhow::anyhow!(e))?;
+    let req: CheckRequest = serde_json::from_str(&s).map_err(|e| anyhow::anyhow!("invalid JSON payload (schema validation failed): {}", e))?;
 
     let version = req
         .version

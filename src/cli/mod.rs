@@ -382,9 +382,29 @@ async fn read_multiline() -> Option<String> {
 }
 
 /// Run a prompt through the agent with spinner feedback.
+/// Check if JSON output mode is active.
+fn is_json_mode() -> bool {
+    std::env::var("RUNE_JSON_OUTPUT").map(|v| v == "1").unwrap_or(false)
+}
+
 async fn execute_prompt(agent: &mut Agent, input: &str) {
     let spinner = if agent.config.policy.mode == "confirm" { None } else { Some(create_spinner("Thinking...")) };
     let result = agent.run(input).await;
+    if is_json_mode() {
+        let answer = match &result {
+            StopReason::FinalAnswer(a) => a.clone(),
+            StopReason::Error(e) => { println!("{}", serde_json::json!({"error": e})); return; }
+            other => { println!("{}", serde_json::json!({"error": format!("{:?}", other)})); return; }
+        };
+        let cmds: Vec<&str> = agent.executed_commands().iter().map(|s| s.as_str()).collect();
+        println!("{}", serde_json::json!({
+            "answer": answer,
+            "tools_used": cmds,
+            "steps": agent.step_count(),
+            "tokens": agent.tokens_used()
+        }));
+        return;
+    }
     if let Some(s) = spinner { s.finish_and_clear(); }
     display_result(&result);
     // Show executed commands summary
@@ -432,11 +452,16 @@ fn init_provider(cfg: &config::RuneConfig) -> ProviderRegistry {
 
 /// Main CLI entry point.
 pub async fn run() {
-    print_banner();
+    if !is_json_mode() { print_banner(); }
 
     let cfg = config::load().unwrap_or_default();
     let provider = init_provider(&cfg);
 
+
+    // Start MCP servers if configured
+    if !cfg.mcp_servers.is_empty() && !is_json_mode() {
+        eprintln!("  {} Starting {} MCP server(s)...", "⚙".dimmed(), cfg.mcp_servers.len());
+    }
     if provider.is_empty() {
         println!("{}", "⚠ No API key configured. Set RUNE_API_KEY or use --api-key to connect.".yellow());
         println!("{}", "  The agent will not be able to call an LLM without a key.".dimmed());
@@ -450,7 +475,7 @@ pub async fn run() {
          Use them when needed. Be concise and accurate."
     );
 
-    println!("{} Type {} for commands.", "Ready.".green().bold(), "/help".bold());
+    if !is_json_mode() { println!("{} Type {} for commands.", "Ready.".green().bold(), "/help".bold()); }
     println!();
 
     use tokio::io::{self, AsyncBufReadExt};
@@ -464,7 +489,7 @@ pub async fn run() {
         let mut raw_buf = Vec::new();
         match reader.read_until(b'\n', &mut raw_buf).await {
             Ok(0) => {
-                println!("\n{}", "EOF — Goodbye! ᚱ".cyan());
+                if !is_json_mode() { println!("\n{}", "EOF — Goodbye! ᚱ".cyan()); }
                 break;
             }
             Ok(_) => {}
@@ -479,7 +504,7 @@ pub async fn run() {
 
         match cmd.as_str() {
             "/exit" | "/quit" => {
-                println!("{}", "Goodbye! ᚱ".cyan());
+                if !is_json_mode() { println!("{}", "Goodbye! ᚱ".cyan()); }
                 break;
             }
             "/help" | "/h" => print_help(),
