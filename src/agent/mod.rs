@@ -321,14 +321,44 @@ impl Agent {
                 return Err(StopReason::Error(msg));
             }
 
+            // Show what we're about to do
+            let involved_domain = Self::extract_domain_from_args(&tc.function.name, &args);
+            let involved_cmd = Self::extract_command_from_args(&tc.function.name, &args);
+
             eprint!("
   {} Execute? [Y/n/A(lways)] ", "⚠".yellow().bold());
             std::io::Write::flush(&mut std::io::stderr()).ok();
             match Self::prompt_confirm_with_always() {
                 ConfirmResult::Yes => eprintln!("{}", "approved".green()),
                 ConfirmResult::Always => {
-                    self.auto_approve = true;
-                    eprintln!("{}", "always approve (session)".green());
+                    // Permanently allow: persist domain/command to config
+                    let mut added: Vec<String> = Vec::new();
+
+                    if let Some(ref domain) = involved_domain {
+                        if !self.config.policy.allowed_domains.contains(domain) {
+                            self.tools.add_allowed_domain(domain);
+                            self.config.policy.allowed_domains.push(domain.clone());
+                            crate::config::persist_domain(domain);
+                            added.push(format!("domain '{}' → allowed_domains", domain));
+                        }
+                    }
+
+                    if let Some(ref cmd_name) = involved_cmd {
+                        if !self.config.policy.allowed_commands.contains(cmd_name) {
+                            self.config.policy.allowed_commands.push(cmd_name.clone());
+                            crate::config::persist_command(cmd_name);
+                            added.push(format!("command '{}' → allowed_commands", cmd_name));
+                        }
+                    }
+
+                    if added.is_empty() {
+                        eprintln!("{}", "approved (already in allowlist)".green());
+                    } else {
+                        eprintln!("{}", "permanently allowed → saved to ~/.rune/rune.toml".green());
+                        for item in &added {
+                            eprintln!("    {} {}", "+".green(), item);
+                        }
+                    }
                 }
                 ConfirmResult::No => {
                     eprintln!("{}", "denied".red());
@@ -388,6 +418,37 @@ impl Agent {
                 let after = &content[start + 8..];
                 if let Some(end) = after.find('\'') {
                     return Some(after[..end].to_string());
+                }
+            }
+        }
+        None
+    }
+
+    /// Extract domain from tool call arguments (for fetch_url).
+    fn extract_domain_from_args(tool_name: &str, args: &serde_json::Value) -> Option<String> {
+        if tool_name == "fetch_url" {
+            if let Some(url) = args.get("url").and_then(|v| v.as_str()) {
+                let without_scheme = url.strip_prefix("https://")
+                    .or_else(|| url.strip_prefix("http://"))
+                    .unwrap_or(url);
+                let host = without_scheme.split('/').next()?;
+                let domain = host.split(':').next()?;
+                if !domain.is_empty() {
+                    return Some(domain.to_string());
+                }
+            }
+        }
+        None
+    }
+
+    /// Extract the base command name from execute_cmd arguments.
+    fn extract_command_from_args(tool_name: &str, args: &serde_json::Value) -> Option<String> {
+        if tool_name == "execute_cmd" {
+            if let Some(cmd) = args.get("cmd").and_then(|v| v.as_str()) {
+                let first_token = cmd.split_whitespace().next().unwrap_or("");
+                let binary = first_token.rsplit('/').next().unwrap_or(first_token);
+                if !binary.is_empty() {
+                    return Some(binary.to_string());
                 }
             }
         }
