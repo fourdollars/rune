@@ -41,6 +41,13 @@ impl ToolRegistry {
         self.allowed_domains = domains;
     }
 
+    /// Add a single domain to the runtime allowlist.
+    pub fn add_allowed_domain(&mut self, domain: &str) {
+        if !self.allowed_domains.iter().any(|d| d == domain) {
+            self.allowed_domains.push(domain.to_string());
+        }
+    }
+
     /// Set command execution policy.
         pub fn set_policy(&mut self, policy: &crate::config::PolicyConfig) {
         self.policy_mode = policy.mode.clone();

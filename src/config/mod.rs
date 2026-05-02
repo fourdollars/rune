@@ -312,3 +312,49 @@ pub fn load() -> anyhow::Result<RuneConfig> {
             .unwrap_or_default(),
     })
 }
+
+/// Persist a new domain to the user's ~/.rune/rune.toml allowed_domains list.
+/// Best-effort: if the file can't be read/written, silently skip.
+pub fn persist_domain(domain: &str) {
+    let config_path = match env::var("HOME") {
+        Ok(h) => PathBuf::from(h).join(".rune").join("rune.toml"),
+        Err(_) => return,
+    };
+    let content = match fs::read_to_string(&config_path) {
+        Ok(c) => c,
+        Err(_) => return,
+    };
+
+    // Parse and update
+    let mut doc: toml::Table = match content.parse() {
+        Ok(d) => d,
+        Err(_) => return,
+    };
+
+    let policy = doc.entry("policy")
+        .or_insert_with(|| toml::Value::Table(toml::Table::new()))
+        .as_table_mut();
+    let policy = match policy {
+        Some(p) => p,
+        None => return,
+    };
+
+    let domains = policy.entry("allowed_domains")
+        .or_insert_with(|| toml::Value::Array(Vec::new()))
+        .as_array_mut();
+    let domains = match domains {
+        Some(d) => d,
+        None => return,
+    };
+
+    // Don't duplicate
+    if domains.iter().any(|v| v.as_str() == Some(domain)) {
+        return;
+    }
+
+    domains.push(toml::Value::String(domain.to_string()));
+
+    // Write back
+    let new_content = doc.to_string();
+    let _ = fs::write(&config_path, new_content);
+}

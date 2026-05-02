@@ -337,9 +337,38 @@ impl Agent {
             }
         }
 
-        let output = self.tools.execute(&tc.function.name, args).await;
+        let output = self.tools.execute(&tc.function.name, args.clone()).await;
 
         if output.is_error {
+            // Check if it's a domain block we can interactively resolve
+            if let Some(domain) = Self::extract_blocked_domain(&output.content) {
+                if self.interactive {
+                    eprint!("\n  {} Add '{}' to allowed_domains? [Y/n] ", "🔓".yellow(), domain);
+                    std::io::Write::flush(&mut std::io::stderr()).ok();
+                    let answer = Self::prompt_yn();
+                    if answer {
+                        self.tools.add_allowed_domain(&domain);
+                        self.config.policy.allowed_domains.push(domain.clone());
+                        crate::config::persist_domain(&domain);
+                        eprintln!("{}", format!("  ✓ '{}' added to allowed_domains (saved to config)", domain).green());
+                        // Retry the tool call
+                        let retry_output = self.tools.execute(&tc.function.name, args).await;
+                        if retry_output.is_error {
+                            eprintln!("  {} {}", "✗".red(), retry_output.content[..retry_output.content.len().min(200)].dimmed());
+                            if Self::is_policy_blocked(&retry_output.content) {
+                                return Err(StopReason::Error(retry_output.content));
+                            }
+                        } else {
+                            eprintln!("  {} {}", "✓".green(), format!("{}...ok", tc.function.name).dimmed());
+                        }
+                        return Ok(retry_output.content);
+                    }
+                }
+                // User said no, or non-interactive
+                eprintln!("  {} {}", "✗".red(), output.content[..output.content.len().min(200)].dimmed());
+                return Err(StopReason::Error(output.content));
+            }
+
             eprintln!("  {} {}", "✗".red(), output.content[..output.content.len().min(200)].dimmed());
             if Self::is_policy_blocked(&output.content) {
                 return Err(StopReason::Error(output.content));
@@ -349,6 +378,38 @@ impl Agent {
         }
 
         Ok(output.content)
+    }
+
+    /// Extract blocked domain from error message, if applicable.
+    fn extract_blocked_domain(content: &str) -> Option<String> {
+        // Pattern: "BLOCKED: domain 'xxx' is not in allowed_domains"
+        if content.contains("is not in allowed_domains") {
+            if let Some(start) = content.find("domain '") {
+                let after = &content[start + 8..];
+                if let Some(end) = after.find('\'') {
+                    return Some(after[..end].to_string());
+                }
+            }
+        }
+        None
+    }
+
+    /// Simple Y/n prompt via /dev/tty.
+    fn prompt_yn() -> bool {
+        use std::io::{BufRead, Write};
+        if let Ok(tty) = std::fs::File::open("/dev/tty") {
+            let mut reader = std::io::BufReader::new(tty);
+            std::io::stderr().flush().ok();
+            let mut input = String::new();
+            if reader.read_line(&mut input).is_ok() {
+                let trimmed = input.trim().to_lowercase();
+                if trimmed == "n" || trimmed == "no" {
+                    return false;
+                }
+                return true; // empty or y/yes
+            }
+        }
+        true
     }
 
     fn is_policy_blocked(content: &str) -> bool {
