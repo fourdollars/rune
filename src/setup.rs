@@ -14,32 +14,38 @@ pub async fn run_setup() {
 
     // 1. Provider selection
     println!("{}", "1. Choose your LLM provider:".bold());
-    println!("   {} OpenAI          (api.openai.com)", "[1]".cyan());
-    println!("   {} OpenRouter      (openrouter.ai)", "[2]".cyan());
-    println!("   {} Anthropic       (api.anthropic.com - via proxy)", "[3]".cyan());
-    println!("   {} Local/Custom    (specify URL)", "[4]".cyan());
+    println!("   {} GitHub Copilot  (recommended — auto token refresh)", "[1]".cyan());
+    println!("   {} Google Gemini   (generativelanguage.googleapis.com)", "[2]".cyan());
+    println!("   {} OpenAI          (api.openai.com)", "[3]".cyan());
+    println!("   {} OpenRouter      (openrouter.ai)", "[4]".cyan());
+    println!("   {} Anthropic       (api.anthropic.com — via proxy)", "[5]".cyan());
+    println!("   {} Local/Custom    (specify URL)", "[6]".cyan());
     println!();
 
-    let provider_choice = prompt("  Select [1-4]: ").unwrap_or_default();
-    let (base_url, provider_name) = match provider_choice.trim() {
-        "1" => ("https://api.openai.com/v1".to_string(), "OpenAI"),
-        "2" => ("https://openrouter.ai/api/v1".to_string(), "OpenRouter"),
-        "3" => ("https://api.anthropic.com/v1".to_string(), "Anthropic"),
-        "4" => {
+    let provider_choice = prompt("  Select [1-6]: ").unwrap_or_default();
+    let (base_url, provider_name, key_hint) = match provider_choice.trim() {
+        "1" => (None, "GitHub Copilot", "GitHub PAT (starts with ghu_ or ghp_)"),
+        "2" => (Some("https://generativelanguage.googleapis.com/v1beta/openai".to_string()), "Google Gemini", "Gemini API key (starts with AIza)"),
+        "3" => (Some("https://api.openai.com/v1".to_string()), "OpenAI", "OpenAI API key (starts with sk-)"),
+        "4" => (Some("https://openrouter.ai/api/v1".to_string()), "OpenRouter", "OpenRouter key (starts with sk-or-)"),
+        "5" => (Some("https://api.anthropic.com/v1".to_string()), "Anthropic", "Anthropic key"),
+        "6" => {
             let url = prompt("  Enter base URL: ").unwrap_or_default();
-            (url.trim().to_string(), "Custom")
+            (Some(url.trim().to_string()), "Custom", "API key")
         }
         _ => {
-            println!("  {} Defaulting to OpenAI", "⚠".yellow());
-            ("https://api.openai.com/v1".to_string(), "OpenAI")
+            println!("  {} Defaulting to GitHub Copilot", "⚠".yellow());
+            (None, "GitHub Copilot", "GitHub PAT (starts with ghu_ or ghp_)")
         }
     };
 
-    println!("  {} Selected: {} ({})", "✓".green(), provider_name, base_url.dimmed());
+    let base_url_display = base_url.as_deref().unwrap_or("(auto — Copilot endpoint)");
+    println!("  {} Selected: {} ({})", "✓".green(), provider_name, base_url_display.dimmed());
     println!();
 
     // 2. API Key
     println!("{}", "2. Enter your API key:".bold());
+    println!("   {}", format!("Hint: {}", key_hint).dimmed());
     let api_key = prompt("  API key: ").unwrap_or_default().trim().to_string();
     if api_key.is_empty() {
         println!("  {} No API key provided. You can set it later via RUNE_API_KEY.", "⚠".yellow());
@@ -52,12 +58,23 @@ pub async fn run_setup() {
     println!("{}", "3. Choose a model:".bold());
     match provider_choice.trim() {
         "1" => {
+            println!("   {} gpt-4o          (powerful, recommended)", "[1]".cyan());
+            println!("   {} gpt-4o-mini     (fast, cheap)", "[2]".cyan());
+            println!("   {} claude-3.5-sonnet", "[3]".cyan());
+            println!("   {} Custom", "[4]".cyan());
+        }
+        "2" => {
+            println!("   {} gemini-2.0-flash (fast)", "[1]".cyan());
+            println!("   {} gemini-1.5-pro   (powerful)", "[2]".cyan());
+            println!("   {} Custom", "[3]".cyan());
+        }
+        "3" => {
             println!("   {} gpt-4o-mini     (fast, cheap)", "[1]".cyan());
             println!("   {} gpt-4o          (powerful)", "[2]".cyan());
             println!("   {} gpt-4-turbo     (balanced)", "[3]".cyan());
             println!("   {} Custom", "[4]".cyan());
         }
-        "2" => {
+        "4" => {
             println!("   {} openai/gpt-4o-mini", "[1]".cyan());
             println!("   {} anthropic/claude-3.5-sonnet", "[2]".cyan());
             println!("   {} google/gemini-pro", "[3]".cyan());
@@ -71,16 +88,21 @@ pub async fn run_setup() {
 
     let model_choice = prompt("  Select or type model name: ").unwrap_or_default();
     let model = match (provider_choice.trim(), model_choice.trim()) {
-        ("1", "1") => "gpt-4o-mini".to_string(),
-        ("1", "2") => "gpt-4o".to_string(),
-        ("1", "3") => "gpt-4-turbo".to_string(),
-        ("2", "1") => "openai/gpt-4o-mini".to_string(),
-        ("2", "2") => "anthropic/claude-3.5-sonnet".to_string(),
-        ("2", "3") => "google/gemini-pro".to_string(),
-        (_, choice) if !choice.is_empty() && choice != "4" => choice.to_string(),
+        ("1", "1") => "gpt-4o".to_string(),
+        ("1", "2") => "gpt-4o-mini".to_string(),
+        ("1", "3") => "claude-3.5-sonnet".to_string(),
+        ("2", "1") => "gemini-2.0-flash".to_string(),
+        ("2", "2") => "gemini-1.5-pro".to_string(),
+        ("3", "1") => "gpt-4o-mini".to_string(),
+        ("3", "2") => "gpt-4o".to_string(),
+        ("3", "3") => "gpt-4-turbo".to_string(),
+        ("4", "1") => "openai/gpt-4o-mini".to_string(),
+        ("4", "2") => "anthropic/claude-3.5-sonnet".to_string(),
+        ("4", "3") => "google/gemini-pro".to_string(),
+        (_, choice) if !choice.is_empty() && !["3", "4"].contains(&choice) => choice.to_string(),
         _ => {
             let custom = prompt("  Model name: ").unwrap_or_default().trim().to_string();
-            if custom.is_empty() { "gpt-4o-mini".to_string() } else { custom }
+            if custom.is_empty() { "gpt-4o".to_string() } else { custom }
         }
     };
     println!("  {} Model: {}", "✓".green(), model.green());
@@ -107,14 +129,19 @@ pub async fn run_setup() {
     if !api_key.is_empty() {
         toml_content.push_str(&format!("api_key = \"{}\"\n", api_key));
     }
-    if base_url != "https://api.openai.com/v1" {
-        toml_content.push_str(&format!("base_url = \"{}\"\n", base_url));
+    if let Some(ref url) = base_url {
+        toml_content.push_str(&format!("base_url = \"{}\"\n", url));
     }
     toml_content.push_str(&format!("skills_dir = \"{}\"\n", skills_dir));
     toml_content.push_str("log_level = \"warn\"\n");
     toml_content.push_str("max_steps = 20\n");
-    toml_content.push_str("token_budget = 8192\n");
+    toml_content.push_str("token_budget = 16384\n");
     toml_content.push_str("timeout_secs = 30\n");
+    toml_content.push('\n');
+    toml_content.push_str("[policy]\n");
+    toml_content.push_str("mode = \"confirm\"\n");
+    toml_content.push_str("allowed_commands = [\"ls\", \"cat\", \"head\", \"ps\", \"echo\", \"uname\", \"free\", \"df\", \"date\", \"hostname\"]\n");
+    toml_content.push_str("allowed_domains = []\n");
 
     // Show preview
     println!("{}", "─".repeat(50).dimmed());
