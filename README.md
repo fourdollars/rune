@@ -96,6 +96,8 @@ EOF
 | `/clear` | Clear screen |
 | `/exit` | Quit |
 
+In interactive mode, use ↑/↓ to browse previous prompts.
+
 ## Configuration
 
 ```toml
@@ -231,7 +233,7 @@ rune -y
 When stdin is piped into Rune, it runs in one-shot non-interactive mode:
 
 ```bash
-echo "Get weather for Taoyuan from wttr.in 用台灣中文" | rune --json --yes
+echo "Get weather for Taoyuan from wttr.in" | rune --json --yes
 ```
 
 Behavior in pipe mode:

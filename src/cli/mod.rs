@@ -1,5 +1,8 @@
 use colored::Colorize;
 use indicatif::{ProgressBar, ProgressStyle};
+use rustyline::config::Configurer;
+use rustyline::error::ReadlineError;
+use rustyline::DefaultEditor;
 use std::io::IsTerminal;
 use std::time::Duration;
 
@@ -86,6 +89,7 @@ fn print_help() {
     println!("{}", "Tips:".dimmed());
     println!("  {} Type your prompt directly (without 'run') for quick execution", "•".dimmed());
     println!("  {} Use @skill_name in prompts to load skill context", "•".dimmed());
+    println!("  {} Use ↑/↓ to browse previous prompts", "•".dimmed());
     println!("  {} Set RUNE_API_KEY or --api-key to connect to an LLM provider", "•".dimmed());
     println!("  {} Ctrl+C interrupts the current agent run", "•".dimmed());
 }
@@ -362,21 +366,26 @@ fn show_policy_full(cfg: &config::RuneConfig) {
 }
 
 /// Read multi-line input until ";;" on its own line.
-async fn read_multiline() -> Option<String> {
-    use tokio::io::{self, AsyncBufReadExt};
+fn read_multiline(editor: &mut DefaultEditor) -> Option<String> {
     println!("{}", "Multi-line mode. Enter ';;' on its own line to submit:".dimmed());
     println!("{}", "─".repeat(40).dimmed());
 
-    let stdin = io::stdin();
-    let reader = io::BufReader::new(stdin);
-    let mut lines = reader.lines();
     let mut buffer = Vec::new();
-
-    while let Ok(Some(line)) = lines.next_line().await {
-        if line.trim() == ";;" {
-            break;
+    loop {
+        match editor.readline("... ") {
+            Ok(line) => {
+                if line.trim() == ";;" {
+                    break;
+                }
+                buffer.push(line);
+            }
+            Err(ReadlineError::Interrupted) => {
+                println!();
+                continue;
+            }
+            Err(ReadlineError::Eof) => break,
+            Err(_) => break,
         }
-        buffer.push(line);
     }
 
     if buffer.is_empty() { None } else { Some(buffer.join("\n")) }
@@ -485,6 +494,15 @@ pub async fn run() {
          Use them when needed. Be concise and accurate."
     );
 
+    let mut editor = if stdin_is_terminal {
+        Some(DefaultEditor::new().expect("failed to initialize line editor"))
+    } else {
+        None
+    };
+    if let Some(ref mut ed) = editor {
+        ed.set_auto_add_history(false);
+    }
+
     if !stdin_is_terminal {
         use tokio::io::{self, AsyncReadExt};
 
@@ -513,29 +531,33 @@ pub async fn run() {
         println!();
     }
 
-    use tokio::io::{self, AsyncBufReadExt};
-    let stdin = io::stdin();
-    let mut reader = io::BufReader::new(stdin);
+    let editor = editor.as_mut().expect("interactive editor unavailable");
 
     loop {
-        eprint!("{} ", "ᚱ›".cyan().bold());
-
-        // Read raw bytes for full UTF-8 support (including CJK characters)
-        let mut raw_buf = Vec::new();
-        match reader.read_until(b'\n', &mut raw_buf).await {
-            Ok(0) => {
+        let cmd = match editor.readline("ᚱ› ") {
+            Ok(line) => {
+                let trimmed = line.trim().to_string();
+                if trimmed.is_empty() {
+                    continue;
+                }
+                if !trimmed.starts_with('/') {
+                    let _ = editor.add_history_entry(trimmed.as_str());
+                }
+                trimmed
+            }
+            Err(ReadlineError::Interrupted) => {
+                println!();
+                continue;
+            }
+            Err(ReadlineError::Eof) => {
                 if !is_json_mode(&cfg) { println!("\n{}", "EOF — Goodbye! ᚱ".cyan()); }
                 break;
             }
-            Ok(_) => {}
             Err(e) => {
                 eprintln!("{} {}", "Read error:".red(), e);
                 break;
             }
-        }
-        let line = String::from_utf8_lossy(&raw_buf);
-        let cmd = line.trim().to_string();
-        if cmd.is_empty() { continue; }
+        };
 
         match cmd.as_str() {
             "/exit" | "/quit" => {
@@ -574,8 +596,11 @@ pub async fn run() {
             "/policy" => show_policy_summary(&cfg),
             "/policy full" => show_policy_full(&cfg),
             "/multi" => {
-                if let Some(input) = read_multiline().await {
-                    let _ = execute_prompt(&mut agent, &input).await;
+                if let Some(input) = read_multiline(editor) {
+                    if !input.trim().is_empty() {
+                        let _ = editor.add_history_entry(input.as_str());
+                        let _ = execute_prompt(&mut agent, &input).await;
+                    }
                 }
             }
             _ => {

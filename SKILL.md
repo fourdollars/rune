@@ -41,6 +41,8 @@ rune init
 rune
 ```
 
+Use ↑/↓ to browse previous prompts in interactive mode.
+
 ### JSON Mode (for programmatic use)
 ```bash
 echo "your prompt here" | rune --json
@@ -49,7 +51,7 @@ echo "your prompt here" | rune --json
 
 ### Non-interactive pipe mode
 ```bash
-echo "Get weather for Taoyuan from wttr.in 用台灣中文" | rune --json --yes
+echo "Get weather for Taoyuan from wttr.in" | rune --json --yes
 ```
 
 When stdin is piped into Rune, it runs once and exits immediately. It does not enter interactive mode. If confirm mode would require approval, rerun with `--yes`.
