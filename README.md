@@ -57,22 +57,24 @@ EOF
     └───────────────────────────────────┘
         ᛟ ᚺ ᛊ ᛏ ᛒ ᛖ ᚹ ᛗ ᛚ ᛝ ᛟ
 
-ᚱ› Use @sysadmin skill. Show me uptime and memory.
-  📚 Loaded skill: sysadmin
-  ⚙ execute_cmd({"cmd": "uptime"})
-  ⚠ Execute? [Y/n/A(lways)] y
+ᚱ› Show me hostname and disk usage
+  ⚙ execute_cmd({"cmd": "hostname"})
   ✓ execute_cmd...ok
-  ⚙ execute_cmd({"cmd": "free -h"})
+  ⚙ execute_cmd({"cmd": "df -h /"})
+
+  ⚠ Execute? [Y/n/A(lways)] A
+permanently allowed → saved to ~/.rune/rune.toml
+    + command 'df' → allowed_commands
   ✓ execute_cmd...ok
 
 ────────────────────────────────────────────────────────────
-- Uptime: 2 days, 1 hour
-- Memory: 5.8 GiB used / 30 GiB total
+- Hostname: rune-dev
+- Disk: 42G used / 100G total
 ────────────────────────────────────────────────────────────
   📋 commands executed: 2
-    ▸ uptime
-    ▸ free -h
-  ⚡ [2 steps | 797 tokens | 2 tool calls]
+    ▸ hostname
+    ▸ df -h /
+  ⚡ [2 steps | 650 tokens | 2 tool calls]
 ```
 
 ### Commands
@@ -308,7 +310,7 @@ src/
 
 ```bash
 cargo build --release    # Build all 3 binaries
-cargo test               # Unit tests (18)
+cargo test               # Unit tests
 ./tests/e2e.sh           # E2E tests (26)
 make check-all           # Both
 ```
