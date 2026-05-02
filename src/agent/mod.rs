@@ -254,7 +254,20 @@ impl Agent {
             for tc in &response.tool_calls {
                 let result = match self.execute_tool_call(tc).await {
                     Ok(result) => result,
-                    Err(stop) => return stop,
+                    Err(stop) => {
+                        // Push error as tool result so conversation stays valid
+                        let err_msg = match &stop {
+                            StopReason::Error(e) => e.clone(),
+                            other => format!("{:?}", other),
+                        };
+                        self.messages.push(LlmMessage {
+                            role: "tool".to_string(),
+                            content: Some(err_msg),
+                            tool_calls: None,
+                            tool_call_id: Some(tc.id.clone()),
+                        });
+                        return stop;
+                    }
                 };
                 self.messages.push(LlmMessage {
                     role: "tool".to_string(),
