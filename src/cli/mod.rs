@@ -395,6 +395,12 @@ async fn execute_prompt(agent: &mut Agent, input: &str) {
             println!("    {} {}", "▸".dimmed(), c.dimmed());
         }
     }
+    // Run summary
+    if agent.step_count() > 0 {
+        let cmds2 = agent.executed_commands();
+        println!("  {} [{} steps | {} tokens | {} tool calls]",
+            "⚡".dimmed(), agent.step_count(), agent.tokens_used(), cmds2.len());
+    }
 }
 
 /// Initialize the provider registry from config.

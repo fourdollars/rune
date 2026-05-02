@@ -6,6 +6,7 @@ use anyhow::Result;
 use colored::Colorize;
 use std::path::PathBuf;
 use tracing::{debug, info, warn};
+use crate::trace::{TraceWriter, StepKind};
 
 /// Agent's stop reason.
 #[derive(Debug)]
@@ -34,13 +35,25 @@ pub struct Agent {
     tools: ToolRegistry,
     skill_loader: SkillLoader,
     auto_approve: bool,
+    trace: Option<TraceWriter>,
     executed_commands: Vec<String>,
 }
 
 impl Agent {
     pub fn new(config: RuneConfig, provider: ProviderRegistry) -> Self {
-        let mut tools = ToolRegistry::new(vec![PathBuf::from("/tmp"), PathBuf::from(".")]); tools.set_policy(&config.policy);
+        let mut tools = ToolRegistry::new(vec![PathBuf::from("/tmp"), PathBuf::from(".")]);
+        tools.set_policy(&config.policy);
         let skill_loader = SkillLoader::new(vec![PathBuf::from(&config.skills_dir)]);
+        let trace = if config.trace {
+            Some(TraceWriter::new(
+                TraceWriter::generate_run_id(),
+                config.model.clone(),
+                PathBuf::from(".rune/traces"),
+                true,
+            ))
+        } else {
+            None
+        };
         Agent {
             config,
             messages: Vec::new(),
@@ -50,6 +63,7 @@ impl Agent {
             tools,
             skill_loader,
             auto_approve: false,
+            trace,
             executed_commands: Vec::new(),
         }
     }
@@ -239,7 +253,7 @@ impl Agent {
     }
 
     /// Call the LLM provider.
-    async fn call_llm(&self) -> Result<LlmResponse> {
+    async fn call_llm(&mut self) -> Result<LlmResponse> {
         let tool_defs = self.tools.tool_definitions();
         let request = LlmRequest {
             model: self.config.model.clone(),
@@ -248,7 +262,16 @@ impl Agent {
             max_tokens: None,
         };
         debug!(model = %self.config.model, messages = self.messages.len(), "calling LLM");
-        self.provider.chat(request).await
+        if let Some(ref mut t) = self.trace {
+            t.record(StepKind::LlmRequest { messages_count: self.messages.len(), model: self.config.model.clone() });
+        }
+        let resp = self.provider.chat(request).await;
+        if let Some(ref mut t) = self.trace {
+            if let Ok(ref r) = resp {
+                t.record(StepKind::LlmResponse { tokens_used: r.usage.total_tokens, has_tool_calls: !r.tool_calls.is_empty() });
+            }
+        }
+        resp
     }
 
     /// Execute a single tool call.
@@ -259,6 +282,11 @@ impl Agent {
         eprintln!("  {} {}", "⚙".dimmed(), format!("{}({})", tc.function.name, &tc.function.arguments[..tc.function.arguments.len().min(80)]).dimmed());
 
         // Confirm mode: ask user before executing dangerous tools
+        // Trace tool call
+        if let Some(ref mut t) = self.trace {
+            t.record(StepKind::ToolCall { name: tc.function.name.clone(), arguments_preview: tc.function.arguments[..tc.function.arguments.len().min(100)].to_string() });
+        }
+
         // Track executed commands
         if tc.function.name == "execute_cmd" {
             if let Some(cmd) = serde_json::from_str::<serde_json::Value>(&tc.function.arguments)

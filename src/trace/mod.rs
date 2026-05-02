@@ -105,6 +105,34 @@ impl TraceWriter {
     }
 }
 
+/// Redact sensitive info from strings (api keys, tokens).
+pub fn redact(s: &str) -> String {
+    let mut out = s.to_string();
+    // Patterns: sk-..., ghu_..., ghp_..., AIza..., Bearer ...
+    let patterns = ["sk-", "ghu_", "ghp_", "AIza"];
+    for pat in patterns {
+        while let Some(start) = out.find(pat) {
+            let end = out[start..].find(|c: char| c.is_whitespace() || c == '"' || c == ',').map(|i| start + i).unwrap_or(out.len());
+            if end - start > pat.len() + 3 {
+                out.replace_range(start + pat.len()..end, "***");
+            } else {
+                break;
+            }
+        }
+    }
+    // Bearer token
+    while let Some(start) = out.find("Bearer ") {
+        let token_start = start + 7;
+        let end = out[token_start..].find(|c: char| c.is_whitespace() || c == '"').map(|i| token_start + i).unwrap_or(out.len());
+        if end > token_start + 3 {
+            out.replace_range(token_start..end, "***");
+        } else {
+            break;
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
