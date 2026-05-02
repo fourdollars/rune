@@ -27,13 +27,16 @@ pub struct ToolRegistry {
     policy_mode: String,
     policy_allowed_commands: Vec<String>,
     policy_denied_syscalls: Vec<String>,
+    policy_denied_paths: Vec<String>,
+    policy_allowed_paths_rw: Vec<String>,
+    policy_allowed_paths_ro: Vec<String>,
     allowed_dirs: Vec<PathBuf>,
     allowed_domains: Vec<String>,
 }
 
 impl ToolRegistry {
     pub fn new(allowed_dirs: Vec<PathBuf>) -> Self {
-        Self { allowed_dirs, allowed_domains: Vec::new(), policy_mode: "confirm".to_string(), policy_allowed_commands: Vec::new(), policy_denied_syscalls: Vec::new() }
+        Self { allowed_dirs, allowed_domains: Vec::new(), policy_mode: "confirm".to_string(), policy_allowed_commands: Vec::new(), policy_denied_syscalls: Vec::new(), policy_denied_paths: Vec::new(), policy_allowed_paths_rw: Vec::new(), policy_allowed_paths_ro: Vec::new() }
     }
 
     /// Set allowed network domains (for fetch_url / execute_cmd network access).
@@ -53,6 +56,9 @@ impl ToolRegistry {
         self.policy_mode = policy.mode.clone();
         self.policy_allowed_commands = policy.allowed_commands.clone();
         self.policy_denied_syscalls = policy.denied_syscalls.clone();
+        self.policy_denied_paths = policy.denied_paths.clone();
+        self.policy_allowed_paths_rw = policy.allowed_paths_rw.clone();
+        self.policy_allowed_paths_ro = policy.allowed_paths_ro.clone();
         self.allowed_domains = policy.allowed_domains.clone();
     }
 
@@ -196,6 +202,11 @@ impl ToolRegistry {
             Some(p) => p,
             None => return ToolOutput::err("missing required argument: path"),
         };
+        // Check path policy
+        if self.is_path_denied(path) {
+            return ToolOutput::err(format!("BLOCKED by policy: path '{}' is in denied_paths", path));
+        }
+
         info!(path = %path, "read_file (sandboxed)");
         let cmd = format!("head -c {} '{}'", MAX_FILE_SIZE, path.replace('\'', "'\\''"));
         let result = self.sandboxed_cmd(&cmd, 10).await;
@@ -218,6 +229,14 @@ impl ToolRegistry {
             Some(c) => c,
             None => return ToolOutput::err("missing required argument: content"),
         };
+        // Check path policy
+        if self.is_path_denied(path) {
+            return ToolOutput::err(format!("BLOCKED by policy: path '{}' is in denied_paths", path));
+        }
+        if !self.policy_allowed_paths_rw.is_empty() && !self.is_path_in_list(path, &self.policy_allowed_paths_rw) {
+            return ToolOutput::err(format!("BLOCKED by policy: path '{}' is not in allowed_paths_rw", path));
+        }
+
         info!(path = %path, bytes = content.len(), "write_file (sandboxed)");
         let escaped_path = path.replace('\'', "'\\''");
         let escaped_content = content.replace('\'', "'\\''");
@@ -309,6 +328,18 @@ impl ToolRegistry {
         };
         let cmd = format!("ps -p {} -o pid,comm,%cpu,%mem,stat,etime --no-headers 2>/dev/null || echo process_not_found", pid);
         self.sandboxed_cmd(&cmd, 5).await
+    }
+}
+
+impl ToolRegistry {
+    /// Check if a path is in the denied_paths list.
+    fn is_path_denied(&self, path: &str) -> bool {
+        self.policy_denied_paths.iter().any(|d| path.starts_with(d))
+    }
+
+    /// Check if a path starts with any entry in a given list.
+    fn is_path_in_list(&self, path: &str, list: &[String]) -> bool {
+        list.iter().any(|p| path.starts_with(p))
     }
 }
 
