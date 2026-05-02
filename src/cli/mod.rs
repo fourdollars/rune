@@ -459,7 +459,7 @@ pub async fn run() {
     let provider = init_provider(&cfg);
     let stdin_is_terminal = std::io::stdin().is_terminal();
 
-    if !is_json_mode(&cfg) {
+    if stdin_is_terminal && !is_json_mode(&cfg) {
         print_banner();
     }
 
