@@ -2,11 +2,11 @@ use crate::config::RuneConfig;
 use crate::provider::{LlmMessage, LlmRequest, LlmResponse, LlmToolCall, ProviderRegistry};
 use crate::skills::SkillLoader;
 use crate::tools::ToolRegistry;
+use crate::trace::{redact, StepKind, TraceWriter};
 use anyhow::Result;
 use colored::Colorize;
 use std::path::PathBuf;
 use tracing::{debug, info, warn};
-use crate::trace::{TraceWriter, StepKind, redact};
 
 /// Agent's stop reason.
 #[derive(Debug)]
@@ -75,22 +75,33 @@ impl Agent {
 
     /// Set the system prompt.
     pub fn set_system_prompt(&mut self, prompt: &str) {
-        if self.messages.first().map(|m| m.role == "system").unwrap_or(false) {
+        if self
+            .messages
+            .first()
+            .map(|m| m.role == "system")
+            .unwrap_or(false)
+        {
             self.messages[0].content = Some(prompt.to_string());
         } else {
-            self.messages.insert(0, LlmMessage {
-                role: "system".to_string(),
-                content: Some(prompt.to_string()),
-                tool_calls: None,
-                tool_call_id: None,
-            });
+            self.messages.insert(
+                0,
+                LlmMessage {
+                    role: "system".to_string(),
+                    content: Some(prompt.to_string()),
+                    tool_calls: None,
+                    tool_call_id: None,
+                },
+            );
         }
     }
 
     /// Reset conversation state for a new run (keeps system prompt).
-
-    pub fn tokens_used(&self) -> u32 { self.tokens_used }
-    pub fn step_count(&self) -> u32 { self.step_count }
+    pub fn tokens_used(&self) -> u32 {
+        self.tokens_used
+    }
+    pub fn step_count(&self) -> u32 {
+        self.step_count
+    }
 
     /// Get message count by role.
     pub fn context_summary(&self) -> Vec<(String, usize)> {
@@ -104,11 +115,16 @@ impl Agent {
     }
 
     /// Get total message count.
-    pub fn message_count(&self) -> usize { self.messages.len() }
+    pub fn message_count(&self) -> usize {
+        self.messages.len()
+    }
 
     /// Get estimated context size in chars.
     pub fn context_chars(&self) -> usize {
-        self.messages.iter().map(|m| m.content.as_ref().map(|c| c.len()).unwrap_or(0)).sum()
+        self.messages
+            .iter()
+            .map(|m| m.content.as_ref().map(|c| c.len()).unwrap_or(0))
+            .sum()
     }
 
     /// Compact context: keep system prompt + summarize older messages.
@@ -120,20 +136,36 @@ impl Agent {
         // Keep last 4 messages (2 exchanges)
         let keep_last = 4;
         let total = self.messages.len();
-        let to_summarize = if total > keep_last + 1 { total - keep_last - 1 } else { 0 };
-        if to_summarize == 0 { return; }
+        let to_summarize = if total > keep_last + 1 {
+            total - keep_last - 1
+        } else {
+            0
+        };
+        if to_summarize == 0 {
+            return;
+        }
 
         // Build summary of older messages
         let mut summary_parts: Vec<String> = Vec::new();
         for m in self.messages.iter().skip(1).take(to_summarize) {
-            let preview = m.content.as_ref().map(|c| c.chars().take(100).collect::<String>()).unwrap_or_default();
+            let preview = m
+                .content
+                .as_ref()
+                .map(|c| c.chars().take(100).collect::<String>())
+                .unwrap_or_default();
             if !preview.is_empty() {
                 summary_parts.push(format!("[{}]: {}", m.role, preview));
             }
         }
-        let summary = format!("[Compacted {} messages]
-{}", to_summarize, summary_parts.join("
-"));
+        let summary = format!(
+            "[Compacted {} messages]
+{}",
+            to_summarize,
+            summary_parts.join(
+                "
+"
+            )
+        );
 
         // Rebuild: system + summary + last N messages
         let mut new_messages = Vec::new();
@@ -174,7 +206,11 @@ impl Agent {
                     // Skill safety: restrict tools if skill defines tools_allow
                     if let Some(ref allowed) = skill.metadata.tools_allow {
                         self.tools.set_allowed_domains(vec![]); // reset
-                        eprintln!("    {} tool restriction: {}", "🔒".dimmed(), allowed.join(", "));
+                        eprintln!(
+                            "    {} tool restriction: {}",
+                            "🔒".dimmed(),
+                            allowed.join(", ")
+                        );
                     }
                     // Inject skill content as a system message
                     self.messages.push(LlmMessage {
@@ -223,7 +259,11 @@ impl Agent {
             }
 
             self.step_count += 1;
-            info!(step = self.step_count, tokens = self.tokens_used, "agent loop step");
+            info!(
+                step = self.step_count,
+                tokens = self.tokens_used,
+                "agent loop step"
+            );
 
             // Call LLM
             let response = match self.call_llm().await {
@@ -248,8 +288,8 @@ impl Agent {
                     tool_call_id: None,
                 });
                 let r = StopReason::FinalAnswer(answer);
-                    self.finish_trace(&r);
-                    return r;
+                self.finish_trace(&r);
+                return r;
             }
 
             // We have tool calls
@@ -296,17 +336,27 @@ impl Agent {
         let request = LlmRequest {
             model: self.config.model.clone(),
             messages: self.messages.clone(),
-            tools: if tool_defs.is_empty() { None } else { Some(tool_defs) },
+            tools: if tool_defs.is_empty() {
+                None
+            } else {
+                Some(tool_defs)
+            },
             max_tokens: None,
         };
         debug!(model = %self.config.model, messages = self.messages.len(), "calling LLM");
         if let Some(ref mut t) = self.trace {
-            t.record(StepKind::LlmRequest { messages_count: self.messages.len(), model: self.config.model.clone() });
+            t.record(StepKind::LlmRequest {
+                messages_count: self.messages.len(),
+                model: self.config.model.clone(),
+            });
         }
         let resp = self.provider.chat(request).await;
         if let Some(ref mut t) = self.trace {
             if let Ok(ref r) = resp {
-                t.record(StepKind::LlmResponse { tokens_used: r.usage.total_tokens, has_tool_calls: !r.tool_calls.is_empty() });
+                t.record(StepKind::LlmResponse {
+                    tokens_used: r.usage.total_tokens,
+                    has_tool_calls: !r.tool_calls.is_empty(),
+                });
             }
         }
         resp
@@ -333,19 +383,35 @@ impl Agent {
         let args: serde_json::Value = serde_json::from_str(&tc.function.arguments)
             .unwrap_or(serde_json::Value::Object(serde_json::Map::new()));
 
-        eprintln!("  {} {}", "⚙".dimmed(), format!("{}({})", tc.function.name, &tc.function.arguments[..tc.function.arguments.len().min(80)]).dimmed());
+        eprintln!(
+            "  {} {}",
+            "⚙".dimmed(),
+            format!(
+                "{}({})",
+                tc.function.name,
+                &tc.function.arguments[..tc.function.arguments.len().min(80)]
+            )
+            .dimmed()
+        );
 
         // Confirm mode: ask user before executing dangerous tools
         // Trace tool call
         if let Some(ref mut t) = self.trace {
-            t.record(StepKind::ToolCall { name: tc.function.name.clone(), arguments_preview: redact(&tc.function.arguments[..tc.function.arguments.len().min(100)]) });
+            t.record(StepKind::ToolCall {
+                name: tc.function.name.clone(),
+                arguments_preview: redact(
+                    &tc.function.arguments[..tc.function.arguments.len().min(100)],
+                ),
+            });
         }
 
         // Track tool calls and executed commands
         self.tool_call_names.push(tc.function.name.clone());
         if tc.function.name == "execute_cmd" {
             if let Some(cmd) = serde_json::from_str::<serde_json::Value>(&tc.function.arguments)
-                .ok().and_then(|a| a.get("cmd").and_then(|c| c.as_str()).map(|s| s.to_string())) {
+                .ok()
+                .and_then(|a| a.get("cmd").and_then(|c| c.as_str()).map(|s| s.to_string()))
+            {
                 self.executed_commands.push(cmd);
             }
         }
@@ -353,7 +419,11 @@ impl Agent {
         // Confirm mode: ask user before executing dangerous tools
         // Skip confirm if the involved domain/command is already in the allowlist
         let already_allowed = self.is_already_allowed(&tc.function.name, &args);
-        if self.config.policy.mode == "confirm" && Self::is_dangerous_tool(&tc.function.name) && !self.auto_approve && !already_allowed {
+        if self.config.policy.mode == "confirm"
+            && Self::is_dangerous_tool(&tc.function.name)
+            && !self.auto_approve
+            && !already_allowed
+        {
             if !self.interactive {
                 let msg = format!(
                     "non-interactive mode requires --yes (or a non-confirm policy) before executing {}",
@@ -367,8 +437,11 @@ impl Agent {
             let involved_domain = Self::extract_domain_from_args(&tc.function.name, &args);
             let involved_cmd = Self::extract_command_from_args(&tc.function.name, &args);
 
-            eprint!("
-  {} Execute? [Y/n/A(lways)] ", "⚠".yellow().bold());
+            eprint!(
+                "
+  {} Execute? [Y/n/A(lways)] ",
+                "⚠".yellow().bold()
+            );
             std::io::Write::flush(&mut std::io::stderr()).ok();
             match Self::prompt_confirm_with_always() {
                 ConfirmResult::Yes => eprintln!("{}", "approved".green()),
@@ -396,7 +469,10 @@ impl Agent {
                     if added.is_empty() {
                         eprintln!("{}", "approved (already in allowlist)".green());
                     } else {
-                        eprintln!("{}", "permanently allowed → saved to ~/.rune/rune.toml".green());
+                        eprintln!(
+                            "{}",
+                            "permanently allowed → saved to ~/.rune/rune.toml".green()
+                        );
                         for item in &added {
                             eprintln!("    {} {}", "+".green(), item);
                         }
@@ -415,38 +491,70 @@ impl Agent {
             // Check if it's a domain block we can interactively resolve
             if let Some(domain) = Self::extract_blocked_domain(&output.content) {
                 if self.interactive {
-                    eprint!("\n  {} Add '{}' to allowed_domains? [Y/n] ", "🔓".yellow(), domain);
+                    eprint!(
+                        "\n  {} Add '{}' to allowed_domains? [Y/n] ",
+                        "🔓".yellow(),
+                        domain
+                    );
                     std::io::Write::flush(&mut std::io::stderr()).ok();
                     let answer = Self::prompt_yn();
                     if answer {
                         self.tools.add_allowed_domain(&domain);
                         self.config.policy.allowed_domains.push(domain.clone());
                         crate::config::persist_domain(&domain);
-                        eprintln!("{}", format!("  ✓ '{}' added to allowed_domains (saved to config)", domain).green());
+                        eprintln!(
+                            "{}",
+                            format!(
+                                "  ✓ '{}' added to allowed_domains (saved to config)",
+                                domain
+                            )
+                            .green()
+                        );
                         // Retry the tool call
                         let retry_output = self.tools.execute(&tc.function.name, args).await;
                         if retry_output.is_error {
-                            eprintln!("  {} {}", "✗".red(), retry_output.content[..retry_output.content.len().min(200)].dimmed());
+                            eprintln!(
+                                "  {} {}",
+                                "✗".red(),
+                                retry_output.content[..retry_output.content.len().min(200)]
+                                    .dimmed()
+                            );
                             if Self::is_policy_blocked(&retry_output.content) {
                                 return Err(StopReason::Error(retry_output.content));
                             }
                         } else {
-                            eprintln!("  {} {}", "✓".green(), format!("{}...ok", tc.function.name).dimmed());
+                            eprintln!(
+                                "  {} {}",
+                                "✓".green(),
+                                format!("{}...ok", tc.function.name).dimmed()
+                            );
                         }
                         return Ok(retry_output.content);
                     }
                 }
                 // User said no, or non-interactive
-                eprintln!("  {} {}", "✗".red(), output.content[..output.content.len().min(200)].dimmed());
+                eprintln!(
+                    "  {} {}",
+                    "✗".red(),
+                    output.content[..output.content.len().min(200)].dimmed()
+                );
                 return Err(StopReason::Error(output.content));
             }
 
-            eprintln!("  {} {}", "✗".red(), output.content[..output.content.len().min(200)].dimmed());
+            eprintln!(
+                "  {} {}",
+                "✗".red(),
+                output.content[..output.content.len().min(200)].dimmed()
+            );
             if Self::is_policy_blocked(&output.content) {
                 return Err(StopReason::Error(output.content));
             }
         } else {
-            eprintln!("  {} {}", "✓".green(), format!("{}...ok", tc.function.name).dimmed());
+            eprintln!(
+                "  {} {}",
+                "✓".green(),
+                format!("{}...ok", tc.function.name).dimmed()
+            );
         }
 
         Ok(output.content)
@@ -479,7 +587,12 @@ impl Agent {
             }
             "execute_cmd" => {
                 if let Some(cmd_name) = Self::extract_command_from_args(tool_name, args) {
-                    return self.config.policy.allowed_commands.iter().any(|c| c == &cmd_name || c == "*");
+                    return self
+                        .config
+                        .policy
+                        .allowed_commands
+                        .iter()
+                        .any(|c| c == &cmd_name || c == "*");
                 }
                 false
             }
@@ -491,7 +604,8 @@ impl Agent {
     fn extract_domain_from_args(tool_name: &str, args: &serde_json::Value) -> Option<String> {
         if tool_name == "fetch_url" {
             if let Some(url) = args.get("url").and_then(|v| v.as_str()) {
-                let without_scheme = url.strip_prefix("https://")
+                let without_scheme = url
+                    .strip_prefix("https://")
                     .or_else(|| url.strip_prefix("http://"))
                     .unwrap_or(url);
                 let host = without_scheme.split('/').next()?;
@@ -546,7 +660,10 @@ impl Agent {
 
     /// Tools that modify state or execute arbitrary commands.
     fn is_dangerous_tool(name: &str) -> bool {
-        matches!(name, "execute_cmd" | "write_file" | "fetch_url" | "read_file")
+        matches!(
+            name,
+            "execute_cmd" | "write_file" | "fetch_url" | "read_file"
+        )
     }
 
     /// Prompt user for Y/n confirmation via /dev/tty (bypasses stdin pipe).

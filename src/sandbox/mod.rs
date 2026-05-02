@@ -41,10 +41,7 @@ impl Default for SandboxConfig {
                 PathBuf::from("/usr"),
                 PathBuf::from("/lib"),
             ],
-            denied_paths: vec![
-                PathBuf::from("/root"),
-                PathBuf::from("/etc/shadow"),
-            ],
+            denied_paths: vec![PathBuf::from("/root"), PathBuf::from("/etc/shadow")],
             timeout_secs: 30,
             uid: 0,
             gid: 0,
@@ -106,7 +103,12 @@ impl SandboxExecutor {
 
         // Layer 1: Resource limits via systemd-run (cgroups v2)
         if has_systemd_run && (self.config.memory_limit > 0 || self.config.max_pids > 0) {
-            let mut systemd_args = vec!["systemd-run".to_string(), "--quiet".to_string(), "--scope".to_string(), "--user".to_string()];
+            let mut systemd_args = vec![
+                "systemd-run".to_string(),
+                "--quiet".to_string(),
+                "--scope".to_string(),
+                "--user".to_string(),
+            ];
             if self.config.memory_limit > 0 {
                 systemd_args.push(format!("-p MemoryMax={}", self.config.memory_limit));
             }
@@ -122,7 +124,11 @@ impl SandboxExecutor {
                 .await;
             if test.map(|o| o.status.success()).unwrap_or(false) {
                 wrapper_parts.push(systemd_args.join(" "));
-                active_layers.push(format!("cgroups(mem={}MB,pids={})", self.config.memory_limit / 1024 / 1024, self.config.max_pids));
+                active_layers.push(format!(
+                    "cgroups(mem={}MB,pids={})",
+                    self.config.memory_limit / 1024 / 1024,
+                    self.config.max_pids
+                ));
                 info!("sandbox: cgroups via systemd-run --scope --user");
             } else {
                 debug!("sandbox: systemd-run --user not available, skipping cgroups");
@@ -134,7 +140,10 @@ impl SandboxExecutor {
             // DNS-proxy mode: allow network but restrict via custom resolv.conf
             // Only whitelisted domains can be resolved
             wrapper_parts.push("unshare --user --".to_string());
-            active_layers.push(format!("dns-proxy(allowed: {})", self.config.allowed_domains.join(",")));
+            active_layers.push(format!(
+                "dns-proxy(allowed: {})",
+                self.config.allowed_domains.join(",")
+            ));
             info!(domains = ?self.config.allowed_domains, "sandbox: DNS proxy mode (network allowed, restricted by resolv)");
         } else if has_unshare {
             // Full isolation: no network at all
@@ -157,9 +166,11 @@ impl SandboxExecutor {
         // Layer 4: Landlock filesystem restriction
         let landlock_wrapper = self.build_landlock_wrapper().await;
         if let Some(ref lw) = landlock_wrapper {
-            active_layers.push(format!("landlock(rw={},ro={})",
+            active_layers.push(format!(
+                "landlock(rw={},ro={})",
                 self.config.read_write_paths.len(),
-                self.config.read_only_paths.len()));
+                self.config.read_only_paths.len()
+            ));
             debug!("sandbox: landlock active");
         }
 
@@ -201,7 +212,8 @@ impl SandboxExecutor {
         command.stdout(std::process::Stdio::piped());
         command.stderr(std::process::Stdio::piped());
 
-        let child = command.spawn()
+        let child = command
+            .spawn()
             .context("failed to spawn sandboxed command")?;
 
         let timeout = std::time::Duration::from_secs(self.config.timeout_secs);
@@ -227,11 +239,13 @@ impl SandboxExecutor {
                     active_layers,
                 })
             }
-            Ok(Err(e)) => {
-                Err(anyhow::anyhow!("sandbox command error: {}", e))
-            }
+            Ok(Err(e)) => Err(anyhow::anyhow!("sandbox command error: {}", e)),
             Err(_) => {
-                warn!(cmd, timeout_secs = self.config.timeout_secs, "sandbox: command timed out");
+                warn!(
+                    cmd,
+                    timeout_secs = self.config.timeout_secs,
+                    "sandbox: command timed out"
+                );
                 Ok(SandboxResult {
                     stdout: String::new(),
                     stderr: format!("command timed out after {}s", self.config.timeout_secs),
@@ -316,9 +330,10 @@ impl SandboxExecutor {
         if self.config.allowed_domains.is_empty() {
             return false; // empty = block all
         }
-        self.config.allowed_domains.iter().any(|d| {
-            d == domain || d == "*" || (d.starts_with("*.") && domain.ends_with(&d[1..]))
-        })
+        self.config
+            .allowed_domains
+            .iter()
+            .any(|d| d == domain || d == "*" || (d.starts_with("*.") && domain.ends_with(&d[1..])))
     }
 }
 

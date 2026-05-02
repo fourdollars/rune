@@ -48,15 +48,8 @@ impl Default for PolicyConfig {
                 "setns".to_string(),
             ],
             allowed_paths_rw: vec!["/tmp".to_string()],
-            allowed_paths_ro: vec![
-                "/bin".to_string(),
-                "/usr".to_string(),
-                "/lib".to_string(),
-            ],
-            denied_paths: vec![
-                "/root".to_string(),
-                "/etc/shadow".to_string(),
-            ],
+            allowed_paths_ro: vec!["/bin".to_string(), "/usr".to_string(), "/lib".to_string()],
+            denied_paths: vec!["/root".to_string(), "/etc/shadow".to_string()],
             max_memory_mb: 512,
             max_pids: 64,
         }
@@ -226,14 +219,20 @@ pub fn load() -> anyhow::Result<RuneConfig> {
         skills_dir: env::var("RUNE_SKILLS_DIR").ok(),
         log_level: env::var("RUNE_LOG_LEVEL").ok(),
         max_steps: env::var("RUNE_MAX_STEPS").ok().and_then(|v| v.parse().ok()),
-        token_budget: env::var("RUNE_TOKEN_BUDGET").ok().and_then(|v| v.parse().ok()),
-        timeout_secs: env::var("RUNE_TIMEOUT_SECS").ok().and_then(|v| v.parse().ok()),
+        token_budget: env::var("RUNE_TOKEN_BUDGET")
+            .ok()
+            .and_then(|v| v.parse().ok()),
+        timeout_secs: env::var("RUNE_TIMEOUT_SECS")
+            .ok()
+            .and_then(|v| v.parse().ok()),
         base_url: env::var("RUNE_BASE_URL").ok(),
         trace: env::var("RUNE_TRACE").ok().and_then(|v| v.parse().ok()),
         policy: None, // Policy loaded from TOML only (too complex for single env var)
         mcp_servers: None,
     };
-    let env_json_output = env::var("RUNE_JSON_OUTPUT").ok().and_then(|v| parse_boolish(&v));
+    let env_json_output = env::var("RUNE_JSON_OUTPUT")
+        .ok()
+        .and_then(|v| parse_boolish(&v));
     let env_auto_approve = env::var("RUNE_YES").ok().and_then(|v| parse_boolish(&v));
 
     // Project-local config: .rune/rune.toml
@@ -253,7 +252,8 @@ pub fn load() -> anyhow::Result<RuneConfig> {
     let defaults = RuneConfig::default();
 
     // Merge policy: first non-None wins, otherwise default
-    let mut policy = lc.and_then(|c| c.policy.clone())
+    let mut policy = lc
+        .and_then(|c| c.policy.clone())
         .or_else(|| uc.and_then(|c| c.policy.clone()))
         .unwrap_or_default();
 
@@ -268,38 +268,71 @@ pub fn load() -> anyhow::Result<RuneConfig> {
 
     Ok(RuneConfig {
         model: pick(
-            &[&cli.model, &env_partial.model, &lc.and_then(|c| c.model.clone()), &uc.and_then(|c| c.model.clone())],
+            &[
+                &cli.model,
+                &env_partial.model,
+                &lc.and_then(|c| c.model.clone()),
+                &uc.and_then(|c| c.model.clone()),
+            ],
             defaults.model,
         ),
-        api_key: cli.api_key
+        api_key: cli
+            .api_key
             .or(env_partial.api_key)
             .or(lc.and_then(|c| c.api_key.clone()))
             .or(uc.and_then(|c| c.api_key.clone())),
         skills_dir: pick(
-            &[&cli.skills_dir, &env_partial.skills_dir, &lc.and_then(|c| c.skills_dir.clone()), &uc.and_then(|c| c.skills_dir.clone())],
+            &[
+                &cli.skills_dir,
+                &env_partial.skills_dir,
+                &lc.and_then(|c| c.skills_dir.clone()),
+                &uc.and_then(|c| c.skills_dir.clone()),
+            ],
             defaults.skills_dir,
         ),
         log_level: pick(
-            &[&cli.log_level, &env_partial.log_level, &lc.and_then(|c| c.log_level.clone()), &uc.and_then(|c| c.log_level.clone())],
+            &[
+                &cli.log_level,
+                &env_partial.log_level,
+                &lc.and_then(|c| c.log_level.clone()),
+                &uc.and_then(|c| c.log_level.clone()),
+            ],
             defaults.log_level,
         ),
         max_steps: pick(
-            &[&cli.max_steps, &env_partial.max_steps, &lc.and_then(|c| c.max_steps), &uc.and_then(|c| c.max_steps)],
+            &[
+                &cli.max_steps,
+                &env_partial.max_steps,
+                &lc.and_then(|c| c.max_steps),
+                &uc.and_then(|c| c.max_steps),
+            ],
             defaults.max_steps,
         ),
         token_budget: pick(
-            &[&cli.token_budget, &env_partial.token_budget, &lc.and_then(|c| c.token_budget), &uc.and_then(|c| c.token_budget)],
+            &[
+                &cli.token_budget,
+                &env_partial.token_budget,
+                &lc.and_then(|c| c.token_budget),
+                &uc.and_then(|c| c.token_budget),
+            ],
             defaults.token_budget,
         ),
         timeout_secs: pick(
-            &[&cli.timeout_secs, &env_partial.timeout_secs, &lc.and_then(|c| c.timeout_secs), &uc.and_then(|c| c.timeout_secs)],
+            &[
+                &cli.timeout_secs,
+                &env_partial.timeout_secs,
+                &lc.and_then(|c| c.timeout_secs),
+                &uc.and_then(|c| c.timeout_secs),
+            ],
             defaults.timeout_secs,
         ),
-        base_url: cli.base_url
+        base_url: cli
+            .base_url
             .or(env_partial.base_url)
             .or(lc.and_then(|c| c.base_url.clone()))
             .or(uc.and_then(|c| c.base_url.clone())),
-        trace: cli.trace
+        trace: cli
+            .trace
             .or(env_partial.trace)
             .or(lc.and_then(|c| c.trace))
             .or(uc.and_then(|c| c.trace))
@@ -307,7 +340,8 @@ pub fn load() -> anyhow::Result<RuneConfig> {
         json_output: cli.json || env_json_output.unwrap_or(defaults.json_output),
         auto_approve: cli.yes || env_auto_approve.unwrap_or(defaults.auto_approve),
         policy,
-        mcp_servers: lc.and_then(|c| c.mcp_servers.clone())
+        mcp_servers: lc
+            .and_then(|c| c.mcp_servers.clone())
             .or_else(|| uc.and_then(|c| c.mcp_servers.clone()))
             .unwrap_or_default(),
     })
@@ -331,7 +365,8 @@ pub fn persist_domain(domain: &str) {
         Err(_) => return,
     };
 
-    let policy = doc.entry("policy")
+    let policy = doc
+        .entry("policy")
         .or_insert_with(|| toml::Value::Table(toml::Table::new()))
         .as_table_mut();
     let policy = match policy {
@@ -339,7 +374,8 @@ pub fn persist_domain(domain: &str) {
         None => return,
     };
 
-    let domains = policy.entry("allowed_domains")
+    let domains = policy
+        .entry("allowed_domains")
         .or_insert_with(|| toml::Value::Array(Vec::new()))
         .as_array_mut();
     let domains = match domains {
@@ -376,7 +412,8 @@ pub fn persist_command(command: &str) {
         Err(_) => return,
     };
 
-    let policy = doc.entry("policy")
+    let policy = doc
+        .entry("policy")
         .or_insert_with(|| toml::Value::Table(toml::Table::new()))
         .as_table_mut();
     let policy = match policy {
@@ -384,7 +421,8 @@ pub fn persist_command(command: &str) {
         None => return,
     };
 
-    let commands = policy.entry("allowed_commands")
+    let commands = policy
+        .entry("allowed_commands")
         .or_insert_with(|| toml::Value::Array(Vec::new()))
         .as_array_mut();
     let commands = match commands {

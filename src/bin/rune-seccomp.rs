@@ -1,3 +1,5 @@
+#![allow(dead_code, unused_imports, unused_variables)]
+#![allow(clippy::all)]
 //! rune-seccomp: applies a seccomp BPF filter then exec's the remaining args.
 //! Blocks: ptrace, mount, unshare, kexec_load, bpf, setns
 //! Allows everything else.
@@ -7,15 +9,14 @@ use std::os::unix::process::CommandExt;
 use std::process::Command;
 
 // seccomp_data offsets
-const OFFSET_NR: u32 = 0;       // offsetof(seccomp_data, nr)
-const OFFSET_ARCH: u32 = 4;     // offsetof(seccomp_data, arch)
+const OFFSET_NR: u32 = 0; // offsetof(seccomp_data, nr)
+const OFFSET_ARCH: u32 = 4; // offsetof(seccomp_data, arch)
 
 // Audit arch for x86_64
 const AUDIT_ARCH_X86_64: u32 = 0xC000003E;
 
 // Seccomp
 const SECCOMP_RET_ALLOW: u32 = 0x7FFF0000;
-const SECCOMP_RET_KILL_PROCESS: u32 = 0x80000000;
 const SECCOMP_RET_ERRNO: u32 = 0x00050000;
 const EPERM: u32 = 1;
 
@@ -51,7 +52,12 @@ struct SockFprog {
 }
 
 fn bpf_stmt(code: u16, k: u32) -> SockFilter {
-    SockFilter { code, jt: 0, jf: 0, k }
+    SockFilter {
+        code,
+        jt: 0,
+        jf: 0,
+        k,
+    }
 }
 
 fn bpf_jump(code: u16, k: u32, jt: u8, jf: u8) -> SockFilter {
@@ -65,7 +71,14 @@ fn main() {
         std::process::exit(1);
     }
 
-    let blocked = [SYS_PTRACE, SYS_MOUNT, SYS_UNSHARE, SYS_KEXEC_LOAD, SYS_BPF, SYS_SETNS];
+    let blocked = [
+        SYS_PTRACE,
+        SYS_MOUNT,
+        SYS_UNSHARE,
+        SYS_KEXEC_LOAD,
+        SYS_BPF,
+        SYS_SETNS,
+    ];
     let num_blocked = blocked.len();
 
     // Build BPF program:
@@ -78,7 +91,12 @@ fn main() {
     // Load arch
     filter.push(bpf_stmt(BPF_LD | BPF_W | BPF_ABS, OFFSET_ARCH));
     // If arch != x86_64, skip to allow (jump over all checks)
-    filter.push(bpf_jump(BPF_JMP | BPF_JEQ | BPF_K, AUDIT_ARCH_X86_64, 0, (num_blocked + 2) as u8));
+    filter.push(bpf_jump(
+        BPF_JMP | BPF_JEQ | BPF_K,
+        AUDIT_ARCH_X86_64,
+        0,
+        (num_blocked + 2) as u8,
+    ));
 
     // Load syscall number
     filter.push(bpf_stmt(BPF_LD | BPF_W | BPF_ABS, OFFSET_NR));
@@ -102,7 +120,10 @@ fn main() {
     unsafe {
         // Required: set no_new_privs
         if libc::prctl(libc::PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) != 0 {
-            eprintln!("rune-seccomp: prctl(NO_NEW_PRIVS) failed: {}", std::io::Error::last_os_error());
+            eprintln!(
+                "rune-seccomp: prctl(NO_NEW_PRIVS) failed: {}",
+                std::io::Error::last_os_error()
+            );
             std::process::exit(1);
         }
 
@@ -115,7 +136,10 @@ fn main() {
             0,
         );
         if ret != 0 {
-            eprintln!("rune-seccomp: prctl(SET_SECCOMP) failed: {}", std::io::Error::last_os_error());
+            eprintln!(
+                "rune-seccomp: prctl(SET_SECCOMP) failed: {}",
+                std::io::Error::last_os_error()
+            );
             std::process::exit(1);
         }
     }

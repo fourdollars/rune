@@ -25,11 +25,28 @@ pub struct TraceStep {
 
 #[derive(Debug, Serialize)]
 pub enum StepKind {
-    LlmRequest { messages_count: usize, model: String },
-    LlmResponse { tokens_used: u32, has_tool_calls: bool },
-    ToolCall { name: String, arguments_preview: String },
-    ToolResult { name: String, is_error: bool, content_preview: String },
-    PreCommand { command: String, exit_code: i32, duration_ms: u64 },
+    LlmRequest {
+        messages_count: usize,
+        model: String,
+    },
+    LlmResponse {
+        tokens_used: u32,
+        has_tool_calls: bool,
+    },
+    ToolCall {
+        name: String,
+        arguments_preview: String,
+    },
+    ToolResult {
+        name: String,
+        is_error: bool,
+        content_preview: String,
+    },
+    PreCommand {
+        command: String,
+        exit_code: i32,
+        duration_ms: u64,
+    },
 }
 
 /// Trace writer — 寫入 .rune/traces/ 目錄
@@ -56,7 +73,11 @@ impl TraceWriter {
             exit_code: 0,
         };
 
-        Self { trace, output_dir, enabled }
+        Self {
+            trace,
+            output_dir,
+            enabled,
+        }
     }
 
     /// 記錄一個步驟
@@ -67,7 +88,11 @@ impl TraceWriter {
             .map(|d| d.as_secs())
             .unwrap_or(0);
 
-        let step = TraceStep { step_num, timestamp, kind };
+        let step = TraceStep {
+            step_num,
+            timestamp,
+            kind,
+        };
         self.trace.steps.push(step);
     }
 
@@ -77,10 +102,12 @@ impl TraceWriter {
             return Ok(());
         }
 
-        self.trace.ended_at = Some(SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map(|d| d.as_secs())
-            .unwrap_or(0));
+        self.trace.ended_at = Some(
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map(|d| d.as_secs())
+                .unwrap_or(0),
+        );
         self.trace.exit_code = exit_code;
 
         fs::create_dir_all(&self.output_dir)?;
@@ -112,7 +139,10 @@ pub fn redact(s: &str) -> String {
     let patterns = ["sk-", "ghu_", "ghp_", "AIza"];
     for pat in patterns {
         while let Some(start) = out.find(pat) {
-            let end = out[start..].find(|c: char| c.is_whitespace() || c == '"' || c == ',').map(|i| start + i).unwrap_or(out.len());
+            let end = out[start..]
+                .find(|c: char| c.is_whitespace() || c == '"' || c == ',')
+                .map(|i| start + i)
+                .unwrap_or(out.len());
             if end - start > pat.len() + 3 {
                 out.replace_range(start + pat.len()..end, "***");
             } else {
@@ -123,7 +153,10 @@ pub fn redact(s: &str) -> String {
     // Bearer token
     while let Some(start) = out.find("Bearer ") {
         let token_start = start + 7;
-        let end = out[token_start..].find(|c: char| c.is_whitespace() || c == '"').map(|i| token_start + i).unwrap_or(out.len());
+        let end = out[token_start..]
+            .find(|c: char| c.is_whitespace() || c == '"')
+            .map(|i| token_start + i)
+            .unwrap_or(out.len());
         if end > token_start + 3 {
             out.replace_range(token_start..end, "***");
         } else {
@@ -149,8 +182,15 @@ mod tests {
         let output_dir = dir.clone();
 
         let mut w = TraceWriter::new(run_id.clone(), "m1".to_string(), output_dir.clone(), true);
-        w.record(StepKind::PreCommand { command: "echo hi".to_string(), exit_code: 0, duration_ms: 10 });
-        w.record(StepKind::ToolCall { name: "t1".to_string(), arguments_preview: "{\"a\":1}".to_string() });
+        w.record(StepKind::PreCommand {
+            command: "echo hi".to_string(),
+            exit_code: 0,
+            duration_ms: 10,
+        });
+        w.record(StepKind::ToolCall {
+            name: "t1".to_string(),
+            arguments_preview: "{\"a\":1}".to_string(),
+        });
         w.finish(2).expect("finish should succeed");
 
         let path = output_dir.join(format!("{}.json", run_id));
@@ -158,10 +198,19 @@ mod tests {
 
         let data = fs::read_to_string(&path).expect("read trace");
         let v: serde_json::Value = serde_json::from_str(&data).expect("parse json");
-        assert_eq!(v.get("run_id").and_then(|x| x.as_str()), Some("test-run-12345"));
+        assert_eq!(
+            v.get("run_id").and_then(|x| x.as_str()),
+            Some("test-run-12345")
+        );
         assert_eq!(v.get("model").and_then(|x| x.as_str()), Some("m1"));
         assert_eq!(v.get("exit_code").and_then(|x| x.as_i64()), Some(2));
-        assert!(v.get("steps").and_then(|s| s.as_array()).map(|a| a.len()).unwrap_or(0) >= 2);
+        assert!(
+            v.get("steps")
+                .and_then(|s| s.as_array())
+                .map(|a| a.len())
+                .unwrap_or(0)
+                >= 2
+        );
 
         // cleanup
         let _ = fs::remove_dir_all(&dir);

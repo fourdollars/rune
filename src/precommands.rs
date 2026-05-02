@@ -1,8 +1,8 @@
 use anyhow::{bail, Result};
-use std::time::Instant;
-use tracing::{info, error};
-use tokio::process::Command;
 use std::process::Stdio;
+use std::time::Instant;
+use tokio::process::Command;
+use tracing::{error, info};
 
 /// 預處理指令的執行結果
 #[derive(Debug)]
@@ -49,7 +49,13 @@ pub async fn execute_pre_commands(commands: &[String]) -> Result<Vec<PreCommandR
 
         if exit_code != 0 {
             error!(command = %cmd, exit_code, "pre-command failed");
-            bail!("pre-command failed: '{}' exit code {}\nstdout: {}\nstderr: {}", cmd, exit_code, stdout, stderr);
+            bail!(
+                "pre-command failed: '{}' exit code {}\nstdout: {}\nstderr: {}",
+                cmd,
+                exit_code,
+                stdout,
+                stderr
+            );
         }
 
         info!(command = %cmd, exit_code = result.exit_code, duration_ms = result.duration_ms, "pre-command completed");

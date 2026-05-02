@@ -41,11 +41,22 @@ impl SkillLoader {
         }
 
         if let Ok(rune_home) = env::var("RUNE_HOME") {
-            candidates.push(PathBuf::from(rune_home).join("skills").join(name).join("SKILL.md"));
+            candidates.push(
+                PathBuf::from(rune_home)
+                    .join("skills")
+                    .join(name)
+                    .join("SKILL.md"),
+            );
         }
 
         if let Ok(home) = env::var("HOME") {
-            candidates.push(PathBuf::from(home).join(".rune").join("skills").join(name).join("SKILL.md"));
+            candidates.push(
+                PathBuf::from(home)
+                    .join(".rune")
+                    .join("skills")
+                    .join(name)
+                    .join("SKILL.md"),
+            );
         }
 
         if let Ok(cur) = env::current_dir() {
@@ -58,7 +69,8 @@ impl SkillLoader {
             .find(|p| p.exists() && p.is_file())
             .ok_or_else(|| anyhow::anyhow!("skill '{}' not found in search paths", name))?;
 
-        let raw = fs::read_to_string(&path).with_context(|| format!("reading SKILL.md at {}", path.display()))?;
+        let raw = fs::read_to_string(&path)
+            .with_context(|| format!("reading SKILL.md at {}", path.display()))?;
 
         let (metadata, body) = parse_frontmatter(&raw, &path, Some(name));
 
@@ -109,7 +121,11 @@ impl SkillLoader {
 }
 
 /// 解析簡單的 YAML-like frontmatter（不使用 yaml crate）
-fn parse_frontmatter(content: &str, source_path: &Path, default_name: Option<&str>) -> (SkillMetadata, String) {
+fn parse_frontmatter(
+    content: &str,
+    source_path: &Path,
+    default_name: Option<&str>,
+) -> (SkillMetadata, String) {
     let all_lines: Vec<&str> = content.lines().collect();
     if let Some(first) = all_lines.get(0) {
         if first.trim() == "---" {
@@ -149,7 +165,9 @@ fn parse_frontmatter(content: &str, source_path: &Path, default_name: Option<&st
                             } else {
                                 inner
                                     .split(',')
-                                    .map(|s| s.trim().trim_matches('"').trim_matches('\'').to_string())
+                                    .map(|s| {
+                                        s.trim().trim_matches('"').trim_matches('\'').to_string()
+                                    })
                                     .collect()
                             };
                             match key.as_str() {
@@ -160,7 +178,9 @@ fn parse_frontmatter(content: &str, source_path: &Path, default_name: Option<&st
                         } else {
                             // string value
                             // strip surrounding quotes if present
-                            if (val.starts_with('"') && val.ends_with('"')) || (val.starts_with('\'') && val.ends_with('\'')) {
+                            if (val.starts_with('"') && val.ends_with('"'))
+                                || (val.starts_with('\'') && val.ends_with('\''))
+                            {
                                 val = val[1..(val.len() - 1)].to_string();
                             }
                             match key.as_str() {
@@ -170,7 +190,12 @@ fn parse_frontmatter(content: &str, source_path: &Path, default_name: Option<&st
                                     // support comma-separated on single line without brackets
                                     let items: Vec<String> = val
                                         .split(',')
-                                        .map(|s| s.trim().trim_matches('"').trim_matches('\'').to_string())
+                                        .map(|s| {
+                                            s.trim()
+                                                .trim_matches('"')
+                                                .trim_matches('\'')
+                                                .to_string()
+                                        })
                                         .filter(|s| !s.is_empty())
                                         .collect();
                                     tools_allow = Some(items);
@@ -178,7 +203,12 @@ fn parse_frontmatter(content: &str, source_path: &Path, default_name: Option<&st
                                 "tools_deny" | "tools-deny" => {
                                     let items: Vec<String> = val
                                         .split(',')
-                                        .map(|s| s.trim().trim_matches('"').trim_matches('\'').to_string())
+                                        .map(|s| {
+                                            s.trim()
+                                                .trim_matches('"')
+                                                .trim_matches('\'')
+                                                .to_string()
+                                        })
                                         .filter(|s| !s.is_empty())
                                         .collect();
                                     tools_deny = Some(items);
@@ -190,16 +220,17 @@ fn parse_frontmatter(content: &str, source_path: &Path, default_name: Option<&st
                 }
 
                 // derive name if missing
-                let final_name = name.or_else(|| {
-                    // try parent directory name
-                    source_path
-                        .parent()
-                        .and_then(|p| p.file_name())
-                        .and_then(|os| os.to_str())
-                        .map(|s| s.to_string())
-                        .or_else(|| default_name.map(|s| s.to_string()))
-                })
-                .unwrap_or_else(|| default_name.unwrap_or("unknown").to_string());
+                let final_name = name
+                    .or_else(|| {
+                        // try parent directory name
+                        source_path
+                            .parent()
+                            .and_then(|p| p.file_name())
+                            .and_then(|os| os.to_str())
+                            .map(|s| s.to_string())
+                            .or_else(|| default_name.map(|s| s.to_string()))
+                    })
+                    .unwrap_or_else(|| default_name.unwrap_or("unknown").to_string());
 
                 let metadata = SkillMetadata {
                     name: final_name,
@@ -251,7 +282,10 @@ mod tests {
         let (meta, body) = parse_frontmatter(content, &path, Some("my-skill"));
         assert_eq!(meta.name, "my-skill");
         assert_eq!(meta.description.as_deref(), Some("A skill"));
-        assert_eq!(meta.tools_allow.as_ref().map(|v| v.clone()).unwrap(), vec!["a".to_string(), "b".to_string()]);
+        assert_eq!(
+            meta.tools_allow.as_ref().map(|v| v.clone()).unwrap(),
+            vec!["a".to_string(), "b".to_string()]
+        );
         assert!(body.contains("Skill body line"));
     }
 
@@ -265,4 +299,3 @@ mod tests {
         assert_eq!(body, content.to_string());
     }
 }
-

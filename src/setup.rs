@@ -8,39 +8,79 @@ pub async fn run_setup() {
     println!("{}", "  ᚱ  Rune Setup Wizard".cyan().bold());
     println!("{}", "  ─────────────────────".dimmed());
     println!();
-    println!("  This will create a configuration file at {}",
-        "~/.rune/rune.toml".green());
+    println!(
+        "  This will create a configuration file at {}",
+        "~/.rune/rune.toml".green()
+    );
     println!();
 
     // 1. Provider selection
     println!("{}", "1. Choose your LLM provider:".bold());
-    println!("   {} GitHub Copilot  (recommended — auto token refresh)", "[1]".cyan());
-    println!("   {} Google Gemini   (generativelanguage.googleapis.com)", "[2]".cyan());
+    println!(
+        "   {} GitHub Copilot  (recommended — auto token refresh)",
+        "[1]".cyan()
+    );
+    println!(
+        "   {} Google Gemini   (generativelanguage.googleapis.com)",
+        "[2]".cyan()
+    );
     println!("   {} OpenAI          (api.openai.com)", "[3]".cyan());
     println!("   {} OpenRouter      (openrouter.ai)", "[4]".cyan());
-    println!("   {} Anthropic       (api.anthropic.com — via proxy)", "[5]".cyan());
+    println!(
+        "   {} Anthropic       (api.anthropic.com — via proxy)",
+        "[5]".cyan()
+    );
     println!("   {} Local/Custom    (specify URL)", "[6]".cyan());
     println!();
 
     let provider_choice = prompt("  Select [1-6]: ").unwrap_or_default();
     let (base_url, provider_name, key_hint) = match provider_choice.trim() {
-        "1" => (None, "GitHub Copilot", "GitHub PAT (starts with ghu_ or ghp_)"),
-        "2" => (Some("https://generativelanguage.googleapis.com/v1beta/openai".to_string()), "Google Gemini", "Gemini API key (starts with AIza)"),
-        "3" => (Some("https://api.openai.com/v1".to_string()), "OpenAI", "OpenAI API key (starts with sk-)"),
-        "4" => (Some("https://openrouter.ai/api/v1".to_string()), "OpenRouter", "OpenRouter key (starts with sk-or-)"),
-        "5" => (Some("https://api.anthropic.com/v1".to_string()), "Anthropic", "Anthropic key"),
+        "1" => (
+            None,
+            "GitHub Copilot",
+            "GitHub PAT (starts with ghu_ or ghp_)",
+        ),
+        "2" => (
+            Some("https://generativelanguage.googleapis.com/v1beta/openai".to_string()),
+            "Google Gemini",
+            "Gemini API key (starts with AIza)",
+        ),
+        "3" => (
+            Some("https://api.openai.com/v1".to_string()),
+            "OpenAI",
+            "OpenAI API key (starts with sk-)",
+        ),
+        "4" => (
+            Some("https://openrouter.ai/api/v1".to_string()),
+            "OpenRouter",
+            "OpenRouter key (starts with sk-or-)",
+        ),
+        "5" => (
+            Some("https://api.anthropic.com/v1".to_string()),
+            "Anthropic",
+            "Anthropic key",
+        ),
         "6" => {
             let url = prompt("  Enter base URL: ").unwrap_or_default();
             (Some(url.trim().to_string()), "Custom", "API key")
         }
         _ => {
             println!("  {} Defaulting to GitHub Copilot", "⚠".yellow());
-            (None, "GitHub Copilot", "GitHub PAT (starts with ghu_ or ghp_)")
+            (
+                None,
+                "GitHub Copilot",
+                "GitHub PAT (starts with ghu_ or ghp_)",
+            )
         }
     };
 
     let base_url_display = base_url.as_deref().unwrap_or("(auto — Copilot endpoint)");
-    println!("  {} Selected: {} ({})", "✓".green(), provider_name, base_url_display.dimmed());
+    println!(
+        "  {} Selected: {} ({})",
+        "✓".green(),
+        provider_name,
+        base_url_display.dimmed()
+    );
     println!();
 
     // 2. API Key
@@ -48,9 +88,16 @@ pub async fn run_setup() {
     println!("   {}", format!("Hint: {}", key_hint).dimmed());
     let api_key = prompt("  API key: ").unwrap_or_default().trim().to_string();
     if api_key.is_empty() {
-        println!("  {} No API key provided. You can set it later via RUNE_API_KEY.", "⚠".yellow());
+        println!(
+            "  {} No API key provided. You can set it later via RUNE_API_KEY.",
+            "⚠".yellow()
+        );
     } else {
-        println!("  {} API key set ({}...)", "✓".green(), &api_key[..api_key.len().min(8)]);
+        println!(
+            "  {} API key set ({}...)",
+            "✓".green(),
+            &api_key[..api_key.len().min(8)]
+        );
     }
     println!();
 
@@ -58,7 +105,10 @@ pub async fn run_setup() {
     println!("{}", "3. Choose a model:".bold());
     match provider_choice.trim() {
         "1" => {
-            println!("   {} gpt-4o          (powerful, recommended)", "[1]".cyan());
+            println!(
+                "   {} gpt-4o          (powerful, recommended)",
+                "[1]".cyan()
+            );
             println!("   {} gpt-4o-mini     (fast, cheap)", "[2]".cyan());
             println!("   {} claude-3.5-sonnet", "[3]".cyan());
             println!("   {} Custom", "[4]".cyan());
@@ -101,8 +151,15 @@ pub async fn run_setup() {
         ("4", "3") => "google/gemini-pro".to_string(),
         (_, choice) if !choice.is_empty() && !["3", "4"].contains(&choice) => choice.to_string(),
         _ => {
-            let custom = prompt("  Model name: ").unwrap_or_default().trim().to_string();
-            if custom.is_empty() { "gpt-4o".to_string() } else { custom }
+            let custom = prompt("  Model name: ")
+                .unwrap_or_default()
+                .trim()
+                .to_string();
+            if custom.is_empty() {
+                "gpt-4o".to_string()
+            } else {
+                custom
+            }
         }
     };
     println!("  {} Model: {}", "✓".green(), model.green());
@@ -161,18 +218,36 @@ pub async fn run_setup() {
 
     // Create directory and write
     if let Err(e) = std::fs::create_dir_all(&config_dir) {
-        eprintln!("  {} Failed to create {}: {}", "✗".red(), config_dir.display(), e);
+        eprintln!(
+            "  {} Failed to create {}: {}",
+            "✗".red(),
+            config_dir.display(),
+            e
+        );
         return;
     }
     if let Err(e) = std::fs::write(&config_path, &toml_content) {
-        eprintln!("  {} Failed to write {}: {}", "✗".red(), config_path.display(), e);
+        eprintln!(
+            "  {} Failed to write {}: {}",
+            "✗".red(),
+            config_path.display(),
+            e
+        );
         return;
     }
 
     println!();
-    println!("  {} Configuration saved to {}", "✓".green().bold(), config_path.display().to_string().green());
+    println!(
+        "  {} Configuration saved to {}",
+        "✓".green().bold(),
+        config_path.display().to_string().green()
+    );
     println!();
-    println!("  {} Run {} to start using Rune!", "🎉", "rune".cyan().bold());
+    println!(
+        "  {} Run {} to start using Rune!",
+        "🎉",
+        "rune".cyan().bold()
+    );
     println!();
 }
 

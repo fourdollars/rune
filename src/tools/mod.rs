@@ -15,10 +15,16 @@ pub struct ToolOutput {
 
 impl ToolOutput {
     fn ok(content: impl Into<String>) -> Self {
-        Self { content: content.into(), is_error: false }
+        Self {
+            content: content.into(),
+            is_error: false,
+        }
     }
     fn err(content: impl Into<String>) -> Self {
-        Self { content: content.into(), is_error: true }
+        Self {
+            content: content.into(),
+            is_error: true,
+        }
     }
 }
 
@@ -36,7 +42,16 @@ pub struct ToolRegistry {
 
 impl ToolRegistry {
     pub fn new(allowed_dirs: Vec<PathBuf>) -> Self {
-        Self { allowed_dirs, allowed_domains: Vec::new(), policy_mode: "confirm".to_string(), policy_allowed_commands: Vec::new(), policy_denied_syscalls: Vec::new(), policy_denied_paths: Vec::new(), policy_allowed_paths_rw: Vec::new(), policy_allowed_paths_ro: Vec::new() }
+        Self {
+            allowed_dirs,
+            allowed_domains: Vec::new(),
+            policy_mode: "confirm".to_string(),
+            policy_allowed_commands: Vec::new(),
+            policy_denied_syscalls: Vec::new(),
+            policy_denied_paths: Vec::new(),
+            policy_allowed_paths_rw: Vec::new(),
+            policy_allowed_paths_ro: Vec::new(),
+        }
     }
 
     /// Set allowed network domains (for fetch_url / execute_cmd network access).
@@ -52,7 +67,7 @@ impl ToolRegistry {
     }
 
     /// Set command execution policy.
-        pub fn set_policy(&mut self, policy: &crate::config::PolicyConfig) {
+    pub fn set_policy(&mut self, policy: &crate::config::PolicyConfig) {
         self.policy_mode = policy.mode.clone();
         self.policy_allowed_commands = policy.allowed_commands.clone();
         self.policy_denied_syscalls = policy.denied_syscalls.clone();
@@ -87,7 +102,10 @@ impl ToolRegistry {
                     result.stdout.clone()
                 };
                 if result.exit_code != 0 {
-                    ToolOutput::err(format!("exit_code: {}\nstdout: {}\nstderr: {}", result.exit_code, result.stdout, result.stderr))
+                    ToolOutput::err(format!(
+                        "exit_code: {}\nstdout: {}\nstderr: {}",
+                        result.exit_code, result.stdout, result.stderr
+                    ))
                 } else {
                     ToolOutput::ok(output)
                 }
@@ -204,11 +222,18 @@ impl ToolRegistry {
         };
         // Check path policy
         if self.is_path_denied(path) {
-            return ToolOutput::err(format!("BLOCKED by policy: path '{}' is in denied_paths", path));
+            return ToolOutput::err(format!(
+                "BLOCKED by policy: path '{}' is in denied_paths",
+                path
+            ));
         }
 
         info!(path = %path, "read_file (sandboxed)");
-        let cmd = format!("head -c {} '{}'", MAX_FILE_SIZE, path.replace('\'', "'\\''"));
+        let cmd = format!(
+            "head -c {} '{}'",
+            MAX_FILE_SIZE,
+            path.replace('\'', "'\\''")
+        );
         let result = self.sandboxed_cmd(&cmd, 10).await;
         if result.is_error {
             return result;
@@ -231,10 +256,18 @@ impl ToolRegistry {
         };
         // Check path policy
         if self.is_path_denied(path) {
-            return ToolOutput::err(format!("BLOCKED by policy: path '{}' is in denied_paths", path));
+            return ToolOutput::err(format!(
+                "BLOCKED by policy: path '{}' is in denied_paths",
+                path
+            ));
         }
-        if !self.policy_allowed_paths_rw.is_empty() && !self.is_path_in_list(path, &self.policy_allowed_paths_rw) {
-            return ToolOutput::err(format!("BLOCKED by policy: path '{}' is not in allowed_paths_rw", path));
+        if !self.policy_allowed_paths_rw.is_empty()
+            && !self.is_path_in_list(path, &self.policy_allowed_paths_rw)
+        {
+            return ToolOutput::err(format!(
+                "BLOCKED by policy: path '{}' is not in allowed_paths_rw",
+                path
+            ));
         }
 
         info!(path = %path, bytes = content.len(), "write_file (sandboxed)");
@@ -266,7 +299,8 @@ impl ToolRegistry {
             Some(c) => c.to_string(),
             None => return ToolOutput::err("missing required argument: cmd"),
         };
-        let timeout_secs = args.get("timeout_secs")
+        let timeout_secs = args
+            .get("timeout_secs")
             .and_then(|v| v.as_u64())
             .unwrap_or(30);
 
@@ -315,7 +349,10 @@ impl ToolRegistry {
             return result;
         }
         if result.content.len() > MAX_FILE_SIZE {
-            ToolOutput::ok(format!("{}\n[Content Truncated at 32KB]", &result.content[..MAX_FILE_SIZE]))
+            ToolOutput::ok(format!(
+                "{}\n[Content Truncated at 32KB]",
+                &result.content[..MAX_FILE_SIZE]
+            ))
         } else {
             result
         }
@@ -348,7 +385,8 @@ impl ToolRegistry {
 fn extract_command_binaries(cmd: &str) -> Vec<String> {
     let mut binaries = Vec::new();
     // Split on shell separators
-    let parts: Vec<&str> = cmd.split(|c| c == ';' || c == '|' || c == '&')
+    let parts: Vec<&str> = cmd
+        .split(|c| c == ';' || c == '|' || c == '&')
         .filter(|s| !s.trim().is_empty())
         .collect();
     for part in parts {
@@ -364,12 +402,17 @@ fn extract_command_binaries(cmd: &str) -> Vec<String> {
 /// Extract domain from a URL string.
 fn extract_domain(url: &str) -> Option<String> {
     // Simple extraction: strip scheme, take host part
-    let without_scheme = url.strip_prefix("https://")
+    let without_scheme = url
+        .strip_prefix("https://")
         .or_else(|| url.strip_prefix("http://"))
         .unwrap_or(url);
     let host = without_scheme.split('/').next()?;
     let domain = host.split(':').next()?; // strip port
-    if domain.is_empty() { None } else { Some(domain.to_string()) }
+    if domain.is_empty() {
+        None
+    } else {
+        Some(domain.to_string())
+    }
 }
 
 #[cfg(test)]
@@ -378,8 +421,14 @@ mod tests {
 
     #[test]
     fn test_extract_domain() {
-        assert_eq!(extract_domain("https://example.com/path"), Some("example.com".to_string()));
-        assert_eq!(extract_domain("http://api.github.com:443/v1"), Some("api.github.com".to_string()));
+        assert_eq!(
+            extract_domain("https://example.com/path"),
+            Some("example.com".to_string())
+        );
+        assert_eq!(
+            extract_domain("http://api.github.com:443/v1"),
+            Some("api.github.com".to_string())
+        );
         assert_eq!(extract_domain("https://"), None);
     }
 }

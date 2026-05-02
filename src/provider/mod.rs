@@ -1,10 +1,10 @@
 use anyhow::{anyhow, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::pin::Pin;
 use std::future::Future;
-use tokio::process::Command;
+use std::pin::Pin;
 use std::process::Stdio;
+use tokio::process::Command;
 use tracing::{debug, info};
 
 /// LLM request payload.
@@ -66,7 +66,10 @@ pub struct TokenUsage {
 /// Provider trait.
 pub trait Provider: Send + Sync {
     fn name(&self) -> &str;
-    fn chat(&self, request: LlmRequest) -> Pin<Box<dyn Future<Output = Result<LlmResponse>> + Send + '_>>;
+    fn chat(
+        &self,
+        request: LlmRequest,
+    ) -> Pin<Box<dyn Future<Output = Result<LlmResponse>> + Send + '_>>;
 }
 
 /// OpenAI-compatible provider (works with OpenAI, Anthropic proxies, local servers).
@@ -79,7 +82,11 @@ pub struct OpenAiProvider {
 impl OpenAiProvider {
     pub fn new(name: String, api_key: String, base_url: Option<String>) -> Self {
         let base = base_url.unwrap_or_else(|| "https://api.openai.com/v1".to_string());
-        OpenAiProvider { api_key, base_url: base, provider_name: name }
+        OpenAiProvider {
+            api_key,
+            base_url: base,
+            provider_name: name,
+        }
     }
 }
 
@@ -88,7 +95,10 @@ impl Provider for OpenAiProvider {
         &self.provider_name
     }
 
-    fn chat(&self, request: LlmRequest) -> Pin<Box<dyn Future<Output = Result<LlmResponse>> + Send + '_>> {
+    fn chat(
+        &self,
+        request: LlmRequest,
+    ) -> Pin<Box<dyn Future<Output = Result<LlmResponse>> + Send + '_>> {
         let api_key = self.api_key.clone();
         let base_url = self.base_url.clone();
 
@@ -103,17 +113,24 @@ impl Provider for OpenAiProvider {
 
             // Use a temp file to pass the payload to curl (avoids shell escaping issues)
             let tmp_path = format!("/tmp/rune_llm_req_{}.json", std::process::id());
-            tokio::fs::write(&tmp_path, &payload).await
+            tokio::fs::write(&tmp_path, &payload)
+                .await
                 .map_err(|e| anyhow!("failed to write temp payload: {}", e))?;
 
             let output = Command::new("curl")
                 .args([
-                    "-s", "-S",
-                    "-X", "POST",
-                    "-H", "Content-Type: application/json",
-                    "-H", &format!("Authorization: Bearer {}", api_key),
-                    "-d", &format!("@{}", tmp_path),
-                    "--max-time", "120",
+                    "-s",
+                    "-S",
+                    "-X",
+                    "POST",
+                    "-H",
+                    "Content-Type: application/json",
+                    "-H",
+                    &format!("Authorization: Bearer {}", api_key),
+                    "-d",
+                    &format!("@{}", tmp_path),
+                    "--max-time",
+                    "120",
                     &url,
                 ])
                 .stdout(Stdio::piped())
@@ -129,32 +146,51 @@ impl Provider for OpenAiProvider {
             let stderr = String::from_utf8_lossy(&output.stderr).to_string();
 
             if !output.status.success() {
-                return Err(anyhow!("curl failed (exit {:?}): {}", output.status.code(), stderr));
+                return Err(anyhow!(
+                    "curl failed (exit {:?}): {}",
+                    output.status.code(),
+                    stderr
+                ));
             }
 
             // Parse response JSON
-            let v: Value = serde_json::from_str(&stdout)
-                .map_err(|e| anyhow!("failed to parse response JSON: {}\nraw: {}", e, &stdout[..stdout.len().min(500)]))?;
+            let v: Value = serde_json::from_str(&stdout).map_err(|e| {
+                anyhow!(
+                    "failed to parse response JSON: {}\nraw: {}",
+                    e,
+                    &stdout[..stdout.len().min(500)]
+                )
+            })?;
 
             // Check for API error
             if let Some(err) = v.get("error") {
-                let msg = err.get("message").and_then(|m| m.as_str()).unwrap_or("unknown error");
+                let msg = err
+                    .get("message")
+                    .and_then(|m| m.as_str())
+                    .unwrap_or("unknown error");
                 return Err(anyhow!("API error: {}", msg));
             }
 
             // Extract model
-            let model = v.get("model").and_then(|m| m.as_str()).unwrap_or("").to_string();
+            let model = v
+                .get("model")
+                .and_then(|m| m.as_str())
+                .unwrap_or("")
+                .to_string();
 
             // Extract from choices[0].message
-            let message = v.get("choices")
+            let message = v
+                .get("choices")
                 .and_then(|c| c.get(0))
                 .and_then(|first| first.get("message"));
 
-            let content = message
-                .and_then(|m| m.get("content"))
-                .and_then(|c| {
-                    if c.is_null() { None } else { c.as_str().map(|s| s.to_string()) }
-                });
+            let content = message.and_then(|m| m.get("content")).and_then(|c| {
+                if c.is_null() {
+                    None
+                } else {
+                    c.as_str().map(|s| s.to_string())
+                }
+            });
 
             // Parse tool_calls from response
             let tool_calls: Vec<LlmToolCall> = message
@@ -169,14 +205,20 @@ impl Provider for OpenAiProvider {
                 .unwrap_or_default();
 
             // Parse usage
-            let usage = v.get("usage")
+            let usage = v
+                .get("usage")
                 .and_then(|u| serde_json::from_value::<TokenUsage>(u.clone()).ok())
                 .unwrap_or_default();
 
             debug!(model = %model, content_len = content.as_ref().map(|c| c.len()).unwrap_or(0),
                    tool_calls = tool_calls.len(), tokens = usage.total_tokens, "LLM response received");
 
-            Ok(LlmResponse { content, tool_calls, usage, model })
+            Ok(LlmResponse {
+                content,
+                tool_calls,
+                usage,
+                model,
+            })
         })
     }
 }
@@ -208,7 +250,8 @@ impl CopilotProvider {
                     .duration_since(std::time::UNIX_EPOCH)
                     .unwrap_or_default()
                     .as_secs();
-                if now < expires_at - 60 { // refresh 60s before expiry
+                if now < expires_at - 60 {
+                    // refresh 60s before expiry
                     return Ok((token.clone(), endpoint.clone()));
                 }
             }
@@ -219,9 +262,12 @@ impl CopilotProvider {
         let output = Command::new("curl")
             .args([
                 "-sS",
-                "--max-time", "10",
-                "-H", &format!("Authorization: token {}", self.pat),
-                "-H", "editor-version: vscode/1.96.0",
+                "--max-time",
+                "10",
+                "-H",
+                &format!("Authorization: token {}", self.pat),
+                "-H",
+                "editor-version: vscode/1.96.0",
                 "https://api.github.com/copilot_internal/v2/token",
             ])
             .stdout(Stdio::piped())
@@ -235,19 +281,24 @@ impl CopilotProvider {
             return Err(anyhow!("copilot token refresh failed: {}", stdout));
         }
 
-        let v: serde_json::Value = serde_json::from_str(&stdout)
-            .map_err(|e| anyhow!("failed to parse token response: {}\nraw: {}", e, &stdout[..stdout.len().min(200)]))?;
+        let v: serde_json::Value = serde_json::from_str(&stdout).map_err(|e| {
+            anyhow!(
+                "failed to parse token response: {}\nraw: {}",
+                e,
+                &stdout[..stdout.len().min(200)]
+            )
+        })?;
 
-        let token = v.get("token")
+        let token = v
+            .get("token")
             .and_then(|t| t.as_str())
             .ok_or_else(|| anyhow!("no token in response"))?
             .to_string();
 
-        let expires_at = v.get("expires_at")
-            .and_then(|e| e.as_u64())
-            .unwrap_or(0);
+        let expires_at = v.get("expires_at").and_then(|e| e.as_u64()).unwrap_or(0);
 
-        let endpoint = v.get("endpoints")
+        let endpoint = v
+            .get("endpoints")
             .and_then(|e| e.get("api"))
             .and_then(|a| a.as_str())
             .unwrap_or("https://api.githubcopilot.com")
@@ -272,7 +323,10 @@ impl Provider for CopilotProvider {
         &self.provider_name
     }
 
-    fn chat(&self, request: LlmRequest) -> Pin<Box<dyn Future<Output = Result<LlmResponse>> + Send + '_>> {
+    fn chat(
+        &self,
+        request: LlmRequest,
+    ) -> Pin<Box<dyn Future<Output = Result<LlmResponse>> + Send + '_>> {
         Box::pin(async move {
             let (token, endpoint) = self.get_token().await?;
 
@@ -281,18 +335,25 @@ impl Provider for CopilotProvider {
 
             let url = format!("{}/chat/completions", endpoint.trim_end_matches('/'));
             let tmp_path = format!("/tmp/rune_copilot_req_{}.json", std::process::id());
-            tokio::fs::write(&tmp_path, &payload).await
+            tokio::fs::write(&tmp_path, &payload)
+                .await
                 .map_err(|e| anyhow!("failed to write temp payload: {}", e))?;
 
             let output = Command::new("curl")
                 .args([
                     "-sS",
-                    "-X", "POST",
-                    "-H", "Content-Type: application/json",
-                    "-H", &format!("Authorization: Bearer {}", token),
-                    "-H", "editor-version: vscode/1.96.0",
-                    "-d", &format!("@{}", tmp_path),
-                    "--max-time", "120",
+                    "-X",
+                    "POST",
+                    "-H",
+                    "Content-Type: application/json",
+                    "-H",
+                    &format!("Authorization: Bearer {}", token),
+                    "-H",
+                    "editor-version: vscode/1.96.0",
+                    "-d",
+                    &format!("@{}", tmp_path),
+                    "--max-time",
+                    "120",
                     &url,
                 ])
                 .stdout(Stdio::piped())
@@ -306,36 +367,63 @@ impl Provider for CopilotProvider {
             let stdout = String::from_utf8_lossy(&output.stdout).to_string();
             if !output.status.success() {
                 let stderr = String::from_utf8_lossy(&output.stderr).to_string();
-                return Err(anyhow!("curl failed (exit {:?}): {}", output.status.code(), stderr));
+                return Err(anyhow!(
+                    "curl failed (exit {:?}): {}",
+                    output.status.code(),
+                    stderr
+                ));
             }
 
-            let v: serde_json::Value = serde_json::from_str(&stdout)
-                .map_err(|e| anyhow!("failed to parse response: {}\nraw: {}", e, &stdout[..stdout.len().min(500)]))?;
+            let v: serde_json::Value = serde_json::from_str(&stdout).map_err(|e| {
+                anyhow!(
+                    "failed to parse response: {}\nraw: {}",
+                    e,
+                    &stdout[..stdout.len().min(500)]
+                )
+            })?;
 
             if let Some(err) = v.get("error") {
-                let msg = err.get("message").and_then(|m| m.as_str()).unwrap_or("unknown error");
+                let msg = err
+                    .get("message")
+                    .and_then(|m| m.as_str())
+                    .unwrap_or("unknown error");
                 return Err(anyhow!("Copilot API error: {}", msg));
             }
 
-            let model = v.get("model").and_then(|m| m.as_str()).unwrap_or("").to_string();
-            let message = v.get("choices")
+            let model = v
+                .get("model")
+                .and_then(|m| m.as_str())
+                .unwrap_or("")
+                .to_string();
+            let message = v
+                .get("choices")
                 .and_then(|c| c.get(0))
                 .and_then(|first| first.get("message"));
 
-            let content = message
-                .and_then(|m| m.get("content"))
-                .and_then(|c| if c.is_null() { None } else { c.as_str().map(|s| s.to_string()) });
+            let content = message.and_then(|m| m.get("content")).and_then(|c| {
+                if c.is_null() {
+                    None
+                } else {
+                    c.as_str().map(|s| s.to_string())
+                }
+            });
 
             let tool_calls: Vec<LlmToolCall> = message
                 .and_then(|m| m.get("tool_calls"))
                 .and_then(|tc| serde_json::from_value::<Vec<LlmToolCall>>(tc.clone()).ok())
                 .unwrap_or_default();
 
-            let usage = v.get("usage")
+            let usage = v
+                .get("usage")
                 .and_then(|u| serde_json::from_value::<TokenUsage>(u.clone()).ok())
                 .unwrap_or_default();
 
-            Ok(LlmResponse { content, tool_calls, usage, model })
+            Ok(LlmResponse {
+                content,
+                tool_calls,
+                usage,
+                model,
+            })
         })
     }
 }
@@ -355,7 +443,10 @@ fn is_transient_error(err: &anyhow::Error) -> bool {
 
 impl ProviderRegistry {
     pub fn new() -> Self {
-        ProviderRegistry { providers: Vec::new(), default_provider: 0 }
+        ProviderRegistry {
+            providers: Vec::new(),
+            default_provider: 0,
+        }
     }
 
     pub fn register(&mut self, provider: Box<dyn Provider>) {
@@ -389,7 +480,12 @@ impl ProviderRegistry {
                     Ok(_) => break,
                     Err(e) if is_transient_error(e) && retry < 3 => {
                         let delay = retry_delays[retry as usize];
-                        debug!(provider = provider.name(), retry, delay_ms = delay, "retrying after transient error");
+                        debug!(
+                            provider = provider.name(),
+                            retry,
+                            delay_ms = delay,
+                            "retrying after transient error"
+                        );
                         tokio::time::sleep(std::time::Duration::from_millis(delay)).await;
                     }
                     Err(_) => break,
@@ -427,21 +523,51 @@ impl ProviderRegistry {
 mod tests {
     use super::*;
 
-    struct FailingProvider { name: String, msg: String }
-    impl FailingProvider { fn new(name: &str, msg: &str) -> Self { Self { name: name.to_string(), msg: msg.to_string() } } }
+    struct FailingProvider {
+        name: String,
+        msg: String,
+    }
+    impl FailingProvider {
+        fn new(name: &str, msg: &str) -> Self {
+            Self {
+                name: name.to_string(),
+                msg: msg.to_string(),
+            }
+        }
+    }
     impl Provider for FailingProvider {
-        fn name(&self) -> &str { &self.name }
-        fn chat(&self, _request: LlmRequest) -> Pin<Box<dyn Future<Output = Result<LlmResponse>> + Send + '_>> {
+        fn name(&self) -> &str {
+            &self.name
+        }
+        fn chat(
+            &self,
+            _request: LlmRequest,
+        ) -> Pin<Box<dyn Future<Output = Result<LlmResponse>> + Send + '_>> {
             let msg = self.msg.clone();
             Box::pin(async move { Err(anyhow!(msg)) })
         }
     }
 
-    struct SucceedProvider { name: String, resp: LlmResponse }
-    impl SucceedProvider { fn new(name: &str, resp: LlmResponse) -> Self { Self { name: name.to_string(), resp } } }
+    struct SucceedProvider {
+        name: String,
+        resp: LlmResponse,
+    }
+    impl SucceedProvider {
+        fn new(name: &str, resp: LlmResponse) -> Self {
+            Self {
+                name: name.to_string(),
+                resp,
+            }
+        }
+    }
     impl Provider for SucceedProvider {
-        fn name(&self) -> &str { &self.name }
-        fn chat(&self, _request: LlmRequest) -> Pin<Box<dyn Future<Output = Result<LlmResponse>> + Send + '_>> {
+        fn name(&self) -> &str {
+            &self.name
+        }
+        fn chat(
+            &self,
+            _request: LlmRequest,
+        ) -> Pin<Box<dyn Future<Output = Result<LlmResponse>> + Send + '_>> {
             let r = self.resp.clone();
             Box::pin(async move { Ok(r) })
         }
@@ -450,22 +576,48 @@ mod tests {
     #[tokio::test]
     async fn test_provider_registry_transient_fallback() {
         let mut reg = ProviderRegistry::new();
-        reg.register(Box::new(FailingProvider::new("fail", "timeout talking to provider")));
-        let resp = LlmResponse { content: Some("ok".into()), tool_calls: vec![], usage: TokenUsage::default(), model: "m1".into() };
+        reg.register(Box::new(FailingProvider::new(
+            "fail",
+            "timeout talking to provider",
+        )));
+        let resp = LlmResponse {
+            content: Some("ok".into()),
+            tool_calls: vec![],
+            usage: TokenUsage::default(),
+            model: "m1".into(),
+        };
         reg.register(Box::new(SucceedProvider::new("succ", resp)));
 
-        let req = LlmRequest { model: "m".into(), messages: vec![], tools: None, max_tokens: None };
-        let res = reg.chat(req).await.expect("transient fallback should succeed");
+        let req = LlmRequest {
+            model: "m".into(),
+            messages: vec![],
+            tools: None,
+            max_tokens: None,
+        };
+        let res = reg
+            .chat(req)
+            .await
+            .expect("transient fallback should succeed");
         assert_eq!(res.content, Some("ok".to_string()));
     }
 
     #[tokio::test]
     async fn test_chat_with_specific_provider() {
         let mut reg = ProviderRegistry::new();
-        let resp = LlmResponse { content: Some("hello".into()), tool_calls: vec![], usage: TokenUsage::default(), model: "m1".into() };
+        let resp = LlmResponse {
+            content: Some("hello".into()),
+            tool_calls: vec![],
+            usage: TokenUsage::default(),
+            model: "m1".into(),
+        };
         reg.register(Box::new(SucceedProvider::new("p1", resp)));
 
-        let req = LlmRequest { model: "m".into(), messages: vec![], tools: None, max_tokens: None };
+        let req = LlmRequest {
+            model: "m".into(),
+            messages: vec![],
+            tools: None,
+            max_tokens: None,
+        };
         let res = reg.chat_with("p1", req).await.expect("should find p1");
         assert_eq!(res.content, Some("hello".to_string()));
     }
@@ -474,19 +626,39 @@ mod tests {
     async fn test_provider_registry_permanent_failure_no_fallback() {
         struct PermanentFailProvider;
         impl Provider for PermanentFailProvider {
-            fn name(&self) -> &str { "perm" }
-            fn chat(&self, _request: LlmRequest) -> Pin<Box<dyn Future<Output = Result<LlmResponse>> + Send + '_>> {
-                Box::pin(async move { Err(anyhow!("failed to parse response: expected value at line 1 column 1 raw: Unprocessable Entity")) })
+            fn name(&self) -> &str {
+                "perm"
+            }
+            fn chat(
+                &self,
+                _request: LlmRequest,
+            ) -> Pin<Box<dyn Future<Output = Result<LlmResponse>> + Send + '_>> {
+                Box::pin(async move {
+                    Err(anyhow!("failed to parse response: expected value at line 1 column 1 raw: Unprocessable Entity"))
+                })
             }
         }
 
         let mut reg = ProviderRegistry::new();
         reg.register(Box::new(PermanentFailProvider));
-        let resp = LlmResponse { content: Some("ok".into()), tool_calls: vec![], usage: TokenUsage::default(), model: "m1".into() };
+        let resp = LlmResponse {
+            content: Some("ok".into()),
+            tool_calls: vec![],
+            usage: TokenUsage::default(),
+            model: "m1".into(),
+        };
         reg.register(Box::new(SucceedProvider::new("succ", resp)));
 
-        let req = LlmRequest { model: "m".into(), messages: vec![], tools: None, max_tokens: None };
-        let err = reg.chat(req).await.expect_err("permanent failure should not fallback");
+        let req = LlmRequest {
+            model: "m".into(),
+            messages: vec![],
+            tools: None,
+            max_tokens: None,
+        };
+        let err = reg
+            .chat(req)
+            .await
+            .expect_err("permanent failure should not fallback");
         assert!(err.to_string().contains("failed to parse response"));
     }
 }

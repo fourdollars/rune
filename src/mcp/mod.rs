@@ -1,7 +1,6 @@
 use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::path::PathBuf;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, ChildStdin, ChildStdout, Command};
 use tracing::{debug, error, info, warn};
@@ -103,11 +102,14 @@ impl McpClient {
             }
         }
 
-        let mut child = cmd.spawn()
+        let mut child = cmd
+            .spawn()
             .with_context(|| format!("failed to start MCP server '{}'", self.config.name))?;
 
         self.stdin = child.stdin.take();
-        let stdout = child.stdout.take()
+        let stdout = child
+            .stdout
+            .take()
             .ok_or_else(|| anyhow::anyhow!("no stdout for MCP server '{}'", self.config.name))?;
         self.stdout_reader = Some(BufReader::new(stdout));
         self.child = Some(child);
@@ -132,25 +134,27 @@ impl McpClient {
             params,
         };
 
-        let mut payload = serde_json::to_string(&request)
-            .context("failed to serialize JSON-RPC request")?;
+        let mut payload =
+            serde_json::to_string(&request).context("failed to serialize JSON-RPC request")?;
         payload.push('\n');
 
         debug!(server = %self.config.name, method, id, "sending JSON-RPC request");
 
-        let stdin = self.stdin.as_mut()
-            .ok_or_else(|| anyhow::anyhow!("MCP server '{}' stdin not available", self.config.name))?;
-        stdin.write_all(payload.as_bytes()).await
+        let stdin = self.stdin.as_mut().ok_or_else(|| {
+            anyhow::anyhow!("MCP server '{}' stdin not available", self.config.name)
+        })?;
+        stdin
+            .write_all(payload.as_bytes())
+            .await
             .context("failed to write to MCP server stdin")?;
         stdin.flush().await?;
 
         // Read response line
-        let reader = self.stdout_reader.as_mut()
-            .ok_or_else(|| anyhow::anyhow!("MCP server '{}' stdout not available", self.config.name))?;
+        let reader = self.stdout_reader.as_mut().ok_or_else(|| {
+            anyhow::anyhow!("MCP server '{}' stdout not available", self.config.name)
+        })?;
 
-        let timeout = std::time::Duration::from_secs(
-            self.config.timeout_secs.unwrap_or(30),
-        );
+        let timeout = std::time::Duration::from_secs(self.config.timeout_secs.unwrap_or(30));
 
         let line = tokio::time::timeout(timeout, async {
             let mut buf = String::new();
@@ -247,7 +251,12 @@ impl McpClient {
         let resp = self.send_request("tools/call", Some(params)).await?;
 
         if let Some(err) = resp.error {
-            bail!("tools/call '{}' error: {} (code {})", name, err.message, err.code);
+            bail!(
+                "tools/call '{}' error: {} (code {})",
+                name,
+                err.message,
+                err.code
+            );
         }
 
         Ok(resp.result.unwrap_or(serde_json::Value::Null))
@@ -282,7 +291,7 @@ impl McpClient {
     pub fn is_running(&mut self) -> bool {
         if let Some(child) = &mut self.child {
             match child.try_wait() {
-                Ok(None) => true,   // still running
+                Ok(None) => true, // still running
                 Ok(Some(_)) => false,
                 Err(_) => false,
             }
@@ -304,7 +313,9 @@ pub struct McpManager {
 
 impl McpManager {
     pub fn new() -> Self {
-        Self { clients: Vec::new() }
+        Self {
+            clients: Vec::new(),
+        }
     }
 
     /// Start all configured MCP servers.
@@ -369,7 +380,9 @@ impl McpManager {
         arguments: serde_json::Value,
     ) -> Result<serde_json::Value> {
         // Find which client owns this tool
-        let idx = self.clients.iter()
+        let idx = self
+            .clients
+            .iter()
             .position(|c| c.tools.iter().any(|t| t.name == name));
 
         match idx {
@@ -390,7 +403,8 @@ impl McpManager {
 
     /// Health summary: (server_name, is_running).
     pub fn health_summary(&mut self) -> Vec<(String, bool)> {
-        self.clients.iter_mut()
+        self.clients
+            .iter_mut()
             .map(|c| (c.config.name.clone(), c.is_running()))
             .collect()
     }

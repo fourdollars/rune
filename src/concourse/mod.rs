@@ -50,7 +50,8 @@ fn read_to_string_from<R: Read>(mut reader: R) -> io::Result<String> {
 /// otherwise return an empty array.
 pub fn handle_check<R: Read>(reader: R) -> anyhow::Result<CheckResponse> {
     let s = read_to_string_from(reader)?;
-    let req: CheckRequest = serde_json::from_str(&s).map_err(|e| anyhow::anyhow!("invalid JSON payload (schema validation failed): {}", e))?;
+    let req: CheckRequest = serde_json::from_str(&s)
+        .map_err(|e| anyhow::anyhow!("invalid JSON payload (schema validation failed): {}", e))?;
 
     if let Some(v) = req.version {
         Ok(CheckResponse(vec![v]))
@@ -62,7 +63,8 @@ pub fn handle_check<R: Read>(reader: R) -> anyhow::Result<CheckResponse> {
 /// Handle `in` mode: return a version (echoed or generated), some metadata and the current path.
 pub fn handle_in<R: Read>(reader: R) -> anyhow::Result<InResponse> {
     let s = read_to_string_from(reader)?;
-    let req: CheckRequest = serde_json::from_str(&s).map_err(|e| anyhow::anyhow!("invalid JSON payload (schema validation failed): {}", e))?;
+    let req: CheckRequest = serde_json::from_str(&s)
+        .map_err(|e| anyhow::anyhow!("invalid JSON payload (schema validation failed): {}", e))?;
 
     let version = req
         .version
@@ -70,7 +72,8 @@ pub fn handle_in<R: Read>(reader: R) -> anyhow::Result<InResponse> {
 
     let metadata = vec![MetadataItem {
         name: "source".to_string(),
-        value: serde_json::to_string(&req.source).unwrap_or_else(|_| "<invalid-source>".to_string()),
+        value: serde_json::to_string(&req.source)
+            .unwrap_or_else(|_| "<invalid-source>".to_string()),
     }];
 
     let path = std::env::current_dir()
@@ -87,7 +90,8 @@ pub fn handle_in<R: Read>(reader: R) -> anyhow::Result<InResponse> {
 /// Handle `out` mode: return a version (echoed or generated) and metadata.
 pub fn handle_out<R: Read>(reader: R) -> anyhow::Result<OutResponse> {
     let s = read_to_string_from(reader)?;
-    let req: CheckRequest = serde_json::from_str(&s).map_err(|e| anyhow::anyhow!("invalid JSON payload (schema validation failed): {}", e))?;
+    let req: CheckRequest = serde_json::from_str(&s)
+        .map_err(|e| anyhow::anyhow!("invalid JSON payload (schema validation failed): {}", e))?;
 
     let version = req
         .version
@@ -95,7 +99,8 @@ pub fn handle_out<R: Read>(reader: R) -> anyhow::Result<OutResponse> {
 
     let metadata = vec![MetadataItem {
         name: "source".to_string(),
-        value: serde_json::to_string(&req.source).unwrap_or_else(|_| "<invalid-source>".to_string()),
+        value: serde_json::to_string(&req.source)
+            .unwrap_or_else(|_| "<invalid-source>".to_string()),
     }];
 
     Ok(OutResponse { version, metadata })
@@ -169,7 +174,10 @@ mod tests {
     #[test]
     fn test_in_out_serde_roundtrip() {
         let v = json!({"v": "1"});
-        let metadata = vec![MetadataItem { name: "k".into(), value: "v".into() }];
+        let metadata = vec![MetadataItem {
+            name: "k".into(),
+            value: "v".into(),
+        }];
         let path = "/tmp".to_string();
 
         let inresp = InResponse {

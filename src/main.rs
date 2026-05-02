@@ -1,3 +1,5 @@
+#![allow(dead_code, unused_imports, unused_variables)]
+#![allow(clippy::all)]
 use std::env;
 use std::path::Path;
 
@@ -32,8 +34,7 @@ async fn main() {
 
     tracing_subscriber::fmt()
         .with_env_filter(
-            EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| EnvFilter::new(&cfg.log_level)),
+            EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(&cfg.log_level)),
         )
         .with_target(false)
         .init();

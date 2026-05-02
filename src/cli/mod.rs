@@ -17,7 +17,8 @@ const VERSION: &str = env!("CARGO_PKG_VERSION");
 /// Print the startup banner.
 fn print_banner() {
     // Runic ASCII art banner with mystical colors
-    let rune_border = format!("        {} {} {} {} {} {} {} {} {} {} {}",
+    let rune_border = format!(
+        "        {} {} {} {} {} {} {} {} {} {} {}",
         "ᛟ".magenta(),
         "ᚺ".bright_cyan(),
         "ᛊ".blue(),
@@ -39,7 +40,8 @@ fn print_banner() {
     let line8 = format!("    │    v{:<6}⚡ sandboxed            │", VERSION);
     let line9 = r#"    │                                   │"#;
     let line10 = r#"    └───────────────────────────────────┘"#;
-    let rune_border2 = format!("        {} {} {} {} {} {} {} {} {} {} {}",
+    let rune_border2 = format!(
+        "        {} {} {} {} {} {} {} {} {} {} {}",
         "ᛟ".cyan(),
         "ᚺ".bright_magenta(),
         "ᛊ".blue(),
@@ -72,7 +74,10 @@ fn print_banner() {
 fn print_help() {
     println!("{}", "Commands:".bold());
     println!("  {}      Send a prompt to the agent", "<text>".green());
-    println!("  {}    Enter multi-line mode (end with ';;' on its own line)", "/multi".green());
+    println!(
+        "  {}    Enter multi-line mode (end with ';;' on its own line)",
+        "/multi".green()
+    );
     println!("  {}      Show current configuration", "/config".green());
     println!("  {}       List available built-in tools", "/tools".green());
     println!("  {}      List loaded skills", "/skills".green());
@@ -80,17 +85,35 @@ fn print_help() {
     println!("  {}     Show version info", "/version".green());
     println!("  {}        Clear the screen", "/clear".green());
     println!("  {}       Reset conversation history", "/reset".green());
-    println!("  {}     Compact (summarize) conversation context", "/compact".green());
-    println!("  {}      Show current session status (model, context, skills)", "/info".green());
-    println!("  {}    Show policy summary (use /policy full for details)", "/policy".green());
+    println!(
+        "  {}     Compact (summarize) conversation context",
+        "/compact".green()
+    );
+    println!(
+        "  {}      Show current session status (model, context, skills)",
+        "/info".green()
+    );
+    println!(
+        "  {}    Show policy summary (use /policy full for details)",
+        "/policy".green()
+    );
     println!("  {}   Show this help", "/help".green());
     println!("  {}  Exit the CLI", "/exit | /quit".green());
     println!();
     println!("{}", "Tips:".dimmed());
-    println!("  {} Type your prompt directly (without 'run') for quick execution", "•".dimmed());
-    println!("  {} Use @skill_name in prompts to load skill context", "•".dimmed());
+    println!(
+        "  {} Type your prompt directly (without 'run') for quick execution",
+        "•".dimmed()
+    );
+    println!(
+        "  {} Use @skill_name in prompts to load skill context",
+        "•".dimmed()
+    );
     println!("  {} Use ↑/↓ to browse previous prompts", "•".dimmed());
-    println!("  {} Set RUNE_API_KEY or --api-key to connect to an LLM provider", "•".dimmed());
+    println!(
+        "  {} Set RUNE_API_KEY or --api-key to connect to an LLM provider",
+        "•".dimmed()
+    );
     println!("  {} Ctrl+C interrupts the current agent run", "•".dimmed());
 }
 
@@ -136,8 +159,15 @@ fn display_result(reason: &StopReason) {
 fn show_config(cfg: &config::RuneConfig) {
     println!("{}", "Current Configuration:".bold());
     println!("  {}  {}", "model:".dimmed(), cfg.model.green());
-    println!("  {}  {}", "api_key:".dimmed(),
-        if cfg.api_key.is_some() { "*** (set)".to_string() } else { "(not set)".red().to_string() });
+    println!(
+        "  {}  {}",
+        "api_key:".dimmed(),
+        if cfg.api_key.is_some() {
+            "*** (set)".to_string()
+        } else {
+            "(not set)".red().to_string()
+        }
+    );
     println!("  {}  {}", "skills_dir:".dimmed(), cfg.skills_dir);
     println!("  {}  {}", "log_level:".dimmed(), cfg.log_level);
     println!("  {}  {}", "max_steps:".dimmed(), cfg.max_steps);
@@ -153,7 +183,10 @@ fn show_tools() {
     for def in &defs {
         if let Some(func) = def.get("function") {
             let name = func.get("name").and_then(|v| v.as_str()).unwrap_or("?");
-            let desc = func.get("description").and_then(|v| v.as_str()).unwrap_or("");
+            let desc = func
+                .get("description")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
             println!("  {} — {}", name.green(), desc.dimmed());
         }
     }
@@ -165,7 +198,10 @@ fn show_skills(cfg: &config::RuneConfig) {
     let loader = SkillLoader::new(search_paths);
     println!("{}", "Skill Loader:".bold());
     println!("  {} {}", "search_dir:".dimmed(), cfg.skills_dir);
-    println!("  {} Use @skill_name in prompts to load skills", "usage:".dimmed());
+    println!(
+        "  {} Use @skill_name in prompts to load skills",
+        "usage:".dimmed()
+    );
     let skill_dir = std::path::Path::new(&cfg.skills_dir);
     if skill_dir.exists() {
         if let Ok(entries) = std::fs::read_dir(skill_dir) {
@@ -208,7 +244,11 @@ fn show_info(cfg: &config::RuneConfig, agent: &crate::agent::Agent) {
         };
         println!("    {} provider: {}", "•".dimmed(), provider.green());
     } else {
-        println!("    {} provider: {}", "•".dimmed(), "(not configured)".red());
+        println!(
+            "    {} provider: {}",
+            "•".dimmed(),
+            "(not configured)".red()
+        );
     }
     println!("    {} model: {}", "•".dimmed(), cfg.model.green());
     if let Some(ref url) = cfg.base_url {
@@ -218,8 +258,18 @@ fn show_info(cfg: &config::RuneConfig, agent: &crate::agent::Agent) {
 
     // Context / Token usage
     println!("  {}", "Context:".bold());
-    println!("    {} tokens used: {} / {} (budget)", "•".dimmed(), agent.tokens_used(), cfg.token_budget);
-    println!("    {} steps: {} / {} (max)", "•".dimmed(), agent.step_count(), cfg.max_steps);
+    println!(
+        "    {} tokens used: {} / {} (budget)",
+        "•".dimmed(),
+        agent.tokens_used(),
+        cfg.token_budget
+    );
+    println!(
+        "    {} steps: {} / {} (max)",
+        "•".dimmed(),
+        agent.step_count(),
+        cfg.max_steps
+    );
     println!("    {} timeout: {}s", "•".dimmed(), cfg.timeout_secs);
     println!();
 
@@ -242,7 +292,11 @@ fn show_info(cfg: &config::RuneConfig, agent: &crate::agent::Agent) {
             }
         }
     } else {
-        println!("    {} (dir {} does not exist)", "•".dimmed(), cfg.skills_dir);
+        println!(
+            "    {} (dir {} does not exist)",
+            "•".dimmed(),
+            cfg.skills_dir
+        );
     }
     println!();
 
@@ -277,19 +331,59 @@ fn show_policy_summary(cfg: &config::RuneConfig) {
     let p = &cfg.policy;
     println!("{}", "Policy Summary:".bold());
     println!("  {} mode: {}", "•".dimmed(), p.mode.cyan());
-    println!("  {} allowed commands: {}", "•".dimmed(), if p.allowed_commands.is_empty() { "(none — all blocked in allowlist mode)".to_string() } else { format!("{}", p.allowed_commands.join(", ")) });
-    println!("  {} allowed domains: {}", "•".dimmed(), if p.allowed_domains.is_empty() { "(none — network blocked)".to_string() } else { p.allowed_domains.join(", ") });
-    println!("  {} denied syscalls: {}", "•".dimmed(), p.denied_syscalls.join(", "));
-    println!("  {} paths rw: {}", "•".dimmed(), p.allowed_paths_rw.join(", "));
-    println!("  {} paths ro: {}", "•".dimmed(), p.allowed_paths_ro.join(", "));
-    println!("  {} denied paths: {}", "•".dimmed(), p.denied_paths.join(", "));
-    println!("  {} memory limit: {}MB | max pids: {}", "•".dimmed(), p.max_memory_mb, p.max_pids);
+    println!(
+        "  {} allowed commands: {}",
+        "•".dimmed(),
+        if p.allowed_commands.is_empty() {
+            "(none — all blocked in allowlist mode)".to_string()
+        } else {
+            format!("{}", p.allowed_commands.join(", "))
+        }
+    );
+    println!(
+        "  {} allowed domains: {}",
+        "•".dimmed(),
+        if p.allowed_domains.is_empty() {
+            "(none — network blocked)".to_string()
+        } else {
+            p.allowed_domains.join(", ")
+        }
+    );
+    println!(
+        "  {} denied syscalls: {}",
+        "•".dimmed(),
+        p.denied_syscalls.join(", ")
+    );
+    println!(
+        "  {} paths rw: {}",
+        "•".dimmed(),
+        p.allowed_paths_rw.join(", ")
+    );
+    println!(
+        "  {} paths ro: {}",
+        "•".dimmed(),
+        p.allowed_paths_ro.join(", ")
+    );
+    println!(
+        "  {} denied paths: {}",
+        "•".dimmed(),
+        p.denied_paths.join(", ")
+    );
+    println!(
+        "  {} memory limit: {}MB | max pids: {}",
+        "•".dimmed(),
+        p.max_memory_mb,
+        p.max_pids
+    );
     println!();
-    println!("  {} Use {} for full sandbox status", "ℹ".cyan(), "/policy full".bold());
+    println!(
+        "  {} Use {} for full sandbox status",
+        "ℹ".cyan(),
+        "/policy full".bold()
+    );
 }
 
 fn show_policy_full(cfg: &config::RuneConfig) {
-
     println!("{}", "Sandbox & Permissions Info:".bold());
     println!();
 
@@ -303,33 +397,65 @@ fn show_policy_full(cfg: &config::RuneConfig) {
     println!("  {}", "Network Isolation:".bold());
     if unshare_ok {
         println!("    {} Active (unshare --user --net)", "✓".green());
-        println!("    {} All tool commands run in isolated network namespace", "•".dimmed());
-        println!("    {} No DNS resolution available inside sandbox", "•".dimmed());
+        println!(
+            "    {} All tool commands run in isolated network namespace",
+            "•".dimmed()
+        );
+        println!(
+            "    {} No DNS resolution available inside sandbox",
+            "•".dimmed()
+        );
         println!("    {} No outbound connections possible", "•".dimmed());
     } else {
         println!("    {} DEGRADED — unshare not available", "⚠".yellow());
-        println!("    {} Commands run WITHOUT network isolation", "•".dimmed());
+        println!(
+            "    {} Commands run WITHOUT network isolation",
+            "•".dimmed()
+        );
     }
     println!();
 
     println!("  {}", "Filesystem Access:".bold());
     println!("    {} User namespace UID remapping active", "•".dimmed());
-    println!("    {} Cannot read: /etc/shadow, /root, privileged files", "✓".green());
-    println!("    {} Cannot write: /root, /etc, system directories", "✓".green());
+    println!(
+        "    {} Cannot read: /etc/shadow, /root, privileged files",
+        "✓".green()
+    );
+    println!(
+        "    {} Cannot write: /root, /etc, system directories",
+        "✓".green()
+    );
     println!("    {} Can read: general user-readable files", "•".dimmed());
     println!("    {} Can write: /tmp, project directories", "•".dimmed());
     println!();
 
     println!("  {}", "Tool Restrictions:".bold());
-    println!("    {} read_file    — sandboxed, 32KB truncation", "•".dimmed());
-    println!("    {} write_file   — sandboxed, allowed dirs only", "•".dimmed());
+    println!(
+        "    {} read_file    — sandboxed, 32KB truncation",
+        "•".dimmed()
+    );
+    println!(
+        "    {} write_file   — sandboxed, allowed dirs only",
+        "•".dimmed()
+    );
     println!("    {} list_dir     — sandboxed", "•".dimmed());
-    println!("    {} execute_cmd — sandboxed, network blocked", "•".dimmed());
-    println!("    {} fetch_url    — sandboxed, {} (network blocked)", "•".dimmed(), "ALWAYS FAILS".red());
+    println!(
+        "    {} execute_cmd — sandboxed, network blocked",
+        "•".dimmed()
+    );
+    println!(
+        "    {} fetch_url    — sandboxed, {} (network blocked)",
+        "•".dimmed(),
+        "ALWAYS FAILS".red()
+    );
     println!();
 
     println!("  {}", "Timeouts:".bold());
-    println!("    {} Default command timeout: {}s", "•".dimmed(), cfg.timeout_secs);
+    println!(
+        "    {} Default command timeout: {}s",
+        "•".dimmed(),
+        cfg.timeout_secs
+    );
     println!("    {} Max agent steps: {}", "•".dimmed(), cfg.max_steps);
     println!("    {} Token budget: {}", "•".dimmed(), cfg.token_budget);
     println!();
@@ -354,12 +480,20 @@ fn show_policy_full(cfg: &config::RuneConfig) {
     if let Some(ref url) = cfg.base_url {
         println!("    {} Endpoint: {}", "•".dimmed(), url);
     }
-    println!("    {} Provider calls are NOT sandboxed (need network for LLM)", "ℹ".cyan());
+    println!(
+        "    {} Provider calls are NOT sandboxed (need network for LLM)",
+        "ℹ".cyan()
+    );
     println!();
 
     println!("  {}", "Summary:".bold());
-    println!("    Tools: network={}, filesystem={}, timeout={}s",
-        if unshare_ok { "BLOCKED".red().to_string() } else { "OPEN (degraded)".yellow().to_string() },
+    println!(
+        "    Tools: network={}, filesystem={}, timeout={}s",
+        if unshare_ok {
+            "BLOCKED".red().to_string()
+        } else {
+            "OPEN (degraded)".yellow().to_string()
+        },
         "RESTRICTED".green(),
         cfg.timeout_secs
     );
@@ -367,7 +501,10 @@ fn show_policy_full(cfg: &config::RuneConfig) {
 
 /// Read multi-line input until ";;" on its own line.
 fn read_multiline(editor: &mut DefaultEditor) -> Option<String> {
-    println!("{}", "Multi-line mode. Enter ';;' on its own line to submit:".dimmed());
+    println!(
+        "{}",
+        "Multi-line mode. Enter ';;' on its own line to submit:".dimmed()
+    );
     println!("{}", "─".repeat(40).dimmed());
 
     let mut buffer = Vec::new();
@@ -388,7 +525,11 @@ fn read_multiline(editor: &mut DefaultEditor) -> Option<String> {
         }
     }
 
-    if buffer.is_empty() { None } else { Some(buffer.join("\n")) }
+    if buffer.is_empty() {
+        None
+    } else {
+        Some(buffer.join("\n"))
+    }
 }
 
 /// Run a prompt through the agent with spinner feedback.
@@ -417,7 +558,9 @@ async fn execute_prompt(agent: &mut Agent, input: &str) -> StopReason {
         println!("{}", payload);
         return result;
     }
-    if let Some(s) = spinner { s.finish_and_clear(); }
+    if let Some(s) = spinner {
+        s.finish_and_clear();
+    }
     display_result(&result);
     // Show executed commands summary
     let cmds = agent.executed_commands();
@@ -429,8 +572,13 @@ async fn execute_prompt(agent: &mut Agent, input: &str) -> StopReason {
     }
     // Run summary
     if agent.step_count() > 0 {
-        println!("  {} [{} steps | {} tokens | {} tool calls]",
-            "⚡".dimmed(), agent.step_count(), agent.tokens_used(), agent.tool_call_count());
+        println!(
+            "  {} [{} steps | {} tokens | {} tool calls]",
+            "⚡".dimmed(),
+            agent.step_count(),
+            agent.tokens_used(),
+            agent.tool_call_count()
+        );
     }
     result
 }
@@ -443,18 +591,20 @@ fn init_provider(cfg: &config::RuneConfig) -> ProviderRegistry {
 
     if let Some(ref key) = cfg.api_key {
         // Detect GitHub Copilot PAT (starts with ghu_ or ghp_)
-        let is_copilot = key.starts_with("ghu_") || key.starts_with("ghp_")
-            || cfg.base_url.as_deref().map(|u| u.contains("githubcopilot")).unwrap_or(false);
+        let is_copilot = key.starts_with("ghu_")
+            || key.starts_with("ghp_")
+            || cfg
+                .base_url
+                .as_deref()
+                .map(|u| u.contains("githubcopilot"))
+                .unwrap_or(false);
 
         if is_copilot {
             let provider = CopilotProvider::new(key.clone());
             registry.register(Box::new(provider));
         } else {
-            let provider = OpenAiProvider::new(
-                "openai".to_string(),
-                key.clone(),
-                cfg.base_url.clone(),
-            );
+            let provider =
+                OpenAiProvider::new("openai".to_string(), key.clone(), cfg.base_url.clone());
             registry.register(Box::new(provider));
         }
     }
@@ -476,7 +626,11 @@ pub async fn run() {
     let mut mcp_manager = crate::mcp::McpManager::new();
     if !cfg.mcp_servers.is_empty() {
         if !is_json_mode(&cfg) {
-            eprintln!("  {} Starting {} MCP server(s)...", "⚙".dimmed(), cfg.mcp_servers.len());
+            eprintln!(
+                "  {} Starting {} MCP server(s)...",
+                "⚙".dimmed(),
+                cfg.mcp_servers.len()
+            );
         }
         if let Err(e) = mcp_manager.start_all(cfg.mcp_servers.clone()).await {
             eprintln!("  {} MCP startup failed: {}", "✗".red(), e);
@@ -489,11 +643,23 @@ pub async fn run() {
     }
     if provider.is_empty() {
         if is_json_mode(&cfg) {
-            eprintln!("{}", "⚠ No API key configured. Set RUNE_API_KEY or use --api-key to connect.".yellow());
-            eprintln!("{}", "  The agent will not be able to call an LLM without a key.".dimmed());
+            eprintln!(
+                "{}",
+                "⚠ No API key configured. Set RUNE_API_KEY or use --api-key to connect.".yellow()
+            );
+            eprintln!(
+                "{}",
+                "  The agent will not be able to call an LLM without a key.".dimmed()
+            );
         } else {
-            println!("{}", "⚠ No API key configured. Set RUNE_API_KEY or use --api-key to connect.".yellow());
-            println!("{}", "  The agent will not be able to call an LLM without a key.".dimmed());
+            println!(
+                "{}",
+                "⚠ No API key configured. Set RUNE_API_KEY or use --api-key to connect.".yellow()
+            );
+            println!(
+                "{}",
+                "  The agent will not be able to call an LLM without a key.".dimmed()
+            );
             println!();
         }
     }
@@ -502,7 +668,7 @@ pub async fn run() {
     agent.set_system_prompt(
         "You are Rune, a high-performance AI agent running in a terminal. \
          You have access to tools: read_file, write_file, list_dir, execute_cmd, fetch_url. \
-         Use them when needed. Be concise and accurate."
+         Use them when needed. Be concise and accurate.",
     );
 
     let mut editor = if stdin_is_terminal {
@@ -538,7 +704,11 @@ pub async fn run() {
     }
 
     if !is_json_mode(&cfg) {
-        println!("{} Type {} for commands.", "Ready.".green().bold(), "/help".bold());
+        println!(
+            "{} Type {} for commands.",
+            "Ready.".green().bold(),
+            "/help".bold()
+        );
         println!();
     }
 
@@ -561,7 +731,9 @@ pub async fn run() {
                 continue;
             }
             Err(ReadlineError::Eof) => {
-                if !is_json_mode(&cfg) { println!("\n{}", "EOF — Goodbye! ᚱ".cyan()); }
+                if !is_json_mode(&cfg) {
+                    println!("\n{}", "EOF — Goodbye! ᚱ".cyan());
+                }
                 break;
             }
             Err(e) => {
@@ -572,7 +744,9 @@ pub async fn run() {
 
         match cmd.as_str() {
             "/exit" | "/quit" => {
-                if !is_json_mode(&cfg) { println!("{}", "Goodbye! ᚱ".cyan()); }
+                if !is_json_mode(&cfg) {
+                    println!("{}", "Goodbye! ᚱ".cyan());
+                }
                 break;
             }
             "/help" | "/h" => print_help(),
@@ -581,7 +755,15 @@ pub async fn run() {
             "/skills" => show_skills(&cfg),
             "/trace" => {
                 println!("{} {}", "Trace dir:".bold(), ".rune/traces/");
-                println!("  {} {}", "status:".dimmed(), if cfg.trace { "enabled".green().to_string() } else { "disabled (use --trace to enable)".dimmed().to_string() });
+                println!(
+                    "  {} {}",
+                    "status:".dimmed(),
+                    if cfg.trace {
+                        "enabled".green().to_string()
+                    } else {
+                        "disabled (use --trace to enable)".dimmed().to_string()
+                    }
+                );
             }
             "/version" => {
                 println!("{} v{}", "Rune".cyan().bold(), VERSION);
@@ -602,7 +784,12 @@ pub async fn run() {
                 let before = agent.message_count();
                 agent.compact();
                 let after = agent.message_count();
-                println!("{} Context compacted: {} → {} messages", "✓".green(), before, after);
+                println!(
+                    "{} Context compacted: {} → {} messages",
+                    "✓".green(),
+                    before,
+                    after
+                );
             }
             "/policy" => show_policy_summary(&cfg),
             "/policy full" => show_policy_full(&cfg),
