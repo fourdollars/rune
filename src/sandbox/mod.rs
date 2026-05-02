@@ -283,17 +283,32 @@ impl SandboxExecutor {
     /// in the probe phase since raw landlock from a shell wrapper is impractical.
     /// The real protection comes from the user namespace UID remapping.
     async fn build_landlock_wrapper(&self) -> Option<String> {
-        // Check if kernel supports landlock
-        let landlock_supported = tokio::fs::metadata("/sys/kernel/security/landlock").await.is_ok();
-        if !landlock_supported {
+        // Check if rune-landlock helper is available
+        let has_landlock = Command::new("which")
+            .arg("rune-landlock")
+            .output()
+            .await
+            .map(|o| o.status.success())
+            .unwrap_or(false);
+
+        if !has_landlock {
+            debug!("sandbox: rune-landlock not found, skipping filesystem restriction");
             return None;
         }
 
-        // Landlock requires a compiled helper to apply rules before exec.
-        // For now, we note it's available but rely on user namespace for fs isolation.
-        // A future version will ship a `rune-landlock` helper binary.
-        debug!("sandbox: landlock supported by kernel but requires helper binary (not yet implemented)");
-        None
+        // Build rune-landlock command with configured paths
+        let mut parts = vec!["rune-landlock".to_string()];
+        for p in &self.config.read_write_paths {
+            parts.push("--rw".to_string());
+            parts.push(p.display().to_string());
+        }
+        for p in &self.config.read_only_paths {
+            parts.push("--ro".to_string());
+            parts.push(p.display().to_string());
+        }
+        parts.push("--".to_string());
+        info!(rw = ?self.config.read_write_paths, ro = ?self.config.read_only_paths, "sandbox: landlock filesystem restriction active");
+        Some(parts.join(" "))
     }
 
     /// Check if a domain is in the allowlist.
