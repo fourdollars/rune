@@ -4,86 +4,131 @@ A high-performance, zero-trust AI agent built in Rust. Single binary, dual mode:
 
 ## Features
 
-- **Zero-Trust Sandbox** — All tool executions run inside isolated Linux namespaces (`unshare --user --net`). Network is blocked by default. No exceptions.
-- **Tool Calling** — Built-in tools (read_file, write_file, list_dir, run_terminal_cmd, fetch_url) with full function-calling support via OpenAI-compatible APIs.
-- **Skills System** — Load contextual abilities via `@skill_name` in prompts. Skills are defined as `SKILL.md` files following the [AgentSkills](https://agentskills.io) specification.
-- **Provider Registry** — Connect to any OpenAI-compatible endpoint (OpenAI, OpenRouter, Anthropic proxies, local models). Automatic fallback chain on failure.
-- **MCP Client** — Stdio-based JSON-RPC client for Model Context Protocol servers.
-- **Concourse CI** — Same binary acts as a Concourse resource type (`check`, `in`, `out`) when invoked via symlink.
-- **Tracing** — Structured logging + optional JSON trace files for full observability.
+- **Zero-Trust Sandbox** — ALL tool executions run through 5 isolation layers:
+  - Network namespace (`unshare --user --net`)
+  - cgroups v2 resource limits (`systemd-run --scope`)
+  - Seccomp BPF syscall filter (`rune-seccomp`)
+  - Landlock filesystem restriction (`rune-landlock`)
+  - DNS allowlist (domain-level network control)
+- **Tool Calling** — 6 built-in tools: `read_file`, `write_file`, `list_dir`, `execute_cmd`, `fetch_url`, `inspect_process`
+- **Command Policy** — Three modes: `confirm` (interactive Y/n/A), `allowlist` (whitelist only), `unrestricted`
+- **Skills System** — Load contextual abilities via `@skill_name` in prompts
+- **Provider Registry** — GitHub Copilot (auto token refresh), OpenRouter, Google Gemini, any OpenAI-compatible
+- **MCP Client** — Stdio-based JSON-RPC client for Model Context Protocol servers
+- **Concourse CI** — Same binary acts as a resource type (`check`, `in`, `out`) via symlink
+- **Trace Recording** — JSON trace files with sensitive info redaction
+- **JSON Output** — `--json` flag for machine-readable output
 
 ## Quick Start
 
 ```bash
-# Build
+# Build (produces 3 binaries: rune, rune-seccomp, rune-landlock)
 cargo build --release
 
-# Run with an API key
-export RUNE_API_KEY="sk-..."
-export RUNE_BASE_URL="https://openrouter.ai/api/v1"  # optional, defaults to OpenAI
-export RUNE_MODEL="openai/gpt-4o-mini"               # optional, defaults to gpt-4
+# Interactive setup
+./target/release/rune init
+
+# Or configure manually
+mkdir -p ~/.rune
+cat > ~/.rune/rune.toml << 'EOF'
+model = "gpt-4o"
+api_key = "ghu_your_github_copilot_pat"
+skills_dir = "./skills"
+
+[policy]
+mode = "confirm"
+allowed_domains = ["wttr.in"]
+allowed_commands = ["ls", "cat", "head", "ps", "echo", "uname", "free", "df", "date", "hostname"]
+EOF
+
+# Run
 ./target/release/rune
 ```
 
 ## CLI Usage
 
 ```
-  ┌─────────────────────────────────────────┐
-  │  ᚱ  R U N E   v0.1.0                    │
-  │  High-performance Zero-Trust AI Agent   │
-  └─────────────────────────────────────────┘
+        ᛟ ᚺ ᛊ ᛏ ᛒ ᛖ ᚹ ᛗ ᛚ ᛝ ᛟ
+    ┌───────────────────────────────────┐
+    │    ᚱ  ᚢ  ᚾ  ᛖ                     │
+    │    Zero-Trust AI Agent            │
+    │    v0.1.0 ⚡ sandboxed            │
+    └───────────────────────────────────┘
+        ᛟ ᚺ ᛊ ᛏ ᛒ ᛖ ᚹ ᛗ ᛚ ᛝ ᛟ
 
 ᚱ› Use @sysadmin skill. Show me uptime and memory.
   📚 Loaded skill: sysadmin
-  ⚙ run_terminal_cmd({"cmd": "uptime"})
-  ✓ run_terminal_cmd...ok
-  ⚙ run_terminal_cmd({"cmd": "free -h"})
-  ✓ run_terminal_cmd...ok
+  ⚙ execute_cmd({"cmd": "uptime"})
+  ⚠ Execute? [Y/n/A(lways)] y
+  ✓ execute_cmd...ok
+  ⚙ execute_cmd({"cmd": "free -h"})
+  ✓ execute_cmd...ok
 
 ────────────────────────────────────────────────────────────
-- Uptime: 1 day, 17 hours
-- Memory: 5.8 GiB used / 30 GiB total (25 GiB available)
+- Uptime: 2 days, 1 hour
+- Memory: 5.8 GiB used / 30 GiB total
 ────────────────────────────────────────────────────────────
+  📋 commands executed: 2
+    ▸ uptime
+    ▸ free -h
+  ⚡ [2 steps | 797 tokens | 2 tool calls]
 ```
 
 ### Commands
 
 | Command | Description |
 |---------|-------------|
-| `<prompt>` | Send a prompt to the agent |
-| `run <prompt>` | Explicit prompt execution |
-| `/multi` | Multi-line input mode (end with `;;`) |
-| `/config` | Show current configuration |
+| `<text>` | Send a prompt to the agent |
+| `/help` | Show help |
+| `/info` | Current session status (model, context, skills) |
+| `/info context` | Detailed context breakdown |
+| `/policy` | Show policy summary |
+| `/policy full` | Full sandbox status |
+| `/config` | Show configuration |
 | `/tools` | List available tools |
 | `/skills` | List available skills |
-| `/trace` | Show trace directory |
-| `/version` | Show version info |
+| `/trace` | Trace recording status |
+| `/compact` | Compress conversation context |
 | `/reset` | Clear conversation history |
+| `/multi` | Multi-line input (end with `;;`) |
+| `/version` | Show version |
 | `/clear` | Clear screen |
-| `help` | Show help |
-| `exit` | Quit |
+| `/exit` | Quit |
 
 ## Configuration
 
-Configuration is loaded with the following precedence:
-
-1. CLI flags (`--model`, `--api-key`, `--base-url`, etc.)
-2. Environment variables (`RUNE_MODEL`, `RUNE_API_KEY`, `RUNE_BASE_URL`, etc.)
-3. Project config (`.rune/rune.toml` in current directory)
-4. User config (`~/.rune/rune.toml`)
-5. Built-in defaults
-
-### Example `rune.toml`
-
 ```toml
-model = "openai/gpt-4o-mini"
-api_key = "sk-..."
-base_url = "https://openrouter.ai/api/v1"
+# ~/.rune/rune.toml
+model = "gpt-4o"
+api_key = "ghu_..."          # GitHub Copilot (auto-detected)
+# api_key = "AIza..."        # Google Gemini
+# api_key = "sk-or-..."      # OpenRouter
+# base_url = "https://..."   # Custom endpoint (not needed for Copilot)
+
 skills_dir = "./skills"
-log_level = "info"
-max_steps = 100
-token_budget = 8192
-timeout_secs = 60
+log_level = "warn"
+max_steps = 20
+token_budget = 16384
+timeout_secs = 30
+trace = false
+
+[policy]
+mode = "confirm"             # confirm | allowlist | unrestricted
+allowed_commands = ["ls", "cat", "head", "ps", "echo"]
+allowed_domains = ["wttr.in", "api.github.com"]
+denied_syscalls = ["ptrace", "mount", "kexec_load", "bpf", "setns"]
+allowed_paths_rw = ["/tmp"]
+allowed_paths_ro = ["/bin", "/usr", "/lib"]
+denied_paths = ["/root", "/etc/shadow"]
+max_memory_mb = 512
+max_pids = 64
+
+# MCP servers (optional)
+# [[mcp_servers]]
+# name = "example"
+# command = "node"
+# args = ["server.js"]
+# required = false
 ```
 
 ### Environment Variables
@@ -91,17 +136,83 @@ timeout_secs = 60
 | Variable | Description |
 |----------|-------------|
 | `RUNE_API_KEY` | LLM provider API key |
-| `RUNE_BASE_URL` | Provider base URL (default: OpenAI) |
 | `RUNE_MODEL` | Model name |
-| `RUNE_SKILLS_DIR` | Skills directory path |
-| `RUNE_LOG_LEVEL` | Log level (trace/debug/info/warn/error) |
-| `RUNE_MAX_STEPS` | Max agent loop iterations |
-| `RUNE_TOKEN_BUDGET` | Max tokens per run |
-| `RUNE_TIMEOUT_SECS` | Default command timeout |
+| `RUNE_BASE_URL` | Provider base URL |
+| `RUNE_POLICY_MODE` | Policy mode override |
+| `RUNE_LOG_LEVEL` | Log level |
+| `RUNE_TRACE` | Enable trace (true/false) |
+| `RUNE_JSON_OUTPUT` | JSON output mode |
+
+## Zero-Trust Sandbox
+
+Every tool invocation passes through up to 5 isolation layers:
+
+```
+┌─────────────────────────────────────────────┐
+│  Layer 1: cgroups (memory + pids limits)    │
+│  Layer 2: Network namespace (isolated)      │
+│  Layer 3: Seccomp BPF (syscall filter)      │
+│  Layer 4: Landlock (filesystem restriction) │
+│  Layer 5: DNS allowlist (domain control)    │
+└─────────────────────────────────────────────┘
+```
+
+### Sandbox Demo
+
+#### ✅ ALLOWED — Operations that succeed:
+
+```
+ᚱ› (read /etc/hostname)
+  ⚙ read_file({"path": "/etc/hostname"})
+  ✓ read_file...ok → "u"
+
+ᚱ› (write to /tmp)
+  ⚙ write_file({"path": "/tmp/test.txt", "content": "hello"})
+  ✓ write_file...ok → "Written 5 bytes"
+
+ᚱ› (run allowed command)
+  ⚙ execute_cmd({"cmd": "echo hello"})
+  ✓ execute_cmd...ok → "hello"
+```
+
+#### ❌ BLOCKED — Operations that fail:
+
+```
+ᚱ› (fetch non-allowed URL)
+  ⚙ fetch_url({"url": "https://example.com"})
+  ✗ BLOCKED: domain 'example.com' is not in allowed_domains
+
+ᚱ› (run non-allowed command in allowlist mode)
+  ⚙ execute_cmd({"cmd": "rm -rf /"})
+  ✗ BLOCKED by policy: command 'rm' is not in allowed_commands
+
+ᚱ› (read sensitive file)
+  ⚙ read_file({"path": "/etc/shadow"})
+  ✗ Permission denied (Landlock + user namespace)
+
+ᚱ› (ptrace attempt inside sandbox)
+  → Seccomp BPF: Operation not permitted
+```
+
+### Command Policy
+
+| Mode | Behavior |
+|------|----------|
+| `confirm` | Ask user Y/n/A(lways) before dangerous tools |
+| `allowlist` | Only whitelisted commands can execute |
+| `unrestricted` | No restrictions (development only) |
+
+## JSON Output Mode
+
+```bash
+echo "What is 2+2?" | rune --json true
+```
+
+```json
+{"answer":"4","steps":1,"tokens":348,"tools_used":[]}
+```
 
 ## Skills
-
-Skills extend the agent's knowledge. Place them in the skills directory:
 
 ```
 skills/
@@ -110,112 +221,21 @@ skills/
 └── launchpad/
     ├── SKILL.md
     └── references/
-        ├── basics.md
-        └── ...
 ```
 
-Reference a skill in your prompt with `@skill_name`:
-
+Use `@skill_name` in prompts:
 ```
 ᚱ› Use @sysadmin skill. Check disk usage.
   📚 Loaded skill: sysadmin
-  ...
 ```
 
-## Zero-Trust Sandbox
-
-Every tool invocation runs inside an isolated environment:
-
-```
-unshare --user --net -- sh -c '<command>'
-```
-
-- **Network isolated**: No DNS, no outbound connections
-- **User namespace**: Separate UID/GID mapping
-- **Timeout enforced**: Commands killed after deadline
-- **Graceful degradation**: Falls back to direct execution (with warning) if namespaces unavailable
-
-This means sandboxed commands **cannot** access the network. This is by design.
-
-
-### Sandbox Demo
-
-All tools are sandboxed with `unshare --user --net`. Here is a live demonstration:
-
-#### ✅ ALLOWED — Operations that succeed inside the sandbox:
-
-```
-ᚱ› read_file /etc/hostname
-  ⚙ read_file({"path": "/etc/hostname"})
-  ✓ read_file...ok
-  → Output: "u"
-
-ᚱ› list_dir /tmp
-  ⚙ list_dir({"path": "/tmp"})
-  ✓ list_dir...ok
-  → Output: (directory listing)
-
-ᚱ› run_terminal_cmd: echo hello
-  ⚙ run_terminal_cmd({"cmd": "echo hello"})
-  ✓ run_terminal_cmd...ok
-  → Output: "hello"
-
-ᚱ› write_file to /tmp/rune_test.txt
-  ⚙ write_file({"content": "sandbox test", "path": "/tmp/rune_test.txt"})
-  ✓ write_file...ok
-  → Output: "Written 12 bytes to /tmp/rune_test.txt"
-```
-
-#### ❌ BLOCKED — Operations that fail due to sandbox restrictions:
-
-```
-ᚱ› fetch_url https://example.com
-  ⚙ fetch_url({"url": "https://example.com"})
-  ✗ exit_code: 6
-  → Error: curl: (6) Could not resolve host: example.com
-  → Reason: Network namespace is isolated, no DNS available
-
-ᚱ› run_terminal_cmd: curl -s --max-time 3 https://1.1.1.1
-  ⚙ run_terminal_cmd({"cmd": "curl -s --max-time 3 https://1.1.1.1"})
-  ✗ exit_code: 7
-  → Error: Failed to connect (no network interface in namespace)
-  → Reason: unshare --user --net removes all network interfaces
-
-ᚱ› read_file /etc/shadow
-  ⚙ read_file({"path": "/etc/shadow"})
-  ✗ exit_code: 1
-  → Error: head: cannot open '/etc/shadow': Permission denied
-  → Reason: User namespace remaps UID, no privileged access
-
-ᚱ› write_file to /root/evil.txt
-  ⚙ write_file({"content": "hack", "path": "/root/evil.txt"})
-  ✗ exit_code: 2
-  → Error: cannot create /root/evil.txt: Permission denied
-  → Reason: User namespace has no write access to /root
-```
-
-#### Summary
-
-| Tool | Allowed | Blocked |
-|------|---------|---------|
-| `read_file` | ✅ Read files in accessible paths | ❌ Cannot read `/etc/shadow` or root-owned files |
-| `write_file` | ✅ Write to `/tmp` or project dirs | ❌ Cannot write to `/root`, `/etc`, system dirs |
-| `list_dir` | ✅ List any readable directory | ❌ Cannot list restricted directories |
-| `run_terminal_cmd` | ✅ Run local commands (no network) | ❌ Cannot make network connections |
-| `fetch_url` | ❌ Always blocked | ❌ DNS resolution fails (no network in namespace) |
-
-**Design principle:** All tool invocations are network-isolated by default. File access is restricted by the user namespace UID remapping. This is enforced at the kernel level, not by the application.
 ## Concourse CI Resource Type
-
-The same binary works as a Concourse resource when invoked as `check`, `in`, or `out`:
 
 ```yaml
 resource_types:
   - name: rune-agent
     type: docker-image
-    source:
-      repository: my-registry/rune
-      tag: debian
+    source: { repository: my-registry/rune, tag: debian }
 
 resources:
   - name: ai-dev
@@ -223,57 +243,46 @@ resources:
     source:
       api_key: ((api_key))
       sandbox:
-        network:
-          allowed_domains: ["github.com", "api.openai.com"]
-```
-
-### Docker Images
-
-```bash
-make build-debian   # debian:bookworm-slim based
-make build-alpine   # alpine:latest based
-make build-ubuntu   # ubuntu:24.04 based
+        network: { allowed_domains: ["github.com"] }
+        filesystem: { read_write_paths: ["/workspace"] }
 ```
 
 ## Architecture
 
 ```
 src/
-├── main.rs          — Entry point, argv[0] routing, tracing init
-├── agent/mod.rs     — Agent loop, LLM ↔ tool orchestration
-├── cli/mod.rs       — Interactive CLI with spinner + commands
-├── concourse/mod.rs — Concourse check/in/out handlers
-├── config/mod.rs    — Layered config loading
-├── mcp/mod.rs       — MCP client (stdio JSON-RPC)
-├── precommands.rs   — Pre-command execution
-├── provider/mod.rs  — LLM provider trait + OpenAI-compatible impl
-├── sandbox/mod.rs   — Linux namespace isolation
-├── skills/mod.rs    — SKILL.md loader + @skill refs
-├── tools/mod.rs     — Built-in tools (all sandboxed)
-└── trace/mod.rs     — JSON trace writer
+├── main.rs              — Entry point, routing
+├── agent/mod.rs         — Agent loop, tool orchestration, confirm flow
+├── cli/mod.rs           — Interactive CLI, commands, JSON mode
+├── concourse/mod.rs     — Concourse check/in/out
+├── config/mod.rs        — Layered config + PolicyConfig
+├── mcp/mod.rs           — MCP client (stdio JSON-RPC)
+├── precommands.rs       — Pre-command execution
+├── provider/mod.rs      — LLM providers + retry backoff
+├── sandbox/mod.rs       — 5-layer sandbox orchestration
+├── setup.rs             — rune init wizard
+├── skills/mod.rs        — SKILL.md loader
+├── tools/mod.rs         — 6 built-in tools (all sandboxed)
+├── trace/mod.rs         — JSON trace + redaction
+└── bin/
+    ├── rune-seccomp.rs  — Seccomp BPF helper
+    └── rune-landlock.rs — Landlock filesystem helper
 ```
 
 ## Development
 
 ```bash
-# Check
-cargo check
-
-# Test
-cargo test
-
-# Build release
-cargo build --release
-
-# Run with trace logging
-RUST_LOG=debug ./target/release/rune
+cargo build --release    # Build all 3 binaries
+cargo test               # Unit tests (18)
+./tests/e2e.sh           # E2E tests (26)
+make check-all           # Both
 ```
 
 ## Requirements
 
 - Rust 1.75+ (tested on 1.95)
-- Linux (for sandbox namespace support)
-- `curl` on PATH (used by provider and fetch_url)
+- Linux kernel 5.13+ (for Landlock ABI)
+- `curl` on PATH
 
 ## License
 
