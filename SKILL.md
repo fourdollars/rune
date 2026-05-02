@@ -108,11 +108,24 @@ All tool executions are sandboxed:
 
 | Command | Description |
 |---------|-------------|
-| `/info` | Session status |
+| `<text>` | Send a prompt to the agent |
+| `/help` | Show help |
+| `/info` | Session status (model, context, skills) |
+| `/info context` | Detailed context breakdown |
 | `/policy` | Policy summary |
-| `/compact` | Compress context |
-| `/reset` | Clear history |
+| `/policy full` | Full sandbox status |
+| `/config` | Show configuration |
+| `/tools` | List available tools |
+| `/skills` | List loaded skills |
+| `/trace` | Trace recording status |
+| `/compact` | Compress conversation context |
+| `/reset` | Clear conversation history |
+| `/multi` | Multi-line input (end with `;;`) |
+| `/version` | Show version |
+| `/clear` | Clear screen |
 | `/exit` | Quit |
+
+Use ↑/↓ to browse previous prompts in interactive mode.
 
 ## Skills
 
