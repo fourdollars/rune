@@ -6,7 +6,7 @@ use anyhow::Result;
 use colored::Colorize;
 use std::path::PathBuf;
 use tracing::{debug, info, warn};
-use crate::trace::{TraceWriter, StepKind};
+use crate::trace::{TraceWriter, StepKind, redact};
 
 /// Agent's stop reason.
 #[derive(Debug)]
@@ -212,10 +212,14 @@ impl Agent {
 
         loop {
             if self.step_count >= self.config.max_steps {
-                return StopReason::MaxSteps;
+                let r = StopReason::MaxSteps;
+                self.finish_trace(&r);
+                return r;
             }
             if self.tokens_used >= self.config.token_budget {
-                return StopReason::TokenBudgetExhausted;
+                let r = StopReason::TokenBudgetExhausted;
+                self.finish_trace(&r);
+                return r;
             }
 
             self.step_count += 1;
@@ -224,7 +228,11 @@ impl Agent {
             // Call LLM
             let response = match self.call_llm().await {
                 Ok(r) => r,
-                Err(e) => return StopReason::Error(format!("LLM call failed: {}", e)),
+                Err(e) => {
+                    let r = StopReason::Error(format!("LLM call failed: {}", e));
+                    self.finish_trace(&r);
+                    return r;
+                }
             };
 
             // Update token usage
@@ -239,7 +247,9 @@ impl Agent {
                     tool_calls: None,
                     tool_call_id: None,
                 });
-                return StopReason::FinalAnswer(answer);
+                let r = StopReason::FinalAnswer(answer);
+                    self.finish_trace(&r);
+                    return r;
             }
 
             // We have tool calls
@@ -266,6 +276,7 @@ impl Agent {
                             tool_calls: None,
                             tool_call_id: Some(tc.id.clone()),
                         });
+                        self.finish_trace(&stop);
                         return stop;
                     }
                 };
@@ -301,6 +312,22 @@ impl Agent {
         resp
     }
 
+    /// Finish trace recording and write to disk.
+    fn finish_trace(&mut self, result: &StopReason) {
+        if let Some(ref mut t) = self.trace {
+            let exit_code = match result {
+                StopReason::FinalAnswer(_) => 0,
+                StopReason::Error(_) => 1,
+                StopReason::MaxSteps => 2,
+                StopReason::TokenBudgetExhausted => 3,
+                StopReason::UserInterrupt => 130,
+            };
+            if let Err(e) = t.finish(exit_code) {
+                eprintln!("  {} trace write failed: {}", "⚠".red(), e);
+            }
+        }
+    }
+
     /// Execute a single tool call.
     async fn execute_tool_call(&mut self, tc: &LlmToolCall) -> Result<String, StopReason> {
         let args: serde_json::Value = serde_json::from_str(&tc.function.arguments)
@@ -311,7 +338,7 @@ impl Agent {
         // Confirm mode: ask user before executing dangerous tools
         // Trace tool call
         if let Some(ref mut t) = self.trace {
-            t.record(StepKind::ToolCall { name: tc.function.name.clone(), arguments_preview: tc.function.arguments[..tc.function.arguments.len().min(100)].to_string() });
+            t.record(StepKind::ToolCall { name: tc.function.name.clone(), arguments_preview: redact(&tc.function.arguments[..tc.function.arguments.len().min(100)]) });
         }
 
         // Track tool calls and executed commands
