@@ -473,8 +473,19 @@ pub async fn run() {
     }
 
     // Start MCP servers if configured
-    if !cfg.mcp_servers.is_empty() && !is_json_mode(&cfg) {
-        eprintln!("  {} Starting {} MCP server(s)...", "⚙".dimmed(), cfg.mcp_servers.len());
+    let mut mcp_manager = crate::mcp::McpManager::new();
+    if !cfg.mcp_servers.is_empty() {
+        if !is_json_mode(&cfg) {
+            eprintln!("  {} Starting {} MCP server(s)...", "⚙".dimmed(), cfg.mcp_servers.len());
+        }
+        if let Err(e) = mcp_manager.start_all(cfg.mcp_servers.clone()).await {
+            eprintln!("  {} MCP startup failed: {}", "✗".red(), e);
+        } else if !is_json_mode(&cfg) {
+            let tools = mcp_manager.all_tools();
+            if !tools.is_empty() {
+                eprintln!("  {} {} MCP tool(s) available", "✓".green(), tools.len());
+            }
+        }
     }
     if provider.is_empty() {
         if is_json_mode(&cfg) {
