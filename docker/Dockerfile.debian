@@ -9,17 +9,23 @@ FROM debian:bookworm-slim
 ENV DEBIAN_FRONTEND=noninteractive
 
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates \
+    && apt-get install -y --no-install-recommends ca-certificates curl \
     && rm -rf /var/lib/apt/lists/*
 
-RUN useradd --uid 1000 --create-home --home-dir /home/rune --shell /usr/sbin/nologin rune \
-    && mkdir -p /opt/resource \
+# Install all rune binaries
+COPY --from=builder /app/target/release/rune /usr/local/bin/rune
+COPY --from=builder /app/target/release/rune-seccomp /usr/local/bin/rune-seccomp
+COPY --from=builder /app/target/release/rune-landlock /usr/local/bin/rune-landlock
+RUN chmod 0755 /usr/local/bin/rune /usr/local/bin/rune-seccomp /usr/local/bin/rune-landlock
+
+# Concourse resource type: /opt/resource/{check,in,out}
+RUN mkdir -p /opt/resource \
     && ln -sf /usr/local/bin/rune /opt/resource/check \
     && ln -sf /usr/local/bin/rune /opt/resource/in \
     && ln -sf /usr/local/bin/rune /opt/resource/out
 
-COPY --from=builder /app/target/release/rune /usr/local/bin/rune
-RUN chmod 0755 /usr/local/bin/rune
-
+# Non-root user
+RUN useradd --uid 1000 --create-home --home-dir /home/rune --shell /usr/sbin/nologin rune
 USER rune
+
 ENTRYPOINT ["/usr/local/bin/rune"]
