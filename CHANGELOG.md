@@ -29,6 +29,10 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - **JSON Output**: `--json` flag for machine-readable output
 - **Auto-Approve**: `--yes` / `-y` flag to skip confirm prompts
 - **Pipe Mode**: Non-interactive one-shot execution when stdin is piped
+- **Interactive Allowlist**: `A(lways)` in confirm mode permanently adds domains/commands to config
+- **Command Pipeline Checking**: All commands in `;` `|` `&&` pipelines are checked against allowlist
+- **Path Policy Enforcement**: `read_file` and `write_file` check `denied_paths` and `allowed_paths_rw`
+- **MCP Server Startup**: MCP servers are now actually spawned via `McpManager::start_all()`
 
 ### Security
 
@@ -40,5 +44,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - **Landlock**: Filesystem restriction via `rune-landlock` helper binary
 - **DNS Allowlist**: Only explicitly whitelisted domains can be accessed
 - **Policy Fail-Fast**: Blocked tool calls immediately stop the agent (no further LLM calls)
+- **Conversation Integrity**: Tool errors are pushed as tool results to keep message history valid
+- **Trace Completion**: `--trace` now writes JSON trace files on every run exit with redacted arguments
 - **File Truncation**: read_file capped at 32KB to prevent memory exhaustion
 - **Timeout Enforcement**: All sandboxed commands have configurable deadlines
