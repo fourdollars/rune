@@ -72,7 +72,7 @@ OUT=$(printf "/tools\n/exit\n" | $RUNE 2>&1)
 assert_contains "$OUT" "read_file" "tools lists read_file"
 assert_contains "$OUT" "write_file" "tools lists write_file"
 assert_contains "$OUT" "fetch_url" "tools lists fetch_url"
-assert_contains "$OUT" "run_terminal_cmd" "tools lists run_terminal_cmd"
+assert_contains "$OUT" "execute_cmd" "tools lists execute_cmd"
 assert_contains "$OUT" "list_dir" "tools lists list_dir"
 
 # ── Test 5: Skills ────────────────────────────────────────
