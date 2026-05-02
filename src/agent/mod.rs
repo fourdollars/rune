@@ -62,7 +62,7 @@ impl Agent {
             provider,
             tools,
             skill_loader,
-            auto_approve: false,
+            auto_approve: std::env::var("RUNE_YES").map(|v| v == "1" || v == "true").unwrap_or(false),
             trace,
             executed_commands: Vec::new(),
         }

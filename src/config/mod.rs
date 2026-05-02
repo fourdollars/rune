@@ -177,6 +177,10 @@ struct CliArgs {
     /// Output in JSON format (machine-readable)
     #[arg(long, env = "RUNE_JSON_OUTPUT")]
     json: Option<bool>,
+
+    /// Auto-approve all tool executions (skip confirm prompts)
+    #[arg(long, short = 'y', env = "RUNE_YES")]
+    yes: Option<bool>,
 }
 
 /// Pick the first Some value from a chain of options, falling back to a default.
