@@ -311,7 +311,9 @@ impl Agent {
         }
 
         // Confirm mode: ask user before executing dangerous tools
-        if self.config.policy.mode == "confirm" && Self::is_dangerous_tool(&tc.function.name) && !self.auto_approve {
+        // Skip confirm if the involved domain/command is already in the allowlist
+        let already_allowed = self.is_already_allowed(&tc.function.name, &args);
+        if self.config.policy.mode == "confirm" && Self::is_dangerous_tool(&tc.function.name) && !self.auto_approve && !already_allowed {
             if !self.interactive {
                 let msg = format!(
                     "non-interactive mode requires --yes (or a non-confirm policy) before executing {}",
@@ -422,6 +424,27 @@ impl Agent {
             }
         }
         None
+    }
+
+    /// Check if the tool call's domain/command is already in the allowlist.
+    fn is_already_allowed(&self, tool_name: &str, args: &serde_json::Value) -> bool {
+        match tool_name {
+            "fetch_url" => {
+                if let Some(domain) = Self::extract_domain_from_args(tool_name, args) {
+                    return self.config.policy.allowed_domains.iter().any(|d| {
+                        d == &domain || (d.starts_with("*.") && domain.ends_with(&d[1..]))
+                    });
+                }
+                false
+            }
+            "execute_cmd" => {
+                if let Some(cmd_name) = Self::extract_command_from_args(tool_name, args) {
+                    return self.config.policy.allowed_commands.iter().any(|c| c == &cmd_name || c == "*");
+                }
+                false
+            }
+            _ => false,
+        }
     }
 
     /// Extract domain from tool call arguments (for fetch_url).
