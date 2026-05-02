@@ -5,7 +5,7 @@ use std::pin::Pin;
 use std::future::Future;
 use tokio::process::Command;
 use std::process::Stdio;
-use tracing::{debug, info, warn};
+use tracing::{debug, info};
 
 /// LLM request payload.
 #[derive(Debug, Clone, Serialize)]
@@ -344,6 +344,15 @@ pub struct ProviderRegistry {
     default_provider: usize,
 }
 
+fn is_transient_error(err: &anyhow::Error) -> bool {
+    let err_str = err.to_string();
+    err_str.contains("timeout")
+        || err_str.contains("429")
+        || err_str.contains("500")
+        || err_str.contains("502")
+        || err_str.contains("503")
+}
+
 impl ProviderRegistry {
     pub fn new() -> Self {
         ProviderRegistry { providers: Vec::new(), default_provider: 0 }
@@ -357,7 +366,7 @@ impl ProviderRegistry {
         self.providers.is_empty()
     }
 
-    /// Call default provider, fallback on failure.
+    /// Call default provider, fallback only on transient failure.
     pub async fn chat(&self, request: LlmRequest) -> Result<LlmResponse> {
         if self.providers.is_empty() {
             return Err(anyhow!("no providers registered"));
@@ -369,7 +378,7 @@ impl ProviderRegistry {
 
         let retry_delays = [100u64, 500, 2000]; // ms
 
-        for attempt in 0..len {
+        for _attempt in 0..len {
             let provider = &self.providers[idx];
 
             // Try with retries for transient errors
@@ -378,28 +387,22 @@ impl ProviderRegistry {
                 result = provider.chat(request.clone()).await;
                 match &result {
                     Ok(_) => break,
-                    Err(e) => {
-                        let err_str = e.to_string();
-                        let is_transient = err_str.contains("timeout")
-                            || err_str.contains("429")
-                            || err_str.contains("500")
-                            || err_str.contains("502")
-                            || err_str.contains("503");
-                        if is_transient && retry < 3 {
-                            let delay = retry_delays[retry as usize];
-                            debug!(provider = provider.name(), retry, delay_ms = delay, "retrying after transient error");
-                            tokio::time::sleep(std::time::Duration::from_millis(delay)).await;
-                        } else {
-                            break;
-                        }
+                    Err(e) if is_transient_error(e) && retry < 3 => {
+                        let delay = retry_delays[retry as usize];
+                        debug!(provider = provider.name(), retry, delay_ms = delay, "retrying after transient error");
+                        tokio::time::sleep(std::time::Duration::from_millis(delay)).await;
                     }
+                    Err(_) => break,
                 }
             }
 
             match result {
                 Ok(resp) => return Ok(resp),
                 Err(e) => {
-                    warn!(provider = provider.name(), attempt, error = %e, "provider failed, trying next");
+                    if !is_transient_error(&e) {
+                        return Err(e);
+                    }
+                    debug!(provider = provider.name(), error = %e, "provider failed, trying next transient provider");
                     last_err = e;
                     idx = (idx + 1) % len;
                 }
@@ -424,12 +427,13 @@ impl ProviderRegistry {
 mod tests {
     use super::*;
 
-    struct FailingProvider { name: String }
-    impl FailingProvider { fn new(name: &str) -> Self { Self { name: name.to_string() } } }
+    struct FailingProvider { name: String, msg: String }
+    impl FailingProvider { fn new(name: &str, msg: &str) -> Self { Self { name: name.to_string(), msg: msg.to_string() } } }
     impl Provider for FailingProvider {
         fn name(&self) -> &str { &self.name }
         fn chat(&self, _request: LlmRequest) -> Pin<Box<dyn Future<Output = Result<LlmResponse>> + Send + '_>> {
-            Box::pin(async move { Err(anyhow!("simulated failure")) })
+            let msg = self.msg.clone();
+            Box::pin(async move { Err(anyhow!(msg)) })
         }
     }
 
@@ -444,14 +448,14 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_provider_registry_fallback() {
+    async fn test_provider_registry_transient_fallback() {
         let mut reg = ProviderRegistry::new();
-        reg.register(Box::new(FailingProvider::new("fail")));
+        reg.register(Box::new(FailingProvider::new("fail", "timeout talking to provider")));
         let resp = LlmResponse { content: Some("ok".into()), tool_calls: vec![], usage: TokenUsage::default(), model: "m1".into() };
         reg.register(Box::new(SucceedProvider::new("succ", resp)));
 
         let req = LlmRequest { model: "m".into(), messages: vec![], tools: None, max_tokens: None };
-        let res = reg.chat(req).await.expect("fallback should succeed");
+        let res = reg.chat(req).await.expect("transient fallback should succeed");
         assert_eq!(res.content, Some("ok".to_string()));
     }
 
@@ -464,5 +468,25 @@ mod tests {
         let req = LlmRequest { model: "m".into(), messages: vec![], tools: None, max_tokens: None };
         let res = reg.chat_with("p1", req).await.expect("should find p1");
         assert_eq!(res.content, Some("hello".to_string()));
+    }
+
+    #[tokio::test]
+    async fn test_provider_registry_permanent_failure_no_fallback() {
+        struct PermanentFailProvider;
+        impl Provider for PermanentFailProvider {
+            fn name(&self) -> &str { "perm" }
+            fn chat(&self, _request: LlmRequest) -> Pin<Box<dyn Future<Output = Result<LlmResponse>> + Send + '_>> {
+                Box::pin(async move { Err(anyhow!("failed to parse response: expected value at line 1 column 1 raw: Unprocessable Entity")) })
+            }
+        }
+
+        let mut reg = ProviderRegistry::new();
+        reg.register(Box::new(PermanentFailProvider));
+        let resp = LlmResponse { content: Some("ok".into()), tool_calls: vec![], usage: TokenUsage::default(), model: "m1".into() };
+        reg.register(Box::new(SucceedProvider::new("succ", resp)));
+
+        let req = LlmRequest { model: "m".into(), messages: vec![], tools: None, max_tokens: None };
+        let err = reg.chat(req).await.expect_err("permanent failure should not fallback");
+        assert!(err.to_string().contains("failed to parse response"));
     }
 }
