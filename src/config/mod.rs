@@ -182,7 +182,7 @@ struct CliArgs {
     #[arg(long, action = clap::ArgAction::SetTrue)]
     json: bool,
 
-    /// Auto-approve all tool executions (skip confirm prompts)
+    /// Auto-approve tool execution prompts (does not bypass policy allowlist checks)
     #[arg(long, short = 'y', action = clap::ArgAction::SetTrue)]
     yes: bool,
 }
