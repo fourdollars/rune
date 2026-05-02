@@ -35,12 +35,13 @@ pub struct Agent {
     tools: ToolRegistry,
     skill_loader: SkillLoader,
     auto_approve: bool,
+    interactive: bool,
     trace: Option<TraceWriter>,
     executed_commands: Vec<String>,
 }
 
 impl Agent {
-    pub fn new(config: RuneConfig, provider: ProviderRegistry) -> Self {
+    pub fn new(config: RuneConfig, provider: ProviderRegistry, interactive: bool) -> Self {
         let mut tools = ToolRegistry::new(vec![PathBuf::from("/tmp"), PathBuf::from(".")]);
         tools.set_policy(&config.policy);
         let skill_loader = SkillLoader::new(vec![PathBuf::from(&config.skills_dir)]);
@@ -54,6 +55,7 @@ impl Agent {
         } else {
             None
         };
+        let auto_approve = config.auto_approve;
         Agent {
             config,
             messages: Vec::new(),
@@ -62,7 +64,8 @@ impl Agent {
             provider,
             tools,
             skill_loader,
-            auto_approve: std::env::var("RUNE_YES").map(|v| v == "1" || v == "true").unwrap_or(false),
+            auto_approve,
+            interactive,
             trace,
             executed_commands: Vec::new(),
         }
@@ -246,7 +249,10 @@ impl Agent {
 
             // Execute each tool call
             for tc in &response.tool_calls {
-                let result = self.execute_tool_call(tc).await;
+                let result = match self.execute_tool_call(tc).await {
+                    Ok(result) => result,
+                    Err(stop) => return stop,
+                };
                 self.messages.push(LlmMessage {
                     role: "tool".to_string(),
                     content: Some(result),
@@ -280,7 +286,7 @@ impl Agent {
     }
 
     /// Execute a single tool call.
-    async fn execute_tool_call(&mut self, tc: &LlmToolCall) -> String {
+    async fn execute_tool_call(&mut self, tc: &LlmToolCall) -> Result<String, StopReason> {
         let args: serde_json::Value = serde_json::from_str(&tc.function.arguments)
             .unwrap_or(serde_json::Value::Object(serde_json::Map::new()));
 
@@ -302,6 +308,15 @@ impl Agent {
 
         // Confirm mode: ask user before executing dangerous tools
         if self.config.policy.mode == "confirm" && Self::is_dangerous_tool(&tc.function.name) && !self.auto_approve {
+            if !self.interactive {
+                let msg = format!(
+                    "non-interactive mode requires --yes (or a non-confirm policy) before executing {}",
+                    tc.function.name
+                );
+                eprintln!("  {} {}", "✗".red(), msg.dimmed());
+                return Err(StopReason::Error(msg));
+            }
+
             eprint!("
   {} Execute? [Y/n/A(lways)] ", "⚠".yellow().bold());
             std::io::Write::flush(&mut std::io::stderr()).ok();
@@ -313,7 +328,7 @@ impl Agent {
                 }
                 ConfirmResult::No => {
                     eprintln!("{}", "denied".red());
-                    return "DENIED: user rejected tool execution".to_string();
+                    return Ok("DENIED: user rejected tool execution".to_string());
                 }
             }
         }
@@ -326,7 +341,7 @@ impl Agent {
             eprintln!("  {} {}", "✓".green(), format!("{}...ok", tc.function.name).dimmed());
         }
 
-        output.content
+        Ok(output.content)
     }
 
     /// Tools that modify state or execute arbitrary commands.

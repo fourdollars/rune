@@ -1,5 +1,6 @@
 use colored::Colorize;
 use indicatif::{ProgressBar, ProgressStyle};
+use std::io::IsTerminal;
 use std::time::Duration;
 
 use crate::agent::{Agent, StopReason};
@@ -382,28 +383,30 @@ async fn read_multiline() -> Option<String> {
 }
 
 /// Run a prompt through the agent with spinner feedback.
-/// Check if JSON output mode is active.
-fn is_json_mode() -> bool {
-    std::env::var("RUNE_JSON_OUTPUT").map(|v| v == "1").unwrap_or(false)
+fn is_json_mode(cfg: &config::RuneConfig) -> bool {
+    cfg.json_output
 }
 
-async fn execute_prompt(agent: &mut Agent, input: &str) {
-    let spinner = if agent.config.policy.mode == "confirm" { None } else { Some(create_spinner("Thinking...")) };
+async fn execute_prompt(agent: &mut Agent, input: &str) -> StopReason {
+    let spinner = if agent.config.policy.mode == "confirm" || is_json_mode(&agent.config) {
+        None
+    } else {
+        Some(create_spinner("Thinking..."))
+    };
     let result = agent.run(input).await;
-    if is_json_mode() {
-        let answer = match &result {
-            StopReason::FinalAnswer(a) => a.clone(),
-            StopReason::Error(e) => { println!("{}", serde_json::json!({"error": e})); return; }
-            other => { println!("{}", serde_json::json!({"error": format!("{:?}", other)})); return; }
+    if is_json_mode(&agent.config) {
+        let payload = match &result {
+            StopReason::FinalAnswer(a) => serde_json::json!({
+                "answer": a,
+                "tools_used": agent.executed_commands(),
+                "steps": agent.step_count(),
+                "tokens": agent.tokens_used()
+            }),
+            StopReason::Error(e) => serde_json::json!({"error": e}),
+            other => serde_json::json!({"error": format!("{:?}", other)}),
         };
-        let cmds: Vec<&str> = agent.executed_commands().iter().map(|s| s.as_str()).collect();
-        println!("{}", serde_json::json!({
-            "answer": answer,
-            "tools_used": cmds,
-            "steps": agent.step_count(),
-            "tokens": agent.tokens_used()
-        }));
-        return;
+        println!("{}", payload);
+        return result;
     }
     if let Some(s) = spinner { s.finish_and_clear(); }
     display_result(&result);
@@ -421,6 +424,7 @@ async fn execute_prompt(agent: &mut Agent, input: &str) {
         println!("  {} [{} steps | {} tokens | {} tool calls]",
             "⚡".dimmed(), agent.step_count(), agent.tokens_used(), cmds2.len());
     }
+    result
 }
 
 /// Initialize the provider registry from config.
@@ -452,31 +456,63 @@ fn init_provider(cfg: &config::RuneConfig) -> ProviderRegistry {
 
 /// Main CLI entry point.
 pub async fn run() {
-    if !is_json_mode() { print_banner(); }
-
     let cfg = config::load().unwrap_or_default();
     let provider = init_provider(&cfg);
+    let stdin_is_terminal = std::io::stdin().is_terminal();
 
+    if !is_json_mode(&cfg) {
+        print_banner();
+    }
 
     // Start MCP servers if configured
-    if !cfg.mcp_servers.is_empty() && !is_json_mode() {
+    if !cfg.mcp_servers.is_empty() && !is_json_mode(&cfg) {
         eprintln!("  {} Starting {} MCP server(s)...", "⚙".dimmed(), cfg.mcp_servers.len());
     }
     if provider.is_empty() {
-        println!("{}", "⚠ No API key configured. Set RUNE_API_KEY or use --api-key to connect.".yellow());
-        println!("{}", "  The agent will not be able to call an LLM without a key.".dimmed());
-        println!();
+        if is_json_mode(&cfg) {
+            eprintln!("{}", "⚠ No API key configured. Set RUNE_API_KEY or use --api-key to connect.".yellow());
+            eprintln!("{}", "  The agent will not be able to call an LLM without a key.".dimmed());
+        } else {
+            println!("{}", "⚠ No API key configured. Set RUNE_API_KEY or use --api-key to connect.".yellow());
+            println!("{}", "  The agent will not be able to call an LLM without a key.".dimmed());
+            println!();
+        }
     }
 
-    let mut agent = Agent::new(cfg.clone(), provider);
+    let mut agent = Agent::new(cfg.clone(), provider, stdin_is_terminal);
     agent.set_system_prompt(
         "You are Rune, a high-performance AI agent running in a terminal. \
          You have access to tools: read_file, write_file, list_dir, execute_cmd, fetch_url. \
          Use them when needed. Be concise and accurate."
     );
 
-    if !is_json_mode() { println!("{} Type {} for commands.", "Ready.".green().bold(), "/help".bold()); }
-    println!();
+    if !stdin_is_terminal {
+        use tokio::io::{self, AsyncReadExt};
+
+        let mut input = String::new();
+        let mut stdin = io::stdin();
+        if let Err(e) = stdin.read_to_string(&mut input).await {
+            eprintln!("{} {}", "Read error:".red(), e);
+            std::process::exit(1);
+        }
+
+        let input = input.trim();
+        if input.is_empty() {
+            eprintln!("{}", "No piped input received on stdin.".red());
+            std::process::exit(1);
+        }
+
+        let result = execute_prompt(&mut agent, input).await;
+        if !matches!(result, StopReason::FinalAnswer(_)) {
+            std::process::exit(1);
+        }
+        return;
+    }
+
+    if !is_json_mode(&cfg) {
+        println!("{} Type {} for commands.", "Ready.".green().bold(), "/help".bold());
+        println!();
+    }
 
     use tokio::io::{self, AsyncBufReadExt};
     let stdin = io::stdin();
@@ -489,7 +525,7 @@ pub async fn run() {
         let mut raw_buf = Vec::new();
         match reader.read_until(b'\n', &mut raw_buf).await {
             Ok(0) => {
-                if !is_json_mode() { println!("\n{}", "EOF — Goodbye! ᚱ".cyan()); }
+                if !is_json_mode(&cfg) { println!("\n{}", "EOF — Goodbye! ᚱ".cyan()); }
                 break;
             }
             Ok(_) => {}
@@ -504,7 +540,7 @@ pub async fn run() {
 
         match cmd.as_str() {
             "/exit" | "/quit" => {
-                if !is_json_mode() { println!("{}", "Goodbye! ᚱ".cyan()); }
+                if !is_json_mode(&cfg) { println!("{}", "Goodbye! ᚱ".cyan()); }
                 break;
             }
             "/help" | "/h" => print_help(),
@@ -540,12 +576,12 @@ pub async fn run() {
             "/policy full" => show_policy_full(&cfg),
             "/multi" => {
                 if let Some(input) = read_multiline().await {
-                    execute_prompt(&mut agent, &input).await;
+                    let _ = execute_prompt(&mut agent, &input).await;
                 }
             }
             _ => {
                 let input = &cmd;
-                execute_prompt(&mut agent, input).await;
+                let _ = execute_prompt(&mut agent, input).await;
             }
         }
     }

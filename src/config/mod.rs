@@ -75,6 +75,8 @@ pub struct RuneConfig {
     pub timeout_secs: u64,
     pub base_url: Option<String>,
     pub trace: bool,
+    pub json_output: bool,
+    pub auto_approve: bool,
     #[serde(default)]
     pub policy: PolicyConfig,
     #[serde(default)]
@@ -93,6 +95,8 @@ impl Default for RuneConfig {
             timeout_secs: 60,
             base_url: None,
             trace: false,
+            json_output: false,
+            auto_approve: false,
             policy: PolicyConfig::default(),
             mcp_servers: Vec::new(),
         }
@@ -175,12 +179,20 @@ struct CliArgs {
     policy_mode: Option<String>,
 
     /// Output in JSON format (machine-readable)
-    #[arg(long, env = "RUNE_JSON_OUTPUT")]
-    json: Option<bool>,
+    #[arg(long, action = clap::ArgAction::SetTrue)]
+    json: bool,
 
     /// Auto-approve all tool executions (skip confirm prompts)
-    #[arg(long, short = 'y', env = "RUNE_YES")]
-    yes: Option<bool>,
+    #[arg(long, short = 'y', action = clap::ArgAction::SetTrue)]
+    yes: bool,
+}
+
+fn parse_boolish(value: &str) -> Option<bool> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "1" | "true" | "yes" | "y" | "on" => Some(true),
+        "0" | "false" | "no" | "n" | "off" => Some(false),
+        _ => None,
+    }
 }
 
 /// Pick the first Some value from a chain of options, falling back to a default.
@@ -221,6 +233,8 @@ pub fn load() -> anyhow::Result<RuneConfig> {
         policy: None, // Policy loaded from TOML only (too complex for single env var)
         mcp_servers: None,
     };
+    let env_json_output = env::var("RUNE_JSON_OUTPUT").ok().and_then(|v| parse_boolish(&v));
+    let env_auto_approve = env::var("RUNE_YES").ok().and_then(|v| parse_boolish(&v));
 
     // Project-local config: .rune/rune.toml
     let local_cfg = env::current_dir()
@@ -290,6 +304,8 @@ pub fn load() -> anyhow::Result<RuneConfig> {
             .or(lc.and_then(|c| c.trace))
             .or(uc.and_then(|c| c.trace))
             .unwrap_or(defaults.trace),
+        json_output: cli.json || env_json_output.unwrap_or(defaults.json_output),
+        auto_approve: cli.yes || env_auto_approve.unwrap_or(defaults.auto_approve),
         policy,
         mcp_servers: lc.and_then(|c| c.mcp_servers.clone())
             .or_else(|| uc.and_then(|c| c.mcp_servers.clone()))

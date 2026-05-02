@@ -18,6 +18,7 @@ A high-performance, zero-trust AI agent built in Rust. Single binary, dual mode:
 - **Concourse CI** — Same binary acts as a resource type (`check`, `in`, `out`) via symlink
 - **Trace Recording** — JSON trace files with sensitive info redaction
 - **JSON Output** — `--json` flag for machine-readable output
+- **Non-Interactive Pipe Mode** — piped stdin runs once and exits; no interactive prompt loop
 
 ## Quick Start
 
@@ -141,7 +142,8 @@ max_pids = 64
 | `RUNE_POLICY_MODE` | Policy mode override |
 | `RUNE_LOG_LEVEL` | Log level |
 | `RUNE_TRACE` | Enable trace (true/false) |
-| `RUNE_JSON_OUTPUT` | JSON output mode |
+| `RUNE_JSON_OUTPUT` | JSON output mode (`true` / `false`, also accepts `1` / `0`) |
+| `RUNE_YES` | Auto-approve dangerous tool execution (`true` / `false`, also accepts `1` / `0`) |
 
 ## Zero-Trust Sandbox
 
@@ -205,12 +207,38 @@ Every tool invocation passes through up to 5 isolation layers:
 ## JSON Output Mode
 
 ```bash
-echo "What is 2+2?" | rune --json true
+echo "What is 2+2?" | rune --json
 ```
 
 ```json
 {"answer":"4","steps":1,"tokens":348,"tools_used":[]}
 ```
+
+## CLI Flags
+
+```bash
+# Machine-readable output
+rune --json
+
+# Skip confirm prompts for dangerous tools
+rune --yes
+# or
+rune -y
+```
+
+## Pipe / Non-Interactive Mode
+
+When stdin is piped into Rune, it runs in one-shot non-interactive mode:
+
+```bash
+echo "Get weather for Taoyuan from wttr.in 用台灣中文" | rune --json --yes
+```
+
+Behavior in pipe mode:
+- reads all stdin as a single prompt
+- does **not** enter the interactive prompt loop
+- exits immediately after one run
+- if confirm mode would require approval, Rune stops with an error unless `--yes` is provided
 
 ## Skills
 
@@ -227,6 +255,11 @@ Use `@skill_name` in prompts:
 ```
 ᚱ› Use @sysadmin skill. Check disk usage.
   📚 Loaded skill: sysadmin
+```
+
+For scripting, combine skills with pipe mode:
+```bash
+echo "Use @sysadmin skill. Check disk usage." | rune --json --yes
 ```
 
 ## Concourse CI Resource Type

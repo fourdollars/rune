@@ -20,12 +20,6 @@ use tracing_subscriber::EnvFilter;
 async fn main() {
     // Check for subcommands BEFORE clap parses args
     let args: Vec<String> = env::args().collect();
-    if args.iter().any(|a| a == "--json") {
-        std::env::set_var("RUNE_JSON_OUTPUT", "1");
-    }
-    if args.iter().any(|a| a == "--yes" || a == "-y") {
-        std::env::set_var("RUNE_YES", "1");
-    }
     if args.len() > 1 && args[1] == "init" {
         setup::run_setup().await;
         return;

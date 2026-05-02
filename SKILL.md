@@ -43,9 +43,16 @@ rune
 
 ### JSON Mode (for programmatic use)
 ```bash
-echo "your prompt here" | rune --json true
+echo "your prompt here" | rune --json
 # Output: {"answer":"...","tools_used":[...],"steps":N,"tokens":N}
 ```
+
+### Non-interactive pipe mode
+```bash
+echo "Get weather for Taoyuan from wttr.in 用台灣中文" | rune --json --yes
+```
+
+When stdin is piped into Rune, it runs once and exits immediately. It does not enter interactive mode. If confirm mode would require approval, rerun with `--yes`.
 
 ### With specific model
 ```bash
@@ -119,11 +126,11 @@ Skills are stored in the `skills_dir` (default: `./skills`).
 
 ```bash
 # Quick question
-echo "What time is it?" | rune --json true
+echo "What time is it?" | rune --json
 
 # With a skill
-echo "Use @sysadmin. Check disk usage." | rune --json true
+echo "Use @sysadmin. Check disk usage." | rune --json --yes
 
 # Fetch weather (requires wttr.in in allowed_domains)
-echo "Get weather for Tokyo from wttr.in" | rune --json true
+echo "Get weather for Tokyo from wttr.in" | rune --json --yes
 ```
