@@ -1,3 +1,7 @@
 /target
 skills/
 .rune/
+*.swp
+*.swo
+*~
+.DS_Store
