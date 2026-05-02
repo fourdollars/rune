@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ᚱ Rune — Zero-Trust AI Agent</title>
+    <meta name="description" content="High-performance, zero-trust AI agent built in Rust. Single binary, sandboxed tool execution, 5 isolation layers.">
+    <meta property="og:title" content="ᚱ Rune — Zero-Trust AI Agent">
+    <meta property="og:description" content="High-performance, zero-trust AI agent built in Rust. Single binary, sandboxed tool execution.">
+    <meta property="og:url" content="https://fourdollars.github.io/rune/">
+    <meta property="og:type" content="website">
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>ᚱ</text></svg>">
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <canvas id="rune-particles"></canvas>
+
+    <!-- Hero -->
+    <section class="hero">
+        <div class="rune-border">ᛟ ᚺ ᛊ ᛏ ᛒ ᛖ ᚹ ᛗ ᛚ ᛝ ᛟ</div>
+        <h1 class="glow">ᚱ&nbsp; R U N E</h1>
+        <p class="tagline">Zero-Trust AI Agent</p>
+        <p class="sub">High-performance. Single binary. Sandboxed by default.</p>
+        <div class="cta">
+            <a href="https://github.com/fourdollars/rune" class="btn btn-primary">⚡ View on GitHub</a>
+            <a href="#install" class="btn btn-secondary">Get Started</a>
+        </div>
+        <div class="rune-border">ᛟ ᚺ ᛊ ᛏ ᛒ ᛖ ᚹ ᛗ ᛚ ᛝ ᛟ</div>
+    </section>
+
+    <!-- Features -->
+    <section class="features" id="features">
+        <h2 class="section-title">⚔️ Features</h2>
+        <div class="feature-grid">
+            <div class="feature-card fade-in">
+                <div class="feature-icon">🛡️</div>
+                <h3>5-Layer Sandbox</h3>
+                <p>Network namespace, cgroups, Seccomp BPF, Landlock, DNS allowlist. Every tool call is isolated.</p>
+            </div>
+            <div class="feature-card fade-in">
+                <div class="feature-icon">🔧</div>
+                <h3>6 Built-in Tools</h3>
+                <p>read_file, write_file, list_dir, execute_cmd, fetch_url, inspect_process — all sandboxed.</p>
+            </div>
+            <div class="feature-card fade-in">
+                <div class="feature-icon">📚</div>
+                <h3>Skills System</h3>
+                <p>Load contextual abilities via @skill_name. Frontmatter-driven, multi-path search.</p>
+            </div>
+            <div class="feature-card fade-in">
+                <div class="feature-icon">🤖</div>
+                <h3>Multi-Provider</h3>
+                <p>GitHub Copilot (auto refresh), OpenRouter, Google Gemini, any OpenAI-compatible endpoint.</p>
+            </div>
+            <div class="feature-card fade-in">
+                <div class="feature-icon">🔌</div>
+                <h3>MCP Client</h3>
+                <p>Stdio JSON-RPC client for Model Context Protocol servers. Extend without recompiling.</p>
+            </div>
+            <div class="feature-card fade-in">
+                <div class="feature-icon">🚀</div>
+                <h3>Concourse CI</h3>
+                <p>Same binary doubles as a Concourse resource type via symlink routing. Zero extra deps.</p>
+            </div>
+        </div>
+    </section>
+
+    <!-- Demo -->
+    <section class="demo" id="demo">
+        <h2 class="section-title">✨ Demo</h2>
+        <div class="terminal">
+            <div class="terminal-header">
+                <span class="dot red"></span>
+                <span class="dot yellow"></span>
+                <span class="dot green"></span>
+                <span class="terminal-title">rune</span>
+            </div>
+            <div class="terminal-body">
+                <div class="line" data-delay="0"><span class="prompt">ᚱ›</span> Get weather for Taoyuan from wttr.in</div>
+                <div class="line" data-delay="800"><span class="dim">  ⚙ fetch_url({"url":"https://wttr.in/Taoyuan"})</span></div>
+                <div class="line" data-delay="1200"><span class="dim">  </span><span class="warn">⚠</span> Execute? [Y/n/A(lways)] <span class="input">A</span></div>
+                <div class="line" data-delay="1800"><span class="success">permanently allowed → saved to ~/.rune/rune.toml</span></div>
+                <div class="line" data-delay="2200"><span class="success">    + domain 'wttr.in' → allowed_domains</span></div>
+                <div class="line" data-delay="2600"><span class="dim">  </span><span class="success">✓</span><span class="dim"> fetch_url...ok</span></div>
+                <div class="line" data-delay="3200"><span class="separator">────────────────────────────────────────</span></div>
+                <div class="line" data-delay="3600"><span class="output">Taoyuan: ☁️ 27°C, Humidity 79%, Wind WNW 8km/h</span></div>
+                <div class="line" data-delay="4000"><span class="separator">────────────────────────────────────────</span></div>
+                <div class="line" data-delay="4400"><span class="dim">  ⚡ [2 steps | 1049 tokens | 1 tool calls]</span></div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Security -->
+    <section class="security" id="security">
+        <h2 class="section-title">🔐 Security Model</h2>
+        <div class="sandbox-stack">
+            <div class="layer fade-in" style="--layer-color: #ff6b6b">
+                <span class="layer-num">1</span>
+                <div>
+                    <strong>cgroups v2</strong>
+                    <small>Memory 512MB, max 64 processes</small>
+                </div>
+            </div>
+            <div class="layer fade-in" style="--layer-color: #feca57">
+                <span class="layer-num">2</span>
+                <div>
+                    <strong>Network Namespace</strong>
+                    <small>unshare --user --net — all outbound blocked</small>
+                </div>
+            </div>
+            <div class="layer fade-in" style="--layer-color: #48dbfb">
+                <span class="layer-num">3</span>
+                <div>
+                    <strong>Seccomp BPF</strong>
+                    <small>Blocks ptrace, mount, kexec_load, bpf, setns</small>
+                </div>
+            </div>
+            <div class="layer fade-in" style="--layer-color: #ff9ff3">
+                <span class="layer-num">4</span>
+                <div>
+                    <strong>Landlock</strong>
+                    <small>Filesystem restriction — only allowed paths</small>
+                </div>
+            </div>
+            <div class="layer fade-in" style="--layer-color: #54a0ff">
+                <span class="layer-num">5</span>
+                <div>
+                    <strong>DNS Allowlist</strong>
+                    <small>Domain-level network control + wildcard</small>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Install -->
+    <section class="install" id="install">
+        <h2 class="section-title">📦 Installation</h2>
+        <div class="install-steps">
+            <div class="code-block">
+                <div class="code-header">Build from source</div>
+                <pre><code>git clone https://github.com/fourdollars/rune.git
+cd rune
+cargo build --release
+cp target/release/rune ~/.local/bin/</code></pre>
+            </div>
+            <div class="code-block">
+                <div class="code-header">First-time setup</div>
+                <pre><code>rune init</code></pre>
+            </div>
+            <div class="code-block">
+                <div class="code-header">Pipe mode (scripting)</div>
+                <pre><code>echo "Get weather for Tokyo" | rune --json --yes</code></pre>
+            </div>
+        </div>
+    </section>
+
+    <!-- Footer -->
+    <footer>
+        <div class="rune-border dim">ᛟ ᚺ ᛊ ᛏ ᛒ ᛖ ᚹ ᛗ ᛚ ᛝ ᛟ</div>
+        <p>
+            <a href="https://github.com/fourdollars/rune">GitHub</a> ·
+            MIT License · Built with 🦀 Rust
+        </p>
+        <p class="dim">ᚱ Rune v0.1.0</p>
+    </footer>
+
+    <script src="runes.js"></script>
+</body>
+</html>
