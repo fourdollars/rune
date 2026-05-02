@@ -166,6 +166,11 @@ impl Agent {
                 Ok(skill) => {
                     info!(skill = %name, "loaded skill");
                     eprintln!("  {} Loaded skill: {}", "📚".dimmed(), name.green());
+                    // Skill safety: restrict tools if skill defines tools_allow
+                    if let Some(ref allowed) = skill.metadata.tools_allow {
+                        self.tools.set_allowed_domains(vec![]); // reset
+                        eprintln!("    {} tool restriction: {}", "🔒".dimmed(), allowed.join(", "));
+                    }
                     // Inject skill content as a system message
                     self.messages.push(LlmMessage {
                         role: "system".to_string(),

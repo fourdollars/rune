@@ -367,9 +367,36 @@ impl ProviderRegistry {
         let mut idx = self.default_provider.min(len - 1);
         let mut last_err = anyhow!("no providers");
 
+        let retry_delays = [100u64, 500, 2000]; // ms
+
         for attempt in 0..len {
             let provider = &self.providers[idx];
-            match provider.chat(request.clone()).await {
+
+            // Try with retries for transient errors
+            let mut result = Err(anyhow!("not attempted"));
+            for retry in 0..=3 {
+                result = provider.chat(request.clone()).await;
+                match &result {
+                    Ok(_) => break,
+                    Err(e) => {
+                        let err_str = e.to_string();
+                        let is_transient = err_str.contains("timeout")
+                            || err_str.contains("429")
+                            || err_str.contains("500")
+                            || err_str.contains("502")
+                            || err_str.contains("503");
+                        if is_transient && retry < 3 {
+                            let delay = retry_delays[retry as usize];
+                            debug!(provider = provider.name(), retry, delay_ms = delay, "retrying after transient error");
+                            tokio::time::sleep(std::time::Duration::from_millis(delay)).await;
+                        } else {
+                            break;
+                        }
+                    }
+                }
+            }
+
+            match result {
                 Ok(resp) => return Ok(resp),
                 Err(e) => {
                     warn!(provider = provider.name(), attempt, error = %e, "provider failed, trying next");
