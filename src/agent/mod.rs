@@ -38,6 +38,7 @@ pub struct Agent {
     interactive: bool,
     trace: Option<TraceWriter>,
     executed_commands: Vec<String>,
+    tool_call_names: Vec<String>,
 }
 
 impl Agent {
@@ -68,6 +69,7 @@ impl Agent {
             interactive,
             trace,
             executed_commands: Vec::new(),
+            tool_call_names: Vec::new(),
         }
     }
 
@@ -197,6 +199,7 @@ impl Agent {
     pub async fn run(&mut self, user_input: &str) -> StopReason {
         // Resolve and inject @skill references
         self.executed_commands.clear();
+        self.tool_call_names.clear();
         self.inject_skills(user_input);
 
         // Add user message
@@ -298,7 +301,8 @@ impl Agent {
             t.record(StepKind::ToolCall { name: tc.function.name.clone(), arguments_preview: tc.function.arguments[..tc.function.arguments.len().min(100)].to_string() });
         }
 
-        // Track executed commands
+        // Track tool calls and executed commands
+        self.tool_call_names.push(tc.function.name.clone());
         if tc.function.name == "execute_cmd" {
             if let Some(cmd) = serde_json::from_str::<serde_json::Value>(&tc.function.arguments)
                 .ok().and_then(|a| a.get("cmd").and_then(|c| c.as_str()).map(|s| s.to_string())) {
@@ -385,5 +389,15 @@ impl Agent {
     /// Get the list of commands executed during this session.
     pub fn executed_commands(&self) -> &[String] {
         &self.executed_commands
+    }
+
+    /// Get all tool call names executed during this session.
+    pub fn tool_call_names(&self) -> &[String] {
+        &self.tool_call_names
+    }
+
+    /// Count all tool calls executed during this session.
+    pub fn tool_call_count(&self) -> usize {
+        self.tool_call_names.len()
     }
 }
