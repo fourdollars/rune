@@ -337,11 +337,22 @@ impl Agent {
 
         if output.is_error {
             eprintln!("  {} {}", "✗".red(), output.content[..output.content.len().min(200)].dimmed());
+            if Self::is_policy_blocked(&output.content) {
+                return Err(StopReason::Error(output.content));
+            }
         } else {
             eprintln!("  {} {}", "✓".green(), format!("{}...ok", tc.function.name).dimmed());
         }
 
         Ok(output.content)
+    }
+
+    fn is_policy_blocked(content: &str) -> bool {
+        let s = content.trim_start();
+        s.starts_with("BLOCKED:")
+            || s.starts_with("BLOCKED by policy:")
+            || s.contains("Network access requires explicit allowlist configuration")
+            || s.contains("command '") && s.contains("is not in allowed_commands")
     }
 
     /// Tools that modify state or execute arbitrary commands.
