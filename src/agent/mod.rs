@@ -65,7 +65,17 @@ impl Agent {
                 config.policy.allowed_paths_ro.push(cwd_str);
             }
         }
-        let mut tools = ToolRegistry::new(vec![PathBuf::from("/tmp"), PathBuf::from(".")]);
+        let allowed_dirs = if config.policy.allowed_paths_rw.is_empty() {
+            vec![PathBuf::from("/tmp"), PathBuf::from(".")]
+        } else {
+            config
+                .policy
+                .allowed_paths_rw
+                .iter()
+                .map(PathBuf::from)
+                .collect()
+        };
+        let mut tools = ToolRegistry::new(allowed_dirs);
         tools.set_policy(&config.policy);
         let skill_loader = SkillLoader::new(vec![PathBuf::from(&config.skills_dir)]);
         let trace = if config.trace {

@@ -41,6 +41,11 @@ model = "text-embedding-3-small"  # auto-detected from provider
 threshold = 0.6                    # cosine similarity threshold
 ```
 
+### Concourse Resource Type
+- `check` / `in` / `out` now run the same sandboxed agent pipeline used by pipe mode.
+- Copilot tokens (`ghu_` / `ghp_`) are auto-refreshed before LLM calls.
+- Sandbox allowlists can be provided in the resource source (`network.allowed_domains`, `filesystem.read_write_paths`, `filesystem.read_only_paths`).
+
 ## Built-in Tools (6)
 
 | Tool | Sandboxed | Dangerous* | Notes |
@@ -133,7 +138,7 @@ src/
 ├── skills/          — SkillLoader + tools_allow/tools_deny enforcement
 ├── config/          — PolicyConfig, persistence, TOML loading
 ├── embedding/       — EmbeddingEngine + VectorStore + cosine search
-├── concourse/       — AI-driven resource type (check/in/out + Copilot refresh)
+├── concourse/       — AI-driven resource type (sandboxed check/in/out + Copilot refresh)
 ├── mcp/             — MCP client (stdio JSON-RPC)
 ├── cli/             — interactive CLI, slash commands, persistent history
 ├── setup.rs         — `rune init` wizard
@@ -153,7 +158,7 @@ src/
 ## Testing
 
 ```bash
-cargo test                    # 98 unit tests
+cargo test                    # 95 unit tests
 ./tests/e2e.sh               # 16 E2E integration tests
 cargo llvm-cov --summary-only # coverage report
 cargo build --release         # release build (~5MB)

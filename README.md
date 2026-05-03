@@ -268,7 +268,13 @@ echo "Use @sysadmin skill. Check disk usage." | rune --json --yes
 
 ## Concourse CI Resource Type
 
-Rune acts as a content-aware Concourse resource type. The `check` step executes a prompt, computes `sha256` of the response for versioning — when the world changes, the pipeline triggers.
+Rune acts as a content-aware Concourse resource type. **All three resource steps (`check` / `in` / `out`) run through the same sandboxed Rune agent pipeline as pipe mode.**
+
+- `check` executes the prompt, hashes the final answer, and returns `{"ref":"sha256:..."}`
+- `in` re-executes the prompt and writes `payload.json` + `response.txt`
+- `out` executes `params.prompt` and returns a new version
+
+When tool usage is needed, configure sandbox allowlists in the resource source (domains, paths, commands via Rune policy).
 
 ```yaml
 resource_types:
@@ -285,6 +291,12 @@ resources:
       api_key: ((copilot_key))          # ghu_/ghp_ auto-refreshed
       model: gpt-4o-mini
       prompt: "List top 3 trending AI topics today. One line each."
+      sandbox:
+        network:
+          allowed_domains: ["news.google.com", "api.github.com"]
+        filesystem:
+          read_write_paths: ["/workspace"]
+          read_only_paths: ["/bin", "/usr", "/lib"]
 
 jobs:
   - name: news-digest
@@ -313,9 +325,9 @@ jobs:
 
 | Mode | Behavior |
 |------|----------|
-| `check` | Execute `source.prompt` → sha256(response) → version `{"ref":"sha256:..."}` |
-| `in` (get) | Re-execute prompt → write `payload.json` + `response.txt` to dest dir |
-| `out` (put) | Execute `params.prompt` → return version + print response to build log |
+| `check` | Run sandboxed agent on `source.prompt` → sha256(final answer) → version `{"ref":"sha256:..."}` |
+| `in` (get) | Run sandboxed agent again → write `payload.json` + `response.txt` to dest dir |
+| `out` (put) | Run sandboxed agent on `params.prompt` → return version + print response to build log |
 
 ### Supported Providers
 
@@ -336,7 +348,7 @@ src/
 ├── main.rs              — Entry point, routing
 ├── agent/mod.rs         — Agent loop, tool orchestration, confirm flow
 ├── cli/mod.rs           — Interactive CLI, commands, JSON mode
-├── concourse/mod.rs     — Concourse check/in/out
+├── concourse/mod.rs     — Concourse check/in/out (sandboxed agent pipeline)
 ├── config/mod.rs        — Layered config + PolicyConfig
 ├── mcp/mod.rs           — MCP client (stdio JSON-RPC)
 ├── precommands.rs       — Pre-command execution
@@ -356,7 +368,7 @@ src/
 
 ```bash
 cargo build --release    # Build all 3 binaries
-cargo test               # Unit tests (98)
+cargo test               # Unit tests (95)
 ./tests/e2e.sh           # E2E tests (16)
 make check-all           # Both
 ```

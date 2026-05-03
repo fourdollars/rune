@@ -38,15 +38,15 @@ async fn main() {
 
     match prog_name.as_str() {
         "check" => {
-            concourse::run(concourse::ConcourseMode::Check);
+            concourse::run(concourse::ConcourseMode::Check).await;
             return;
         }
         "in" => {
-            concourse::run(concourse::ConcourseMode::In);
+            concourse::run(concourse::ConcourseMode::In).await;
             return;
         }
         "out" => {
-            concourse::run(concourse::ConcourseMode::Out);
+            concourse::run(concourse::ConcourseMode::Out).await;
             return;
         }
         _ => {}

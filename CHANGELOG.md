@@ -17,16 +17,17 @@ All notable changes to this project will be documented in this file.
   - `tools_deny`: listed tools hidden from LLM and blocked at execution
   - Both filter `tool_definitions()` sent to the provider
 - **Concourse AI-Driven Resource Type** — complete rewrite
-  - `check`: execute prompt → sha256 versioning (content-based triggers)
-  - `in` (get): execute prompt → write `payload.json` + `response.txt`
-  - `out` (put): execute `params.prompt` → return version
+  - `check` / `in` / `out` all run the full sandboxed Rune agent pipeline (same behavior as pipe mode)
+  - `check`: prompt → final answer → sha256 versioning (content-based triggers)
+  - `in` (get): prompt → `payload.json` + `response.txt`
+  - `out` (put): `params.prompt` → version + build log
   - GitHub Copilot token auto-refresh (`ghu_`/`ghp_` detection)
-  - Proper Concourse mode detection before clap parsing
+  - Sandbox allowlists supported in resource source (`allowed_domains`, `read_write_paths`, `read_only_paths`)
 - **CI Coverage Report** — `cargo-llvm-cov` integration
   - Coverage summary in GitHub Actions job summary
   - `lcov.info` artifact upload (30-day retention)
   - Binary size reporting
-- **Unit Tests** — 34 → 98 tests
+- **Unit Tests** — 34 → 95 tests
   - `config/mod.rs`: 18 tests (pick, parse_boolish, defaults, load_toml, persist)
   - `trace/mod.rs`: 12 tests (redact patterns, disabled mode, all StepKinds) → 100% coverage
   - `skills/mod.rs`: 20 tests (extract_refs, frontmatter, loader, resolve)
