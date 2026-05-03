@@ -3,6 +3,7 @@
 use std::env;
 use std::path::Path;
 
+mod embedding;
 mod agent;
 mod cli;
 mod concourse;

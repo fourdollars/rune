@@ -20,3 +20,4 @@ tokio = { version = "1", features = ["full"] }
 indicatif = "0.18"
 rustyline = "18"
 libc = "0.2"
+reqwest = { version = "0.13.3", features = ["json"] }
