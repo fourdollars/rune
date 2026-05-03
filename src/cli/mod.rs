@@ -172,9 +172,9 @@ fn show_config(cfg: &config::RuneConfig) {
     );
     println!("  {}  {}", "skills_dir:".dimmed(), cfg.skills_dir);
     println!("  {}  {}", "log_level:".dimmed(), cfg.log_level);
-    println!("  {}  {}", "max_steps:".dimmed(), cfg.max_steps);
+    println!("  {}  {}", "max_steps:".dimmed(), cfg.max_steps.map_or("unlimited".to_string(), |s| s.to_string()));
     println!("  {}  {}", "token_budget:".dimmed(), cfg.token_budget.map_or("unlimited".to_string(), |b| b.to_string()));
-    println!("  {}  {}", "timeout_secs:".dimmed(), cfg.timeout_secs);
+    println!("  {}  {}", "timeout_secs:".dimmed(), cfg.timeout_secs.map_or("unlimited".to_string(), |t| t.to_string()));
 }
 
 /// Display available tools.
@@ -270,9 +270,9 @@ fn show_info(cfg: &config::RuneConfig, agent: &crate::agent::Agent) {
         "    {} steps: {} / {} (max)",
         "•".dimmed(),
         agent.step_count(),
-        cfg.max_steps
+        cfg.max_steps.map_or("unlimited".to_string(), |s| s.to_string())
     );
-    println!("    {} timeout: {}s", "•".dimmed(), cfg.timeout_secs);
+    println!("    {} timeout: {}", "•".dimmed(), cfg.timeout_secs.map_or("unlimited".to_string(), |t| format!("{}s", t)));
     println!();
 
     // Skills
@@ -454,11 +454,11 @@ fn show_policy_full(cfg: &config::RuneConfig) {
 
     println!("  {}", "Timeouts:".bold());
     println!(
-        "    {} Default command timeout: {}s",
+        "    {} Default command timeout: {}",
         "•".dimmed(),
-        cfg.timeout_secs
+        cfg.timeout_secs.map_or("unlimited".to_string(), |t| format!("{}s", t))
     );
-    println!("    {} Max agent steps: {}", "•".dimmed(), cfg.max_steps);
+    println!("    {} Max agent steps: {}", "•".dimmed(), cfg.max_steps.map_or("unlimited".to_string(), |s| s.to_string()));
     println!("    {} Token budget: {}", "•".dimmed(), cfg.token_budget.map_or("unlimited".to_string(), |b| b.to_string()));
     println!();
 
@@ -490,14 +490,14 @@ fn show_policy_full(cfg: &config::RuneConfig) {
 
     println!("  {}", "Summary:".bold());
     println!(
-        "    Tools: network={}, filesystem={}, timeout={}s",
+        "    Tools: network={}, filesystem={}, timeout={}",
         if unshare_ok {
             "BLOCKED".red().to_string()
         } else {
             "OPEN (degraded)".yellow().to_string()
         },
         "RESTRICTED".green(),
-        cfg.timeout_secs
+        cfg.timeout_secs.map_or("unlimited".to_string(), |t| format!("{}s", t))
     );
 }
 

@@ -63,9 +63,9 @@ pub struct RuneConfig {
     pub api_key: Option<String>,
     pub skills_dir: String,
     pub log_level: String,
-    pub max_steps: u32,
+    pub max_steps: Option<u32>,
     pub token_budget: Option<u32>,
-    pub timeout_secs: u64,
+    pub timeout_secs: Option<u64>,
     pub base_url: Option<String>,
     pub trace: bool,
     pub json_output: bool,
@@ -83,9 +83,9 @@ impl Default for RuneConfig {
             api_key: None,
             skills_dir: "./skills".to_string(),
             log_level: "info".to_string(),
-            max_steps: 100,
+            max_steps: None,
             token_budget: None,
-            timeout_secs: 60,
+            timeout_secs: None,
             base_url: None,
             trace: false,
             json_output: false,
@@ -309,30 +309,24 @@ pub fn load() -> anyhow::Result<RuneConfig> {
             ],
             defaults.log_level,
         ),
-        max_steps: pick(
-            &[
+        max_steps: pick_option(&[
                 &cli.max_steps,
                 &env_partial.max_steps,
                 &lc.and_then(|c| c.max_steps),
                 &uc.and_then(|c| c.max_steps),
-            ],
-            defaults.max_steps,
-        ),
+            ]),
         token_budget: pick_option(&[
                 &cli.token_budget,
                 &env_partial.token_budget,
                 &lc.and_then(|c| c.token_budget),
                 &uc.and_then(|c| c.token_budget),
             ]),
-        timeout_secs: pick(
-            &[
+        timeout_secs: pick_option(&[
                 &cli.timeout_secs,
                 &env_partial.timeout_secs,
                 &lc.and_then(|c| c.timeout_secs),
                 &uc.and_then(|c| c.timeout_secs),
-            ],
-            defaults.timeout_secs,
-        ),
+            ]),
         base_url: cli
             .base_url
             .or(env_partial.base_url)

@@ -257,10 +257,12 @@ impl Agent {
         });
 
         loop {
-            if self.step_count >= self.config.max_steps {
-                let r = StopReason::MaxSteps;
-                self.finish_trace(&r);
-                return r;
+            if let Some(max) = self.config.max_steps {
+                if self.step_count >= max {
+                    let r = StopReason::MaxSteps;
+                    self.finish_trace(&r);
+                    return r;
+                }
             }
             if let Some(budget) = self.config.token_budget {
                 if self.tokens_used >= budget {

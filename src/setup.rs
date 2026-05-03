@@ -191,8 +191,6 @@ pub async fn run_setup() {
     }
     toml_content.push_str(&format!("skills_dir = \"{}\"\n", skills_dir));
     toml_content.push_str("log_level = \"warn\"\n");
-    toml_content.push_str("max_steps = 20\n");
-    toml_content.push_str("timeout_secs = 30\n");
     toml_content.push('\n');
     toml_content.push_str("[policy]\n");
     toml_content.push_str("mode = \"confirm\"\n");
