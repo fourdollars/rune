@@ -1,6 +1,5 @@
 # AGENTS.md — Rune Agent Architecture
 
-> Last updated: 2026-05-03 (commit 626710d)
 
 ## Overview
 
