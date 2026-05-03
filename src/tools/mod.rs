@@ -449,6 +449,14 @@ fn extract_command_binaries(cmd: &str) -> Vec<String> {
                     continue;
                 }
                 '&' => {
+                    // Check if this is part of a redirect (>&, &>, 2>&1, etc.)
+                    let prev_is_redirect = current.ends_with('>') || current.ends_with('<');
+                    let next_is_redirect = chars.peek() == Some(&'>');
+                    if prev_is_redirect || next_is_redirect {
+                        // Part of a redirect operator, not a separator
+                        current.push(ch);
+                        continue;
+                    }
                     // && is a separator, single & (background) is also a separator
                     if chars.peek() == Some(&'&') {
                         chars.next();
@@ -575,4 +583,65 @@ mod tests {
         assert_eq!(extract_command_binaries(""), Vec::<String>::new());
         assert_eq!(extract_command_binaries("   "), Vec::<String>::new());
     }
-}
+
+    #[test]
+    fn test_extract_binaries_redirect_not_separator() {
+        // 2>&1 should NOT split on &
+        assert_eq!(
+            extract_command_binaries("cargo build 2>&1 | head -50"),
+            vec!["cargo", "head"]
+        );
+        // &> is redirect, not separator
+        assert_eq!(
+            extract_command_binaries("make &> /dev/null"),
+            vec!["make"]
+        );
+        // Multiple redirects
+        assert_eq!(
+            extract_command_binaries("cmd 2>&1 1>/dev/null"),
+            vec!["cmd"]
+        );
+    }
+
+    #[test]
+    fn test_extract_binaries_background_ampersand() {
+        // Single & at end is background, should split
+        assert_eq!(
+            extract_command_binaries("sleep 10 & echo done"),
+            vec!["sleep", "echo"]
+        );
+    }
+
+    #[test]
+    fn test_extract_binaries_complex_real_world() {
+        // Real-world: build + test with redirect
+        assert_eq!(
+            extract_command_binaries("cargo build 2>&1 && cargo test 2>&1 | tail -20"),
+            vec!["cargo", "cargo", "tail"]
+        );
+        // grep with complex pattern + pipe
+        assert_eq!(
+            extract_command_binaries(r#"grep -rn "TODO\|FIXME\|HACK" src/ | sort | uniq -c"#),
+            vec!["grep", "sort", "uniq"]
+        );
+        // Subshell-like: semicolons + pipes
+        assert_eq!(
+            extract_command_binaries("echo start ; ls -la | grep rs ; echo done"),
+            vec!["echo", "ls", "grep", "echo"]
+        );
+    }
+
+    #[test]
+    fn test_extract_binaries_nested_quotes() {
+            // Single quotes inside double quotes
+            assert_eq!(
+                extract_command_binaries(r#"echo "it's a pipe | not""#),
+                vec!["echo"]
+            );
+            // Double quotes inside single quotes
+            assert_eq!(
+                extract_command_binaries(r#"echo 'he said "hello | world"'"#),
+                vec!["echo"]
+            );
+        }
+    }
