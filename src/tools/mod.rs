@@ -402,16 +402,75 @@ impl ToolRegistry {
 }
 
 /// Extract all command binaries from a shell command string.
-/// Handles ; | && || and the first token of each sub-command.
+/// Splits on unquoted shell separators (; | && ||) while respecting
+/// single quotes, double quotes, and backslash escapes.
 fn extract_command_binaries(cmd: &str) -> Vec<String> {
     let mut binaries = Vec::new();
-    // Split on shell separators
-    let parts: Vec<&str> = cmd
-        .split(|c| c == ';' || c == '|' || c == '&')
-        .filter(|s| !s.trim().is_empty())
-        .collect();
-    for part in parts {
-        let first_token = part.trim().split_whitespace().next().unwrap_or("");
+    let mut segments: Vec<String> = Vec::new();
+    let mut current = String::new();
+    let mut chars = cmd.chars().peekable();
+    let mut in_single = false;
+    let mut in_double = false;
+    let mut escaped = false;
+
+    while let Some(ch) = chars.next() {
+        if escaped {
+            current.push(ch);
+            escaped = false;
+            continue;
+        }
+        if ch == '\\' && !in_single {
+            escaped = true;
+            current.push(ch);
+            continue;
+        }
+        if ch == '\'' && !in_double {
+            in_single = !in_single;
+            current.push(ch);
+            continue;
+        }
+        if ch == '"' && !in_single {
+            in_double = !in_double;
+            current.push(ch);
+            continue;
+        }
+        if !in_single && !in_double {
+            match ch {
+                ';' => {
+                    segments.push(std::mem::take(&mut current));
+                    continue;
+                }
+                '|' => {
+                    // || is a separator too, consume second |
+                    if chars.peek() == Some(&'|') {
+                        chars.next();
+                    }
+                    segments.push(std::mem::take(&mut current));
+                    continue;
+                }
+                '&' => {
+                    // && is a separator, single & (background) is also a separator
+                    if chars.peek() == Some(&'&') {
+                        chars.next();
+                    }
+                    segments.push(std::mem::take(&mut current));
+                    continue;
+                }
+                _ => {}
+            }
+        }
+        current.push(ch);
+    }
+    if !current.is_empty() {
+        segments.push(current);
+    }
+
+    for seg in &segments {
+        let trimmed = seg.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let first_token = trimmed.split_whitespace().next().unwrap_or("");
         let binary = first_token.rsplit('/').next().unwrap_or(first_token);
         if !binary.is_empty() {
             binaries.push(binary.to_string());
@@ -451,5 +510,69 @@ mod tests {
             Some("api.github.com".to_string())
         );
         assert_eq!(extract_domain("https://"), None);
+    }
+
+    #[test]
+    fn test_extract_binaries_simple() {
+        assert_eq!(extract_command_binaries("ls"), vec!["ls"]);
+        assert_eq!(extract_command_binaries("/usr/bin/ls -la"), vec!["ls"]);
+    }
+
+    #[test]
+    fn test_extract_binaries_pipeline() {
+        assert_eq!(
+            extract_command_binaries("cat file | grep foo | wc -l"),
+            vec!["cat", "grep", "wc"]
+        );
+    }
+
+    #[test]
+    fn test_extract_binaries_chained() {
+        assert_eq!(
+            extract_command_binaries("make && make test"),
+            vec!["make", "make"]
+        );
+        assert_eq!(
+            extract_command_binaries("cmd1 ; cmd2 || cmd3"),
+            vec!["cmd1", "cmd2", "cmd3"]
+        );
+    }
+
+    #[test]
+    fn test_extract_binaries_quoted_pipes() {
+        // Pipes inside double quotes should NOT split
+        assert_eq!(
+            extract_command_binaries(r#"grep -r "todo!\|unimplemented!" src/"#),
+            vec!["grep"]
+        );
+        // Pipes inside single quotes should NOT split
+        assert_eq!(
+            extract_command_binaries("grep 'a|b|c' file.txt"),
+            vec!["grep"]
+        );
+    }
+
+    #[test]
+    fn test_extract_binaries_mixed_quotes_and_pipes() {
+        // Real pipe after quoted argument
+        assert_eq!(
+            extract_command_binaries(r#"grep "pattern" file | wc -l"#),
+            vec!["grep", "wc"]
+        );
+    }
+
+    #[test]
+    fn test_extract_binaries_escaped_pipe() {
+        // Backslash-escaped pipe inside double quotes (common in grep)
+        assert_eq!(
+            extract_command_binaries(r#"grep -r "todo!\|unimplemented!\|TODO\|FIXME" src/ --include="*.rs" -l"#),
+            vec!["grep"]
+        );
+    }
+
+    #[test]
+    fn test_extract_binaries_empty() {
+        assert_eq!(extract_command_binaries(""), Vec::<String>::new());
+        assert_eq!(extract_command_binaries("   "), Vec::<String>::new());
     }
 }
