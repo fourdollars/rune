@@ -43,6 +43,16 @@ pub struct Agent {
 
 impl Agent {
     pub fn new(config: RuneConfig, provider: ProviderRegistry, interactive: bool) -> Self {
+        let mut config = config;
+        // Auto-add CWD to allowed_paths_ro so read_file in project dir does not require confirm
+        if let Ok(cwd) = std::env::current_dir() {
+            let cwd_str = cwd.to_string_lossy().to_string();
+            if !config.policy.allowed_paths_ro.iter().any(|p| cwd_str.starts_with(p.trim_end_matches("/")))
+                && !config.policy.allowed_paths_rw.iter().any(|p| cwd_str.starts_with(p.trim_end_matches("/")))
+            {
+                config.policy.allowed_paths_ro.push(cwd_str);
+            }
+        }
         let mut tools = ToolRegistry::new(vec![PathBuf::from("/tmp"), PathBuf::from(".")]);
         tools.set_policy(&config.policy);
         let skill_loader = SkillLoader::new(vec![PathBuf::from(&config.skills_dir)]);
@@ -577,6 +587,21 @@ impl Agent {
     /// Check if the tool call's domain/command is already in the allowlist.
     fn is_already_allowed(&self, tool_name: &str, args: &serde_json::Value) -> bool {
         match tool_name {
+            "read_file" => {
+                if let Some(path) = args.get("path").and_then(|v| v.as_str()) {
+                    let p = self.resolve_tool_path(path);
+                    return self.is_path_in_list(&p, &self.config.policy.allowed_paths_ro)
+                        || self.is_path_in_list(&p, &self.config.policy.allowed_paths_rw);
+                }
+                false
+            }
+            "write_file" => {
+                if let Some(path) = args.get("path").and_then(|v| v.as_str()) {
+                    let p = self.resolve_tool_path(path);
+                    return self.is_path_in_list(&p, &self.config.policy.allowed_paths_rw);
+                }
+                false
+            }
             "fetch_url" => {
                 if let Some(domain) = Self::extract_domain_from_args(tool_name, args) {
                     return self.config.policy.allowed_domains.iter().any(|d| {
@@ -598,6 +623,22 @@ impl Agent {
             }
             _ => false,
         }
+    }
+
+    /// Resolve a potentially relative path to absolute for policy matching.
+    fn resolve_tool_path(&self, path: &str) -> String {
+        if path.starts_with('/') {
+            path.to_string()
+        } else {
+            format!("{}/{}", std::env::current_dir().unwrap_or_default().display(), path)
+        }
+    }
+
+    /// Check if a path falls under any entry in the given list.
+    fn is_path_in_list(&self, path: &str, list: &[String]) -> bool {
+        list.iter().any(|allowed| {
+            path == allowed || path.starts_with(&format!("{}/", allowed.trim_end_matches('/')))
+        })
     }
 
     /// Extract domain from tool call arguments (for fetch_url).
