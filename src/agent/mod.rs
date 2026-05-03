@@ -450,6 +450,7 @@ impl Agent {
             // Show what we're about to do
             let involved_domain = Self::extract_domain_from_args(&tc.function.name, &args);
             let involved_cmd = Self::extract_command_from_args(&tc.function.name, &args);
+            let involved_path = Self::extract_path_from_args(&tc.function.name, &args);
 
             eprint!(
                 "
@@ -477,6 +478,32 @@ impl Agent {
                             self.config.policy.allowed_commands.push(cmd_name.clone());
                             crate::config::persist_command(cmd_name);
                             added.push(format!("command '{}' → allowed_commands", cmd_name));
+                        }
+                    }
+
+                    if let Some(ref path) = involved_path {
+                        // Persist the parent directory for path-based tools
+                        let dir = std::path::Path::new(path.as_str())
+                            .parent()
+                            .map(|p| p.to_string_lossy().to_string())
+                            .unwrap_or_else(|| path.clone());
+                        let dir = if dir.is_empty() { ".".to_string() } else { dir };
+                        let resolved = self.resolve_tool_path(&dir);
+                        if tc.function.name == "write_file" {
+                            if !self.is_path_in_list(&resolved, &self.config.policy.allowed_paths_rw) {
+                                self.config.policy.allowed_paths_rw.push(resolved.clone());
+                                crate::config::persist_path_rw(&resolved);
+                                added.push(format!("path '{}' → allowed_paths_rw", resolved));
+                            }
+                        } else {
+                            // read_file
+                            if !self.is_path_in_list(&resolved, &self.config.policy.allowed_paths_ro)
+                                && !self.is_path_in_list(&resolved, &self.config.policy.allowed_paths_rw)
+                            {
+                                self.config.policy.allowed_paths_ro.push(resolved.clone());
+                                crate::config::persist_path_ro(&resolved);
+                                added.push(format!("path '{}' → allowed_paths_ro", resolved));
+                            }
                         }
                     }
 
@@ -671,6 +698,18 @@ impl Agent {
                 let binary = first_token.rsplit('/').next().unwrap_or(first_token);
                 if !binary.is_empty() {
                     return Some(binary.to_string());
+                }
+            }
+        }
+        None
+    }
+
+    /// Extract path from read_file/write_file arguments.
+    fn extract_path_from_args(tool_name: &str, args: &serde_json::Value) -> Option<String> {
+        if tool_name == "read_file" || tool_name == "write_file" {
+            if let Some(path) = args.get("path").and_then(|v| v.as_str()) {
+                if !path.is_empty() {
+                    return Some(path.to_string());
                 }
             }
         }
