@@ -262,10 +262,12 @@ impl Agent {
                 self.finish_trace(&r);
                 return r;
             }
-            if self.tokens_used >= self.config.token_budget {
-                let r = StopReason::TokenBudgetExhausted;
-                self.finish_trace(&r);
-                return r;
+            if let Some(budget) = self.config.token_budget {
+                if self.tokens_used >= budget {
+                    let r = StopReason::TokenBudgetExhausted;
+                    self.finish_trace(&r);
+                    return r;
+                }
             }
 
             self.step_count += 1;

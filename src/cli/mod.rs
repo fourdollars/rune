@@ -173,7 +173,7 @@ fn show_config(cfg: &config::RuneConfig) {
     println!("  {}  {}", "skills_dir:".dimmed(), cfg.skills_dir);
     println!("  {}  {}", "log_level:".dimmed(), cfg.log_level);
     println!("  {}  {}", "max_steps:".dimmed(), cfg.max_steps);
-    println!("  {}  {}", "token_budget:".dimmed(), cfg.token_budget);
+    println!("  {}  {}", "token_budget:".dimmed(), cfg.token_budget.map_or("unlimited".to_string(), |b| b.to_string()));
     println!("  {}  {}", "timeout_secs:".dimmed(), cfg.timeout_secs);
 }
 
@@ -264,7 +264,7 @@ fn show_info(cfg: &config::RuneConfig, agent: &crate::agent::Agent) {
         "    {} tokens used: {} / {} (budget)",
         "•".dimmed(),
         agent.tokens_used(),
-        cfg.token_budget
+        cfg.token_budget.map_or("unlimited".to_string(), |b| b.to_string())
     );
     println!(
         "    {} steps: {} / {} (max)",
@@ -459,7 +459,7 @@ fn show_policy_full(cfg: &config::RuneConfig) {
         cfg.timeout_secs
     );
     println!("    {} Max agent steps: {}", "•".dimmed(), cfg.max_steps);
-    println!("    {} Token budget: {}", "•".dimmed(), cfg.token_budget);
+    println!("    {} Token budget: {}", "•".dimmed(), cfg.token_budget.map_or("unlimited".to_string(), |b| b.to_string()));
     println!();
 
     println!("  {}", "LLM Provider:".bold());

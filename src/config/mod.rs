@@ -64,7 +64,7 @@ pub struct RuneConfig {
     pub skills_dir: String,
     pub log_level: String,
     pub max_steps: u32,
-    pub token_budget: u32,
+    pub token_budget: Option<u32>,
     pub timeout_secs: u64,
     pub base_url: Option<String>,
     pub trace: bool,
@@ -84,7 +84,7 @@ impl Default for RuneConfig {
             skills_dir: "./skills".to_string(),
             log_level: "info".to_string(),
             max_steps: 100,
-            token_budget: 4096,
+            token_budget: None,
             timeout_secs: 60,
             base_url: None,
             trace: false,
@@ -198,6 +198,16 @@ fn pick<T: Clone>(sources: &[&Option<T>], default: T) -> T {
     default
 }
 
+/// Like pick but returns Option<T> — None if no source provides a value.
+fn pick_option<T: Clone>(sources: &[&Option<T>]) -> Option<T> {
+    for src in sources {
+        if let Some(v) = src {
+            return Some(v.clone());
+        }
+    }
+    None
+}
+
 /// Load a TOML partial config from a path, returning None if it doesn't exist.
 fn load_toml(path: &PathBuf) -> Option<PartialConfig> {
     if !path.exists() {
@@ -308,15 +318,12 @@ pub fn load() -> anyhow::Result<RuneConfig> {
             ],
             defaults.max_steps,
         ),
-        token_budget: pick(
-            &[
+        token_budget: pick_option(&[
                 &cli.token_budget,
                 &env_partial.token_budget,
                 &lc.and_then(|c| c.token_budget),
                 &uc.and_then(|c| c.token_budget),
-            ],
-            defaults.token_budget,
-        ),
+            ]),
         timeout_secs: pick(
             &[
                 &cli.timeout_secs,
