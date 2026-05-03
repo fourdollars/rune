@@ -1,50 +1,62 @@
 # Changelog
 
 All notable changes to this project will be documented in this file.
-Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
-## [0.1.0] - Unreleased
+## [Unreleased] — 2026-05-03
 
 ### Added
+- **Embedding Engine (§19)** — `src/embedding/mod.rs`
+  - `EmbeddingConfig`, `EmbeddingEngine`, `VectorStore`
+  - Provider-agnostic `/v1/embeddings` API support
+  - Cosine similarity search with configurable threshold
+  - JSON persistence to `.rune/vectors/`
+  - `[embedding]` config section in rune.toml
+- **Persistent Prompt History** — readline history saved to `~/.rune/history`
+- **Skill tools_deny Enforcement (§5.3)** — skills can now restrict tool access
+  - `tools_allow`: only listed tools exposed to LLM and executable
+  - `tools_deny`: listed tools hidden from LLM and blocked at execution
+  - Both filter `tool_definitions()` sent to the provider
+- **Concourse AI-Driven Resource Type** — complete rewrite
+  - `check`: execute prompt → sha256 versioning (content-based triggers)
+  - `in` (get): execute prompt → write `payload.json` + `response.txt`
+  - `out` (put): execute `params.prompt` → return version
+  - GitHub Copilot token auto-refresh (`ghu_`/`ghp_` detection)
+  - Proper Concourse mode detection before clap parsing
+- **CI Coverage Report** — `cargo-llvm-cov` integration
+  - Coverage summary in GitHub Actions job summary
+  - `lcov.info` artifact upload (30-day retention)
+  - Binary size reporting
+- **Unit Tests** — 34 → 98 tests
+  - `config/mod.rs`: 18 tests (pick, parse_boolish, defaults, load_toml, persist)
+  - `trace/mod.rs`: 12 tests (redact patterns, disabled mode, all StepKinds) → 100% coverage
+  - `skills/mod.rs`: 20 tests (extract_refs, frontmatter, loader, resolve)
+  - `tools/mod.rs`: 34 tests (quote-aware parser, pipeline, redirect)
+  - `embedding/mod.rs`: 13 tests (cosine similarity, vector store CRUD)
+  - `concourse/mod.rs`: 7 tests (sha256, check/in/out behavior)
 
-- **CLI Mode**: Interactive REPL with runic banner, colored output, spinner
-- **Prompt History**: ↑/↓ to browse previous prompts (via rustyline)
-- **Commands**: /help, /config, /tools, /skills, /info, /trace, /version, /reset, /clear, /multi, /compact, /policy, /exit
-- **Agent Loop**: LLM → tool-calling → LLM cycle with configurable max_steps and token_budget
-- **Built-in Tools** (6): read_file, write_file, list_dir, execute_cmd, fetch_url, inspect_process
-- **Skills System**: SKILL.md loading via @skill_name refs, frontmatter parsing, multi-path search
-- **LLM Providers**: OpenAI-compatible, GitHub Copilot (auto token refresh), Google Gemini
-- **Provider Registry**: Multi-provider with fallback chain (transient errors only)
-- **MCP Client**: Stdio JSON-RPC client for Model Context Protocol servers
-- **Concourse CI Resource Type**: check/in/out via argv[0] symlink routing
-- **Configuration**: Layered loading (CLI flags > env vars > .rune/rune.toml > ~/.rune/rune.toml > defaults)
-- **Setup Wizard**: `rune init` interactive config generator
-- **DNS Allowlist**: Domain-based whitelist for fetch_url with wildcard support
-- **Trace Recording**: --trace flag, JSON trace files in .rune/traces/
-- **Structured Logging**: tracing-subscriber with env filter
-- **UTF-8 Support**: Full CJK and unicode character handling
-- **Pre-commands**: Sequential execution with bail-on-failure
-- **Docker**: Debian/Alpine/Ubuntu multi-stage Dockerfiles
-- **E2E Tests**: end-to-end tests + unit tests
-- **JSON Output**: `--json` flag for machine-readable output
-- **Auto-Approve**: `--yes` / `-y` flag to skip confirm prompts
-- **Pipe Mode**: Non-interactive one-shot execution when stdin is piped
-- **Interactive Allowlist**: `A(lways)` in confirm mode permanently adds domains/commands to config
-- **Command Pipeline Checking**: All commands in `;` `|` `&&` pipelines are checked against allowlist
-- **Path Policy Enforcement**: `read_file` and `write_file` check `denied_paths` and `allowed_paths_rw`
-- **MCP Server Startup**: MCP servers are now actually spawned via `McpManager::start_all()`
+### Changed
+- **Config limits now optional** — `max_steps`, `token_budget`, `timeout_secs` are `Option` types; unlimited when not set
+- **Cargo deps upgraded** — colored 3, indicatif 0.18, rustyline 18, toml 1.1
+- **Docker image runs as root** — required for Concourse resource volumes
 
-### Security
+### Fixed
+- **Path-based auto-allow** — `read_file` skips confirm if path in `allowed_paths_ro`/`rw`; CWD auto-added to `allowed_paths_ro`
+- **"Always" persist for paths** — pressing A now correctly persists parent dir to config
+- **Quote-aware command parser** — grep patterns with `\|` no longer split on quoted pipes
+- **Redirect operators** — `2>&1` no longer treated as command separator
+- **Pipeline allowlist** — all binaries in pipeline checked (not just first)
+- **Runtime allowlist sync** — "Always" now updates ToolRegistry in-memory immediately
+- **Concourse first check** — returns synthetic version instead of empty array
+- **Concourse arg parsing** — mode detected before clap to avoid positional arg rejection
 
-- **Zero-Trust Sandbox**: ALL tool executions run in isolated Linux namespaces
-- **Network Isolation**: `unshare --user --net` blocks all outbound connections by default
-- **User Namespace**: UID remapping prevents access to privileged files
-- **Seccomp BPF**: Real syscall filter via `rune-seccomp` helper binary
-- **cgroups v2**: Memory and process limits via systemd-run --scope
-- **Landlock**: Filesystem restriction via `rune-landlock` helper binary
-- **DNS Allowlist**: Only explicitly whitelisted domains can be accessed
-- **Policy Fail-Fast**: Blocked tool calls immediately stop the agent (no further LLM calls)
-- **Conversation Integrity**: Tool errors are pushed as tool results to keep message history valid
-- **Trace Completion**: `--trace` now writes JSON trace files on every run exit with redacted arguments
-- **File Truncation**: read_file capped at 32KB to prevent memory exhaustion
-- **Timeout Enforcement**: All sandboxed commands have configurable deadlines
+## [0.1.0] — 2026-05-01
+
+### Added
+- Initial release: 6 built-in tools, 3 providers, Skills system, MCP Client
+- 5-layer sandbox (netns + cgroups + seccomp + landlock + DNS allowlist)
+- CLI with confirm/allowlist/unrestricted policy modes
+- Concourse CI resource type (check/in/out via symlink)
+- `rune init` setup wizard
+- E2E test suite
+- Docker images (debian/alpine/ubuntu)
+- GitHub Actions CI + container push to ghcr.io

@@ -98,7 +98,7 @@ permanently allowed → saved to ~/.rune/rune.toml
 | `/clear` | Clear screen |
 | `/exit` | Quit |
 
-In interactive mode, use ↑/↓ to browse previous prompts.
+In interactive mode, use ↑/↓ to browse previous prompts. History is persisted across sessions in `~/.rune/history`.
 
 ## Configuration
 
@@ -112,9 +112,9 @@ api_key = "ghu_..."          # GitHub Copilot (auto-detected)
 
 skills_dir = "./skills"
 log_level = "warn"
-max_steps = 20
-token_budget = 16384
-timeout_secs = 30
+# max_steps = 20          # optional (unlimited if not set)
+# token_budget = 16384    # optional (unlimited if not set)
+# timeout_secs = 30       # optional (unlimited if not set)
 trace = false
 
 [policy]
@@ -268,20 +268,65 @@ echo "Use @sysadmin skill. Check disk usage." | rune --json --yes
 
 ## Concourse CI Resource Type
 
+Rune acts as a content-aware Concourse resource type. The `check` step executes a prompt, computes `sha256` of the response for versioning — when the world changes, the pipeline triggers.
+
 ```yaml
 resource_types:
   - name: rune-agent
-    type: docker-image
-    source: { repository: my-registry/rune, tag: debian }
+    type: registry-image
+    source:
+      repository: ghcr.io/fourdollars/rune
+      tag: latest
 
 resources:
-  - name: ai-dev
+  - name: ai-news
     type: rune-agent
     source:
-      api_key: ((api_key))
-      sandbox:
-        network: { allowed_domains: ["github.com"] }
-        filesystem: { read_write_paths: ["/workspace"] }
+      api_key: ((copilot_key))          # ghu_/ghp_ auto-refreshed
+      model: gpt-4o-mini
+      prompt: "List top 3 trending AI topics today. One line each."
+
+jobs:
+  - name: news-digest
+    plan:
+      - get: ai-news                    # triggers when content changes
+        trigger: true
+      - task: translate
+        config:
+          platform: linux
+          image_resource:
+            type: registry-image
+            source: { repository: ghcr.io/fourdollars/rune, tag: latest }
+          inputs: [{name: ai-news}]
+          run:
+            path: sh
+            args: [-c, "cat ai-news/response.txt"]
+
+  - name: ask-ai
+    plan:
+      - put: ai-news
+        params:
+          prompt: "Translate to zh-TW: AI is transforming healthcare."
+```
+
+### Resource Lifecycle
+
+| Mode | Behavior |
+|------|----------|
+| `check` | Execute `source.prompt` → sha256(response) → version `{"ref":"sha256:..."}` |
+| `in` (get) | Re-execute prompt → write `payload.json` + `response.txt` to dest dir |
+| `out` (put) | Execute `params.prompt` → return version + print response to build log |
+
+### Supported Providers
+
+GitHub Copilot tokens (`ghu_`/`ghp_`) are auto-detected and refreshed. OpenAI, OpenRouter, Gemini, and any OpenAI-compatible endpoint also work via `base_url`.
+
+### Output Files (get step)
+
+| File | Content |
+|------|---------|
+| `payload.json` | `{prompt, response, ref, model, timestamp}` |
+| `response.txt` | Raw LLM response text |
 ```
 
 ## Architecture
@@ -300,6 +345,7 @@ src/
 ├── setup.rs             — rune init wizard
 ├── skills/mod.rs        — SKILL.md loader
 ├── tools/mod.rs         — 6 built-in tools (all sandboxed)
+├── embedding/mod.rs     — Embedding engine + vector store
 ├── trace/mod.rs         — JSON trace + redaction
 └── bin/
     ├── rune-seccomp.rs  — Seccomp BPF helper
@@ -310,14 +356,14 @@ src/
 
 ```bash
 cargo build --release    # Build all 3 binaries
-cargo test               # Unit tests
-./tests/e2e.sh           # E2E tests (26)
+cargo test               # Unit tests (98)
+./tests/e2e.sh           # E2E tests (16)
 make check-all           # Both
 ```
 
 ## Requirements
 
-- Rust 1.75+ (tested on 1.95)
+- Rust 1.78+ (tested on 1.94-nightly)
 - Linux kernel 5.13+ (for Landlock ABI)
 - `curl` on PATH
 

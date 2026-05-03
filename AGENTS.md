@@ -32,6 +32,15 @@ All limits are **optional** — if not set, the agent runs without artificial ca
 
 Per-command sandbox timeout (default 30s) is separate and always enforced.
 
+### Embedding Configuration
+
+```toml
+[embedding]
+enabled = true
+model = "text-embedding-3-small"  # auto-detected from provider
+threshold = 0.6                    # cosine similarity threshold
+```
+
 ## Built-in Tools (6)
 
 | Tool | Sandboxed | Dangerous* | Notes |
@@ -121,10 +130,12 @@ src/
 ├── tools/mod.rs     — tool registry, policy enforcement, implementations
 ├── sandbox/         — SandboxExecutor, layer implementations
 ├── provider/        — LLM backends (Copilot, Gemini, OpenRouter, generic)
-├── skills/          — SkillLoader
+├── skills/          — SkillLoader + tools_allow/tools_deny enforcement
 ├── config/          — PolicyConfig, persistence, TOML loading
+├── embedding/       — EmbeddingEngine + VectorStore + cosine search
+├── concourse/       — AI-driven resource type (check/in/out + Copilot refresh)
 ├── mcp/             — MCP client (stdio JSON-RPC)
-├── cli/             — interactive CLI, slash commands, display
+├── cli/             — interactive CLI, slash commands, persistent history
 ├── setup.rs         — `rune init` wizard
 └── bin/
     ├── rune-landlock.rs
@@ -142,9 +153,13 @@ src/
 ## Testing
 
 ```bash
-cargo test                    # 19 unit tests
-./tests/e2e.sh               # E2E integration suite
-cargo build --release && cargo install --path .  # release build
+cargo test                    # 98 unit tests
+./tests/e2e.sh               # 16 E2E integration tests
+cargo llvm-cov --summary-only # coverage report
+cargo build --release         # release build (~5MB)
 ```
 
-Flags for CI: `--json` (structured output) + `--yes` (auto-approve all).
+CI runs: `fmt` → `clippy` → `test+coverage` → `build` → `e2e`.
+Coverage uploaded as artifact + displayed in GitHub Actions summary.
+
+Flags for CI/automation: `--json` (structured output) + `--yes` (auto-approve all).
