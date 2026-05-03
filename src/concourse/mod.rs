@@ -56,7 +56,8 @@ pub fn handle_check<R: Read>(reader: R) -> anyhow::Result<CheckResponse> {
     if let Some(v) = req.version {
         Ok(CheckResponse(vec![v]))
     } else {
-        Ok(CheckResponse(vec![]))
+        // First check: return a synthetic version to indicate resource availability
+        Ok(CheckResponse(vec![serde_json::json!({"ref": "latest"})]))
     }
 }
 
@@ -168,7 +169,7 @@ mod tests {
     fn test_check_without_version() {
         let input = json!({"source": {}}).to_string();
         let resp = handle_check(input.as_bytes()).expect("handle_check");
-        assert!(resp.0.is_empty());
+        assert_eq!(resp.0.len(), 1); // First check returns synthetic version
     }
 
     #[test]
