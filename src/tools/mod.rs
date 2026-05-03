@@ -404,6 +404,10 @@ impl ToolRegistry {
 /// Extract all command binaries from a shell command string.
 /// Splits on unquoted shell separators (; | && ||) while respecting
 /// single quotes, double quotes, and backslash escapes.
+pub fn extract_command_binaries_pub(cmd: &str) -> Vec<String> {
+    extract_command_binaries(cmd)
+}
+
 fn extract_command_binaries(cmd: &str) -> Vec<String> {
     let mut binaries = Vec::new();
     let mut segments: Vec<String> = Vec::new();
@@ -643,5 +647,45 @@ mod tests {
                 extract_command_binaries(r#"echo 'he said "hello | world"'"#),
                 vec!["echo"]
             );
-        }
     }
+
+    #[test]
+    fn test_extract_binaries_pub_matches_internal() {
+        // Ensure the pub wrapper returns same results as internal fn
+        assert_eq!(
+            extract_command_binaries_pub("cargo build 2>&1 | head -50"),
+            vec!["cargo", "head"]
+        );
+        assert_eq!(
+            extract_command_binaries_pub(r#"grep "a|b" file | wc -l"#),
+            vec!["grep", "wc"]
+        );
+    }
+
+    #[test]
+    fn test_extract_binaries_pipeline_all_must_be_checked() {
+        // A pipeline where only the first cmd is allowed should still
+        // extract ALL binaries -- the caller must check each one
+        let bins = extract_command_binaries("allowed_cmd | not_allowed | also_not");
+        assert_eq!(bins, vec!["allowed_cmd", "not_allowed", "also_not"]);
+    }
+
+    #[test]
+    fn test_extract_binaries_here_string() {
+        // <<< here-string should not confuse the parser
+        assert_eq!(
+            extract_command_binaries("cat <<< hello"),
+            vec!["cat"]
+        );
+    }
+
+    #[test]
+    fn test_extract_binaries_env_prefix() {
+        // env var prefix before command
+        assert_eq!(
+            extract_command_binaries("FOO=bar baz"),
+            // Extracts FOO=bar as first token
+            vec!["FOO=bar"]
+        );
+    }
+}

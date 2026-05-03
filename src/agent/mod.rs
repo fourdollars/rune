@@ -473,12 +473,14 @@ impl Agent {
                         }
                     }
 
-                    if let Some(ref cmd_name) = involved_cmd {
-                        if !self.config.policy.allowed_commands.contains(cmd_name) {
-                            self.tools.add_allowed_command(cmd_name);
-                            self.config.policy.allowed_commands.push(cmd_name.clone());
-                            crate::config::persist_command(cmd_name);
-                            added.push(format!("command '{}' → allowed_commands", cmd_name));
+                    // Persist ALL binaries in the pipeline, not just the first one
+                    let all_binaries = Self::extract_all_command_binaries(&args);
+                    for bin in &all_binaries {
+                        if !self.config.policy.allowed_commands.contains(bin) {
+                            self.tools.add_allowed_command(bin);
+                            self.config.policy.allowed_commands.push(bin.clone());
+                            crate::config::persist_command(bin);
+                            added.push(format!("command '{}' → allowed_commands", bin));
                         }
                     }
 
@@ -645,15 +647,14 @@ impl Agent {
                 false
             }
             "execute_cmd" => {
-                if let Some(cmd_name) = Self::extract_command_from_args(tool_name, args) {
-                    return self
-                        .config
-                        .policy
-                        .allowed_commands
-                        .iter()
-                        .any(|c| c == &cmd_name || c == "*");
+                let binaries = Self::extract_all_command_binaries(args);
+                if binaries.is_empty() {
+                    return false;
                 }
-                false
+                // All binaries in the pipeline must be allowed
+                binaries.iter().all(|bin| {
+                    self.config.policy.allowed_commands.iter().any(|c| c == bin || c == "*")
+                })
             }
             _ => false,
         }
@@ -705,6 +706,14 @@ impl Agent {
             }
         }
         None
+    }
+
+    /// Extract all command binaries from execute_cmd arguments (pipeline-aware).
+    fn extract_all_command_binaries(args: &serde_json::Value) -> Vec<String> {
+        if let Some(cmd) = args.get("cmd").and_then(|v| v.as_str()) {
+            return crate::tools::extract_command_binaries_pub(cmd);
+        }
+        Vec::new()
     }
 
     /// Extract path from read_file/write_file arguments.
