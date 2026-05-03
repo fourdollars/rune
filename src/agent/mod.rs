@@ -475,6 +475,7 @@ impl Agent {
 
                     if let Some(ref cmd_name) = involved_cmd {
                         if !self.config.policy.allowed_commands.contains(cmd_name) {
+                            self.tools.add_allowed_command(cmd_name);
                             self.config.policy.allowed_commands.push(cmd_name.clone());
                             crate::config::persist_command(cmd_name);
                             added.push(format!("command '{}' → allowed_commands", cmd_name));
@@ -491,6 +492,7 @@ impl Agent {
                         let resolved = self.resolve_tool_path(&dir);
                         if tc.function.name == "write_file" {
                             if !self.is_path_in_list(&resolved, &self.config.policy.allowed_paths_rw) {
+                                self.tools.add_allowed_path_rw(&resolved);
                                 self.config.policy.allowed_paths_rw.push(resolved.clone());
                                 crate::config::persist_path_rw(&resolved);
                                 added.push(format!("path '{}' → allowed_paths_rw", resolved));
@@ -500,6 +502,7 @@ impl Agent {
                             if !self.is_path_in_list(&resolved, &self.config.policy.allowed_paths_ro)
                                 && !self.is_path_in_list(&resolved, &self.config.policy.allowed_paths_rw)
                             {
+                                self.tools.add_allowed_path_ro(&resolved);
                                 self.config.policy.allowed_paths_ro.push(resolved.clone());
                                 crate::config::persist_path_ro(&resolved);
                                 added.push(format!("path '{}' → allowed_paths_ro", resolved));

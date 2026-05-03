@@ -66,6 +66,27 @@ impl ToolRegistry {
         }
     }
 
+    /// Add a single command to the runtime allowlist.
+    pub fn add_allowed_command(&mut self, cmd: &str) {
+        if !self.policy_allowed_commands.iter().any(|c| c == cmd) {
+            self.policy_allowed_commands.push(cmd.to_string());
+        }
+    }
+
+    /// Add a path to the runtime read-only allowlist.
+    pub fn add_allowed_path_ro(&mut self, path: &str) {
+        if !self.policy_allowed_paths_ro.iter().any(|p| p == path) {
+            self.policy_allowed_paths_ro.push(path.to_string());
+        }
+    }
+
+    /// Add a path to the runtime read-write allowlist.
+    pub fn add_allowed_path_rw(&mut self, path: &str) {
+        if !self.policy_allowed_paths_rw.iter().any(|p| p == path) {
+            self.policy_allowed_paths_rw.push(path.to_string());
+        }
+    }
+
     /// Set command execution policy.
     pub fn set_policy(&mut self, policy: &crate::config::PolicyConfig) {
         self.policy_mode = policy.mode.clone();
