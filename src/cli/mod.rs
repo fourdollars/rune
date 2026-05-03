@@ -690,6 +690,15 @@ pub async fn run() {
         }
     }
 
+    // Implicitly add CWD to allowed_paths_ro (runtime only, not persisted)
+    let mut cfg = cfg;
+    if let Ok(cwd) = std::env::current_dir() {
+        let cwd_str = cwd.to_string_lossy().to_string();
+        if !cfg.policy.allowed_paths_ro.contains(&cwd_str) {
+            cfg.policy.allowed_paths_ro.push(cwd_str);
+        }
+    }
+
     let mut agent = Agent::new(cfg.clone(), provider, stdin_is_terminal);
     agent.set_system_prompt(
         "You are Rune, a high-performance AI agent running in a terminal. \
