@@ -10,13 +10,13 @@ description = "High-performance zero-trust AI Agent"
 [dependencies]
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-toml = "0.8"
+toml = "1"
 clap = { version = "4", features = ["derive", "env"] }
-colored = "2"
+colored = "3"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }
 anyhow = "1.0"
 tokio = { version = "1", features = ["full"] }
-indicatif = "0.17"
-rustyline = "14"
+indicatif = "0.18"
+rustyline = "18"
 libc = "0.2"
