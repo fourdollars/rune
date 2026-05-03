@@ -148,8 +148,13 @@ fn call_llm_sync(source: &ResourceSource, prompt: &str) -> anyhow::Result<String
     }
 
     let body = String::from_utf8_lossy(&output.stdout);
-    let resp: Value = serde_json::from_str(&body)
-        .map_err(|e| anyhow::anyhow!("failed to parse LLM response: {} body={}", e, &body[..body.len().min(200)]))?;
+    let resp: Value = serde_json::from_str(&body).map_err(|e| {
+        anyhow::anyhow!(
+            "failed to parse LLM response: {} body={}",
+            e,
+            &body[..body.len().min(200)]
+        )
+    })?;
 
     // Extract assistant message content
     let content = resp
@@ -163,7 +168,10 @@ fn call_llm_sync(source: &ResourceSource, prompt: &str) -> anyhow::Result<String
             if let Some(err) = resp.get("error") {
                 anyhow::anyhow!("LLM API error: {}", err)
             } else {
-                anyhow::anyhow!("unexpected LLM response format: {}", &body[..body.len().min(500)])
+                anyhow::anyhow!(
+                    "unexpected LLM response format: {}",
+                    &body[..body.len().min(500)]
+                )
             }
         })?;
 
@@ -176,8 +184,8 @@ fn call_llm_sync(source: &ResourceSource, prompt: &str) -> anyhow::Result<String
 /// - If previous version matches: return same (no change detected)
 pub fn handle_check<R: Read>(reader: R) -> anyhow::Result<CheckResponse> {
     let s = read_to_string_from(reader)?;
-    let req: CheckRequest = serde_json::from_str(&s)
-        .map_err(|e| anyhow::anyhow!("invalid check JSON: {}", e))?;
+    let req: CheckRequest =
+        serde_json::from_str(&s).map_err(|e| anyhow::anyhow!("invalid check JSON: {}", e))?;
 
     let prompt = match req.source.prompt.as_deref() {
         Some(p) if !p.is_empty() => p,
@@ -215,8 +223,8 @@ pub fn handle_check<R: Read>(reader: R) -> anyhow::Result<CheckResponse> {
 /// - Return version and metadata
 pub fn handle_in<R: Read>(reader: R, dest_dir: &str) -> anyhow::Result<InResponse> {
     let s = read_to_string_from(reader)?;
-    let req: InRequest = serde_json::from_str(&s)
-        .map_err(|e| anyhow::anyhow!("invalid in JSON: {}", e))?;
+    let req: InRequest =
+        serde_json::from_str(&s).map_err(|e| anyhow::anyhow!("invalid in JSON: {}", e))?;
 
     let prompt = match req.source.prompt.as_deref() {
         Some(p) if !p.is_empty() => p,
@@ -259,7 +267,10 @@ pub fn handle_in<R: Read>(reader: R, dest_dir: &str) -> anyhow::Result<InRespons
             .map(|d| d.as_secs())
             .unwrap_or(0),
     });
-    std::fs::write(dest.join("payload.json"), serde_json::to_string_pretty(&payload)?)?;
+    std::fs::write(
+        dest.join("payload.json"),
+        serde_json::to_string_pretty(&payload)?,
+    )?;
 
     // Also write raw response as response.txt for convenience
     std::fs::write(dest.join("response.txt"), &response)?;
@@ -291,8 +302,8 @@ pub fn handle_in<R: Read>(reader: R, dest_dir: &str) -> anyhow::Result<InRespons
 /// - Return version with sha256 of output
 pub fn handle_out<R: Read>(reader: R) -> anyhow::Result<OutResponse> {
     let s = read_to_string_from(reader)?;
-    let req: OutRequest = serde_json::from_str(&s)
-        .map_err(|e| anyhow::anyhow!("invalid out JSON: {}", e))?;
+    let req: OutRequest =
+        serde_json::from_str(&s).map_err(|e| anyhow::anyhow!("invalid out JSON: {}", e))?;
 
     let params = req.params.unwrap_or(ResourceParams {
         prompt: None,
@@ -358,7 +369,9 @@ pub fn run(mode: ConcourseMode) {
         },
         ConcourseMode::In => {
             // Concourse passes destination dir as first CLI argument
-            let dest_dir = std::env::args().nth(1).unwrap_or_else(|| "/tmp/rune-in".into());
+            let dest_dir = std::env::args()
+                .nth(1)
+                .unwrap_or_else(|| "/tmp/rune-in".into());
             match handle_in(io::stdin(), &dest_dir) {
                 Ok(resp) => match serde_json::to_string(&resp) {
                     Ok(s) => println!("{}", s),
@@ -399,7 +412,7 @@ mod tests {
         let r = sha256_ref("hello world");
         assert!(r.starts_with("sha256:"));
         assert_eq!(r.len(), 7 + 64); // "sha256:" + 64 hex chars
-        // Known value
+                                     // Known value
         assert_eq!(
             r,
             "sha256:b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9"
@@ -464,7 +477,10 @@ mod tests {
 
         let result = handle_out(input.as_bytes());
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("prompt is required"));
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("prompt is required"));
     }
 
     #[test]

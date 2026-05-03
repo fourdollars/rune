@@ -51,8 +51,16 @@ impl Agent {
         // Auto-add CWD to allowed_paths_ro so read_file in project dir does not require confirm
         if let Ok(cwd) = std::env::current_dir() {
             let cwd_str = cwd.to_string_lossy().to_string();
-            if !config.policy.allowed_paths_ro.iter().any(|p| cwd_str.starts_with(p.trim_end_matches("/")))
-                && !config.policy.allowed_paths_rw.iter().any(|p| cwd_str.starts_with(p.trim_end_matches("/")))
+            if !config
+                .policy
+                .allowed_paths_ro
+                .iter()
+                .any(|p| cwd_str.starts_with(p.trim_end_matches("/")))
+                && !config
+                    .policy
+                    .allowed_paths_rw
+                    .iter()
+                    .any(|p| cwd_str.starts_with(p.trim_end_matches("/")))
             {
                 config.policy.allowed_paths_ro.push(cwd_str);
             }
@@ -222,19 +230,11 @@ impl Agent {
                     // Skill safety: restrict tools if skill defines tools_allow/tools_deny
                     if let Some(ref allowed) = skill.metadata.tools_allow {
                         self.skill_tools_allow = Some(allowed.clone());
-                        eprintln!(
-                            "    {} tools_allow: {}",
-                            "🔒".dimmed(),
-                            allowed.join(", ")
-                        );
+                        eprintln!("    {} tools_allow: {}", "🔒".dimmed(), allowed.join(", "));
                     }
                     if let Some(ref denied) = skill.metadata.tools_deny {
                         self.skill_tools_deny = Some(denied.clone());
-                        eprintln!(
-                            "    {} tools_deny: {}",
-                            "🔒".dimmed(),
-                            denied.join(", ")
-                        );
+                        eprintln!("    {} tools_deny: {}", "🔒".dimmed(), denied.join(", "));
                     }
                     // Inject skill content as a system message
                     self.messages.push(LlmMessage {
@@ -526,7 +526,9 @@ impl Agent {
                         let dir = if dir.is_empty() { ".".to_string() } else { dir };
                         let resolved = self.resolve_tool_path(&dir);
                         if tc.function.name == "write_file" {
-                            if !self.is_path_in_list(&resolved, &self.config.policy.allowed_paths_rw) {
+                            if !self
+                                .is_path_in_list(&resolved, &self.config.policy.allowed_paths_rw)
+                            {
                                 self.tools.add_allowed_path_rw(&resolved);
                                 self.config.policy.allowed_paths_rw.push(resolved.clone());
                                 crate::config::persist_path_rw(&resolved);
@@ -534,8 +536,12 @@ impl Agent {
                             }
                         } else {
                             // read_file
-                            if !self.is_path_in_list(&resolved, &self.config.policy.allowed_paths_ro)
-                                && !self.is_path_in_list(&resolved, &self.config.policy.allowed_paths_rw)
+                            if !self
+                                .is_path_in_list(&resolved, &self.config.policy.allowed_paths_ro)
+                                && !self.is_path_in_list(
+                                    &resolved,
+                                    &self.config.policy.allowed_paths_rw,
+                                )
                             {
                                 self.tools.add_allowed_path_ro(&resolved);
                                 self.config.policy.allowed_paths_ro.push(resolved.clone());
@@ -708,7 +714,11 @@ impl Agent {
                 }
                 // All binaries in the pipeline must be allowed
                 binaries.iter().all(|bin| {
-                    self.config.policy.allowed_commands.iter().any(|c| c == bin || c == "*")
+                    self.config
+                        .policy
+                        .allowed_commands
+                        .iter()
+                        .any(|c| c == bin || c == "*")
                 })
             }
             _ => false,
@@ -720,7 +730,11 @@ impl Agent {
         if path.starts_with('/') {
             path.to_string()
         } else {
-            format!("{}/{}", std::env::current_dir().unwrap_or_default().display(), path)
+            format!(
+                "{}/{}",
+                std::env::current_dir().unwrap_or_default().display(),
+                path
+            )
         }
     }
 

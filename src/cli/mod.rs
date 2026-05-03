@@ -100,7 +100,10 @@ fn print_help() {
     println!("  {}   Show this help", "/help".green());
     println!("  {}  Exit the CLI", "/exit | /quit".green());
     println!("  {} Add dir to read-only paths", "/add-dir <path>".green());
-    println!("  {} Add dir to read-write paths", "/add-rw-dir <path>".green());
+    println!(
+        "  {} Add dir to read-write paths",
+        "/add-rw-dir <path>".green()
+    );
     println!();
     println!("{}", "Tips:".dimmed());
     println!(
@@ -172,9 +175,24 @@ fn show_config(cfg: &config::RuneConfig) {
     );
     println!("  {}  {}", "skills_dir:".dimmed(), cfg.skills_dir);
     println!("  {}  {}", "log_level:".dimmed(), cfg.log_level);
-    println!("  {}  {}", "max_steps:".dimmed(), cfg.max_steps.map_or("unlimited".to_string(), |s| s.to_string()));
-    println!("  {}  {}", "token_budget:".dimmed(), cfg.token_budget.map_or("unlimited".to_string(), |b| b.to_string()));
-    println!("  {}  {}", "timeout_secs:".dimmed(), cfg.timeout_secs.map_or("unlimited".to_string(), |t| t.to_string()));
+    println!(
+        "  {}  {}",
+        "max_steps:".dimmed(),
+        cfg.max_steps
+            .map_or("unlimited".to_string(), |s| s.to_string())
+    );
+    println!(
+        "  {}  {}",
+        "token_budget:".dimmed(),
+        cfg.token_budget
+            .map_or("unlimited".to_string(), |b| b.to_string())
+    );
+    println!(
+        "  {}  {}",
+        "timeout_secs:".dimmed(),
+        cfg.timeout_secs
+            .map_or("unlimited".to_string(), |t| t.to_string())
+    );
 }
 
 /// Display available tools.
@@ -264,15 +282,22 @@ fn show_info(cfg: &config::RuneConfig, agent: &crate::agent::Agent) {
         "    {} tokens used: {} / {} (budget)",
         "•".dimmed(),
         agent.tokens_used(),
-        cfg.token_budget.map_or("unlimited".to_string(), |b| b.to_string())
+        cfg.token_budget
+            .map_or("unlimited".to_string(), |b| b.to_string())
     );
     println!(
         "    {} steps: {} / {} (max)",
         "•".dimmed(),
         agent.step_count(),
-        cfg.max_steps.map_or("unlimited".to_string(), |s| s.to_string())
+        cfg.max_steps
+            .map_or("unlimited".to_string(), |s| s.to_string())
     );
-    println!("    {} timeout: {}", "•".dimmed(), cfg.timeout_secs.map_or("unlimited".to_string(), |t| format!("{}s", t)));
+    println!(
+        "    {} timeout: {}",
+        "•".dimmed(),
+        cfg.timeout_secs
+            .map_or("unlimited".to_string(), |t| format!("{}s", t))
+    );
     println!();
 
     // Skills
@@ -456,10 +481,21 @@ fn show_policy_full(cfg: &config::RuneConfig) {
     println!(
         "    {} Default command timeout: {}",
         "•".dimmed(),
-        cfg.timeout_secs.map_or("unlimited".to_string(), |t| format!("{}s", t))
+        cfg.timeout_secs
+            .map_or("unlimited".to_string(), |t| format!("{}s", t))
     );
-    println!("    {} Max agent steps: {}", "•".dimmed(), cfg.max_steps.map_or("unlimited".to_string(), |s| s.to_string()));
-    println!("    {} Token budget: {}", "•".dimmed(), cfg.token_budget.map_or("unlimited".to_string(), |b| b.to_string()));
+    println!(
+        "    {} Max agent steps: {}",
+        "•".dimmed(),
+        cfg.max_steps
+            .map_or("unlimited".to_string(), |s| s.to_string())
+    );
+    println!(
+        "    {} Token budget: {}",
+        "•".dimmed(),
+        cfg.token_budget
+            .map_or("unlimited".to_string(), |b| b.to_string())
+    );
     println!();
 
     println!("  {}", "LLM Provider:".bold());
@@ -497,7 +533,8 @@ fn show_policy_full(cfg: &config::RuneConfig) {
             "OPEN (degraded)".yellow().to_string()
         },
         "RESTRICTED".green(),
-        cfg.timeout_secs.map_or("unlimited".to_string(), |t| format!("{}s", t))
+        cfg.timeout_secs
+            .map_or("unlimited".to_string(), |t| format!("{}s", t))
     );
 }
 
@@ -842,11 +879,19 @@ pub async fn run() {
                 if resolved.is_empty() {
                     eprintln!("{}", "Usage: /add-dir <path>".yellow());
                 } else if agent.config.policy.allowed_paths_ro.contains(&resolved) {
-                    eprintln!("  {} '{}' already in allowed_paths_ro", "ℹ".cyan(), resolved);
+                    eprintln!(
+                        "  {} '{}' already in allowed_paths_ro",
+                        "ℹ".cyan(),
+                        resolved
+                    );
                 } else {
                     agent.config.policy.allowed_paths_ro.push(resolved.clone());
                     crate::config::persist_path_ro(&resolved);
-                    eprintln!("  {} '{}' added to allowed_paths_ro (saved to config)", "✓".green(), resolved);
+                    eprintln!(
+                        "  {} '{}' added to allowed_paths_ro (saved to config)",
+                        "✓".green(),
+                        resolved
+                    );
                 }
             }
             cmd if cmd.starts_with("/add-rw-dir ") => {
@@ -855,11 +900,19 @@ pub async fn run() {
                 if resolved.is_empty() {
                     eprintln!("{}", "Usage: /add-rw-dir <path>".yellow());
                 } else if agent.config.policy.allowed_paths_rw.contains(&resolved) {
-                    eprintln!("  {} '{}' already in allowed_paths_rw", "ℹ".cyan(), resolved);
+                    eprintln!(
+                        "  {} '{}' already in allowed_paths_rw",
+                        "ℹ".cyan(),
+                        resolved
+                    );
                 } else {
                     agent.config.policy.allowed_paths_rw.push(resolved.clone());
                     crate::config::persist_path_rw(&resolved);
-                    eprintln!("  {} '{}' added to allowed_paths_rw (saved to config)", "✓".green(), resolved);
+                    eprintln!(
+                        "  {} '{}' added to allowed_paths_rw (saved to config)",
+                        "✓".green(),
+                        resolved
+                    );
                 }
             }
             "/multi" => {

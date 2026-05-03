@@ -320,7 +320,10 @@ impl ToolRegistry {
             Some(c) => c.to_string(),
             None => return ToolOutput::err("missing required argument: cmd"),
         };
-        let cwd = args.get("cwd").and_then(|v| v.as_str()).map(|s| s.to_string());
+        let cwd = args
+            .get("cwd")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
         let timeout_secs = args
             .get("timeout_secs")
             .and_then(|v| v.as_u64())
@@ -578,7 +581,9 @@ mod tests {
     fn test_extract_binaries_escaped_pipe() {
         // Backslash-escaped pipe inside double quotes (common in grep)
         assert_eq!(
-            extract_command_binaries(r#"grep -r "todo!\|unimplemented!\|TODO\|FIXME" src/ --include="*.rs" -l"#),
+            extract_command_binaries(
+                r#"grep -r "todo!\|unimplemented!\|TODO\|FIXME" src/ --include="*.rs" -l"#
+            ),
             vec!["grep"]
         );
     }
@@ -597,10 +602,7 @@ mod tests {
             vec!["cargo", "head"]
         );
         // &> is redirect, not separator
-        assert_eq!(
-            extract_command_binaries("make &> /dev/null"),
-            vec!["make"]
-        );
+        assert_eq!(extract_command_binaries("make &> /dev/null"), vec!["make"]);
         // Multiple redirects
         assert_eq!(
             extract_command_binaries("cmd 2>&1 1>/dev/null"),
@@ -638,16 +640,16 @@ mod tests {
 
     #[test]
     fn test_extract_binaries_nested_quotes() {
-            // Single quotes inside double quotes
-            assert_eq!(
-                extract_command_binaries(r#"echo "it's a pipe | not""#),
-                vec!["echo"]
-            );
-            // Double quotes inside single quotes
-            assert_eq!(
-                extract_command_binaries(r#"echo 'he said "hello | world"'"#),
-                vec!["echo"]
-            );
+        // Single quotes inside double quotes
+        assert_eq!(
+            extract_command_binaries(r#"echo "it's a pipe | not""#),
+            vec!["echo"]
+        );
+        // Double quotes inside single quotes
+        assert_eq!(
+            extract_command_binaries(r#"echo 'he said "hello | world"'"#),
+            vec!["echo"]
+        );
     }
 
     #[test]
@@ -674,10 +676,7 @@ mod tests {
     #[test]
     fn test_extract_binaries_here_string() {
         // <<< here-string should not confuse the parser
-        assert_eq!(
-            extract_command_binaries("cat <<< hello"),
-            vec!["cat"]
-        );
+        assert_eq!(extract_command_binaries("cat <<< hello"), vec!["cat"]);
     }
 
     #[test]

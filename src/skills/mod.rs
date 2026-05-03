@@ -390,7 +390,7 @@ mod tests {
         let (meta, body) = parse_frontmatter(content, &path, Some("fallback"));
         // Since frontmatter is unclosed, it falls through to no-frontmatter path
         assert_eq!(body, content);
-        assert_eq!(meta.name, "broken");  // parent dir name
+        assert_eq!(meta.name, "broken"); // parent dir name
     }
 
     #[test]
@@ -453,7 +453,9 @@ mod tests {
         }
 
         let loader = SkillLoader::new(vec![dir.clone()]);
-        let skills = loader.resolve_skills("Please use @alpha and @beta").unwrap();
+        let skills = loader
+            .resolve_skills("Please use @alpha and @beta")
+            .unwrap();
         assert_eq!(skills.len(), 2);
         assert_eq!(skills[0].metadata.name, "alpha");
         assert_eq!(skills[1].metadata.name, "beta");

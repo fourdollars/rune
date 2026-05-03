@@ -315,23 +315,23 @@ pub fn load() -> anyhow::Result<RuneConfig> {
             defaults.log_level,
         ),
         max_steps: pick_option(&[
-                &cli.max_steps,
-                &env_partial.max_steps,
-                &lc.and_then(|c| c.max_steps),
-                &uc.and_then(|c| c.max_steps),
-            ]),
+            &cli.max_steps,
+            &env_partial.max_steps,
+            &lc.and_then(|c| c.max_steps),
+            &uc.and_then(|c| c.max_steps),
+        ]),
         token_budget: pick_option(&[
-                &cli.token_budget,
-                &env_partial.token_budget,
-                &lc.and_then(|c| c.token_budget),
-                &uc.and_then(|c| c.token_budget),
-            ]),
+            &cli.token_budget,
+            &env_partial.token_budget,
+            &lc.and_then(|c| c.token_budget),
+            &uc.and_then(|c| c.token_budget),
+        ]),
         timeout_secs: pick_option(&[
-                &cli.timeout_secs,
-                &env_partial.timeout_secs,
-                &lc.and_then(|c| c.timeout_secs),
-                &uc.and_then(|c| c.timeout_secs),
-            ]),
+            &cli.timeout_secs,
+            &env_partial.timeout_secs,
+            &lc.and_then(|c| c.timeout_secs),
+            &uc.and_then(|c| c.timeout_secs),
+        ]),
         base_url: cli
             .base_url
             .or(env_partial.base_url)

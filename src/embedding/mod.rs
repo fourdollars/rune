@@ -80,7 +80,12 @@ impl VectorStore {
     }
 
     /// Find entries with cosine similarity above threshold.
-    pub fn search(&self, query_vector: &[f32], threshold: f32, max_results: usize) -> Vec<(f32, &VectorEntry)> {
+    pub fn search(
+        &self,
+        query_vector: &[f32],
+        threshold: f32,
+        max_results: usize,
+    ) -> Vec<(f32, &VectorEntry)> {
         let mut results: Vec<(f32, &VectorEntry)> = self
             .entries
             .iter()

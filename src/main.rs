@@ -3,11 +3,11 @@
 use std::env;
 use std::path::Path;
 
-mod embedding;
 mod agent;
 mod cli;
 mod concourse;
 mod config;
+mod embedding;
 mod mcp;
 mod precommands;
 mod provider;

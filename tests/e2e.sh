@@ -105,9 +105,9 @@ OUT=$(echo '{"source":{}}' | /tmp/check 2>/dev/null || echo "empty")
 assert_contains "$OUT" '\[' "check with no version returns empty array"
 
 # ── Test 8: Concourse check (with version) ───────────────
-echo "▸ Concourse check (with version)"
+echo "▸ Concourse check (with version, no prompt)"
 OUT=$(echo '{"source":{},"version":{"ref":"abc123"}}' | /tmp/check 2>/dev/null || echo "")
-assert_contains "$OUT" "abc123" "check echoes version back"
+assert_contains "$OUT" "latest" "check without prompt returns synthetic version"
 
 # ── Test 9: Tool definitions ─────────────────────────────
 echo "▸ Tool definitions (via --help)"
