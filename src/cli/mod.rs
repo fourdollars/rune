@@ -99,6 +99,8 @@ fn print_help() {
     );
     println!("  {}   Show this help", "/help".green());
     println!("  {}  Exit the CLI", "/exit | /quit".green());
+    println!("  {} Add dir to read-only paths", "/add-dir <path>".green());
+    println!("  {} Add dir to read-write paths", "/add-rw-dir <path>".green());
     println!();
     println!("{}", "Tips:".dimmed());
     println!(
@@ -612,6 +614,30 @@ fn init_provider(cfg: &config::RuneConfig) -> ProviderRegistry {
     registry
 }
 
+/// Resolve a path argument: expand ~ and make absolute.
+fn resolve_path(path: &str) -> String {
+    let expanded = if path.starts_with("~/") {
+        if let Ok(home) = std::env::var("HOME") {
+            format!("{}/{}", home, &path[2..])
+        } else {
+            path.to_string()
+        }
+    } else if path == "~" {
+        std::env::var("HOME").unwrap_or_else(|_| path.to_string())
+    } else {
+        path.to_string()
+    };
+
+    // Make absolute if relative
+    if expanded.starts_with('/') {
+        expanded
+    } else {
+        std::env::current_dir()
+            .map(|cwd| format!("{}/{}", cwd.display(), expanded))
+            .unwrap_or(expanded)
+    }
+}
+
 /// Main CLI entry point.
 pub async fn run() {
     let cfg = config::load().unwrap_or_default();
@@ -793,6 +819,32 @@ pub async fn run() {
             }
             "/policy" => show_policy_summary(&cfg),
             "/policy full" => show_policy_full(&cfg),
+            cmd if cmd.starts_with("/add-dir ") => {
+                let path_arg = cmd.strip_prefix("/add-dir ").unwrap().trim();
+                let resolved = resolve_path(path_arg);
+                if resolved.is_empty() {
+                    eprintln!("{}", "Usage: /add-dir <path>".yellow());
+                } else if agent.config.policy.allowed_paths_ro.contains(&resolved) {
+                    eprintln!("  {} '{}' already in allowed_paths_ro", "ℹ".cyan(), resolved);
+                } else {
+                    agent.config.policy.allowed_paths_ro.push(resolved.clone());
+                    crate::config::persist_path_ro(&resolved);
+                    eprintln!("  {} '{}' added to allowed_paths_ro (saved to config)", "✓".green(), resolved);
+                }
+            }
+            cmd if cmd.starts_with("/add-rw-dir ") => {
+                let path_arg = cmd.strip_prefix("/add-rw-dir ").unwrap().trim();
+                let resolved = resolve_path(path_arg);
+                if resolved.is_empty() {
+                    eprintln!("{}", "Usage: /add-rw-dir <path>".yellow());
+                } else if agent.config.policy.allowed_paths_rw.contains(&resolved) {
+                    eprintln!("  {} '{}' already in allowed_paths_rw", "ℹ".cyan(), resolved);
+                } else {
+                    agent.config.policy.allowed_paths_rw.push(resolved.clone());
+                    crate::config::persist_path_rw(&resolved);
+                    eprintln!("  {} '{}' added to allowed_paths_rw (saved to config)", "✓".green(), resolved);
+                }
+            }
             "/multi" => {
                 if let Some(input) = read_multiline(editor) {
                     if !input.trim().is_empty() {
