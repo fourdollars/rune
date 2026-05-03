@@ -21,3 +21,5 @@ indicatif = "0.18"
 rustyline = "18"
 libc = "0.2"
 reqwest = { version = "0.13.3", features = ["json"] }
+sha2 = "0.11.0"
+hex = "0.4.3"
