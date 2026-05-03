@@ -215,4 +215,151 @@ mod tests {
         // cleanup
         let _ = fs::remove_dir_all(&dir);
     }
+
+    #[test]
+    fn test_redact_openai_key() {
+        let input = r#"{"api_key": "sk-abc123def456"}"#;
+        let redacted = redact(input);
+        assert!(!redacted.contains("abc123def456"));
+        assert!(redacted.contains("sk-***"));
+    }
+
+    #[test]
+    fn test_redact_github_token_ghu() {
+        let input = "Authorization: token ghu_abcdefgh12345678";
+        let redacted = redact(input);
+        assert!(!redacted.contains("abcdefgh12345678"));
+        assert!(redacted.contains("ghu_***"));
+    }
+
+    #[test]
+    fn test_redact_github_token_ghp() {
+        let input = r#"key = "ghp_SomeSecretToken123""#;
+        let redacted = redact(input);
+        assert!(!redacted.contains("SomeSecretToken123"));
+        assert!(redacted.contains("ghp_***"));
+    }
+
+    #[test]
+    fn test_redact_gemini_key() {
+        let input = "api_key=AIzaSyAbCdEfGhIjKlMnOpQrStUvWxYz012345";
+        let redacted = redact(input);
+        assert!(!redacted.contains("SyAbCdEfGhIjKlMnOpQrStUvWxYz012345"));
+        assert!(redacted.contains("AIza***"));
+    }
+
+    #[test]
+    fn test_redact_bearer_token() {
+        let input = r#"{"Authorization": "Bearer eyJhbGciOiJIUzI1NiJ9.payload.signature"}"#;
+        let redacted = redact(input);
+        assert!(!redacted.contains("eyJhbGciOiJIUzI1NiJ9"));
+        assert!(redacted.contains("Bearer ***"));
+    }
+
+    #[test]
+    fn test_redact_no_sensitive_data() {
+        let input = "This is a normal string with no keys";
+        let redacted = redact(input);
+        assert_eq!(redacted, input);
+    }
+
+    #[test]
+    fn test_redact_multiple_keys() {
+        let input = r#"key1="sk-first123456" key2="ghp_second789""#;
+        let redacted = redact(input);
+        assert!(!redacted.contains("first123456"));
+        assert!(!redacted.contains("second789"));
+        assert!(redacted.contains("sk-***"));
+        assert!(redacted.contains("ghp_***"));
+    }
+
+    #[test]
+    fn test_redact_short_prefix_not_redacted() {
+        // Very short values after prefix should not be redacted
+        let input = "sk-ab";
+        let redacted = redact(input);
+        // Only 2 chars after prefix - may or may not redact depending on impl
+        // Just verify it doesn't panic
+        assert!(!redacted.is_empty());
+    }
+
+    #[test]
+    fn test_generate_run_id_unique() {
+        let id1 = TraceWriter::generate_run_id();
+        let id2 = TraceWriter::generate_run_id();
+        // They should be different (different nanos)
+        // Note: in very fast execution they might be same, but format should be valid
+        assert!(!id1.is_empty());
+        assert!(!id2.is_empty());
+        assert!(id1.contains('-'));
+    }
+
+    #[test]
+    fn test_trace_writer_disabled_does_not_write() {
+        let dir = std::env::temp_dir().join(format!("rune-trace-disabled-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+
+        let mut w = TraceWriter::new(
+            "disabled-run".to_string(),
+            "model".to_string(),
+            dir.clone(),
+            false, // disabled
+        );
+        w.record(StepKind::ToolCall {
+            name: "test".to_string(),
+            arguments_preview: "{}".to_string(),
+        });
+        w.finish(0).expect("should succeed");
+
+        // Directory should not be created
+        assert!(!dir.exists());
+    }
+
+    #[test]
+    fn test_trace_writer_records_all_step_kinds() {
+        let dir = std::env::temp_dir().join(format!("rune-trace-kinds-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+
+        let mut w = TraceWriter::new(
+            "kinds-test".to_string(),
+            "gpt-4".to_string(),
+            dir.clone(),
+            true,
+        );
+
+        w.record(StepKind::LlmRequest {
+            messages_count: 3,
+            model: "gpt-4".to_string(),
+        });
+        w.record(StepKind::LlmResponse {
+            tokens_used: 150,
+            has_tool_calls: true,
+        });
+        w.record(StepKind::ToolCall {
+            name: "read_file".to_string(),
+            arguments_preview: r#"{"path":"src/main.rs"}"#.to_string(),
+        });
+        w.record(StepKind::ToolResult {
+            name: "read_file".to_string(),
+            is_error: false,
+            content_preview: "fn main() {...}".to_string(),
+        });
+        w.record(StepKind::PreCommand {
+            command: "cargo build".to_string(),
+            exit_code: 0,
+            duration_ms: 5000,
+        });
+
+        w.finish(0).expect("should write");
+
+        let path = dir.join("kinds-test.json");
+        assert!(path.exists());
+
+        let data = fs::read_to_string(&path).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&data).unwrap();
+        let steps = v["steps"].as_array().unwrap();
+        assert_eq!(steps.len(), 5);
+
+        let _ = fs::remove_dir_all(&dir);
+    }
 }

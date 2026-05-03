@@ -495,3 +495,311 @@ fn persist_policy_array(field: &str, value: &str) {
     let new_content = doc.to_string();
     let _ = fs::write(&config_path, new_content);
 }
+
+// Unit tests for config module: pick, pick_option, parse_boolish, defaults
+#[cfg(test)]
+mod config_tests {
+    use super::*;
+
+    #[test]
+    fn test_pick_returns_first_some() {
+        let a = Some("first".to_string());
+        let b = Some("second".to_string());
+        let c: Option<String> = None;
+        assert_eq!(pick(&[&a, &b], "default".to_string()), "first");
+        assert_eq!(pick(&[&c, &b], "default".to_string()), "second");
+    }
+
+    #[test]
+    fn test_pick_returns_default_when_all_none() {
+        let a: Option<String> = None;
+        let b: Option<String> = None;
+        assert_eq!(pick(&[&a, &b], "default".to_string()), "default");
+    }
+
+    #[test]
+    fn test_pick_option_returns_first_some() {
+        let a: Option<u32> = None;
+        let b = Some(42u32);
+        let c = Some(99u32);
+        assert_eq!(pick_option(&[&a, &b, &c]), Some(42));
+    }
+
+    #[test]
+    fn test_pick_option_returns_none_when_all_none() {
+        let a: Option<u32> = None;
+        let b: Option<u32> = None;
+        assert_eq!(pick_option(&[&a, &b]), None);
+    }
+
+    #[test]
+    fn test_parse_boolish_true_variants() {
+        assert_eq!(parse_boolish("1"), Some(true));
+        assert_eq!(parse_boolish("true"), Some(true));
+        assert_eq!(parse_boolish("TRUE"), Some(true));
+        assert_eq!(parse_boolish("yes"), Some(true));
+        assert_eq!(parse_boolish("Yes"), Some(true));
+        assert_eq!(parse_boolish("y"), Some(true));
+        assert_eq!(parse_boolish("on"), Some(true));
+        assert_eq!(parse_boolish("ON"), Some(true));
+    }
+
+    #[test]
+    fn test_parse_boolish_false_variants() {
+        assert_eq!(parse_boolish("0"), Some(false));
+        assert_eq!(parse_boolish("false"), Some(false));
+        assert_eq!(parse_boolish("FALSE"), Some(false));
+        assert_eq!(parse_boolish("no"), Some(false));
+        assert_eq!(parse_boolish("n"), Some(false));
+        assert_eq!(parse_boolish("off"), Some(false));
+    }
+
+    #[test]
+    fn test_parse_boolish_invalid() {
+        assert_eq!(parse_boolish("maybe"), None);
+        assert_eq!(parse_boolish(""), None);
+        assert_eq!(parse_boolish("2"), None);
+        assert_eq!(parse_boolish("yep"), None);
+    }
+
+    #[test]
+    fn test_parse_boolish_with_whitespace() {
+        assert_eq!(parse_boolish("  true  "), Some(true));
+        assert_eq!(parse_boolish(" false "), Some(false));
+    }
+
+    #[test]
+    fn test_policy_config_default() {
+        let p = PolicyConfig::default();
+        assert_eq!(p.mode, "confirm");
+        assert!(p.allowed_commands.is_empty());
+        assert!(p.allowed_domains.is_empty());
+        assert!(p.denied_syscalls.contains(&"ptrace".to_string()));
+        assert!(p.denied_syscalls.contains(&"mount".to_string()));
+        assert!(p.denied_syscalls.contains(&"bpf".to_string()));
+        assert!(p.allowed_paths_rw.contains(&"/tmp".to_string()));
+        assert!(p.allowed_paths_ro.contains(&"/bin".to_string()));
+        assert!(p.denied_paths.contains(&"/root".to_string()));
+        assert_eq!(p.max_memory_mb, 512);
+        assert_eq!(p.max_pids, 64);
+    }
+
+    #[test]
+    fn test_rune_config_default() {
+        let c = RuneConfig::default();
+        assert_eq!(c.model, "gpt-4");
+        assert!(c.api_key.is_none());
+        assert_eq!(c.skills_dir, "./skills");
+        assert_eq!(c.log_level, "info");
+        assert!(c.max_steps.is_none());
+        assert!(c.token_budget.is_none());
+        assert!(c.timeout_secs.is_none());
+        assert!(c.base_url.is_none());
+        assert!(!c.trace);
+        assert!(!c.json_output);
+        assert!(!c.auto_approve);
+    }
+
+    #[test]
+    fn test_load_toml_nonexistent_path() {
+        let path = PathBuf::from("/nonexistent/rune.toml");
+        assert!(load_toml(&path).is_none());
+    }
+
+    #[test]
+    fn test_load_toml_valid() {
+        let dir = std::env::temp_dir().join(format!("rune-cfg-test-{}", std::process::id()));
+        let _ = fs::create_dir_all(&dir);
+        let path = dir.join("rune.toml");
+        fs::write(
+            &path,
+            r#"
+model = "gpt-4o"
+log_level = "debug"
+max_steps = 50
+token_budget = 8000
+"#,
+        )
+        .unwrap();
+
+        let partial = load_toml(&path).expect("should parse");
+        assert_eq!(partial.model.as_deref(), Some("gpt-4o"));
+        assert_eq!(partial.log_level.as_deref(), Some("debug"));
+        assert_eq!(partial.max_steps, Some(50));
+        assert_eq!(partial.token_budget, Some(8000));
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_load_toml_with_policy() {
+        let dir = std::env::temp_dir().join(format!("rune-cfg-pol-{}", std::process::id()));
+        let _ = fs::create_dir_all(&dir);
+        let path = dir.join("rune.toml");
+        fs::write(
+            &path,
+            r#"
+model = "gpt-4"
+
+[policy]
+mode = "allowlist"
+allowed_commands = ["ls", "cat", "grep"]
+allowed_domains = ["github.com", "*.openai.com"]
+allowed_paths_rw = ["/workspace"]
+allowed_paths_ro = ["/usr", "/bin"]
+denied_paths = ["/etc/shadow"]
+"#,
+        )
+        .unwrap();
+
+        let partial = load_toml(&path).expect("should parse");
+        let policy = partial.policy.unwrap();
+        assert_eq!(policy.mode, "allowlist");
+        assert_eq!(policy.allowed_commands, vec!["ls", "cat", "grep"]);
+        assert_eq!(policy.allowed_domains, vec!["github.com", "*.openai.com"]);
+        assert_eq!(policy.allowed_paths_rw, vec!["/workspace"]);
+        assert_eq!(policy.denied_paths, vec!["/etc/shadow"]);
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_load_toml_invalid_content() {
+        let dir = std::env::temp_dir().join(format!("rune-cfg-bad-{}", std::process::id()));
+        let _ = fs::create_dir_all(&dir);
+        let path = dir.join("rune.toml");
+        fs::write(&path, "this is not valid toml {{{{").unwrap();
+
+        assert!(load_toml(&path).is_none());
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_persist_domain_creates_entry() {
+        let dir = std::env::temp_dir().join(format!("rune-persist-{}", std::process::id()));
+        let rune_dir = dir.join(".rune");
+        let _ = fs::create_dir_all(&rune_dir);
+        let config_path = rune_dir.join("rune.toml");
+        fs::write(
+            &config_path,
+            r#"
+model = "gpt-4"
+
+[policy]
+mode = "confirm"
+allowed_domains = ["existing.com"]
+"#,
+        )
+        .unwrap();
+
+        // Set HOME to our test dir so persist_domain finds the right file
+        let old_home = env::var("HOME").ok();
+        env::set_var("HOME", &dir);
+
+        persist_domain("new-domain.com");
+
+        // Restore HOME
+        if let Some(h) = old_home {
+            env::set_var("HOME", h);
+        }
+
+        let content = fs::read_to_string(&config_path).unwrap();
+        assert!(content.contains("new-domain.com"));
+        assert!(content.contains("existing.com"));
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_persist_domain_no_duplicate() {
+        let dir = std::env::temp_dir().join(format!("rune-persist-dup-{}", std::process::id()));
+        let rune_dir = dir.join(".rune");
+        let _ = fs::create_dir_all(&rune_dir);
+        let config_path = rune_dir.join("rune.toml");
+        fs::write(
+            &config_path,
+            r#"
+[policy]
+allowed_domains = ["github.com"]
+"#,
+        )
+        .unwrap();
+
+        let old_home = env::var("HOME").ok();
+        env::set_var("HOME", &dir);
+
+        persist_domain("github.com"); // already exists
+
+        if let Some(h) = old_home {
+            env::set_var("HOME", h);
+        }
+
+        let content = fs::read_to_string(&config_path).unwrap();
+        // Should only appear once
+        assert_eq!(content.matches("github.com").count(), 1);
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_persist_command_creates_entry() {
+        let dir = std::env::temp_dir().join(format!("rune-persist-cmd-{}", std::process::id()));
+        let rune_dir = dir.join(".rune");
+        let _ = fs::create_dir_all(&rune_dir);
+        let config_path = rune_dir.join("rune.toml");
+        fs::write(
+            &config_path,
+            r#"
+[policy]
+mode = "confirm"
+"#,
+        )
+        .unwrap();
+
+        let old_home = env::var("HOME").ok();
+        env::set_var("HOME", &dir);
+
+        persist_command("cargo");
+
+        if let Some(h) = old_home {
+            env::set_var("HOME", h);
+        }
+
+        let content = fs::read_to_string(&config_path).unwrap();
+        assert!(content.contains("cargo"));
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_persist_path_ro() {
+        let dir = std::env::temp_dir().join(format!("rune-persist-path-{}", std::process::id()));
+        let rune_dir = dir.join(".rune");
+        let _ = fs::create_dir_all(&rune_dir);
+        let config_path = rune_dir.join("rune.toml");
+        fs::write(
+            &config_path,
+            r#"
+[policy]
+mode = "confirm"
+"#,
+        )
+        .unwrap();
+
+        let old_home = env::var("HOME").ok();
+        env::set_var("HOME", &dir);
+
+        persist_path_ro("/home/user/project");
+
+        if let Some(h) = old_home {
+            env::set_var("HOME", h);
+        }
+
+        let content = fs::read_to_string(&config_path).unwrap();
+        assert!(content.contains("/home/user/project"));
+        assert!(content.contains("allowed_paths_ro"));
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+}

@@ -110,9 +110,9 @@ impl ToolRegistry {
     }
 
     /// Run a command in sandbox and return ToolOutput.
-    async fn sandboxed_cmd(&self, cmd: &str, timeout_secs: u64) -> ToolOutput {
+    async fn sandboxed_cmd(&self, cmd: &str, timeout_secs: u64, cwd: Option<&str>) -> ToolOutput {
         let executor = self.sandbox(timeout_secs);
-        match executor.run_shell_command(cmd, None, None).await {
+        match executor.run_shell_command(cmd, cwd, None).await {
             Ok(result) => {
                 if result.timed_out {
                     return ToolOutput::err(format!("command timed out after {}s", timeout_secs));
@@ -255,7 +255,7 @@ impl ToolRegistry {
             MAX_FILE_SIZE,
             path.replace('\'', "'\\''")
         );
-        let result = self.sandboxed_cmd(&cmd, 10).await;
+        let result = self.sandboxed_cmd(&cmd, 10, None).await;
         if result.is_error {
             return result;
         }
@@ -298,7 +298,7 @@ impl ToolRegistry {
             "mkdir -p $(dirname '{}') && printf '%s' '{}' > '{}'",
             escaped_path, escaped_content, escaped_path
         );
-        let result = self.sandboxed_cmd(&cmd, 10).await;
+        let result = self.sandboxed_cmd(&cmd, 10, None).await;
         if result.is_error {
             return result;
         }
@@ -312,7 +312,7 @@ impl ToolRegistry {
         };
         info!(path = %path, "list_dir (sandboxed)");
         let cmd = format!("ls -1F '{}'", path.replace('\'', "'\\''"));
-        self.sandboxed_cmd(&cmd, 10).await
+        self.sandboxed_cmd(&cmd, 10, None).await
     }
 
     async fn execute_cmd(&self, args: serde_json::Value) -> ToolOutput {
@@ -320,12 +320,13 @@ impl ToolRegistry {
             Some(c) => c.to_string(),
             None => return ToolOutput::err("missing required argument: cmd"),
         };
+        let cwd = args.get("cwd").and_then(|v| v.as_str()).map(|s| s.to_string());
         let timeout_secs = args
             .get("timeout_secs")
             .and_then(|v| v.as_u64())
             .unwrap_or(30);
 
-        info!(cmd = %cmd, timeout_secs, "execute_cmd (sandboxed)");
+        info!(cmd = %cmd, ?cwd, timeout_secs, "execute_cmd (sandboxed)");
 
         // Command policy enforcement: check ALL commands in the pipeline
         // Applies in both "allowlist" and "confirm" modes when allowed_commands is set
@@ -342,7 +343,7 @@ impl ToolRegistry {
                 }
             }
         }
-        self.sandboxed_cmd(&cmd, timeout_secs).await
+        self.sandboxed_cmd(&cmd, timeout_secs, cwd.as_deref()).await
     }
 
     async fn fetch_url(&self, args: serde_json::Value) -> ToolOutput {
@@ -365,7 +366,7 @@ impl ToolRegistry {
 
         info!(url = %url, "fetch_url (sandboxed, domain allowed)");
         let cmd = format!("curl -sS -L --max-time 30 '{}'", url.replace('\'', "'\\''"));
-        let result = self.sandboxed_cmd(&cmd, 35).await;
+        let result = self.sandboxed_cmd(&cmd, 35, None).await;
         if result.is_error {
             return result;
         }
@@ -385,7 +386,7 @@ impl ToolRegistry {
             None => return ToolOutput::err("missing required argument: pid"),
         };
         let cmd = format!("ps -p {} -o pid,comm,%cpu,%mem,stat,etime --no-headers 2>/dev/null || echo process_not_found", pid);
-        self.sandboxed_cmd(&cmd, 5).await
+        self.sandboxed_cmd(&cmd, 5, None).await
     }
 }
 

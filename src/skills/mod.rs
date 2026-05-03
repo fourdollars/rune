@@ -298,4 +298,166 @@ mod tests {
         assert!(meta.description.is_none());
         assert_eq!(body, content.to_string());
     }
+
+    #[test]
+    fn test_extract_skill_refs_empty() {
+        assert_eq!(SkillLoader::extract_skill_refs(""), Vec::<String>::new());
+    }
+
+    #[test]
+    fn test_extract_skill_refs_no_at() {
+        assert_eq!(
+            SkillLoader::extract_skill_refs("just some normal text"),
+            Vec::<String>::new()
+        );
+    }
+
+    #[test]
+    fn test_extract_skill_refs_at_end_of_string() {
+        assert_eq!(
+            SkillLoader::extract_skill_refs("use @myskill"),
+            vec!["myskill"]
+        );
+    }
+
+    #[test]
+    fn test_extract_skill_refs_multiple_unique() {
+        let refs = SkillLoader::extract_skill_refs("@a and @b and @c");
+        assert_eq!(refs, vec!["a", "b", "c"]);
+    }
+
+    #[test]
+    fn test_extract_skill_refs_deduplication() {
+        let refs = SkillLoader::extract_skill_refs("@dup @dup @dup");
+        assert_eq!(refs, vec!["dup"]);
+    }
+
+    #[test]
+    fn test_extract_skill_refs_with_dots() {
+        let refs = SkillLoader::extract_skill_refs("use @my.skill.v2");
+        assert_eq!(refs, vec!["my.skill.v2"]);
+    }
+
+    #[test]
+    fn test_extract_skill_refs_stops_at_special_chars() {
+        let refs = SkillLoader::extract_skill_refs("use @skill! done");
+        assert_eq!(refs, vec!["skill"]);
+    }
+
+    #[test]
+    fn test_extract_skill_refs_at_symbol_alone() {
+        // lone @ with no following alphanum should produce nothing
+        let refs = SkillLoader::extract_skill_refs("email user@ domain");
+        assert_eq!(refs, Vec::<String>::new());
+    }
+
+    #[test]
+    fn test_parse_frontmatter_tools_deny() {
+        let content = "---\nname: restricted\ntools_deny: [write_file, execute_cmd]\n---\nbody";
+        let path = PathBuf::from("/skills/restricted/SKILL.md");
+        let (meta, _) = parse_frontmatter(content, &path, None);
+        assert_eq!(meta.name, "restricted");
+        assert_eq!(
+            meta.tools_deny,
+            Some(vec!["write_file".to_string(), "execute_cmd".to_string()])
+        );
+    }
+
+    #[test]
+    fn test_parse_frontmatter_comma_separated_tools_allow() {
+        let content = "---\nname: multi\ntools_allow: read_file, list_dir\n---\nbody";
+        let path = PathBuf::from("/skills/multi/SKILL.md");
+        let (meta, _) = parse_frontmatter(content, &path, None);
+        assert_eq!(
+            meta.tools_allow,
+            Some(vec!["read_file".to_string(), "list_dir".to_string()])
+        );
+    }
+
+    #[test]
+    fn test_parse_frontmatter_name_from_directory() {
+        let content = "---\ndescription: test\n---\nbody";
+        let path = PathBuf::from("/home/user/skills/auto-named/SKILL.md");
+        let (meta, _) = parse_frontmatter(content, &path, None);
+        assert_eq!(meta.name, "auto-named");
+    }
+
+    #[test]
+    fn test_parse_frontmatter_unclosed_frontmatter() {
+        // No closing --- should treat entire content as body
+        let content = "---\nname: broken\nno closing delimiter";
+        let path = PathBuf::from("/skills/broken/SKILL.md");
+        let (meta, body) = parse_frontmatter(content, &path, Some("fallback"));
+        // Since frontmatter is unclosed, it falls through to no-frontmatter path
+        assert_eq!(body, content);
+        assert_eq!(meta.name, "broken");  // parent dir name
+    }
+
+    #[test]
+    fn test_parse_frontmatter_empty_tools_allow_list() {
+        let content = "---\nname: empty\ntools_allow: []\n---\nbody";
+        let path = PathBuf::from("/skills/empty/SKILL.md");
+        let (meta, _) = parse_frontmatter(content, &path, None);
+        assert_eq!(meta.tools_allow, Some(Vec::<String>::new()));
+    }
+
+    #[test]
+    fn test_parse_frontmatter_quoted_values() {
+        let content = "---\nname: \"quoted-name\"\ndescription: 'single quoted desc'\n---\nbody";
+        let path = PathBuf::from("/skills/q/SKILL.md");
+        let (meta, _) = parse_frontmatter(content, &path, None);
+        assert_eq!(meta.name, "quoted-name");
+        assert_eq!(meta.description.as_deref(), Some("single quoted desc"));
+    }
+
+    #[test]
+    fn test_skill_loader_not_found() {
+        let loader = SkillLoader::new(vec![PathBuf::from("/nonexistent/skills")]);
+        let result = loader.load("no-such-skill");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("not found"));
+    }
+
+    #[test]
+    fn test_skill_loader_loads_from_search_path() {
+        let dir = std::env::temp_dir().join(format!("rune-skill-test-{}", std::process::id()));
+        let skill_dir = dir.join("test-skill");
+        fs::create_dir_all(&skill_dir).unwrap();
+        fs::write(
+            skill_dir.join("SKILL.md"),
+            "---\nname: test-skill\ndescription: A test\n---\nSkill content here",
+        )
+        .unwrap();
+
+        let loader = SkillLoader::new(vec![dir.clone()]);
+        let skill = loader.load("test-skill").expect("should load");
+        assert_eq!(skill.metadata.name, "test-skill");
+        assert_eq!(skill.metadata.description.as_deref(), Some("A test"));
+        assert!(skill.content.contains("Skill content here"));
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_resolve_skills_multiple() {
+        let dir = std::env::temp_dir().join(format!("rune-resolve-{}", std::process::id()));
+
+        for name in &["alpha", "beta"] {
+            let skill_dir = dir.join(name);
+            fs::create_dir_all(&skill_dir).unwrap();
+            fs::write(
+                skill_dir.join("SKILL.md"),
+                format!("---\nname: {}\n---\n{} content", name, name),
+            )
+            .unwrap();
+        }
+
+        let loader = SkillLoader::new(vec![dir.clone()]);
+        let skills = loader.resolve_skills("Please use @alpha and @beta").unwrap();
+        assert_eq!(skills.len(), 2);
+        assert_eq!(skills[0].metadata.name, "alpha");
+        assert_eq!(skills[1].metadata.name, "beta");
+
+        let _ = fs::remove_dir_all(&dir);
+    }
 }
