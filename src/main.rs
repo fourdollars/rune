@@ -28,6 +28,30 @@ async fn main() {
         return;
     }
 
+    // Detect Concourse mode BEFORE clap parses args (in/out receive positional args)
+    let argv0 = env::args().next().unwrap_or_else(|| "rune".into());
+    let prog_name = Path::new(&argv0)
+        .file_name()
+        .and_then(|s| s.to_str())
+        .map(|s| s.to_string())
+        .unwrap_or(argv0.clone());
+
+    match prog_name.as_str() {
+        "check" => {
+            concourse::run(concourse::ConcourseMode::Check);
+            return;
+        }
+        "in" => {
+            concourse::run(concourse::ConcourseMode::In);
+            return;
+        }
+        "out" => {
+            concourse::run(concourse::ConcourseMode::Out);
+            return;
+        }
+        _ => {}
+    }
+
     let cfg = config::load().unwrap_or_else(|e| {
         eprintln!("warning: config load failed: {}", e);
         config::RuneConfig::default()
@@ -40,17 +64,5 @@ async fn main() {
         .with_target(false)
         .init();
 
-    let argv0 = env::args().next().unwrap_or_else(|| "rune".into());
-    let prog_name = Path::new(&argv0)
-        .file_name()
-        .and_then(|s| s.to_str())
-        .map(|s| s.to_string())
-        .unwrap_or(argv0);
-
-    match prog_name.as_str() {
-        "check" => concourse::run(concourse::ConcourseMode::Check),
-        "in" => concourse::run(concourse::ConcourseMode::In),
-        "out" => concourse::run(concourse::ConcourseMode::Out),
-        _ => cli::run().await,
-    }
+    cli::run().await;
 }
