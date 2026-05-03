@@ -98,19 +98,79 @@ fn sha256_ref(content: &str) -> String {
 
 /// Call the LLM via curl (same approach as provider/mod.rs).
 /// Returns the assistant's response text.
+/// Refresh GitHub Copilot session token from a ghu_/ghp_ OAuth token.
+/// Returns (session_token, endpoint_base_url).
+fn refresh_copilot_token(oauth_token: &str) -> anyhow::Result<(String, String)> {
+    let output = std::process::Command::new("curl")
+        .args([
+            "-s",
+            "-H",
+            &format!("Authorization: token {}", oauth_token),
+            "-H",
+            "editor-version: vscode/1.96.0",
+            "https://api.github.com/copilot_internal/v2/token",
+        ])
+        .output()?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        anyhow::bail!("copilot token refresh failed: {}", stderr);
+    }
+
+    let body = String::from_utf8_lossy(&output.stdout);
+    let v: serde_json::Value = serde_json::from_str(&body)
+        .map_err(|e| anyhow::anyhow!("failed to parse copilot token response: {}", e))?;
+
+    let token = v
+        .get("token")
+        .and_then(|t| t.as_str())
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "no token in copilot response: {}",
+                &body[..body.len().min(200)]
+            )
+        })?
+        .to_string();
+
+    let endpoint = v
+        .get("endpoints")
+        .and_then(|e| e.get("api"))
+        .and_then(|a| a.as_str())
+        .unwrap_or("https://api.githubcopilot.com")
+        .to_string();
+
+    Ok((token, endpoint))
+}
+
 fn call_llm_sync(source: &ResourceSource, prompt: &str) -> anyhow::Result<String> {
-    let api_key = source
+    let raw_key = source
         .api_key
         .as_deref()
         .ok_or_else(|| anyhow::anyhow!("source.api_key is required"))?;
 
-    let model = source.model.as_deref().unwrap_or("gpt-4o-mini");
-    let base_url = source
-        .base_url
-        .as_deref()
-        .unwrap_or("https://api.openai.com/v1");
+    // Detect GitHub Copilot tokens and refresh
+    let (api_key, base_url) = if raw_key.starts_with("ghu_") || raw_key.starts_with("ghp_") {
+        eprintln!("rune: detected GitHub Copilot token, refreshing...");
+        let (session_token, endpoint) = refresh_copilot_token(raw_key)?;
+        eprintln!("rune: copilot endpoint: {}", endpoint);
+        (
+            session_token,
+            format!("{}/chat/completions", endpoint.trim_end_matches('/')),
+        )
+    } else {
+        let base = source
+            .base_url
+            .as_deref()
+            .unwrap_or("https://api.openai.com/v1");
+        (
+            raw_key.to_string(),
+            format!("{}/chat/completions", base.trim_end_matches('/')),
+        )
+    };
 
-    let url = format!("{}/chat/completions", base_url.trim_end_matches('/'));
+    let model = source.model.as_deref().unwrap_or("gpt-4o-mini");
+
+    let url = base_url;
 
     let payload = serde_json::json!({
         "model": model,
@@ -134,6 +194,10 @@ fn call_llm_sync(source: &ResourceSource, prompt: &str) -> anyhow::Result<String
             "Content-Type: application/json",
             "-H",
             &format!("Authorization: Bearer {}", api_key),
+            "-H",
+            "editor-version: vscode/1.96.0",
+            "--max-time",
+            "120",
             "-d",
             &format!("@{}", tmp_path),
         ])
