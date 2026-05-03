@@ -706,6 +706,10 @@ pub async fn run() {
          Use them when needed. Be concise and accurate.",
     );
 
+    let history_path = std::env::var("HOME")
+        .ok()
+        .map(|h| std::path::PathBuf::from(h).join(".rune").join("history"));
+
     let mut editor = if stdin_is_terminal {
         Some(DefaultEditor::new().expect("failed to initialize line editor"))
     } else {
@@ -713,6 +717,10 @@ pub async fn run() {
     };
     if let Some(ref mut ed) = editor {
         ed.set_auto_add_history(false);
+        // Load persistent history
+        if let Some(ref path) = history_path {
+            let _ = ed.load_history(path);
+        }
     }
 
     if !stdin_is_terminal {
@@ -867,5 +875,13 @@ pub async fn run() {
                 let _ = execute_prompt(&mut agent, input).await;
             }
         }
+    }
+
+    // Save persistent history
+    if let Some(ref path) = history_path {
+        if let Some(parent) = path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        let _ = editor.save_history(path);
     }
 }

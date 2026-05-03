@@ -39,6 +39,10 @@ pub struct Agent {
     trace: Option<TraceWriter>,
     executed_commands: Vec<String>,
     tool_call_names: Vec<String>,
+    /// Skill-scoped tool allow list (None = all tools available)
+    skill_tools_allow: Option<Vec<String>>,
+    /// Skill-scoped tool deny list (None = nothing denied)
+    skill_tools_deny: Option<Vec<String>>,
 }
 
 impl Agent {
@@ -80,6 +84,8 @@ impl Agent {
             trace,
             executed_commands: Vec::new(),
             tool_call_names: Vec::new(),
+            skill_tools_allow: None,
+            skill_tools_deny: None,
         }
     }
 
@@ -213,13 +219,21 @@ impl Agent {
                 Ok(skill) => {
                     info!(skill = %name, "loaded skill");
                     eprintln!("  {} Loaded skill: {}", "📚".dimmed(), name.green());
-                    // Skill safety: restrict tools if skill defines tools_allow
+                    // Skill safety: restrict tools if skill defines tools_allow/tools_deny
                     if let Some(ref allowed) = skill.metadata.tools_allow {
-                        self.tools.set_allowed_domains(vec![]); // reset
+                        self.skill_tools_allow = Some(allowed.clone());
                         eprintln!(
-                            "    {} tool restriction: {}",
+                            "    {} tools_allow: {}",
                             "🔒".dimmed(),
                             allowed.join(", ")
+                        );
+                    }
+                    if let Some(ref denied) = skill.metadata.tools_deny {
+                        self.skill_tools_deny = Some(denied.clone());
+                        eprintln!(
+                            "    {} tools_deny: {}",
+                            "🔒".dimmed(),
+                            denied.join(", ")
                         );
                     }
                     // Inject skill content as a system message
@@ -346,7 +360,26 @@ impl Agent {
 
     /// Call the LLM provider.
     async fn call_llm(&mut self) -> Result<LlmResponse> {
-        let tool_defs = self.tools.tool_definitions();
+        let mut tool_defs = self.tools.tool_definitions();
+        // Filter tool definitions based on skill restrictions
+        if let Some(ref allowed) = self.skill_tools_allow {
+            tool_defs.retain(|def| {
+                def.get("function")
+                    .and_then(|f| f.get("name"))
+                    .and_then(|n| n.as_str())
+                    .map(|name| allowed.iter().any(|a| a == name))
+                    .unwrap_or(false)
+            });
+        }
+        if let Some(ref denied) = self.skill_tools_deny {
+            tool_defs.retain(|def| {
+                def.get("function")
+                    .and_then(|f| f.get("name"))
+                    .and_then(|n| n.as_str())
+                    .map(|name| !denied.iter().any(|d| d == name))
+                    .unwrap_or(true)
+            });
+        }
         let request = LlmRequest {
             model: self.config.model.clone(),
             messages: self.messages.clone(),
@@ -528,6 +561,28 @@ impl Agent {
                     eprintln!("{}", "denied".red());
                     return Ok("DENIED: user rejected tool execution".to_string());
                 }
+            }
+        }
+
+        // Enforce skill-scoped tool restrictions
+        if let Some(ref allowed) = self.skill_tools_allow {
+            if !allowed.iter().any(|t| t == &tc.function.name) {
+                let msg = format!(
+                    "BLOCKED by skill policy: tool '{}' is not in tools_allow",
+                    tc.function.name
+                );
+                eprintln!("  {} {}", "✗".red(), msg.dimmed());
+                return Ok(msg);
+            }
+        }
+        if let Some(ref denied) = self.skill_tools_deny {
+            if denied.iter().any(|t| t == &tc.function.name) {
+                let msg = format!(
+                    "BLOCKED by skill policy: tool '{}' is in tools_deny",
+                    tc.function.name
+                );
+                eprintln!("  {} {}", "✗".red(), msg.dimmed());
+                return Ok(msg);
             }
         }
 
