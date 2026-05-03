@@ -24,8 +24,9 @@ RUN mkdir -p /opt/resource \
     && ln -sf /usr/local/bin/rune /opt/resource/in \
     && ln -sf /usr/local/bin/rune /opt/resource/out
 
-# Non-root user
+# Note: Concourse resource containers must run as root
+# (worker mounts volumes as root). Non-root user is available
+# for task steps that use this image directly.
 RUN useradd --uid 1000 --create-home --home-dir /home/rune --shell /usr/sbin/nologin rune
-USER rune
 
 ENTRYPOINT ["/usr/local/bin/rune"]

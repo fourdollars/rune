@@ -319,7 +319,8 @@ pub fn handle_in<R: Read>(reader: R, dest_dir: &str) -> anyhow::Result<InRespons
 
     // Write payload to destination
     let dest = Path::new(dest_dir);
-    std::fs::create_dir_all(dest)?;
+    std::fs::create_dir_all(dest)
+        .map_err(|e| anyhow::anyhow!("failed to create dest dir '{}': {}", dest.display(), e))?;
 
     let payload = serde_json::json!({
         "prompt": prompt,
@@ -334,10 +335,12 @@ pub fn handle_in<R: Read>(reader: R, dest_dir: &str) -> anyhow::Result<InRespons
     std::fs::write(
         dest.join("payload.json"),
         serde_json::to_string_pretty(&payload)?,
-    )?;
+    )
+    .map_err(|e| anyhow::anyhow!("failed to write payload.json: {}", e))?;
 
     // Also write raw response as response.txt for convenience
-    std::fs::write(dest.join("response.txt"), &response)?;
+    std::fs::write(dest.join("response.txt"), &response)
+        .map_err(|e| anyhow::anyhow!("failed to write response.txt: {}", e))?;
 
     let version = req
         .version
