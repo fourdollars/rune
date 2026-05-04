@@ -756,6 +756,289 @@ impl Provider for CopilotProvider {
         })
     }
 }
+
+/// Google Gemini provider — native Gemini API format.
+pub struct GeminiProvider {
+    pub api_key: String,
+    pub model: String,
+    pub base_url: String,
+}
+
+impl GeminiProvider {
+    pub fn new(api_key: String, model: Option<String>, base_url: Option<String>) -> Self {
+        GeminiProvider {
+            api_key,
+            model: model.unwrap_or_else(|| "gemini-2.0-flash".to_string()),
+            base_url: base_url
+                .unwrap_or_else(|| "https://generativelanguage.googleapis.com/v1beta".to_string()),
+        }
+    }
+
+    /// Convert OpenAI-format messages to Gemini format.
+    fn convert_messages(messages: &[LlmMessage]) -> (Option<Value>, Vec<Value>) {
+        let mut system_instruction: Option<Value> = None;
+        let mut contents: Vec<Value> = Vec::new();
+
+        for msg in messages {
+            match msg.role.as_str() {
+                "system" => {
+                    if let Some(ref text) = msg.content {
+                        system_instruction = Some(serde_json::json!({
+                            "parts": [{"text": text}]
+                        }));
+                    }
+                }
+                "assistant" => {
+                    let mut parts = Vec::new();
+                    if let Some(ref text) = msg.content {
+                        if !text.is_empty() {
+                            parts.push(serde_json::json!({"text": text}));
+                        }
+                    }
+                    if let Some(ref tool_calls) = msg.tool_calls {
+                        for tc in tool_calls {
+                            let args: Value = serde_json::from_str(&tc.function.arguments)
+                                .unwrap_or(Value::Object(serde_json::Map::new()));
+                            parts.push(serde_json::json!({
+                                "functionCall": {
+                                    "name": tc.function.name,
+                                    "args": args
+                                }
+                            }));
+                        }
+                    }
+                    if !parts.is_empty() {
+                        contents.push(serde_json::json!({
+                            "role": "model",
+                            "parts": parts
+                        }));
+                    }
+                }
+                "tool" => {
+                    let response_data: Value = serde_json::from_str(
+                        msg.content.as_deref().unwrap_or("{}"),
+                    )
+                    .unwrap_or(serde_json::json!({"result": msg.content.as_deref().unwrap_or("")}));
+
+                    // Try to find the tool name from tool_call_id
+                    let name = msg.tool_call_id.as_deref().unwrap_or("unknown");
+                    contents.push(serde_json::json!({
+                        "role": "function",
+                        "parts": [{
+                            "functionResponse": {
+                                "name": name,
+                                "response": response_data
+                            }
+                        }]
+                    }));
+                }
+                _ => {
+                    // "user" and anything else
+                    if let Some(ref text) = msg.content {
+                        contents.push(serde_json::json!({
+                            "role": "user",
+                            "parts": [{"text": text}]
+                        }));
+                    }
+                }
+            }
+        }
+        (system_instruction, contents)
+    }
+
+    /// Convert OpenAI-format tool definitions to Gemini function_declarations.
+    fn convert_tools(tools: &[Value]) -> Option<Value> {
+        let declarations: Vec<Value> = tools
+            .iter()
+            .filter_map(|t| {
+                let func = t.get("function")?;
+                Some(serde_json::json!({
+                    "name": func.get("name")?,
+                    "description": func.get("description").unwrap_or(&Value::String(String::new())),
+                    "parameters": func.get("parameters").cloned().unwrap_or(serde_json::json!({"type": "object", "properties": {}}))
+                }))
+            })
+            .collect();
+        if declarations.is_empty() {
+            None
+        } else {
+            Some(serde_json::json!([{"function_declarations": declarations}]))
+        }
+    }
+}
+
+impl Provider for GeminiProvider {
+    fn name(&self) -> &str {
+        "gemini"
+    }
+
+    fn chat(
+        &self,
+        request: LlmRequest,
+    ) -> Pin<Box<dyn Future<Output = Result<LlmResponse>> + Send + '_>> {
+        let api_key = self.api_key.clone();
+        let base_url = self.base_url.clone();
+        let model = if request.model.is_empty() {
+            self.model.clone()
+        } else {
+            request.model.clone()
+        };
+
+        Box::pin(async move {
+            let (system_instruction, contents) = Self::convert_messages(&request.messages);
+            let tools = request.tools.as_ref().and_then(|t| Self::convert_tools(t));
+
+            let mut payload = serde_json::json!({
+                "contents": contents
+            });
+
+            if let Some(si) = system_instruction {
+                payload["systemInstruction"] = si;
+            }
+            if let Some(t) = tools {
+                payload["tools"] = t;
+            }
+
+            let url = format!(
+                "{}/models/{}:generateContent?key={}",
+                base_url.trim_end_matches('/'),
+                model,
+                api_key
+            );
+
+            let tmp_path = format!("/tmp/rune_gemini_req_{}.json", std::process::id());
+            let payload_str = serde_json::to_string(&payload)
+                .map_err(|e| anyhow!("failed to serialize Gemini request: {}", e))?;
+            tokio::fs::write(&tmp_path, &payload_str)
+                .await
+                .map_err(|e| anyhow!("failed to write temp payload: {}", e))?;
+
+            debug!(url = %url, payload_len = payload_str.len(), "sending Gemini request");
+
+            let output = Command::new("curl")
+                .args([
+                    "-s",
+                    "-S",
+                    "-X",
+                    "POST",
+                    "-H",
+                    "Content-Type: application/json",
+                    "-d",
+                    &format!("@{}", tmp_path),
+                    "--max-time",
+                    "120",
+                    &url,
+                ])
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .output()
+                .await
+                .map_err(|e| anyhow!("failed to spawn curl: {}", e))?;
+
+            let _ = tokio::fs::remove_file(&tmp_path).await;
+
+            let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+            if !output.status.success() {
+                let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+                return Err(anyhow!("curl failed: {}", stderr));
+            }
+
+            let v: Value = serde_json::from_str(&stdout).map_err(|e| {
+                anyhow!(
+                    "failed to parse Gemini response: {}\nraw: {}",
+                    e,
+                    &stdout[..stdout.len().min(500)]
+                )
+            })?;
+
+            // Check for API error
+            if let Some(err) = v.get("error") {
+                let msg = err
+                    .get("message")
+                    .and_then(|m| m.as_str())
+                    .unwrap_or("unknown error");
+                return Err(anyhow!("Gemini API error: {}", msg));
+            }
+
+            // Parse response
+            let candidate = v.pointer("/candidates/0/content");
+            let mut content_text = String::new();
+            let mut tool_calls: Vec<LlmToolCall> = Vec::new();
+            let mut tc_counter = 0u32;
+
+            if let Some(cand_content) = candidate {
+                if let Some(parts) = cand_content.get("parts").and_then(|p| p.as_array()) {
+                    for part in parts {
+                        if let Some(text) = part.get("text").and_then(|t| t.as_str()) {
+                            content_text.push_str(text);
+                        }
+                        if let Some(fc) = part.get("functionCall") {
+                            let name = fc
+                                .get("name")
+                                .and_then(|n| n.as_str())
+                                .unwrap_or("")
+                                .to_string();
+                            let args = fc
+                                .get("args")
+                                .cloned()
+                                .unwrap_or(Value::Object(serde_json::Map::new()));
+                            tc_counter += 1;
+                            tool_calls.push(LlmToolCall {
+                                id: format!("gemini_tc_{}", tc_counter),
+                                call_type: "function".to_string(),
+                                function: LlmFunction {
+                                    name,
+                                    arguments: serde_json::to_string(&args).unwrap_or_default(),
+                                },
+                            });
+                        }
+                    }
+                }
+            }
+
+            // Parse usage
+            let usage = if let Some(um) = v.get("usageMetadata") {
+                TokenUsage {
+                    prompt_tokens: um
+                        .get("promptTokenCount")
+                        .and_then(|v| v.as_u64())
+                        .unwrap_or(0) as u32,
+                    completion_tokens: um
+                        .get("candidatesTokenCount")
+                        .and_then(|v| v.as_u64())
+                        .unwrap_or(0) as u32,
+                    total_tokens: um
+                        .get("totalTokenCount")
+                        .and_then(|v| v.as_u64())
+                        .unwrap_or(0) as u32,
+                }
+            } else {
+                TokenUsage::default()
+            };
+
+            let response_model = v
+                .get("modelVersion")
+                .and_then(|m| m.as_str())
+                .unwrap_or(&model)
+                .to_string();
+
+            debug!(model = %response_model, content_len = content_text.len(),
+                   tool_calls = tool_calls.len(), tokens = usage.total_tokens, "Gemini response received");
+
+            Ok(LlmResponse {
+                content: if content_text.is_empty() {
+                    None
+                } else {
+                    Some(content_text)
+                },
+                tool_calls,
+                usage,
+                model: response_model,
+            })
+        })
+    }
+}
+
 pub struct ProviderRegistry {
     providers: Vec<Box<dyn Provider>>,
     default_provider: usize,

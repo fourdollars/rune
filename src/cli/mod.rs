@@ -643,8 +643,21 @@ fn init_provider(cfg: &config::RuneConfig) -> ProviderRegistry {
                 .map(|u| u.contains("githubcopilot"))
                 .unwrap_or(false);
 
+        // Detect Google Gemini API key (starts with AIza)
+        let is_gemini = key.starts_with("AIza")
+            || cfg
+                .base_url
+                .as_deref()
+                .map(|u| u.contains("generativelanguage.googleapis.com"))
+                .unwrap_or(false);
+
         if is_copilot {
             let provider = CopilotProvider::new(key.clone());
+            registry.register(Box::new(provider));
+        } else if is_gemini {
+            use crate::provider::GeminiProvider;
+            let provider =
+                GeminiProvider::new(key.clone(), Some(cfg.model.clone()), cfg.base_url.clone());
             registry.register(Box::new(provider));
         } else {
             let provider =
