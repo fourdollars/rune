@@ -400,32 +400,133 @@ impl Agent {
                 tool_call_id: None,
             });
 
-            // Execute each tool call
-            for tc in &response.tool_calls {
-                let result = match self.execute_tool_call(tc).await {
-                    Ok(result) => result,
-                    Err(stop) => {
-                        // Push error as tool result so conversation stays valid
-                        let err_msg = match &stop {
-                            StopReason::Error(e) => e.clone(),
-                            other => format!("{:?}", other),
-                        };
-                        self.messages.push(LlmMessage {
-                            role: "tool".to_string(),
-                            content: Some(err_msg),
-                            tool_calls: None,
-                            tool_call_id: Some(tc.id.clone()),
+            // Execute tool calls — parallel when multiple and non-interactive
+            if response.tool_calls.len() > 1 && (self.auto_approve || !self.interactive) {
+                // Pre-process: tracking, trace, policy checks (sequential, needs &mut self)
+                let mut dispatch_list: Vec<(String, String, serde_json::Value)> = Vec::new();
+                let early_stop: Option<StopReason> = None;
+
+                for tc in &response.tool_calls {
+                    let args: serde_json::Value = serde_json::from_str(&tc.function.arguments)
+                        .unwrap_or(serde_json::Value::Object(serde_json::Map::new()));
+
+                    eprintln!(
+                        "  {} {}",
+                        "⚙".dimmed(),
+                        format!(
+                            "{}({})",
+                            tc.function.name,
+                            &tc.function.arguments[..tc.function.arguments.len().min(80)]
+                        )
+                        .dimmed()
+                    );
+
+                    if let Some(ref mut t) = self.trace {
+                        t.record(StepKind::ToolCall {
+                            name: tc.function.name.clone(),
+                            arguments_preview: redact(
+                                &tc.function.arguments[..tc.function.arguments.len().min(100)],
+                            ),
                         });
+                    }
+
+                    self.tool_call_names.push(tc.function.name.clone());
+                    if tc.function.name == "execute_cmd" {
+                        if let Some(cmd) =
+                            serde_json::from_str::<serde_json::Value>(&tc.function.arguments)
+                                .ok()
+                                .and_then(|a| {
+                                    a.get("cmd").and_then(|c| c.as_str()).map(|s| s.to_string())
+                                })
+                        {
+                            self.executed_commands.push(cmd);
+                        }
+                    }
+
+                    dispatch_list.push((tc.id.clone(), tc.function.name.clone(), args));
+                }
+
+                if let Some(stop) = early_stop {
+                    self.finish_trace(&stop);
+                    return stop;
+                }
+
+                // Parallel dispatch via ToolRegistry (which only needs &self)
+                let futs: Vec<_> = dispatch_list
+                    .iter()
+                    .map(|(_id, name, args)| self.tools.execute(name, args.clone()))
+                    .collect();
+                let results = futures::future::join_all(futs).await;
+
+                // Push results in order
+                for (i, output) in results.into_iter().enumerate() {
+                    let tc_id = &dispatch_list[i].0;
+                    let tc_name = &dispatch_list[i].1;
+                    let content_preview = redact(&output.content[..output.content.len().min(200)]);
+
+                    if output.is_error {
+                        eprintln!("  {} {}", "✗".red(), output.content.dimmed());
+                    } else {
+                        eprintln!("  {} {}", "✓".green(), format!("{}...ok", tc_name).dimmed());
+                    }
+
+                    if let Some(ref mut t) = self.trace {
+                        t.record(StepKind::ToolResult {
+                            name: tc_name.clone(),
+                            is_error: output.is_error,
+                            content_preview,
+                        });
+                    }
+
+                    let is_err = output.is_error;
+                    self.messages.push(LlmMessage {
+                        role: "tool".to_string(),
+                        content: Some(output.content),
+                        tool_calls: None,
+                        tool_call_id: Some(tc_id.clone()),
+                    });
+
+                    // In non-interactive mode, tool errors are fatal
+                    if is_err && !self.interactive {
+                        let stop = StopReason::Error(
+                            self.messages
+                                .last()
+                                .unwrap()
+                                .content
+                                .clone()
+                                .unwrap_or_default(),
+                        );
                         self.finish_trace(&stop);
                         return stop;
                     }
-                };
-                self.messages.push(LlmMessage {
-                    role: "tool".to_string(),
-                    content: Some(result),
-                    tool_calls: None,
-                    tool_call_id: Some(tc.id.clone()),
-                });
+                }
+            } else {
+                // Sequential execution (single tool call or interactive confirm mode)
+                for tc in &response.tool_calls {
+                    let result = match self.execute_tool_call(tc).await {
+                        Ok(result) => result,
+                        Err(stop) => {
+                            let err_msg = match &stop {
+                                StopReason::Error(e) => e.clone(),
+                                other => format!("{:?}", other),
+                            };
+                            self.messages.push(LlmMessage {
+                                role: "tool".to_string(),
+                                content: Some(err_msg),
+                                tool_calls: None,
+                                tool_call_id: Some(tc.id.clone()),
+                            });
+                            self.finish_trace(&stop);
+                            return stop;
+                        }
+                    };
+                    self.messages.push(LlmMessage {
+                        role: "tool".to_string(),
+                        content: Some(result),
+                        tool_calls: None,
+                        tool_call_id: Some(tc.id.clone()),
+                    });
+                }
             }
         }
     }
