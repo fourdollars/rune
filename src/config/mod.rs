@@ -6,9 +6,12 @@ use std::path::PathBuf;
 /// Unified sandbox/security policy.
 #[derive(Debug, Clone, Deserialize)]
 pub struct PolicyConfig {
-    /// Execution mode: "confirm" | "allowlist" | "unrestricted"
+    /// Execution mode:
+    /// - "confirm": interactive CLI default — prompts user before dangerous tools
+    /// - "allowlist": pipe/Concourse default — auto-executes within allowlist, blocks the rest
+    /// - "unrestricted": all policy checks skipped (opt-in via --policy-mode or config)
     pub mode: String,
-    /// Commands allowed to execute (only enforced in "allowlist" mode).
+    /// Commands allowed to execute (enforced in "confirm" and "allowlist" modes).
     #[serde(default)]
     pub allowed_commands: Vec<String>,
     /// Network domains allowed (empty = block all).
@@ -668,6 +671,35 @@ denied_paths = ["/etc/shadow"]
         assert_eq!(policy.allowed_domains, vec!["github.com", "*.openai.com"]);
         assert_eq!(policy.allowed_paths_rw, vec!["/workspace"]);
         assert_eq!(policy.denied_paths, vec!["/etc/shadow"]);
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_default_policy_mode_is_confirm() {
+        let policy = PolicyConfig::default();
+        assert_eq!(policy.mode, "confirm", "default policy should be confirm for interactive");
+    }
+
+    #[test]
+    fn test_load_toml_unrestricted_mode() {
+        let dir = std::env::temp_dir().join(format!("rune-cfg-unr-{}", std::process::id()));
+        let _ = fs::create_dir_all(&dir);
+        let path = dir.join("rune.toml");
+        fs::write(
+            &path,
+            r#"
+model = "gpt-4"
+
+[policy]
+mode = "unrestricted"
+"#,
+        )
+        .unwrap();
+
+        let partial = load_toml(&path).expect("should parse");
+        let policy = partial.policy.unwrap();
+        assert_eq!(policy.mode, "unrestricted");
 
         let _ = fs::remove_dir_all(&dir);
     }

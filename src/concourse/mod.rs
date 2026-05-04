@@ -132,6 +132,8 @@ struct SandboxResourcesSpec {
 
 #[derive(Debug, Clone, Deserialize, Default)]
 struct SandboxSpec {
+    /// Policy mode override: "allowlist" (default for Concourse), "confirm", or "unrestricted"
+    policy_mode: Option<String>,
     #[serde(default)]
     network: SandboxNetworkSpec,
     #[serde(default)]
@@ -209,6 +211,12 @@ fn build_runtime_config(source: &ResourceSource) -> RuneConfig {
     cfg.api_key = source.api_key.clone();
     cfg.base_url = source.base_url.clone();
     cfg.policy = build_policy_from_source(source);
+    // Concourse defaults to allowlist mode; can be overridden via source.sandbox.policy_mode
+    if let Some(mode) = sandbox_spec(source).and_then(|s| s.policy_mode) {
+        cfg.policy.mode = mode;
+    } else if cfg.policy.mode == "confirm" {
+        cfg.policy.mode = "allowlist".to_string();
+    }
     cfg.json_output = false;
     cfg.trace = false;
     cfg.auto_approve = true;
@@ -639,5 +647,55 @@ mod tests {
         assert_eq!(sb.timeout_secs, 10);
         assert_eq!(sb.memory_limit, 256 * 1024 * 1024);
         assert_eq!(sb.max_pids, 32);
+
+        // Default runtime config should use allowlist mode (not confirm)
+        let cfg = build_runtime_config(&source);
+        assert_eq!(cfg.policy.mode, "allowlist");
+    }
+
+    #[test]
+    fn test_policy_mode_default_allowlist() {
+        let source = ResourceSource {
+            api_key: Some("x".into()),
+            model: None,
+            base_url: None,
+            prompt: None,
+            pre_commands: vec![],
+            sandbox: None,
+        };
+        let cfg = build_runtime_config(&source);
+        assert_eq!(cfg.policy.mode, "allowlist", "Concourse should default to allowlist");
+    }
+
+    #[test]
+    fn test_policy_mode_unrestricted_override() {
+        let source = ResourceSource {
+            api_key: Some("x".into()),
+            model: None,
+            base_url: None,
+            prompt: None,
+            pre_commands: vec![],
+            sandbox: Some(json!({
+                "policy_mode": "unrestricted"
+            })),
+        };
+        let cfg = build_runtime_config(&source);
+        assert_eq!(cfg.policy.mode, "unrestricted", "policy_mode override should work");
+    }
+
+    #[test]
+    fn test_policy_mode_confirm_override() {
+        let source = ResourceSource {
+            api_key: Some("x".into()),
+            model: None,
+            base_url: None,
+            prompt: None,
+            pre_commands: vec![],
+            sandbox: Some(json!({
+                "policy_mode": "confirm"
+            })),
+        };
+        let cfg = build_runtime_config(&source);
+        assert_eq!(cfg.policy.mode, "confirm", "explicit confirm override should work");
     }
 }

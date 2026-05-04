@@ -75,9 +75,13 @@ is_dangerous_tool(name)?
 ```
 
 **Policy modes:**
-- `confirm` — interactive Y/n/A prompts (default)
-- `allowlist` — only explicitly allowed operations run
-- `unrestricted` — no restrictions (dev only, never use with secrets)
+| Mode | Behavior | Default for |
+|------|----------|-------------|
+| `confirm` | Interactive Y/n/A prompts | Interactive CLI |
+| `allowlist` | Auto-execute within allowlist, block the rest | Pipe mode, Concourse CI |
+| `unrestricted` | All policy checks bypassed | Opt-in only (`--policy-mode unrestricted`) |
+
+In Concourse pipelines, override via `source.sandbox.policy_mode`.
 
 ## Sandbox Layers
 

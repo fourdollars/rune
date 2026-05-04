@@ -202,11 +202,35 @@ Every tool invocation passes through up to 5 isolation layers:
 
 ### Command Policy
 
-| Mode | Behavior |
-|------|----------|
-| `confirm` | Ask user Y/n/A(lways) before dangerous tools |
-| `allowlist` | Only whitelisted commands can execute |
-| `unrestricted` | No restrictions (development only) |
+| Mode | Behavior | Default for |
+|------|----------|-------------|
+| `confirm` | Ask user Y/n/A(lways) before dangerous tools | Interactive CLI |
+| `allowlist` | Auto-execute within allowlist, block everything else | Pipe mode, Concourse CI |
+| `unrestricted` | All policy checks skipped | Opt-in via `--policy-mode unrestricted` |
+
+**Defaults by context:**
+- **Interactive CLI** (`rune`): `confirm` — prompts before each dangerous tool call
+- **Pipe mode** (`echo "..." \| rune`): `allowlist` — runs within configured allowlists
+- **Concourse CI** (check/get/put): `allowlist` — enforces sandbox policy from pipeline YAML
+
+Override with `--policy-mode <mode>`, `RUNE_POLICY_MODE=<mode>`, or in `rune.toml`:
+
+```toml
+[policy]
+mode = "unrestricted"
+```
+
+In Concourse pipelines, set via `source.sandbox.policy_mode`:
+
+```yaml
+resources:
+  - name: my-agent
+    type: rune-agent
+    source:
+      api_key: ((key))
+      sandbox:
+        policy_mode: unrestricted
+```
 
 ## JSON Output Mode
 

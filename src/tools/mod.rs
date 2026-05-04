@@ -333,7 +333,9 @@ impl ToolRegistry {
 
         // Command policy enforcement: check ALL commands in the pipeline
         // Applies in both "allowlist" and "confirm" modes when allowed_commands is set
-        if !self.policy_allowed_commands.is_empty()
+        // Skipped entirely in "unrestricted" mode
+        if self.policy_mode != "unrestricted"
+            && !self.policy_allowed_commands.is_empty()
             && !self.policy_allowed_commands.iter().any(|a| a == "*")
         {
             let binaries = extract_command_binaries(&cmd);
@@ -355,7 +357,8 @@ impl ToolRegistry {
             None => return ToolOutput::err("missing required argument: url"),
         };
 
-        // Check domain allowlist
+        // Check domain allowlist (skipped in unrestricted mode)
+        if self.policy_mode != "unrestricted" {
         if let Some(domain) = extract_domain(url) {
             let executor = self.sandbox(35);
             if !executor.is_domain_allowed(&domain) {
@@ -366,6 +369,7 @@ impl ToolRegistry {
                 ));
             }
         }
+        } // end unrestricted check
 
         info!(url = %url, "fetch_url (sandboxed, domain allowed)");
         let cmd = format!("curl -sS -L --max-time 30 '{}'", url.replace('\'', "'\\''"));
@@ -396,6 +400,9 @@ impl ToolRegistry {
 impl ToolRegistry {
     /// Check if a path is in the denied_paths list.
     fn is_path_denied(&self, path: &str) -> bool {
+        if self.policy_mode == "unrestricted" {
+            return false;
+        }
         self.policy_denied_paths.iter().any(|d| path.starts_with(d))
     }
 

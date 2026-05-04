@@ -2,7 +2,20 @@
 
 All notable changes to this project will be documented in this file.
 
-## [Unreleased] — 2026-05-03
+## [Unreleased] — 2026-05-04
+
+### Changed
+- **Policy mode defaults by context:**
+  - Interactive CLI: `confirm` (unchanged)
+  - Pipe mode (`stdin`): now defaults to `allowlist` (was `confirm`)
+  - Concourse CI (check/get/put): now defaults to `allowlist` (was `confirm`)
+  - All modes can be overridden to `unrestricted` via `--policy-mode`, `RUNE_POLICY_MODE`, config, or Concourse `source.sandbox.policy_mode`
+- **Unrestricted mode** now fully bypasses all policy checks (denied_paths, allowed_commands, allowed_domains, allowed_paths_rw)
+- **Non-interactive tool errors** are now hard-stops (StopReason::Error) — sandbox violations cause Concourse steps to fail visibly
+- **Sandbox layers** (Landlock + Seccomp) now chain correctly when both are available (was mutually exclusive)
+- **Concourse build logs** now display the prompt at the start of each check/get/put step
+
+## [Previous] — 2026-05-03
 
 ### Added
 - **Embedding Engine (§19)** — `src/embedding/mod.rs`

@@ -475,8 +475,10 @@ impl Agent {
 
         // Confirm mode: ask user before executing dangerous tools
         // Skip confirm if the involved domain/command is already in the allowlist
+        // Unrestricted mode skips all confirmation
         let already_allowed = self.is_already_allowed(&tc.function.name, &args);
-        if self.config.policy.mode == "confirm"
+        if self.config.policy.mode != "unrestricted"
+            && self.config.policy.mode == "confirm"
             && Self::is_dangerous_tool(&tc.function.name)
             && !self.auto_approve
             && !already_allowed

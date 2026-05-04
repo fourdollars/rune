@@ -736,6 +736,12 @@ pub async fn run() {
         }
     }
 
+    // Non-interactive (pipe) mode defaults to allowlist policy unless explicitly overridden
+    if !stdin_is_terminal && cfg.policy.mode == "confirm" {
+        eprintln!("  {} pipe mode: defaulting policy to allowlist (use --policy-mode to override)", "ℹ".dimmed());
+        cfg.policy.mode = "allowlist".to_string();
+    }
+
     let mut agent = Agent::new(cfg.clone(), provider, stdin_is_terminal);
     agent.set_system_prompt(
         "You are Rune, a high-performance AI agent running in a terminal. \
