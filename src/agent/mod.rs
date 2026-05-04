@@ -1,5 +1,5 @@
 use crate::config::RuneConfig;
-use crate::provider::{LlmMessage, LlmRequest, LlmResponse, LlmToolCall, ProviderRegistry};
+use crate::provider::{LlmMessage, LlmRequest, LlmResponse, LlmToolCall, ProviderRegistry, ContentPart};
 use crate::skills::SkillLoader;
 use crate::tools::ToolRegistry;
 use crate::trace::{redact, StepKind, TraceWriter};
@@ -279,6 +279,18 @@ impl Agent {
         self.step_count = 0;
         self.tokens_used = 0;
     }
+
+    /// Push a user message with explicit content parts (e.g., images).
+    pub fn push_user_message_with_parts(&mut self, text: String, parts: Vec<ContentPart>) {
+        self.messages.push(LlmMessage {
+            role: user.to_string(),
+            content: Some(text),
+            tool_calls: None,
+            tool_call_id: None,
+            content_parts: Some(parts),
+        });
+    }
+
 
     /// Resolve @skill references in user input and inject skill content as system context.
     fn inject_skills(&mut self, user_input: &str) {

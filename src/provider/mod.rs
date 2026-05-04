@@ -7,6 +7,7 @@ use std::collections::BTreeMap;
 use std::future::Future;
 use std::pin::Pin;
 use std::process::Stdio;
+use tokio::io::AsyncBufReadExt;
 use tokio::process::Command;
 use tokio::sync::mpsc::Sender;
 use tracing::{debug, info};
@@ -1054,6 +1055,208 @@ impl Provider for GeminiProvider {
                 tool_calls,
                 usage,
                 model: response_model,
+            })
+        })
+    }
+
+    fn chat_streaming(
+        &self,
+        request: LlmRequest,
+        on_token: Box<dyn Fn(&str) + Send>,
+    ) -> Pin<Box<dyn Future<Output = Result<LlmResponse>> + Send + '_>> {
+        let api_key = self.api_key.clone();
+        let base_url = self.base_url.clone();
+        let model = if request.model.is_empty() {
+            self.model.clone()
+        } else {
+            request.model.clone()
+        };
+
+        Box::pin(async move {
+            let (system_instruction, contents) = Self::convert_messages(&request.messages);
+            let tools = request.tools.as_ref().and_then(|t| Self::convert_tools(t));
+
+            let mut payload = serde_json::json!({
+                "contents": contents
+            });
+
+            if let Some(si) = system_instruction {
+                payload["systemInstruction"] = si;
+            }
+            if let Some(t) = tools {
+                payload["tools"] = t;
+            }
+
+            let url = format!(
+                "{}/models/{}:streamGenerateContent?alt=sse&key={}",
+                base_url.trim_end_matches('/'),
+                model,
+                api_key
+            );
+
+            let tmp_path = format!("/tmp/rune_gemini_stream_{}.json", std::process::id());
+            let payload_str = serde_json::to_string(&payload)
+                .map_err(|e| anyhow!("failed to serialize Gemini request: {}", e))?;
+            tokio::fs::write(&tmp_path, &payload_str)
+                .await
+                .map_err(|e| anyhow!("failed to write temp payload: {}", e))?;
+
+            debug!(url = %url, payload_len = payload_str.len(), "sending Gemini streaming request");
+
+            let mut child = Command::new("curl")
+                .args([
+                    "-s",
+                    "-S",
+                    "-N",
+                    "-X",
+                    "POST",
+                    "-H",
+                    "Content-Type: application/json",
+                    "-d",
+                    &format!("@{}", tmp_path),
+                    "--max-time",
+                    "120",
+                    &url,
+                ])
+                .stdout(Stdio::piped())
+                .stderr(Stdio::inherit())
+                .spawn()
+                .map_err(|e| anyhow!("failed to spawn curl: {}", e))?;
+
+            let stdout = child
+                .stdout
+                .take()
+                .ok_or_else(|| anyhow!("failed to capture curl stdout"))?;
+            let reader = tokio::io::BufReader::new(stdout);
+            let mut lines = reader.lines();
+
+            let mut content_text = String::new();
+            let mut tool_calls: Vec<LlmToolCall> = Vec::new();
+            let mut tc_counter = 0u32;
+            let mut usage = TokenUsage::default();
+            let mut response_model = model.clone();
+
+            while let Some(line) = lines
+                .next_line()
+                .await
+                .map_err(|e| anyhow!("failed to read streaming response: {}", e))?
+            {
+                let line = line.trim();
+                if line.is_empty() {
+                    continue;
+                }
+                if !line.starts_with("data:") {
+                    continue;
+                }
+
+                let payload = line
+                    .strip_prefix("data: ")
+                    .or_else(|| line.strip_prefix("data:"))
+                    .unwrap_or("")
+                    .trim();
+                if payload.is_empty() || payload == "[DONE]" {
+                    continue;
+                }
+
+                let v: Value = match serde_json::from_str(payload) {
+                    Ok(v) => v,
+                    Err(e) => {
+                        debug!(error = %e, chunk = %payload, "skipping malformed Gemini SSE chunk");
+                        continue;
+                    }
+                };
+
+                if let Some(um) = v.get("usageMetadata") {
+                    usage = TokenUsage {
+                        prompt_tokens: um
+                            .get("promptTokenCount")
+                            .and_then(|v| v.as_u64())
+                            .unwrap_or(0) as u32,
+                        completion_tokens: um
+                            .get("candidatesTokenCount")
+                            .and_then(|v| v.as_u64())
+                            .unwrap_or(0) as u32,
+                        total_tokens: um
+                            .get("totalTokenCount")
+                            .and_then(|v| v.as_u64())
+                            .unwrap_or(0) as u32,
+                    };
+                }
+
+                if let Some(mv) = v.get("modelVersion").and_then(|m| m.as_str()) {
+                    if !mv.is_empty() {
+                        response_model = mv.to_string();
+                    }
+                }
+
+                if let Some(parts) = v
+                    .pointer("/candidates/0/content/parts")
+                    .and_then(|p| p.as_array())
+                {
+                    for part in parts {
+                        if let Some(text) = part.get("text").and_then(|t| t.as_str()) {
+                            if !text.is_empty() {
+                                on_token(text);
+                                content_text.push_str(text);
+                            }
+                        }
+                        if let Some(fc) = part.get("functionCall") {
+                            let name = fc
+                                .get("name")
+                                .and_then(|n| n.as_str())
+                                .unwrap_or("")
+                                .to_string();
+                            let args = fc
+                                .get("args")
+                                .cloned()
+                                .unwrap_or(Value::Object(serde_json::Map::new()));
+                            tc_counter += 1;
+                            tool_calls.push(LlmToolCall {
+                                id: format!("gemini_tc_{}", tc_counter),
+                                call_type: "function".to_string(),
+                                function: LlmFunction {
+                                    name,
+                                    arguments: serde_json::to_string(&args).unwrap_or_default(),
+                                },
+                            });
+                        }
+                    }
+                }
+            }
+
+            let status = child
+                .wait()
+                .await
+                .map_err(|e| anyhow!("failed to wait for curl: {}", e))?;
+
+            let _ = tokio::fs::remove_file(&tmp_path).await;
+
+            if !status.success() {
+                return Err(anyhow!("curl failed with status: {}", status));
+            }
+
+            let usage = if usage.total_tokens == 0 {
+                estimate_usage(Some(&content_text), &tool_calls)
+            } else {
+                usage
+            };
+
+            debug!(model = %response_model, content_len = content_text.len(),
+                   tool_calls = tool_calls.len(), tokens = usage.total_tokens, "Gemini streaming response received");
+
+            Ok(LlmResponse {
+                content: if content_text.is_empty() {
+                    None
+                } else {
+                    Some(content_text)
+                },
+                tool_calls,
+                usage,
+                model: if response_model.is_empty() {
+                    model
+                } else {
+                    response_model
+                },
             })
         })
     }
