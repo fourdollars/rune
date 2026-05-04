@@ -666,6 +666,10 @@ impl Agent {
             if Self::is_policy_blocked(&output.content) {
                 return Err(StopReason::Error(output.content));
             }
+            // Non-interactive: any tool error is a hard stop (sandbox enforcement)
+            if !self.interactive {
+                return Err(StopReason::Error(output.content));
+            }
         } else {
             eprintln!(
                 "  {} {}",
