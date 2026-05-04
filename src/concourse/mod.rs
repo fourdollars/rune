@@ -249,35 +249,47 @@ fn build_provider(cfg: &RuneConfig) -> ProviderRegistry {
     let mut registry = ProviderRegistry::new();
 
     if let Some(ref key) = cfg.api_key {
-        let is_copilot = key.starts_with("ghu_")
-            || key.starts_with("ghp_")
-            || cfg
-                .base_url
-                .as_deref()
-                .map(|u| u.contains("githubcopilot"))
-                .unwrap_or(false);
+        let provider_name = cfg.provider.as_deref().unwrap_or_else(|| {
+            if key.starts_with("ghu_")
+                || key.starts_with("ghp_")
+                || cfg
+                    .base_url
+                    .as_deref()
+                    .map(|u| u.contains("githubcopilot"))
+                    .unwrap_or(false)
+            {
+                "github-copilot"
+            } else if key.starts_with("AIza")
+                || cfg
+                    .base_url
+                    .as_deref()
+                    .map(|u| u.contains("generativelanguage.googleapis.com"))
+                    .unwrap_or(false)
+            {
+                "gemini"
+            } else {
+                "openai"
+            }
+        });
 
-        let is_gemini = key.starts_with("AIza")
-            || cfg
-                .base_url
-                .as_deref()
-                .map(|u| u.contains("generativelanguage.googleapis.com"))
-                .unwrap_or(false);
-
-        if is_copilot {
-            registry.register(Box::new(CopilotProvider::new(key.clone())));
-        } else if is_gemini {
-            registry.register(Box::new(crate::provider::GeminiProvider::new(
-                key.clone(),
-                Some(cfg.model.clone()),
-                cfg.base_url.clone(),
-            )));
-        } else {
-            registry.register(Box::new(OpenAiProvider::new(
-                "openai".to_string(),
-                key.clone(),
-                cfg.base_url.clone(),
-            )));
+        match provider_name {
+            "github-copilot" | "copilot" => {
+                registry.register(Box::new(CopilotProvider::new(key.clone())));
+            }
+            "gemini" | "google" => {
+                registry.register(Box::new(crate::provider::GeminiProvider::new(
+                    key.clone(),
+                    Some(cfg.model.clone()),
+                    cfg.base_url.clone(),
+                )));
+            }
+            _ => {
+                registry.register(Box::new(OpenAiProvider::new(
+                    provider_name.to_string(),
+                    key.clone(),
+                    cfg.base_url.clone(),
+                )));
+            }
         }
     }
 

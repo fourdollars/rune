@@ -64,6 +64,10 @@ impl Default for PolicyConfig {
 pub struct RuneConfig {
     pub model: String,
     pub api_key: Option<String>,
+    /// Explicit provider selection. Auto-detected from api_key if not set.
+    /// Values: "github-copilot", "gemini", "openai", "openrouter", "ollama", "anthropic"
+    #[serde(default)]
+    pub provider: Option<String>,
     pub skills_dir: String,
     pub log_level: String,
     pub max_steps: Option<u32>,
@@ -92,6 +96,7 @@ impl Default for RuneConfig {
         Self {
             model: "gpt-4".to_string(),
             api_key: None,
+            provider: None,
             skills_dir: "./skills".to_string(),
             log_level: "info".to_string(),
             max_steps: None,
@@ -116,6 +121,7 @@ impl Default for RuneConfig {
 struct PartialConfig {
     model: Option<String>,
     api_key: Option<String>,
+    provider: Option<String>,
     skills_dir: Option<String>,
     log_level: Option<String>,
     max_steps: Option<u32>,
@@ -255,6 +261,7 @@ pub fn load() -> anyhow::Result<RuneConfig> {
             .ok()
             .and_then(|v| v.parse().ok()),
         base_url: env::var("RUNE_BASE_URL").ok(),
+        provider: env::var("RUNE_PROVIDER").ok(),
         trace: env::var("RUNE_TRACE").ok().and_then(|v| v.parse().ok()),
         context_window: env::var("RUNE_CONTEXT_WINDOW")
             .ok()
@@ -325,6 +332,12 @@ pub fn load() -> anyhow::Result<RuneConfig> {
             .or(env_partial.api_key)
             .or(lc.and_then(|c| c.api_key.clone()))
             .or(uc.and_then(|c| c.api_key.clone())),
+        provider: pick_option(&[
+            &env_partial.provider,
+            &cwdc.and_then(|c| c.provider.clone()),
+            &lc.and_then(|c| c.provider.clone()),
+            &uc.and_then(|c| c.provider.clone()),
+        ]),
         skills_dir: pick(
             &[
                 &cli.skills_dir,
