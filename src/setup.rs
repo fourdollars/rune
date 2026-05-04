@@ -34,41 +34,47 @@ pub async fn run_setup() {
     println!();
 
     let provider_choice = prompt("  Select [1-6]: ").unwrap_or_default();
-    let (base_url, provider_name, key_hint) = match provider_choice.trim() {
+    let (base_url, provider_name, provider_id, key_hint) = match provider_choice.trim() {
         "1" => (
             None,
             "GitHub Copilot",
+            "github-copilot",
             "GitHub PAT (starts with ghu_ or ghp_)",
         ),
         "2" => (
             Some("https://generativelanguage.googleapis.com/v1beta/openai".to_string()),
             "Google Gemini",
+            "gemini",
             "Gemini API key (starts with AIza)",
         ),
         "3" => (
             Some("https://api.openai.com/v1".to_string()),
             "OpenAI",
+            "openai",
             "OpenAI API key (starts with sk-)",
         ),
         "4" => (
             Some("https://openrouter.ai/api/v1".to_string()),
             "OpenRouter",
+            "openrouter",
             "OpenRouter key (starts with sk-or-)",
         ),
         "5" => (
             Some("https://api.anthropic.com/v1".to_string()),
             "Anthropic",
+            "anthropic",
             "Anthropic key",
         ),
         "6" => {
             let url = prompt("  Enter base URL: ").unwrap_or_default();
-            (Some(url.trim().to_string()), "Custom", "API key")
+            (Some(url.trim().to_string()), "Custom", "openai", "API key")
         }
         _ => {
             println!("  {} Defaulting to GitHub Copilot", "⚠".yellow());
             (
                 None,
                 "GitHub Copilot",
+                "github-copilot",
                 "GitHub PAT (starts with ghu_ or ghp_)",
             )
         }

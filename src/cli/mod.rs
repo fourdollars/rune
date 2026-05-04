@@ -345,17 +345,44 @@ fn show_info(cfg: &config::RuneConfig, agent: &crate::agent::Agent) {
 
 /// Display context details.
 fn show_context(agent: &crate::agent::Agent) {
+    let context_tokens = agent.total_context_tokens();
+    let context_window = agent.config.context_window;
+    let pct = if context_window > 0 {
+        (context_tokens as f64 / context_window as f64 * 100.0) as u32
+    } else {
+        0
+    };
     println!("{}", "Context Details:".bold());
     println!("  {} messages: {}", "•".dimmed(), agent.message_count());
     println!("  {} chars: ~{}", "•".dimmed(), agent.context_chars());
-    println!("  {} tokens used: {}", "•".dimmed(), agent.tokens_used());
+    println!(
+        "  {} context: {}/{} tokens ({}%)",
+        "•".dimmed(),
+        context_tokens,
+        context_window,
+        pct
+    );
+    println!(
+        "  {} tokens consumed: {}",
+        "•".dimmed(),
+        agent.tokens_used()
+    );
     println!();
     println!("  {}", "By role:".bold());
     for (role, count) in agent.context_summary() {
         println!("    {} {}: {}", "•".dimmed(), role, count);
     }
     println!();
-    println!("  {} Use /compact to summarize older messages", "ℹ".cyan());
+    if pct > 70 {
+        println!(
+            "  {} Context at {}% — will auto-compact at {}%",
+            "⚠".yellow(),
+            pct,
+            (agent.config.compact_threshold * 100.0) as u32
+        );
+    } else {
+        println!("  {} Use /compact to summarize older messages", "ℹ".cyan());
+    }
 }
 fn show_policy_summary(cfg: &config::RuneConfig) {
     let p = &cfg.policy;
