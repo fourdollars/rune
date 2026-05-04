@@ -326,6 +326,7 @@ pub async fn handle_check<R: Read>(reader: R) -> anyhow::Result<CheckResponse> {
     };
 
     eprintln!("rune check: sandboxed agent execution...");
+    eprintln!("rune check: prompt={}", prompt);
     let response =
         run_agent_prompt(&req.source, prompt, None, None, &req.source.pre_commands).await?;
     let new_ref = sha256_ref(&response);
@@ -377,6 +378,7 @@ pub async fn handle_in<R: Read>(reader: R, dest_dir: &str) -> anyhow::Result<InR
     };
 
     eprintln!("rune in: sandboxed agent execution...");
+    eprintln!("rune in: prompt={}", prompt);
     let response =
         run_agent_prompt(&req.source, prompt, None, None, &req.source.pre_commands).await?;
     let content_ref = sha256_ref(&response);
@@ -447,6 +449,7 @@ pub async fn handle_out<R: Read>(reader: R) -> anyhow::Result<OutResponse> {
         .ok_or_else(|| anyhow::anyhow!("params.prompt is required for put step"))?;
 
     eprintln!("rune out: sandboxed agent execution...");
+    eprintln!("rune out: prompt={}", prompt);
     let response = run_agent_prompt(
         &req.source,
         prompt,
