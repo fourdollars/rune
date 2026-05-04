@@ -137,12 +137,14 @@ fn create_spinner(msg: &str) -> ProgressBar {
 }
 
 /// Format and display the agent's stop reason.
-fn display_result(reason: &StopReason) {
+fn display_result(reason: &StopReason, streamed: bool) {
     match reason {
         StopReason::FinalAnswer(ans) => {
             println!();
             println!("{}", "─".repeat(60).dimmed());
-            println!("{}", ans);
+            if !streamed {
+                println!("{}", ans);
+            }
             println!("{}", "─".repeat(60).dimmed());
         }
         StopReason::MaxSteps => {
@@ -577,7 +579,10 @@ fn is_json_mode(cfg: &config::RuneConfig) -> bool {
 }
 
 async fn execute_prompt(agent: &mut Agent, input: &str) -> StopReason {
-    let spinner = if agent.config.policy.mode == "confirm" || is_json_mode(&agent.config) {
+    let spinner = if agent.config.policy.mode == "confirm"
+        || is_json_mode(&agent.config)
+        || agent.is_interactive()
+    {
         None
     } else {
         Some(create_spinner("Thinking..."))
@@ -600,7 +605,7 @@ async fn execute_prompt(agent: &mut Agent, input: &str) -> StopReason {
     if let Some(s) = spinner {
         s.finish_and_clear();
     }
-    display_result(&result);
+    display_result(&result, agent.is_interactive());
     // Show executed commands summary
     let cmds = agent.executed_commands();
     if !cmds.is_empty() {

@@ -1,10 +1,14 @@
 use anyhow::{anyhow, Result};
+use futures::StreamExt;
+use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::collections::BTreeMap;
 use std::future::Future;
 use std::pin::Pin;
 use std::process::Stdio;
 use tokio::process::Command;
+use tokio::sync::mpsc::Sender;
 use tracing::{debug, info};
 
 /// LLM request payload.
@@ -63,6 +67,236 @@ pub struct TokenUsage {
     pub total_tokens: u32,
 }
 
+#[derive(Debug, Default, Deserialize)]
+struct StreamingDelta {
+    #[serde(default)]
+    pub content: Option<String>,
+    #[serde(default)]
+    pub tool_calls: Option<Vec<StreamingToolCallDelta>>,
+}
+
+#[derive(Debug, Deserialize)]
+struct StreamingToolCallDelta {
+    #[serde(default)]
+    pub index: usize,
+    #[serde(default)]
+    pub id: Option<String>,
+    #[serde(rename = "type", default)]
+    pub call_type: Option<String>,
+    #[serde(default)]
+    pub function: Option<StreamingFunctionDelta>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct StreamingFunctionDelta {
+    #[serde(default)]
+    pub name: Option<String>,
+    #[serde(default)]
+    pub arguments: Option<String>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct StreamingChoice {
+    #[serde(default)]
+    pub delta: StreamingDelta,
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct StreamingChunk {
+    #[serde(default)]
+    pub choices: Vec<StreamingChoice>,
+    #[serde(default)]
+    pub model: Option<String>,
+    #[serde(default)]
+    pub usage: Option<TokenUsage>,
+}
+
+#[derive(Debug, Default)]
+struct StreamingToolCallState {
+    pub id: Option<String>,
+    pub call_type: String,
+    pub name: String,
+    pub arguments: String,
+}
+
+fn estimate_tokens(text: &str) -> u32 {
+    let chars = text.chars().count() as u32;
+    if chars == 0 {
+        0
+    } else {
+        (chars + 3) / 4
+    }
+}
+
+fn estimate_usage(content: Option<&str>, tool_calls: &[LlmToolCall]) -> TokenUsage {
+    let content_tokens = content.map(estimate_tokens).unwrap_or(0);
+    let tool_tokens: u32 = tool_calls
+        .iter()
+        .map(|call| {
+            estimate_tokens(&call.function.name) + estimate_tokens(&call.function.arguments)
+        })
+        .sum();
+    TokenUsage {
+        prompt_tokens: 0,
+        completion_tokens: content_tokens.saturating_add(tool_tokens),
+        total_tokens: content_tokens.saturating_add(tool_tokens),
+    }
+}
+
+fn finalize_tool_calls(states: BTreeMap<usize, StreamingToolCallState>) -> Vec<LlmToolCall> {
+    states
+        .into_iter()
+        .map(|(index, state)| LlmToolCall {
+            id: state.id.unwrap_or_else(|| format!("stream-{}", index)),
+            call_type: if state.call_type.is_empty() {
+                default_tool_type()
+            } else {
+                state.call_type
+            },
+            function: LlmFunction {
+                name: state.name,
+                arguments: state.arguments,
+            },
+        })
+        .collect()
+}
+
+async fn stream_openai_compatible_response(
+    request: reqwest::RequestBuilder,
+    tx: Sender<String>,
+) -> Result<LlmResponse> {
+    let response = request
+        .send()
+        .await
+        .map_err(|e| anyhow!("failed to send streaming request: {}", e))?;
+
+    if !response.status().is_success() {
+        let status = response.status();
+        let body = response.text().await.unwrap_or_default();
+        return Err(anyhow!("streaming request failed ({status}): {body}"));
+    }
+
+    let mut stream = response.bytes_stream();
+    let mut buffer = String::new();
+    let mut content = String::new();
+    let mut model = String::new();
+    let mut usage = TokenUsage::default();
+    let mut tool_calls: BTreeMap<usize, StreamingToolCallState> = BTreeMap::new();
+    let mut done = false;
+
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk.map_err(|e| anyhow!("stream read error: {}", e))?;
+        buffer.push_str(&String::from_utf8_lossy(&chunk));
+
+        while let Some(pos) = buffer.find('\n') {
+            let mut line = buffer.drain(..=pos).collect::<String>();
+            if line.ends_with('\n') {
+                line.pop();
+            }
+            if line.ends_with('\r') {
+                line.pop();
+            }
+
+            let line = line.trim();
+            if line.is_empty() {
+                continue;
+            }
+            if !(line.starts_with("data: ") || line.starts_with("data:")) {
+                continue;
+            }
+
+            let payload = line
+                .strip_prefix("data: ")
+                .or_else(|| line.strip_prefix("data:"))
+                .unwrap_or("")
+                .trim();
+            if payload.is_empty() {
+                continue;
+            }
+            if payload == "[DONE]" {
+                done = true;
+                break;
+            }
+
+            let event: StreamingChunk = serde_json::from_str(payload)
+                .map_err(|e| anyhow!("failed to parse SSE chunk: {} | chunk: {}", e, payload))?;
+            if let Some(event_model) = event.model {
+                if !event_model.is_empty() {
+                    model = event_model;
+                }
+            }
+            if let Some(event_usage) = event.usage {
+                usage = event_usage;
+            }
+
+            for choice in event.choices {
+                if let Some(part) = choice.delta.content {
+                    if !part.is_empty() {
+                        let _ = tx.send(part.clone()).await;
+                        content.push_str(&part);
+                    }
+                }
+
+                if let Some(delta_calls) = choice.delta.tool_calls {
+                    for delta in delta_calls {
+                        let entry = tool_calls.entry(delta.index).or_default();
+                        if let Some(id) = delta.id {
+                            entry.id = Some(id);
+                        }
+                        if let Some(call_type) = delta.call_type {
+                            if !call_type.is_empty() {
+                                entry.call_type = call_type;
+                            }
+                        }
+                        if let Some(function) = delta.function {
+                            if let Some(name) = function.name {
+                                if !name.is_empty() {
+                                    if entry.name.is_empty() {
+                                        entry.name = name;
+                                    } else {
+                                        entry.name.push_str(&name);
+                                    }
+                                }
+                            }
+                            if let Some(arguments) = function.arguments {
+                                entry.arguments.push_str(&arguments);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        if done {
+            break;
+        }
+    }
+
+    let tool_calls = finalize_tool_calls(tool_calls);
+    let content = if content.is_empty() {
+        None
+    } else {
+        Some(content)
+    };
+    let usage = if usage.total_tokens == 0 {
+        estimate_usage(content.as_deref(), &tool_calls)
+    } else {
+        usage
+    };
+    let model = if model.is_empty() {
+        "".to_string()
+    } else {
+        model
+    };
+
+    Ok(LlmResponse {
+        content,
+        tool_calls,
+        usage,
+        model,
+    })
+}
+
 /// Provider trait.
 pub trait Provider: Send + Sync {
     fn name(&self) -> &str;
@@ -70,6 +304,41 @@ pub trait Provider: Send + Sync {
         &self,
         request: LlmRequest,
     ) -> Pin<Box<dyn Future<Output = Result<LlmResponse>> + Send + '_>>;
+
+    /// Stream tokens. Default: bridge the legacy channel-based helper.
+    fn chat_streaming(
+        &self,
+        request: LlmRequest,
+        on_token: Box<dyn Fn(&str) + Send>,
+    ) -> Pin<Box<dyn Future<Output = Result<LlmResponse>> + Send + '_>> {
+        Box::pin(async move {
+            let (tx, mut rx) = tokio::sync::mpsc::channel::<String>(32);
+            let forward = tokio::spawn(async move {
+                while let Some(token) = rx.recv().await {
+                    on_token(&token);
+                }
+            });
+
+            let response = self.call_streaming(&request, tx).await;
+            let _ = forward.await;
+            response
+        })
+    }
+
+    fn call_streaming(
+        &self,
+        request: &LlmRequest,
+        tx: Sender<String>,
+    ) -> Pin<Box<dyn Future<Output = Result<LlmResponse>> + Send + '_>> {
+        let request = request.clone();
+        Box::pin(async move {
+            let response = self.chat(request).await?;
+            if let Some(content) = &response.content {
+                let _ = tx.send(content.clone()).await;
+            }
+            Ok(response)
+        })
+    }
 }
 
 /// OpenAI-compatible provider (works with OpenAI, Anthropic proxies, local servers).
@@ -219,6 +488,36 @@ impl Provider for OpenAiProvider {
                 usage,
                 model,
             })
+        })
+    }
+
+    fn call_streaming(
+        &self,
+        request: &LlmRequest,
+        tx: Sender<String>,
+    ) -> Pin<Box<dyn Future<Output = Result<LlmResponse>> + Send + '_>> {
+        let api_key = self.api_key.clone();
+        let base_url = self.base_url.clone();
+        let request = request.clone();
+
+        Box::pin(async move {
+            let client = Client::new();
+            let mut payload = serde_json::to_value(&request)
+                .map_err(|e| anyhow!("failed to serialize request: {}", e))?;
+            if let Value::Object(ref mut map) = payload {
+                map.insert("stream".to_string(), Value::Bool(true));
+            } else {
+                return Err(anyhow!("request payload must be an object"));
+            }
+
+            let url = format!("{}/chat/completions", base_url.trim_end_matches('/'));
+            let builder = client
+                .post(url)
+                .bearer_auth(api_key)
+                .header("Accept", "text/event-stream")
+                .json(&payload);
+
+            stream_openai_compatible_response(builder, tx).await
         })
     }
 }
@@ -426,6 +725,36 @@ impl Provider for CopilotProvider {
             })
         })
     }
+
+    fn call_streaming(
+        &self,
+        request: &LlmRequest,
+        tx: Sender<String>,
+    ) -> Pin<Box<dyn Future<Output = Result<LlmResponse>> + Send + '_>> {
+        let request = request.clone();
+
+        Box::pin(async move {
+            let (token, endpoint) = self.get_token().await?;
+            let client = Client::new();
+            let mut payload = serde_json::to_value(&request)
+                .map_err(|e| anyhow!("failed to serialize request: {}", e))?;
+            if let Value::Object(ref mut map) = payload {
+                map.insert("stream".to_string(), Value::Bool(true));
+            } else {
+                return Err(anyhow!("request payload must be an object"));
+            }
+
+            let url = format!("{}/chat/completions", endpoint.trim_end_matches('/'));
+            let builder = client
+                .post(url)
+                .bearer_auth(token)
+                .header("editor-version", "vscode/1.96.0")
+                .header("Accept", "text/event-stream")
+                .json(&payload);
+
+            stream_openai_compatible_response(builder, tx).await
+        })
+    }
 }
 pub struct ProviderRegistry {
     providers: Vec<Box<dyn Provider>>,
@@ -513,6 +842,74 @@ impl ProviderRegistry {
         for p in &self.providers {
             if p.name() == provider_name {
                 return p.chat(request).await;
+            }
+        }
+        Err(anyhow!("provider not found: {}", provider_name))
+    }
+
+    /// Streaming call with the default provider fallback chain.
+    pub async fn chat_streaming(
+        &self,
+        request: LlmRequest,
+        tx: Sender<String>,
+    ) -> Result<LlmResponse> {
+        if self.providers.is_empty() {
+            return Err(anyhow!("no providers registered"));
+        }
+
+        let len = self.providers.len();
+        let mut idx = self.default_provider.min(len - 1);
+        let mut last_err = anyhow!("no providers");
+        let retry_delays = [100u64, 500, 2000];
+
+        for _attempt in 0..len {
+            let provider = &self.providers[idx];
+            let mut result = Err(anyhow!("not attempted"));
+
+            for retry in 0..=3 {
+                result = provider.call_streaming(&request, tx.clone()).await;
+                match &result {
+                    Ok(_) => break,
+                    Err(e) if is_transient_error(e) && retry < 3 => {
+                        let delay = retry_delays[retry as usize];
+                        debug!(
+                            provider = provider.name(),
+                            retry,
+                            delay_ms = delay,
+                            "retrying streaming call after transient error"
+                        );
+                        tokio::time::sleep(std::time::Duration::from_millis(delay)).await;
+                    }
+                    Err(_) => break,
+                }
+            }
+
+            match result {
+                Ok(resp) => return Ok(resp),
+                Err(e) => {
+                    if !is_transient_error(&e) {
+                        return Err(e);
+                    }
+                    debug!(provider = provider.name(), error = %e, "provider failed, trying next transient provider");
+                    last_err = e;
+                    idx = (idx + 1) % len;
+                }
+            }
+        }
+
+        Err(last_err)
+    }
+
+    /// Streaming call to a specific named provider.
+    pub async fn chat_with_streaming(
+        &self,
+        provider_name: &str,
+        request: LlmRequest,
+        tx: Sender<String>,
+    ) -> Result<LlmResponse> {
+        for p in &self.providers {
+            if p.name() == provider_name {
+                return p.call_streaming(&request, tx).await;
             }
         }
         Err(anyhow!("provider not found: {}", provider_name))

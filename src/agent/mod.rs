@@ -5,6 +5,7 @@ use crate::tools::ToolRegistry;
 use crate::trace::{redact, StepKind, TraceWriter};
 use anyhow::Result;
 use colored::Colorize;
+use std::io::Write;
 use std::path::PathBuf;
 use tracing::{debug, info, warn};
 
@@ -145,6 +146,10 @@ impl Agent {
     }
     pub fn step_count(&self) -> u32 {
         self.step_count
+    }
+
+    pub fn is_interactive(&self) -> bool {
+        self.interactive
     }
 
     /// Get message count by role.
@@ -531,10 +536,8 @@ impl Agent {
         }
     }
 
-    /// Call the LLM provider.
-    async fn call_llm(&mut self) -> Result<LlmResponse> {
+    fn build_llm_request(&self) -> LlmRequest {
         let mut tool_defs = self.tools.tool_definitions();
-        // Filter tool definitions based on skill restrictions
         if let Some(ref allowed) = self.skill_tools_allow {
             tool_defs.retain(|def| {
                 def.get("function")
@@ -553,7 +556,8 @@ impl Agent {
                     .unwrap_or(true)
             });
         }
-        let request = LlmRequest {
+
+        LlmRequest {
             model: self.config.model.clone(),
             messages: self.messages.clone(),
             tools: if tool_defs.is_empty() {
@@ -562,14 +566,22 @@ impl Agent {
                 Some(tool_defs)
             },
             max_tokens: None,
-        };
-        debug!(model = %self.config.model, messages = self.messages.len(), "calling LLM");
+        }
+    }
+
+    fn record_llm_request_trace(&mut self) {
         if let Some(ref mut t) = self.trace {
             t.record(StepKind::LlmRequest {
                 messages_count: self.messages.len(),
                 model: self.config.model.clone(),
             });
         }
+    }
+
+    async fn call_llm_non_streaming(&mut self) -> Result<LlmResponse> {
+        let request = self.build_llm_request();
+        debug!(model = %self.config.model, messages = self.messages.len(), "calling LLM");
+        self.record_llm_request_trace();
         let resp = self.provider.chat(request).await;
         if let Some(ref mut t) = self.trace {
             if let Ok(ref r) = resp {
@@ -580,6 +592,43 @@ impl Agent {
             }
         }
         resp
+    }
+
+    async fn call_llm_streaming(&mut self) -> Result<LlmResponse> {
+        let request = self.build_llm_request();
+        debug!(model = %self.config.model, messages = self.messages.len(), "calling LLM (streaming)");
+        self.record_llm_request_trace();
+
+        let (tx, mut rx) = tokio::sync::mpsc::channel::<String>(32);
+        let printer = tokio::spawn(async move {
+            let mut stderr = std::io::stderr();
+            while let Some(token) = rx.recv().await {
+                let _ = write!(stderr, "{}", token);
+                let _ = stderr.flush();
+            }
+        });
+
+        let resp = self.provider.chat_streaming(request, tx).await;
+        let _ = printer.await;
+
+        if let Some(ref mut t) = self.trace {
+            if let Ok(ref r) = resp {
+                t.record(StepKind::LlmResponse {
+                    tokens_used: r.usage.total_tokens,
+                    has_tool_calls: !r.tool_calls.is_empty(),
+                });
+            }
+        }
+        resp
+    }
+
+    /// Call the LLM provider.
+    async fn call_llm(&mut self) -> Result<LlmResponse> {
+        if self.interactive {
+            self.call_llm_streaming().await
+        } else {
+            self.call_llm_non_streaming().await
+        }
     }
 
     /// Finish trace recording and write to disk.
