@@ -135,6 +135,7 @@ impl Agent {
                     content: Some(prompt.to_string()),
                     tool_calls: None,
                     tool_call_id: None,
+                    content_parts: None,
                 },
             );
         }
@@ -264,6 +265,7 @@ impl Agent {
             content: Some(summary),
             tool_calls: None,
             tool_call_id: None,
+            content_parts: None,
         });
         new_messages.extend(self.messages[total - keep_last..].iter().cloned());
         self.messages = new_messages;
@@ -308,6 +310,7 @@ impl Agent {
                         )),
                         tool_calls: None,
                         tool_call_id: None,
+                        content_parts: None,
                     });
                 }
                 Err(e) => {
@@ -331,6 +334,7 @@ impl Agent {
             content: Some(user_input.to_string()),
             tool_calls: None,
             tool_call_id: None,
+            content_parts: None,
         });
 
         loop {
@@ -391,6 +395,7 @@ impl Agent {
                     content: Some(answer.clone()),
                     tool_calls: None,
                     tool_call_id: None,
+                    content_parts: None,
                 });
                 let r = StopReason::FinalAnswer(answer);
                 self.finish_trace(&r);
@@ -403,6 +408,7 @@ impl Agent {
                 content: response.content.clone(),
                 tool_calls: Some(response.tool_calls.clone()),
                 tool_call_id: None,
+                content_parts: None,
             });
 
             // Execute tool calls — parallel when multiple and non-interactive
@@ -489,6 +495,7 @@ impl Agent {
                         content: Some(output.content),
                         tool_calls: None,
                         tool_call_id: Some(tc_id.clone()),
+                        content_parts: None,
                     });
 
                     // In non-interactive mode, tool errors are fatal
@@ -520,6 +527,7 @@ impl Agent {
                                 content: Some(err_msg),
                                 tool_calls: None,
                                 tool_call_id: Some(tc.id.clone()),
+                                content_parts: None,
                             });
                             self.finish_trace(&stop);
                             return stop;
@@ -530,6 +538,7 @@ impl Agent {
                         content: Some(result),
                         tool_calls: None,
                         tool_call_id: Some(tc.id.clone()),
+                        content_parts: None,
                     });
                 }
             }
