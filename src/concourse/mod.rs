@@ -186,6 +186,29 @@ fn build_policy_from_source(source: &ResourceSource) -> PolicyConfig {
 }
 
 fn build_sandbox_config(source: &ResourceSource) -> SandboxConfig {
+    let policy_mode = sandbox_spec(source)
+        .and_then(|s| s.policy_mode.clone())
+        .unwrap_or_default();
+
+    // Unrestricted mode: no sandbox restrictions (timeout only)
+    if policy_mode == "unrestricted" {
+        return SandboxConfig {
+            allowed_domains: vec!["*".to_string()],
+            read_write_paths: vec![PathBuf::from("/")],
+            read_only_paths: vec![],
+            denied_paths: vec![],
+            timeout_secs: sandbox_spec(source)
+                .and_then(|s| s.resources.timeout_secs)
+                .unwrap_or(30),
+            uid: 0,
+            gid: 0,
+            memory_limit: 0,
+            cpu_limit_secs: 0,
+            max_pids: 0,
+            block_network: false,
+        };
+    }
+
     let policy = build_policy_from_source(source);
     let timeout_secs = sandbox_spec(source)
         .and_then(|s| s.resources.timeout_secs)
@@ -202,6 +225,7 @@ fn build_sandbox_config(source: &ResourceSource) -> SandboxConfig {
         memory_limit: policy.max_memory_mb.saturating_mul(1024 * 1024),
         cpu_limit_secs: 0,
         max_pids: policy.max_pids,
+        block_network: false,
     }
 }
 

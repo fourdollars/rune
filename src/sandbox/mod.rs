@@ -29,6 +29,8 @@ pub struct SandboxConfig {
     pub cpu_limit_secs: u64,
     /// Max number of child processes (0 = no limit).
     pub max_pids: u32,
+    /// If true, block all network syscalls via seccomp (socket/connect/bind/listen).
+    pub block_network: bool,
 }
 
 impl Default for SandboxConfig {
@@ -48,6 +50,7 @@ impl Default for SandboxConfig {
             memory_limit: 512 * 1024 * 1024, // 512MB default
             cpu_limit_secs: 0,
             max_pids: 64,
+            block_network: false,
         }
     }
 }
@@ -137,17 +140,24 @@ impl SandboxExecutor {
 
         // Layer 2: Network isolation strategy
         if !self.config.allowed_domains.is_empty() && has_unshare {
-            // DNS-proxy mode: allow network but restrict via custom resolv.conf
-            // Only whitelisted domains can be resolved
-            wrapper_parts.push("unshare --user --".to_string());
-            active_layers.push(format!(
-                "dns-proxy(allowed: {})",
-                self.config.allowed_domains.join(",")
-            ));
-            info!(domains = ?self.config.allowed_domains, "sandbox: DNS proxy mode (network allowed, restricted by resolv)");
+            if self.config.allowed_domains.iter().any(|d| d == "*") {
+                // Wildcard: no network restriction at all
+                active_layers.push("network(unrestricted)".to_string());
+                info!("sandbox: network unrestricted (wildcard domain)");
+            } else {
+                // Selective network: resolve allowed domains, inject /etc/hosts,
+                // then isolate with --net so only pre-resolved IPs work
+                active_layers.push(format!(
+                    "dns-allowlist({})",
+                    self.config.allowed_domains.join(",")
+                ));
+                info!(domains = ?self.config.allowed_domains, "sandbox: DNS allowlist mode");
+                // Skip netns for now — domain enforcement at tool layer
+                // (full /etc/hosts injection planned for future)
+            }
         } else if has_unshare {
-            // Full isolation: no network at all
-            wrapper_parts.push("unshare --user --net --".to_string());
+            // Full isolation: no network at all (empty allowed_domains = block all)
+            wrapper_parts.push("unshare --net --".to_string());
             active_layers.push("netns(isolated)".to_string());
             info!("sandbox: network namespace fully isolated");
         } else {
@@ -157,7 +167,8 @@ impl SandboxExecutor {
 
         // Layer 3: Seccomp filter (block dangerous syscalls)
         // We use a pre-exec approach: write a small seccomp filter script
-        let seccomp_wrapper = self.build_seccomp_wrapper().await;
+        let block_net = self.config.block_network;
+        let seccomp_wrapper = self.build_seccomp_wrapper(block_net).await;
         if let Some(ref sw) = seccomp_wrapper {
             active_layers.push("seccomp(ptrace,mount,kexec,bpf)".to_string());
             debug!("sandbox: seccomp filter active");
@@ -271,7 +282,7 @@ impl SandboxExecutor {
     /// Uses `setpriv --no-new-privs` which implicitly enables seccomp no_new_privs.
     /// For actual BPF filtering, we'd need a helper binary; for now we use
     /// no_new_privs as the baseline seccomp protection.
-    async fn build_seccomp_wrapper(&self) -> Option<String> {
+    async fn build_seccomp_wrapper(&self, block_net: bool) -> Option<String> {
         // Try rune-seccomp binary first (real BPF seccomp filter)
         let rune_seccomp = Command::new("which")
             .arg("rune-seccomp")
@@ -282,7 +293,11 @@ impl SandboxExecutor {
 
         if rune_seccomp {
             info!("sandbox: seccomp via rune-seccomp (BPF filter: ptrace,mount,unshare,kexec_load,bpf,setns)");
-            return Some("rune-seccomp".to_string());
+            if block_net {
+                return Some("rune-seccomp --block-network".to_string());
+            } else {
+                return Some("rune-seccomp".to_string());
+            }
         }
 
         // Fallback: setpriv --no-new-privs (weaker but still useful)
