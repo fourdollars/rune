@@ -29,8 +29,6 @@ pub struct SandboxConfig {
     pub cpu_limit_secs: u64,
     /// Max number of child processes (0 = no limit).
     pub max_pids: u32,
-    /// If true, block all network syscalls via seccomp (socket/connect/bind/listen).
-    pub block_network: bool,
 }
 
 impl Default for SandboxConfig {
@@ -50,7 +48,6 @@ impl Default for SandboxConfig {
             memory_limit: 512 * 1024 * 1024, // 512MB default
             cpu_limit_secs: 0,
             max_pids: 64,
-            block_network: false,
         }
     }
 }
@@ -139,25 +136,25 @@ impl SandboxExecutor {
         }
 
         // Layer 2: Network isolation strategy
-        if !self.config.allowed_domains.is_empty() && has_unshare {
+        //  - allowed_domains contains "*" → no restriction
+        //  - allowed_domains non-empty (specific domains) → LD_PRELOAD DNS filter
+        //  - allowed_domains empty → full network isolation (unshare --net)
+        if !self.config.allowed_domains.is_empty() {
             if self.config.allowed_domains.iter().any(|d| d == "*") {
                 // Wildcard: no network restriction at all
                 active_layers.push("network(unrestricted)".to_string());
                 info!("sandbox: network unrestricted (wildcard domain)");
             } else {
-                // Selective network: resolve allowed domains, inject /etc/hosts,
-                // then isolate with --net so only pre-resolved IPs work
+                // DNS-level filtering via LD_PRELOAD: only allowed domains can resolve
                 active_layers.push(format!(
-                    "dns-allowlist({})",
+                    "dns-filter({})",
                     self.config.allowed_domains.join(",")
                 ));
-                info!(domains = ?self.config.allowed_domains, "sandbox: DNS allowlist mode");
-                // Skip netns for now — domain enforcement at tool layer
-                // (full /etc/hosts injection planned for future)
+                info!(domains = ?self.config.allowed_domains, "sandbox: DNS filter (LD_PRELOAD)");
             }
         } else if has_unshare {
             // Full isolation: no network at all (empty allowed_domains = block all)
-            wrapper_parts.push("unshare --net --".to_string());
+            wrapper_parts.push("unshare --user --net --".to_string());
             active_layers.push("netns(isolated)".to_string());
             info!("sandbox: network namespace fully isolated");
         } else {
@@ -167,8 +164,7 @@ impl SandboxExecutor {
 
         // Layer 3: Seccomp filter (block dangerous syscalls)
         // We use a pre-exec approach: write a small seccomp filter script
-        let block_net = self.config.block_network;
-        let seccomp_wrapper = self.build_seccomp_wrapper(block_net).await;
+        let seccomp_wrapper = self.build_seccomp_wrapper(false).await;
         if let Some(ref sw) = seccomp_wrapper {
             active_layers.push("seccomp(ptrace,mount,kexec,bpf)".to_string());
             debug!("sandbox: seccomp filter active");
@@ -229,6 +225,21 @@ impl SandboxExecutor {
             }
         }
 
+        // DNS filter: inject LD_PRELOAD + RUNE_ALLOWED_DOMAINS for domain-level network control
+        if !self.config.allowed_domains.is_empty()
+            && !self.config.allowed_domains.iter().any(|d| d == "*")
+        {
+            let dns_filter_path = Self::find_dns_filter_lib();
+            if let Some(lib_path) = dns_filter_path {
+                let domains = self.config.allowed_domains.join(",");
+                command.env("LD_PRELOAD", &lib_path);
+                command.env("RUNE_ALLOWED_DOMAINS", &domains);
+                info!(lib = %lib_path, domains = %domains, "sandbox: DNS filter injected");
+            } else {
+                warn!("sandbox: librune_dns_filter.so not found, DNS filtering unavailable");
+            }
+        }
+
         command.stdout(std::process::Stdio::piped());
         command.stderr(std::process::Stdio::piped());
 
@@ -282,6 +293,29 @@ impl SandboxExecutor {
     /// Uses `setpriv --no-new-privs` which implicitly enables seccomp no_new_privs.
     /// For actual BPF filtering, we'd need a helper binary; for now we use
     /// no_new_privs as the baseline seccomp protection.
+    /// Locate the librune_dns_filter.so library.
+    fn find_dns_filter_lib() -> Option<String> {
+        let candidates = [
+            "/usr/local/lib/librune_dns_filter.so",
+            "/usr/lib/librune_dns_filter.so",
+        ];
+        for path in &candidates {
+            if std::path::Path::new(path).exists() {
+                return Some(path.to_string());
+            }
+        }
+        // Also check next to the current binary
+        if let Ok(exe) = std::env::current_exe() {
+            if let Some(dir) = exe.parent() {
+                let lib = dir.join("librune_dns_filter.so");
+                if lib.exists() {
+                    return lib.to_str().map(|s| s.to_string());
+                }
+            }
+        }
+        None
+    }
+
     async fn build_seccomp_wrapper(&self, block_net: bool) -> Option<String> {
         // Try rune-seccomp binary first (real BPF seccomp filter)
         let rune_seccomp = Command::new("which")

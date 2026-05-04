@@ -5,6 +5,10 @@ COPY Cargo.toml Cargo.lock ./
 COPY src ./src
 RUN cargo build --release --locked
 
+# Build the DNS filter shared library
+RUN gcc -shared -fPIC -o /app/target/release/librune_dns_filter.so \
+    /app/src/dns_filter.c -ldl
+
 FROM debian:bookworm-slim
 ENV DEBIAN_FRONTEND=noninteractive
 
@@ -16,7 +20,9 @@ RUN apt-get update \
 COPY --from=builder /app/target/release/rune /usr/local/bin/rune
 COPY --from=builder /app/target/release/rune-seccomp /usr/local/bin/rune-seccomp
 COPY --from=builder /app/target/release/rune-landlock /usr/local/bin/rune-landlock
-RUN chmod 0755 /usr/local/bin/rune /usr/local/bin/rune-seccomp /usr/local/bin/rune-landlock
+COPY --from=builder /app/target/release/librune_dns_filter.so /usr/local/lib/librune_dns_filter.so
+RUN chmod 0755 /usr/local/bin/rune /usr/local/bin/rune-seccomp /usr/local/bin/rune-landlock \
+    && chmod 0644 /usr/local/lib/librune_dns_filter.so
 
 # Concourse resource type: /opt/resource/{check,in,out}
 RUN mkdir -p /opt/resource \

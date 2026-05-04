@@ -99,7 +99,7 @@ impl ToolRegistry {
     }
 
     /// Create a sandbox executor with the registry's config.
-    fn sandbox(&self, timeout_secs: u64, block_network: bool) -> SandboxExecutor {
+    fn sandbox(&self, timeout_secs: u64) -> SandboxExecutor {
         // Unrestricted mode: minimal sandbox (timeout only, no filesystem/network restrictions)
         if self.policy_mode == "unrestricted" {
             let config = SandboxConfig {
@@ -121,15 +121,15 @@ impl ToolRegistry {
                 .map(PathBuf::from)
                 .collect(),
             allowed_domains: self.allowed_domains.clone(),
-            block_network,
+            
             ..SandboxConfig::default()
         };
         SandboxExecutor::new(config)
     }
 
     /// Run a command in sandbox and return ToolOutput.
-    async fn sandboxed_cmd(&self, cmd: &str, timeout_secs: u64, cwd: Option<&str>, block_network: bool) -> ToolOutput {
-        let executor = self.sandbox(timeout_secs, block_network);
+    async fn sandboxed_cmd(&self, cmd: &str, timeout_secs: u64, cwd: Option<&str>) -> ToolOutput {
+        let executor = self.sandbox(timeout_secs);
         match executor.run_shell_command(cmd, cwd, None).await {
             Ok(result) => {
                 if result.timed_out {
@@ -273,7 +273,7 @@ impl ToolRegistry {
             MAX_FILE_SIZE,
             path.replace('\'', "'\\''")
         );
-        let result = self.sandboxed_cmd(&cmd, 10, None, false).await;
+        let result = self.sandboxed_cmd(&cmd, 10, None).await;
         if result.is_error {
             return result;
         }
@@ -316,7 +316,7 @@ impl ToolRegistry {
             "mkdir -p $(dirname '{}') && printf '%s' '{}' > '{}'",
             escaped_path, escaped_content, escaped_path
         );
-        let result = self.sandboxed_cmd(&cmd, 10, None, false).await;
+        let result = self.sandboxed_cmd(&cmd, 10, None).await;
         if result.is_error {
             return result;
         }
@@ -330,7 +330,7 @@ impl ToolRegistry {
         };
         info!(path = %path, "list_dir (sandboxed)");
         let cmd = format!("ls -1F '{}'", path.replace('\'', "'\\''"));
-        self.sandboxed_cmd(&cmd, 10, None, false).await
+        self.sandboxed_cmd(&cmd, 10, None).await
     }
 
     async fn execute_cmd(&self, args: serde_json::Value) -> ToolOutput {
@@ -366,7 +366,7 @@ impl ToolRegistry {
                 }
             }
         }
-        self.sandboxed_cmd(&cmd, timeout_secs, cwd.as_deref(), true).await
+        self.sandboxed_cmd(&cmd, timeout_secs, cwd.as_deref()).await
     }
 
     async fn fetch_url(&self, args: serde_json::Value) -> ToolOutput {
@@ -378,7 +378,7 @@ impl ToolRegistry {
         // Check domain allowlist (skipped in unrestricted mode)
         if self.policy_mode != "unrestricted" {
             if let Some(domain) = extract_domain(url) {
-                let executor = self.sandbox(35, false);
+                let executor = self.sandbox(35);
                 if !executor.is_domain_allowed(&domain) {
                     return ToolOutput::err(format!(
                         "BLOCKED: domain '{}' is not in allowed_domains. \
@@ -391,7 +391,7 @@ impl ToolRegistry {
 
         info!(url = %url, "fetch_url (sandboxed, domain allowed)");
         let cmd = format!("curl -sS -L --max-time 30 '{}'", url.replace('\'', "'\\''"));
-        let result = self.sandboxed_cmd(&cmd, 35, None, false).await;
+        let result = self.sandboxed_cmd(&cmd, 35, None).await;
         if result.is_error {
             return result;
         }
@@ -411,7 +411,7 @@ impl ToolRegistry {
             None => return ToolOutput::err("missing required argument: pid"),
         };
         let cmd = format!("ps -p {} -o pid,comm,%cpu,%mem,stat,etime --no-headers 2>/dev/null || echo process_not_found", pid);
-        self.sandboxed_cmd(&cmd, 5, None, false).await
+        self.sandboxed_cmd(&cmd, 5, None).await
     }
 }
 

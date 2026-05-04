@@ -205,7 +205,7 @@ fn build_sandbox_config(source: &ResourceSource) -> SandboxConfig {
             memory_limit: 0,
             cpu_limit_secs: 0,
             max_pids: 0,
-            block_network: false,
+            
         };
     }
 
@@ -225,7 +225,7 @@ fn build_sandbox_config(source: &ResourceSource) -> SandboxConfig {
         memory_limit: policy.max_memory_mb.saturating_mul(1024 * 1024),
         cpu_limit_secs: 0,
         max_pids: policy.max_pids,
-        block_network: false,
+        
     }
 }
 
