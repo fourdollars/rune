@@ -909,4 +909,29 @@ mode = "confirm"
 
         let _ = fs::remove_dir_all(&dir);
     }
+
+    #[test]
+    fn test_config_provider_field() {
+        let toml_str = r#"
+model = "gemini-pro"
+api_key = "AIzaXXXX"
+skills_dir = "./skills"
+log_level = "info"
+provider = "gemini"
+"#;
+        let cfg: PartialConfig = toml::from_str(toml_str).unwrap();
+        assert_eq!(cfg.provider, Some("gemini".to_string()));
+    }
+
+    #[test]
+    fn test_config_provider_field_missing_is_none() {
+        let toml_str = r#"
+model = "gpt-4"
+api_key = "sk-xxx"
+skills_dir = "./skills"
+log_level = "info"
+"#;
+        let cfg: PartialConfig = toml::from_str(toml_str).unwrap();
+        assert_eq!(cfg.provider, None);
+    }
 }

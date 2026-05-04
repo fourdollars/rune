@@ -1105,3 +1105,32 @@ impl Agent {
         self.tool_call_names.len()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_estimate_tokens_empty() {
+        assert_eq!(estimate_tokens(""), 0);
+    }
+
+    #[test]
+    fn test_estimate_tokens_short() {
+        // "hello" = 5 chars → (5+3)/4 = 2 tokens
+        assert_eq!(estimate_tokens("hello"), 2);
+    }
+
+    #[test]
+    fn test_estimate_tokens_longer() {
+        // 100 chars → 25 tokens
+        let text = "a".repeat(100);
+        assert_eq!(estimate_tokens(&text), 25);
+    }
+
+    #[test]
+    fn test_estimate_tokens_unicode() {
+        // 4 unicode chars → (4+3)/4 = 1
+        assert_eq!(estimate_tokens("你好世界"), 1);
+    }
+}

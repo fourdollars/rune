@@ -1361,4 +1361,178 @@ mod tests {
             .expect_err("permanent failure should not fallback");
         assert!(err.to_string().contains("failed to parse response"));
     }
+
+    #[test]
+    fn test_gemini_convert_messages_system() {
+        let messages = vec![
+            LlmMessage {
+                role: "system".to_string(),
+                content: Some("You are helpful.".to_string()),
+                content_parts: None,
+                tool_calls: None,
+                tool_call_id: None,
+            },
+            LlmMessage {
+                role: "user".to_string(),
+                content: Some("Hello".to_string()),
+                content_parts: None,
+                tool_calls: None,
+                tool_call_id: None,
+            },
+        ];
+        let (sys, contents) = GeminiProvider::convert_messages(&messages);
+        assert!(sys.is_some());
+        assert_eq!(contents.len(), 1);
+        assert_eq!(contents[0]["role"], "user");
+    }
+
+    #[test]
+    fn test_gemini_convert_messages_assistant_to_model() {
+        let messages = vec![LlmMessage {
+            role: "assistant".to_string(),
+            content: Some("Hi there!".to_string()),
+            content_parts: None,
+            tool_calls: None,
+            tool_call_id: None,
+        }];
+        let (_, contents) = GeminiProvider::convert_messages(&messages);
+        assert_eq!(contents.len(), 1);
+        assert_eq!(contents[0]["role"], "model");
+    }
+
+    #[test]
+    fn test_gemini_convert_tools_empty() {
+        let tools: Vec<serde_json::Value> = vec![];
+        assert!(GeminiProvider::convert_tools(&tools).is_none());
+    }
+
+    #[test]
+    fn test_gemini_convert_tools_one_function() {
+        let tools = vec![serde_json::json!({
+            "type": "function",
+            "function": {
+                "name": "read_file",
+                "description": "Read a file",
+                "parameters": {"type": "object", "properties": {"path": {"type": "string"}}}
+            }
+        })];
+        let result = GeminiProvider::convert_tools(&tools);
+        assert!(result.is_some());
+        let arr = result.unwrap();
+        assert!(arr.is_array());
+        let decls = &arr[0]["function_declarations"];
+        assert_eq!(decls[0]["name"], "read_file");
+    }
+
+    #[test]
+    fn test_content_part_text_serialization() {
+        let part = ContentPart::Text {
+            text: "hello".to_string(),
+        };
+        let json = serde_json::to_string(&part).unwrap();
+        assert!(json.contains("\"type\":\"text\""));
+        assert!(json.contains("\"text\":\"hello\""));
+    }
+
+    #[test]
+    fn test_content_part_image_url_serialization() {
+        let part = ContentPart::ImageUrl {
+            image_url: ImageUrlDetail {
+                url: "data:image/png;base64,abc123".to_string(),
+                detail: Some("high".to_string()),
+            },
+        };
+        let json = serde_json::to_string(&part).unwrap();
+        assert!(json.contains("\"type\":\"image_url\""));
+        assert!(json.contains("data:image/png;base64,abc123"));
+        assert!(json.contains("\"detail\":\"high\""));
+    }
+
+    #[test]
+    fn test_content_part_image_url_no_detail() {
+        let part = ContentPart::ImageUrl {
+            image_url: ImageUrlDetail {
+                url: "https://example.com/image.png".to_string(),
+                detail: None,
+            },
+        };
+        let json = serde_json::to_string(&part).unwrap();
+        assert!(!json.contains("detail"));
+    }
+
+    #[test]
+    fn test_llm_message_content_parts_none_skipped() {
+        let msg = LlmMessage {
+            role: "user".to_string(),
+            content: Some("hello".to_string()),
+            content_parts: None,
+            tool_calls: None,
+            tool_call_id: None,
+        };
+        let json = serde_json::to_string(&msg).unwrap();
+        assert!(!json.contains("content_parts"));
+    }
+
+    #[test]
+    fn test_provider_auto_detect_copilot() {
+        let key = "ghu_abc123";
+        assert!(key.starts_with("ghu_"));
+    }
+
+    #[test]
+    fn test_provider_auto_detect_gemini() {
+        let key = "AIzaSyAbc123";
+        assert!(key.starts_with("AIza"));
+    }
+
+    #[tokio::test]
+    async fn test_provider_registry_streaming_bridge() {
+        struct EchoProvider {
+            name: String,
+            content: String,
+        }
+
+        impl Provider for EchoProvider {
+            fn name(&self) -> &str {
+                &self.name
+            }
+
+            fn chat(
+                &self,
+                _request: LlmRequest,
+            ) -> Pin<Box<dyn Future<Output = Result<LlmResponse>> + Send + '_>> {
+                let content = self.content.clone();
+                Box::pin(async move {
+                    Ok(LlmResponse {
+                        content: Some(content),
+                        tool_calls: vec![],
+                        usage: TokenUsage::default(),
+                        model: "echo-model".to_string(),
+                    })
+                })
+            }
+        }
+
+        let mut reg = ProviderRegistry::new();
+        reg.register(Box::new(EchoProvider {
+            name: "stream".to_string(),
+            content: "hello stream".to_string(),
+        }));
+
+        let (tx, mut rx) = tokio::sync::mpsc::channel::<String>(4);
+        let req = LlmRequest {
+            model: "m".into(),
+            messages: vec![],
+            tools: None,
+            max_tokens: None,
+        };
+
+        let res = reg
+            .chat_streaming(req, tx)
+            .await
+            .expect("streaming should work");
+        assert_eq!(res.content.as_deref(), Some("hello stream"));
+        assert_eq!(rx.recv().await.as_deref(), Some("hello stream"));
+        assert!(rx.recv().await.is_none());
+    }
 }

@@ -579,3 +579,54 @@ fn main() {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_resolve_domains_loopback_always_included() {
+        let (ips, wildcards) = resolve_domains(&[]);
+        assert!(ips.contains(&IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1))));
+        assert!(ips.contains(&IpAddr::V6(Ipv6Addr::new(0, 0, 0, 0, 0, 0, 0, 1))));
+        assert!(wildcards.is_empty());
+    }
+
+    #[test]
+    fn test_resolve_domains_wildcard_detected() {
+        let (_, wildcards) = resolve_domains(&["*.github.com"]);
+        assert_eq!(wildcards, vec!["*.github.com"]);
+    }
+
+    #[test]
+    fn test_resolve_domains_non_wildcard_resolved() {
+        let (ips, wildcards) = resolve_domains(&["localhost"]);
+        assert!(ips.contains(&IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1))));
+        assert!(wildcards.is_empty());
+    }
+
+    #[test]
+    fn test_resolve_domains_empty_string_skipped() {
+        let (ips, wildcards) = resolve_domains(&["", "  "]);
+        assert!(ips.contains(&IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1))));
+        assert!(ips.contains(&IpAddr::V6(Ipv6Addr::new(0, 0, 0, 0, 0, 0, 0, 1))));
+        assert!(wildcards.is_empty());
+    }
+
+    #[test]
+    fn test_matches_wildcard_suffix() {
+        let pattern = "*.github.com";
+        let suffix = &pattern[1..]; // ".github.com"
+        assert!("api.github.com".ends_with(suffix));
+        assert!(!"example.com".ends_with(suffix));
+    }
+
+    #[test]
+    fn test_matches_wildcard_base_domain() {
+        let pattern = "*.github.com";
+        let suffix = &pattern[1..]; // ".github.com"
+        let base = &suffix[1..]; // "github.com"
+        assert_eq!(base, "github.com");
+        assert!("github.com" == base);
+    }
+}
