@@ -15,6 +15,12 @@ A high-performance, zero-trust AI agent built in Rust. Single binary, dual mode:
 - **Skills System** — Load contextual abilities via `@skill_name` in prompts
 - **Provider Registry** — GitHub Copilot (auto token refresh), OpenRouter, Google Gemini, any OpenAI-compatible
 - **MCP Client** — Stdio-based JSON-RPC client for Model Context Protocol servers
+- **Streaming Output** — Interactive mode displays tokens incrementally as they arrive
+- **Parallel Tool Calls** — Multiple independent tool calls execute concurrently
+- **Context Window Management** — Auto-compact when context exceeds 85% of model limit
+- **Vision / Image Input** — Multi-modal messages with text + images (base64 or URL)
+- **Native Gemini Provider** — Google Gemini API with automatic message format conversion
+- **Wildcard Domains** — `*.github.com` in allowed_domains matches all subdomains
 - **Concourse CI** — Same binary acts as a resource type (`check`, `in`, `out`) via symlink
 - **Trace Recording** — JSON trace files with sensitive info redaction
 - **JSON Output** — `--json` flag for machine-readable output
@@ -141,11 +147,14 @@ max_pids = 64
 | Variable | Description |
 |----------|-------------|
 | `RUNE_API_KEY` | LLM provider API key |
+| `RUNE_PROVIDER` | Provider name (github-copilot, gemini, openai, openrouter, ollama, anthropic) |
 | `RUNE_MODEL` | Model name |
 | `RUNE_BASE_URL` | Provider base URL |
 | `RUNE_POLICY_MODE` | Policy mode override |
 | `RUNE_LOG_LEVEL` | Log level |
 | `RUNE_TRACE` | Enable trace (true/false) |
+| `RUNE_CONTEXT_WINDOW` | Model context window in tokens (default: 128000) |
+| `RUNE_COMPACT_THRESHOLD` | Auto-compact trigger fraction (default: 0.85) |
 | `RUNE_JSON_OUTPUT` | JSON output mode (`true` / `false`, also accepts `1` / `0`) |
 | `RUNE_YES` | Auto-approve dangerous tool execution (`true` / `false`, also accepts `1` / `0`) |
 
@@ -156,7 +165,7 @@ Every tool invocation passes through up to 5 isolation layers:
 ```
 ┌─────────────────────────────────────────────┐
 │  Layer 1: cgroups (memory + pids limits)    │
-│  Layer 2: Network namespace (isolated)      │
+│  Layer 2: rune-net-guard (seccomp notif)    │
 │  Layer 3: Seccomp BPF (syscall filter)      │
 │  Layer 4: Landlock (filesystem restriction) │
 │  Layer 5: DNS allowlist (domain control)    │
@@ -355,7 +364,7 @@ jobs:
 
 ### Supported Providers
 
-GitHub Copilot tokens (`ghu_`/`ghp_`) are auto-detected and refreshed. OpenAI, OpenRouter, Gemini, and any OpenAI-compatible endpoint also work via `base_url`.
+GitHub Copilot tokens (`ghu_`/`ghp_`) are auto-detected and refreshed. Google Gemini (`AIza*` keys) uses the native Gemini API format. OpenAI, OpenRouter, Ollama, Anthropic, and any OpenAI-compatible endpoint work via `base_url`. Use `--provider <name>` or `provider = "..."` in config to override auto-detection.
 
 ### Output Files (get step)
 
@@ -385,7 +394,8 @@ src/
 ├── trace/mod.rs         — JSON trace + redaction
 └── bin/
     ├── rune-seccomp.rs  — Seccomp BPF helper
-    └── rune-landlock.rs — Landlock filesystem helper
+    ├── rune-landlock.rs — Landlock filesystem helper
+    └── rune-net-guard.rs — Seccomp user notification network filter
 ```
 
 ## Development
