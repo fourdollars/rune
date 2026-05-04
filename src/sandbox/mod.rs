@@ -175,13 +175,22 @@ impl SandboxExecutor {
         }
 
         // Build the final command
-        let inner_cmd = if let Some(ref sw) = seccomp_wrapper {
-            // Wrap with seccomp helper
-            format!("{} sh -c {}", sw, shell_escape(cmd))
-        } else if let Some(ref lw) = landlock_wrapper {
-            format!("{} sh -c {}", lw, shell_escape(cmd))
-        } else {
-            format!("sh -c {}", shell_escape(cmd))
+        // Chain both landlock and seccomp when available:
+        // landlock ... -- seccomp ... -- sh -c "cmd"
+        let inner_cmd = match (&landlock_wrapper, &seccomp_wrapper) {
+            (Some(lw), Some(sw)) => {
+                // Landlock outer, seccomp inner, then the actual command
+                format!("{} {} sh -c {}", lw, sw, shell_escape(cmd))
+            }
+            (None, Some(sw)) => {
+                format!("{} sh -c {}", sw, shell_escape(cmd))
+            }
+            (Some(lw), None) => {
+                format!("{} sh -c {}", lw, shell_escape(cmd))
+            }
+            (None, None) => {
+                format!("sh -c {}", shell_escape(cmd))
+            }
         };
 
         let final_cmd = if wrapper_parts.is_empty() {

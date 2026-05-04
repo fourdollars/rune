@@ -258,6 +258,9 @@ async fn execute_sandboxed_pre_commands(
     for cmd in commands {
         eprintln!("rune: pre-command (sandboxed): {}", cmd);
         let result = executor.run_shell_command(cmd, None, None).await?;
+        eprintln!("rune: sandbox layers: {:?}, degraded: {}", result.active_layers, result.degraded);
+        if !result.stdout.trim().is_empty() { eprintln!("rune: pre-cmd stdout: {}", result.stdout.trim()); }
+        if !result.stderr.trim().is_empty() { eprintln!("rune: pre-cmd stderr: {}", result.stderr.trim()); }
         if result.exit_code != 0 {
             anyhow::bail!(
                 "pre-command failed: '{}' exit code {}\nstdout: {}\nstderr: {}",
