@@ -375,7 +375,7 @@ fn main() {
 
                 // Try process_vm_readv first, fallback to /proc/pid/mem
                 let nread = unsafe {
-                    let mut local_iov = iovec {
+                    let local_iov = iovec {
                         iov_base: &mut addr as *mut _ as *mut c_void,
                         iov_len: read_len,
                     };
