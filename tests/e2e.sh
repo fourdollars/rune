@@ -4,6 +4,7 @@
 set -euo pipefail
 
 RUNE="./target/release/rune"
+RUNE_DIR="."
 PASS=0
 FAIL=0
 
@@ -120,6 +121,79 @@ set +e
 OUT=$(RUNE_POLICY_MODE=allowlist printf "run ls" | $RUNE --json --yes 2>&1)
 set -e
 assert_not_contains "$OUT" "Execute?" "allowlist mode skips confirm prompt"
+
+
+# ── Test: --provider flag ─────────────────────────────────
+echo "▸ --provider flag accepted"
+OUT=$($RUNE --provider openai --version 2>&1)
+assert_contains "$OUT" "rune 0.1.0" "--provider flag accepted with --version"
+
+# ── Test: --provider in --help ────────────────────────────
+echo "▸ --provider in help"
+OUT=$($RUNE --help 2>&1)
+assert_contains "$OUT" "\-\-provider" "help shows --provider option"
+assert_contains "$OUT" "github-copilot" "help mentions github-copilot"
+
+# ── Test: /image in --help text ───────────────────────────
+echo "▸ /image mentioned in source"
+OUT=$(grep -c "image\|/img" $RUNE_DIR/src/cli/mod.rs 2>/dev/null || echo "0")
+if [ "$OUT" -gt "0" ]; then
+    green "  ✓ /image command exists in source"
+    PASS=$((PASS + 1))
+else
+    red "  ✗ /image command not found in source"
+    FAIL=$((FAIL + 1))
+fi
+
+# ── Test: rune-net-guard binary exists ────────────────────
+echo "▸ rune-net-guard binary"
+if [ -f "./target/release/rune-net-guard" ]; then
+    green "  ✓ rune-net-guard binary built"
+    PASS=$((PASS + 1))
+else
+    red "  ✗ rune-net-guard not found"
+    FAIL=$((FAIL + 1))
+fi
+
+# ── Test: rune-net-guard --help ───────────────────────────
+echo "▸ rune-net-guard usage"
+set +e
+OUT=$(./target/release/rune-net-guard 2>&1)
+EC=$?
+set -e
+assert_exit_code "$EC" 1 "net-guard exits 1 without args"
+assert_contains "$OUT" "allow-domains" "net-guard shows usage hint"
+
+# ── Test: rune-net-guard blocks non-allowed domain ────────
+echo "▸ rune-net-guard blocks"
+set +e
+OUT=$(./target/release/rune-net-guard --allow-domains "only-this.test" -- curl -s -m 2 http://example.com/ 2>&1)
+EC=$?
+set -e
+# curl should fail (exit 7 = connect refused, or 6 = DNS fail depending on timing)
+if [ $EC -ne 0 ]; then
+    green "  ✓ net-guard blocked non-allowed domain (exit $EC)"
+    PASS=$((PASS + 1))
+else
+    red "  ✗ net-guard did NOT block (exit 0)"
+    FAIL=$((FAIL + 1))
+fi
+
+# ── Test: context_window config field ─────────────────────
+echo "▸ context_window env var"
+set +e
+OUT=$(RUNE_CONTEXT_WINDOW=4096 printf "hi" | $RUNE --json --yes 2>&1)
+set -e
+# Should not crash — just verifies the env var is accepted
+assert_not_contains "$OUT" "panic" "RUNE_CONTEXT_WINDOW does not panic"
+
+# ── Test: RUNE_PROVIDER env var ───────────────────────────
+echo "▸ RUNE_PROVIDER env var"
+set +e
+OUT=$(RUNE_PROVIDER=openai RUNE_API_KEY=sk-test printf "hi" | $RUNE --json --yes 2>&1)
+set -e
+# Will fail (invalid key) but should not panic or show "unknown provider"
+assert_not_contains "$OUT" "unknown provider" "RUNE_PROVIDER=openai accepted"
 
 # ── Summary ───────────────────────────────────────────────
 echo ""
