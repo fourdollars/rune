@@ -211,7 +211,7 @@ fn build_runtime_config(source: &ResourceSource) -> RuneConfig {
     cfg.policy = build_policy_from_source(source);
     cfg.json_output = false;
     cfg.trace = false;
-    cfg.auto_approve = false;
+    cfg.auto_approve = true;
     cfg
 }
 
