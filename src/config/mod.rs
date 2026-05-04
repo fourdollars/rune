@@ -73,6 +73,12 @@ pub struct RuneConfig {
     pub trace: bool,
     pub json_output: bool,
     pub auto_approve: bool,
+    /// Approximate model context window in tokens.
+    pub context_window: usize,
+    /// Trigger automatic compaction once this fraction of context_window is reached.
+    pub compact_threshold: f64,
+    /// Keep the last N messages when compacting context.
+    pub compact_keep_last: usize,
     #[serde(default)]
     pub policy: PolicyConfig,
     #[serde(default)]
@@ -95,6 +101,9 @@ impl Default for RuneConfig {
             trace: false,
             json_output: false,
             auto_approve: false,
+            context_window: 128000,
+            compact_threshold: 0.85,
+            compact_keep_last: 6,
             policy: PolicyConfig::default(),
             mcp_servers: Vec::new(),
             embedding: crate::embedding::EmbeddingConfig::default(),
@@ -114,6 +123,9 @@ struct PartialConfig {
     timeout_secs: Option<u64>,
     base_url: Option<String>,
     trace: Option<bool>,
+    context_window: Option<usize>,
+    compact_threshold: Option<f64>,
+    compact_keep_last: Option<usize>,
     policy: Option<PolicyConfig>,
     mcp_servers: Option<Vec<crate::mcp::McpServerConfig>>,
     embedding: Option<crate::embedding::EmbeddingConfig>,
@@ -244,6 +256,15 @@ pub fn load() -> anyhow::Result<RuneConfig> {
             .and_then(|v| v.parse().ok()),
         base_url: env::var("RUNE_BASE_URL").ok(),
         trace: env::var("RUNE_TRACE").ok().and_then(|v| v.parse().ok()),
+        context_window: env::var("RUNE_CONTEXT_WINDOW")
+            .ok()
+            .and_then(|v| v.parse().ok()),
+        compact_threshold: env::var("RUNE_COMPACT_THRESHOLD")
+            .ok()
+            .and_then(|v| v.parse().ok()),
+        compact_keep_last: env::var("RUNE_COMPACT_KEEP_LAST")
+            .ok()
+            .and_then(|v| v.parse().ok()),
         policy: None, // Policy loaded from TOML only (too complex for single env var)
         mcp_servers: None,
         embedding: None,
@@ -253,7 +274,11 @@ pub fn load() -> anyhow::Result<RuneConfig> {
         .and_then(|v| parse_boolish(&v));
     let env_auto_approve = env::var("RUNE_YES").ok().and_then(|v| parse_boolish(&v));
 
-    // Project-local config: .rune/rune.toml
+    // Project-local config: rune.toml, then .rune/rune.toml
+    let cwd_cfg = env::current_dir()
+        .ok()
+        .map(|cwd| cwd.join("rune.toml"))
+        .and_then(|p| load_toml(&p));
     let local_cfg = env::current_dir()
         .ok()
         .map(|cwd| cwd.join(".rune").join("rune.toml"))
@@ -265,6 +290,7 @@ pub fn load() -> anyhow::Result<RuneConfig> {
         .map(|h| PathBuf::from(h).join(".rune").join("rune.toml"))
         .and_then(|p| load_toml(&p));
 
+    let cwdc = cwd_cfg.as_ref();
     let lc = local_cfg.as_ref();
     let uc = user_cfg.as_ref();
     let defaults = RuneConfig::default();
@@ -320,18 +346,21 @@ pub fn load() -> anyhow::Result<RuneConfig> {
         max_steps: pick_option(&[
             &cli.max_steps,
             &env_partial.max_steps,
+            &cwdc.and_then(|c| c.max_steps),
             &lc.and_then(|c| c.max_steps),
             &uc.and_then(|c| c.max_steps),
         ]),
         token_budget: pick_option(&[
             &cli.token_budget,
             &env_partial.token_budget,
+            &cwdc.and_then(|c| c.token_budget),
             &lc.and_then(|c| c.token_budget),
             &uc.and_then(|c| c.token_budget),
         ]),
         timeout_secs: pick_option(&[
             &cli.timeout_secs,
             &env_partial.timeout_secs,
+            &cwdc.and_then(|c| c.timeout_secs),
             &lc.and_then(|c| c.timeout_secs),
             &uc.and_then(|c| c.timeout_secs),
         ]),
@@ -343,18 +372,39 @@ pub fn load() -> anyhow::Result<RuneConfig> {
         trace: cli
             .trace
             .or(env_partial.trace)
+            .or(cwdc.and_then(|c| c.trace))
             .or(lc.and_then(|c| c.trace))
             .or(uc.and_then(|c| c.trace))
             .unwrap_or(defaults.trace),
         json_output: cli.json || env_json_output.unwrap_or(defaults.json_output),
         auto_approve: cli.yes || env_auto_approve.unwrap_or(defaults.auto_approve),
+        context_window: env_partial
+            .context_window
+            .or(cwdc.and_then(|c| c.context_window))
+            .or(lc.and_then(|c| c.context_window))
+            .or(uc.and_then(|c| c.context_window))
+            .unwrap_or(defaults.context_window),
+        compact_threshold: env_partial
+            .compact_threshold
+            .or(cwdc.and_then(|c| c.compact_threshold))
+            .or(lc.and_then(|c| c.compact_threshold))
+            .or(uc.and_then(|c| c.compact_threshold))
+            .unwrap_or(defaults.compact_threshold),
+        compact_keep_last: env_partial
+            .compact_keep_last
+            .or(cwdc.and_then(|c| c.compact_keep_last))
+            .or(lc.and_then(|c| c.compact_keep_last))
+            .or(uc.and_then(|c| c.compact_keep_last))
+            .unwrap_or(defaults.compact_keep_last),
         policy,
-        mcp_servers: lc
+        mcp_servers: cwdc
             .and_then(|c| c.mcp_servers.clone())
+            .or_else(|| lc.and_then(|c| c.mcp_servers.clone()))
             .or_else(|| uc.and_then(|c| c.mcp_servers.clone()))
             .unwrap_or_default(),
-        embedding: lc
+        embedding: cwdc
             .and_then(|c| c.embedding.clone())
+            .or_else(|| lc.and_then(|c| c.embedding.clone()))
             .or_else(|| uc.and_then(|c| c.embedding.clone()))
             .unwrap_or_default(),
     })

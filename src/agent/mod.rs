@@ -25,6 +25,16 @@ enum ConfirmResult {
     Always,
 }
 
+/// Rough token estimator using a chars/4 approximation.
+pub fn estimate_tokens(text: &str) -> usize {
+    let chars = text.chars().count();
+    if chars == 0 {
+        0
+    } else {
+        (chars + 3) / 4
+    }
+}
+
 /// The AI Agent — orchestrates LLM calls and tool execution.
 pub struct Agent {
     pub config: RuneConfig,
@@ -161,47 +171,85 @@ impl Agent {
             .sum()
     }
 
+    /// Estimate total context tokens across all messages.
+    pub fn total_context_tokens(&self) -> usize {
+        self.messages
+            .iter()
+            .map(|m| estimate_tokens(&self.message_text(m)) + 4)
+            .sum()
+    }
+
+    fn message_text(&self, m: &LlmMessage) -> String {
+        let mut parts = Vec::new();
+        parts.push(format!("role: {}", m.role));
+        if let Some(content) = m.content.as_ref() {
+            parts.push(format!("content: {}", content));
+        }
+        if let Some(tool_calls) = m.tool_calls.as_ref() {
+            for tc in tool_calls {
+                parts.push(format!(
+                    "tool_call: {} {}",
+                    tc.function.name, tc.function.arguments
+                ));
+            }
+        }
+        if let Some(tool_call_id) = m.tool_call_id.as_ref() {
+            parts.push(format!("tool_call_id: {}", tool_call_id));
+        }
+        parts.join(
+            "
+",
+        )
+    }
+
+    fn message_preview(&self, m: &LlmMessage) -> String {
+        let mut text = if let Some(content) = m.content.as_ref() {
+            content.clone()
+        } else if let Some(tool_calls) = m.tool_calls.as_ref() {
+            tool_calls
+                .iter()
+                .map(|tc| format!("{} {}", tc.function.name, tc.function.arguments))
+                .collect::<Vec<_>>()
+                .join("; ")
+        } else if let Some(tool_call_id) = m.tool_call_id.as_ref() {
+            tool_call_id.clone()
+        } else {
+            String::new()
+        };
+        text.truncate(text.chars().take(200).map(char::len_utf8).sum());
+        text
+    }
+
     /// Compact context: keep system prompt + summarize older messages.
     pub fn compact(&mut self) {
-        if self.messages.len() <= 3 {
-            return; // nothing to compact
-        }
-        let system = self.messages.first().cloned();
-        // Keep last 4 messages (2 exchanges)
-        let keep_last = 4;
-        let total = self.messages.len();
-        let to_summarize = if total > keep_last + 1 {
-            total - keep_last - 1
-        } else {
-            0
-        };
-        if to_summarize == 0 {
+        let keep_last = self.config.compact_keep_last.max(1);
+        if self.messages.len() <= keep_last + 1 {
             return;
         }
 
-        // Build summary of older messages
-        let mut summary_parts: Vec<String> = Vec::new();
-        for m in self.messages.iter().skip(1).take(to_summarize) {
-            let preview = m
-                .content
-                .as_ref()
-                .map(|c| c.chars().take(100).collect::<String>())
-                .unwrap_or_default();
-            if !preview.is_empty() {
-                summary_parts.push(format!("[{}]: {}", m.role, preview));
-            }
+        let system = self.messages.first().cloned();
+        let total = self.messages.len();
+        let summarize_end = total.saturating_sub(keep_last);
+        if summarize_end <= 1 {
+            return;
         }
+
+        let mut summary_parts: Vec<String> = Vec::new();
+        for m in self.messages.iter().skip(1).take(summarize_end - 1) {
+            let preview = self.message_preview(m);
+            summary_parts.push(format!("[{}]: {}", m.role, preview));
+        }
+
         let summary = format!(
-            "[Compacted {} messages]
+            "[Context compacted: {} messages summarized]
 {}",
-            to_summarize,
+            summarize_end - 1,
             summary_parts.join(
                 "
 "
             )
         );
 
-        // Rebuild: system + summary + last N messages
         let mut new_messages = Vec::new();
         if let Some(sys) = system {
             new_messages.push(sys);
@@ -294,6 +342,20 @@ impl Agent {
                     self.finish_trace(&r);
                     return r;
                 }
+            }
+
+            let context_tokens = self.total_context_tokens();
+            let context_limit =
+                ((self.config.context_window as f64) * self.config.compact_threshold) as usize;
+            if context_tokens > context_limit {
+                warn!(
+                    context_tokens,
+                    context_limit,
+                    context_window = self.config.context_window,
+                    compact_threshold = self.config.compact_threshold,
+                    "context window threshold exceeded; compacting"
+                );
+                self.compact();
             }
 
             self.step_count += 1;
