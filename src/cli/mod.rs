@@ -97,6 +97,7 @@ fn print_help() {
         "  {}    Show policy summary (use /policy full for details)",
         "/policy".green()
     );
+    println!("  {}  Attach an image to next message", "/image".green());
     println!("  {}   Show this help", "/help".green());
     println!("  {}  Exit the CLI", "/exit | /quit".green());
     println!("  {} Add dir to read-only paths", "/add-dir <path>".green());
@@ -669,6 +670,29 @@ fn init_provider(cfg: &config::RuneConfig) -> ProviderRegistry {
     registry
 }
 
+/// Load an image file and return base64-encoded data + MIME type.
+fn load_image_as_base64(path: &str) -> Result<(String, String), String> {
+    use base64::Engine;
+    let resolved = resolve_path(path);
+    let data = std::fs::read(&resolved).map_err(|e| format!("{}: {}", resolved, e))?;
+    let mime = match resolved
+        .rsplit('.')
+        .next()
+        .unwrap_or("")
+        .to_lowercase()
+        .as_str()
+    {
+        "png" => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "gif" => "image/gif",
+        "webp" => "image/webp",
+        "svg" => "image/svg+xml",
+        _ => "image/png",
+    };
+    let encoded = base64::engine::general_purpose::STANDARD.encode(&data);
+    Ok((encoded, mime.to_string()))
+}
+
 /// Resolve a path argument: expand ~ and make absolute.
 fn resolve_path(path: &str) -> String {
     let expanded = if path.starts_with("~/") {
@@ -821,6 +845,7 @@ pub async fn run() {
 
     let editor = editor.as_mut().expect("interactive editor unavailable");
 
+    let mut pending_image_data: Option<(String, String)> = None;
     loop {
         let cmd = match editor.readline("ᚱ› ") {
             Ok(line) => {
@@ -857,6 +882,24 @@ pub async fn run() {
                 break;
             }
             "/help" | "/h" => print_help(),
+            cmd if cmd.starts_with("/image ") || cmd.starts_with("/img ") => {
+                let parts_str = cmd.splitn(2, ' ').nth(1).unwrap_or("");
+                if parts_str.is_empty() {
+                    eprintln!("  Usage: /image <path>");
+                } else {
+                    match load_image_as_base64(parts_str.trim()) {
+                        Ok((b64, mime)) => {
+                            pending_image_data = Some((b64, mime));
+                            eprintln!(
+                                "  {} Image attached: {} (send with next message)",
+                                "📎".green(),
+                                parts_str.trim()
+                            );
+                        }
+                        Err(e) => eprintln!("  {} {}", "✗".red(), e),
+                    }
+                }
+            }
             "/config" => show_config(&cfg),
             "/tools" => show_tools(),
             "/skills" => show_skills(&cfg),
@@ -952,7 +995,23 @@ pub async fn run() {
             }
             _ => {
                 let input = &cmd;
-                let _ = execute_prompt(&mut agent, input).await;
+                if let Some((b64, mime)) = pending_image_data.take() {
+                    use crate::provider::{ContentPart, ImageUrlDetail};
+                    let url = format!("data:{};base64,{}", mime, b64);
+                    let parts = vec![
+                        ContentPart::Text {
+                            text: input.to_string(),
+                        },
+                        ContentPart::ImageUrl {
+                            image_url: ImageUrlDetail { url, detail: None },
+                        },
+                    ];
+                    agent.push_user_message_with_parts(input.to_string(), parts);
+                    let result = agent.run(input).await;
+                    display_result(&result, true);
+                } else {
+                    let _ = execute_prompt(&mut agent, input).await;
+                }
             }
         }
     }
