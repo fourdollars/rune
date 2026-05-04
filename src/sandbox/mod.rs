@@ -40,6 +40,8 @@ impl Default for SandboxConfig {
                 PathBuf::from("/bin"),
                 PathBuf::from("/usr"),
                 PathBuf::from("/lib"),
+                PathBuf::from("/lib64"),
+                PathBuf::from("/etc"),
             ],
             denied_paths: vec![PathBuf::from("/root"), PathBuf::from("/etc/shadow")],
             timeout_secs: 30,

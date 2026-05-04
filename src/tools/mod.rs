@@ -112,14 +112,26 @@ impl ToolRegistry {
             };
             return SandboxExecutor::new(config);
         }
+        // Build read-only paths: user-configured + essential system paths
+        let mut read_only: Vec<PathBuf> = if self.policy_allowed_paths_ro.is_empty() {
+            SandboxConfig::default().read_only_paths
+        } else {
+            self.policy_allowed_paths_ro
+                .iter()
+                .map(PathBuf::from)
+                .collect()
+        };
+        // Always ensure essential system paths are accessible (required for exec)
+        for p in &["/bin", "/usr", "/lib", "/lib64", "/etc", "/run"] {
+            let pb = PathBuf::from(p);
+            if !read_only.contains(&pb) {
+                read_only.push(pb);
+            }
+        }
         let config = SandboxConfig {
             timeout_secs,
             read_write_paths: self.allowed_dirs.clone(),
-            read_only_paths: self
-                .policy_allowed_paths_ro
-                .iter()
-                .map(PathBuf::from)
-                .collect(),
+            read_only_paths: read_only,
             allowed_domains: self.allowed_domains.clone(),
 
             ..SandboxConfig::default()
