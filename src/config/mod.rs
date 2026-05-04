@@ -192,6 +192,10 @@ struct CliArgs {
     #[arg(long, env = "RUNE_TRACE")]
     trace: Option<bool>,
 
+    /// LLM provider: github-copilot, gemini, openai, openrouter, ollama, anthropic
+    #[arg(long, env = "RUNE_PROVIDER")]
+    provider: Option<String>,
+
     /// Policy mode: confirm, allowlist, or unrestricted
     #[arg(long, env = "RUNE_POLICY_MODE")]
     policy_mode: Option<String>,
@@ -333,6 +337,7 @@ pub fn load() -> anyhow::Result<RuneConfig> {
             .or(lc.and_then(|c| c.api_key.clone()))
             .or(uc.and_then(|c| c.api_key.clone())),
         provider: pick_option(&[
+            &cli.provider,
             &env_partial.provider,
             &cwdc.and_then(|c| c.provider.clone()),
             &lc.and_then(|c| c.provider.clone()),
