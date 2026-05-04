@@ -153,7 +153,6 @@ impl SandboxExecutor {
                 info!(domains = ?self.config.allowed_domains, "sandbox: net-guard active");
             }
         } else if has_unshare {
-            
             wrapper_parts.push("unshare --user --net --".to_string());
             active_layers.push("netns(isolated)".to_string());
             info!("sandbox: network namespace fully isolated");
@@ -182,9 +181,11 @@ impl SandboxExecutor {
 
         // Network guard layer
         let mut net_guard_wrapper = None;
-        if !self.config.allowed_domains.is_empty() && !self.config.allowed_domains.iter().any(|d| d == "*") {
+        if !self.config.allowed_domains.is_empty()
+            && !self.config.allowed_domains.iter().any(|d| d == "*")
+        {
             let has_net_guard = probe_tool("rune-net-guard").await;
-                
+
             if has_net_guard {
                 let domains = self.config.allowed_domains.join(",");
                 net_guard_wrapper = Some(format!("rune-net-guard --allow-domains {} --", domains));
@@ -208,9 +209,9 @@ impl SandboxExecutor {
         if let Some(sw) = seccomp_wrapper {
             inner_cmd_parts.push(sw);
         }
-        
+
         inner_cmd_parts.push(format!("sh -c {}", shell_escape(cmd)));
-        
+
         let inner_cmd = inner_cmd_parts.join(" ");
 
         let final_cmd = if wrapper_parts.is_empty() {
@@ -237,8 +238,6 @@ impl SandboxExecutor {
                 command.env(k, v);
             }
         }
-
-
 
         command.stdout(std::process::Stdio::piped());
         command.stderr(std::process::Stdio::piped());
@@ -293,7 +292,6 @@ impl SandboxExecutor {
     /// Uses `setpriv --no-new-privs` which implicitly enables seccomp no_new_privs.
     /// For actual BPF filtering, we'd need a helper binary; for now we use
     /// no_new_privs as the baseline seccomp protection.
-
 
     async fn build_seccomp_wrapper(&self, block_net: bool) -> Option<String> {
         // Try rune-seccomp binary first (real BPF seccomp filter)

@@ -39,12 +39,29 @@ const SYS_BIND: u32 = 49;
 const SYS_LISTEN: u32 = 50;
 
 #[repr(C)]
-struct SockFilter { code: u16, jt: u8, jf: u8, k: u32 }
+struct SockFilter {
+    code: u16,
+    jt: u8,
+    jf: u8,
+    k: u32,
+}
 #[repr(C)]
-struct SockFprog { len: u16, filter: *const SockFilter }
+struct SockFprog {
+    len: u16,
+    filter: *const SockFilter,
+}
 
-fn bpf_stmt(code: u16, k: u32) -> SockFilter { SockFilter { code, jt: 0, jf: 0, k } }
-fn bpf_jump(code: u16, k: u32, jt: u8, jf: u8) -> SockFilter { SockFilter { code, jt, jf, k } }
+fn bpf_stmt(code: u16, k: u32) -> SockFilter {
+    SockFilter {
+        code,
+        jt: 0,
+        jf: 0,
+        k,
+    }
+}
+fn bpf_jump(code: u16, k: u32, jt: u8, jf: u8) -> SockFilter {
+    SockFilter { code, jt, jf, k }
+}
 
 fn main() {
     let args: Vec<String> = env::args().collect();
@@ -63,7 +80,14 @@ fn main() {
         std::process::exit(1);
     }
 
-    let mut blocked = vec![SYS_PTRACE, SYS_MOUNT, SYS_UNSHARE, SYS_KEXEC_LOAD, SYS_BPF, SYS_SETNS];
+    let mut blocked = vec![
+        SYS_PTRACE,
+        SYS_MOUNT,
+        SYS_UNSHARE,
+        SYS_KEXEC_LOAD,
+        SYS_BPF,
+        SYS_SETNS,
+    ];
     if block_net {
         blocked.push(SYS_SOCKET);
         blocked.push(SYS_CONNECT);
@@ -75,7 +99,12 @@ fn main() {
 
     let mut filter: Vec<SockFilter> = Vec::new();
     filter.push(bpf_stmt(BPF_LD | BPF_W | BPF_ABS, OFFSET_ARCH));
-    filter.push(bpf_jump(BPF_JMP | BPF_JEQ | BPF_K, AUDIT_ARCH_X86_64, 0, (num_blocked + 2) as u8));
+    filter.push(bpf_jump(
+        BPF_JMP | BPF_JEQ | BPF_K,
+        AUDIT_ARCH_X86_64,
+        0,
+        (num_blocked + 2) as u8,
+    ));
     filter.push(bpf_stmt(BPF_LD | BPF_W | BPF_ABS, OFFSET_NR));
 
     for (i, &nr) in blocked.iter().enumerate() {
@@ -86,21 +115,32 @@ fn main() {
     filter.push(bpf_stmt(BPF_RET | BPF_K, SECCOMP_RET_ALLOW));
     filter.push(bpf_stmt(BPF_RET | BPF_K, SECCOMP_RET_ERRNO | EPERM));
 
-    let prog = SockFprog { len: filter.len() as u16, filter: filter.as_ptr() };
+    let prog = SockFprog {
+        len: filter.len() as u16,
+        filter: filter.as_ptr(),
+    };
 
     unsafe {
         if libc::prctl(libc::PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) != 0 {
             eprintln!("rune-seccomp: prctl(NO_NEW_PRIVS) failed");
             std::process::exit(1);
         }
-        let ret = libc::prctl(libc::PR_SET_SECCOMP, 2, &prog as *const SockFprog as libc::c_ulong, 0, 0);
+        let ret = libc::prctl(
+            libc::PR_SET_SECCOMP,
+            2,
+            &prog as *const SockFprog as libc::c_ulong,
+            0,
+            0,
+        );
         if ret != 0 {
             eprintln!("rune-seccomp: prctl(SET_SECCOMP) failed");
             std::process::exit(1);
         }
     }
 
-    let err = Command::new(&args[cmd_idx]).args(&args[cmd_idx + 1..]).exec();
+    let err = Command::new(&args[cmd_idx])
+        .args(&args[cmd_idx + 1..])
+        .exec();
     eprintln!("rune-seccomp: exec failed: {}", err);
     std::process::exit(1);
 }

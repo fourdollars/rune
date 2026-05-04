@@ -121,7 +121,7 @@ impl ToolRegistry {
                 .map(PathBuf::from)
                 .collect(),
             allowed_domains: self.allowed_domains.clone(),
-            
+
             ..SandboxConfig::default()
         };
         SandboxExecutor::new(config)

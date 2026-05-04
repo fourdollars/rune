@@ -12,8 +12,8 @@ use std::process::Command;
 use std::str::FromStr;
 
 use libc::{
-    c_int, c_void, iovec, pid_t, process_vm_readv, sockaddr_in, sockaddr_in6, sockaddr_un,
-    AF_INET, AF_INET6, AF_UNIX,
+    c_int, c_void, iovec, pid_t, process_vm_readv, sockaddr_in, sockaddr_in6, sockaddr_un, AF_INET,
+    AF_INET6, AF_UNIX,
 };
 
 // Seccomp constants
@@ -53,7 +53,12 @@ struct SockFprog {
 }
 
 fn bpf_stmt(code: u16, k: u32) -> SockFilter {
-    SockFilter { code, jt: 0, jf: 0, k }
+    SockFilter {
+        code,
+        jt: 0,
+        jf: 0,
+        k,
+    }
 }
 
 fn bpf_jump(code: u16, k: u32, jt: u8, jf: u8) -> SockFilter {
@@ -117,8 +122,13 @@ macro_rules! _IOWR {
 }
 
 const SECCOMP_IOC_MAGIC: u8 = b'!';
-const SECCOMP_IOCTL_NOTIF_RECV: u64 = _IOWR!(SECCOMP_IOC_MAGIC, 0, std::mem::size_of::<SeccompNotif>()) as u64;
-const SECCOMP_IOCTL_NOTIF_SEND: u64 = _IOWR!(SECCOMP_IOC_MAGIC, 1, std::mem::size_of::<SeccompNotifResp>()) as u64;
+const SECCOMP_IOCTL_NOTIF_RECV: u64 =
+    _IOWR!(SECCOMP_IOC_MAGIC, 0, std::mem::size_of::<SeccompNotif>()) as u64;
+const SECCOMP_IOCTL_NOTIF_SEND: u64 = _IOWR!(
+    SECCOMP_IOC_MAGIC,
+    1,
+    std::mem::size_of::<SeccompNotifResp>()
+) as u64;
 
 fn resolve_domains(domains: &[&str]) -> HashSet<IpAddr> {
     let mut ips = HashSet::new();
@@ -214,7 +224,10 @@ fn recv_fd(sock: RawFd) -> std::io::Result<RawFd> {
 
         let cmsg = libc::CMSG_FIRSTHDR(&msg);
         if cmsg.is_null() {
-            return Err(std::io::Error::new(std::io::ErrorKind::Other, "no cmsg received"));
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::Other,
+                "no cmsg received",
+            ));
         }
 
         let mut fd: RawFd = -1;
@@ -301,7 +314,8 @@ fn main() {
             ) as RawFd;
 
             if notif_fd < 0 {
-                let e = std::io::Error::last_os_error(); eprintln!("seccomp failed: {} (notif_fd raw={})", e, notif_fd);
+                let e = std::io::Error::last_os_error();
+                eprintln!("seccomp failed: {} (notif_fd raw={})", e, notif_fd);
                 std::process::exit(1);
             }
 
@@ -389,7 +403,9 @@ fn main() {
                                     Ok(n) => n as isize,
                                     Err(_) => -1,
                                 }
-                            } else { -1 }
+                            } else {
+                                -1
+                            }
                         }
                         Err(_) => -1,
                     }
