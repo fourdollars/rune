@@ -678,7 +678,10 @@ denied_paths = ["/etc/shadow"]
     #[test]
     fn test_default_policy_mode_is_confirm() {
         let policy = PolicyConfig::default();
-        assert_eq!(policy.mode, "confirm", "default policy should be confirm for interactive");
+        assert_eq!(
+            policy.mode, "confirm",
+            "default policy should be confirm for interactive"
+        );
     }
 
     #[test]

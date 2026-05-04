@@ -171,4 +171,7 @@ cargo build --release         # release build (~5MB)
 CI runs: `fmt` → `clippy` → `test+coverage` → `build` → `e2e`.
 Coverage uploaded as artifact + displayed in GitHub Actions summary.
 
+**Pre-commit requirement:** All code must pass `cargo fmt --all -- --check` before committing.
+Do NOT commit unformatted code. Run `cargo fmt --all` to auto-fix before each commit.
+
 Flags for CI/automation: `--json` (structured output) + `--yes` (auto-approve all).

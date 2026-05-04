@@ -359,16 +359,16 @@ impl ToolRegistry {
 
         // Check domain allowlist (skipped in unrestricted mode)
         if self.policy_mode != "unrestricted" {
-        if let Some(domain) = extract_domain(url) {
-            let executor = self.sandbox(35);
-            if !executor.is_domain_allowed(&domain) {
-                return ToolOutput::err(format!(
-                    "BLOCKED: domain '{}' is not in allowed_domains. \
+            if let Some(domain) = extract_domain(url) {
+                let executor = self.sandbox(35);
+                if !executor.is_domain_allowed(&domain) {
+                    return ToolOutput::err(format!(
+                        "BLOCKED: domain '{}' is not in allowed_domains. \
                      Network access requires explicit allowlist configuration.",
-                    domain
-                ));
+                        domain
+                    ));
+                }
             }
-        }
         } // end unrestricted check
 
         info!(url = %url, "fetch_url (sandboxed, domain allowed)");
