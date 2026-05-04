@@ -130,8 +130,9 @@ const SECCOMP_IOCTL_NOTIF_SEND: u64 = _IOWR!(
     std::mem::size_of::<SeccompNotifResp>()
 ) as u64;
 
-fn resolve_domains(domains: &[&str]) -> HashSet<IpAddr> {
+fn resolve_domains(domains: &[&str]) -> (HashSet<IpAddr>, Vec<String>) {
     let mut ips = HashSet::new();
+    let mut wildcards = Vec::new();
     // Always allow loopback
     ips.insert(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)));
     ips.insert(IpAddr::V6(Ipv6Addr::new(0, 0, 0, 0, 0, 0, 0, 1)));
@@ -155,14 +156,117 @@ fn resolve_domains(domains: &[&str]) -> HashSet<IpAddr> {
         if domain.is_empty() {
             continue;
         }
-        let addr_str = format!("{}:80", domain);
-        if let Ok(addrs) = addr_str.to_socket_addrs() {
-            for addr in addrs {
-                ips.insert(addr.ip());
+        if domain.starts_with("*.") {
+            // Wildcard: store pattern for runtime reverse-DNS matching
+            wildcards.push(domain.to_string());
+            // Pre-resolve the base domain and common subdomain prefixes
+            let base = &domain[2..];
+            let prefixes = [
+                "", "www.", "api.", "cdn.", "raw.", "assets.", "static.", "docs.", "app.", "m.",
+                "mail.", "ns1.", "ns2.",
+            ];
+            for prefix in &prefixes {
+                let fqdn = format!("{}{}:80", prefix, base);
+                if let Ok(addrs) = fqdn.to_socket_addrs() {
+                    for addr in addrs {
+                        ips.insert(addr.ip());
+                    }
+                }
+            }
+        } else {
+            let addr_str = format!("{}:80", domain);
+            if let Ok(addrs) = addr_str.to_socket_addrs() {
+                for addr in addrs {
+                    ips.insert(addr.ip());
+                }
             }
         }
     }
-    ips
+    (ips, wildcards)
+}
+
+/// Reverse DNS lookup: IP → hostname via libc::getnameinfo
+fn reverse_dns(ip: IpAddr) -> Option<String> {
+    unsafe {
+        let mut host = [0u8; 256];
+        let (sa_ptr, sa_len): (*const libc::sockaddr, libc::socklen_t) = match ip {
+            IpAddr::V4(v4) => {
+                let mut sa: libc::sockaddr_in = std::mem::zeroed();
+                sa.sin_family = libc::AF_INET as libc::sa_family_t;
+                sa.sin_addr.s_addr = u32::from_ne_bytes(v4.octets());
+                let boxed = Box::new(sa);
+                let ptr = Box::into_raw(boxed);
+                (
+                    ptr as *const libc::sockaddr,
+                    std::mem::size_of::<libc::sockaddr_in>() as libc::socklen_t,
+                )
+            }
+            IpAddr::V6(v6) => {
+                let mut sa: libc::sockaddr_in6 = std::mem::zeroed();
+                sa.sin6_family = libc::AF_INET6 as libc::sa_family_t;
+                sa.sin6_addr.s6_addr = v6.octets();
+                let boxed = Box::new(sa);
+                let ptr = Box::into_raw(boxed);
+                (
+                    ptr as *const libc::sockaddr,
+                    std::mem::size_of::<libc::sockaddr_in6>() as libc::socklen_t,
+                )
+            }
+        };
+
+        let ret = libc::getnameinfo(
+            sa_ptr,
+            sa_len,
+            host.as_mut_ptr() as *mut libc::c_char,
+            host.len() as libc::socklen_t,
+            std::ptr::null_mut(),
+            0,
+            0, // NI_NAMEREQD would fail if no name; 0 returns IP as fallback
+        );
+
+        // Clean up the boxed sockaddr
+        match ip {
+            IpAddr::V4(_) => {
+                let _ = Box::from_raw(sa_ptr as *mut libc::sockaddr_in);
+            }
+            IpAddr::V6(_) => {
+                let _ = Box::from_raw(sa_ptr as *mut libc::sockaddr_in6);
+            }
+        }
+
+        if ret == 0 {
+            let hostname = std::ffi::CStr::from_ptr(host.as_ptr() as *const libc::c_char)
+                .to_str()
+                .ok()?
+                .to_string();
+            // getnameinfo may return the IP as string if no PTR record; skip that
+            if hostname.parse::<IpAddr>().is_ok() {
+                None
+            } else {
+                Some(hostname)
+            }
+        } else {
+            None
+        }
+    }
+}
+
+/// Check if an IP matches any wildcard pattern via reverse DNS
+fn matches_wildcard(ip: IpAddr, wildcards: &[String]) -> bool {
+    if wildcards.is_empty() {
+        return false;
+    }
+    if let Some(hostname) = reverse_dns(ip) {
+        for pattern in wildcards {
+            // pattern = "*.github.com" → suffix = ".github.com"
+            if let Some(suffix) = pattern.strip_prefix('*') {
+                if hostname.ends_with(suffix) || hostname == &suffix[1..] {
+                    return true;
+                }
+            }
+        }
+    }
+    false
 }
 
 fn send_fd(sock: RawFd, fd: RawFd) -> std::io::Result<()> {
@@ -265,7 +369,7 @@ fn main() {
     }
 
     let domains: Vec<&str> = allowed_domains.split(',').collect();
-    let allowed_ips = resolve_domains(&domains);
+    let (allowed_ips, wildcard_patterns) = resolve_domains(&domains);
 
     let mut sv = [0; 2];
     if unsafe { libc::socketpair(libc::AF_UNIX, libc::SOCK_STREAM, 0, sv.as_mut_ptr()) } < 0 {
@@ -424,7 +528,11 @@ fn main() {
                         let ip = Ipv4Addr::from(u32::from_be(sin.sin_addr.s_addr));
                         let port = u16::from_be(sin.sin_port);
                         // Allow DNS queries (port 53) and loopback unconditionally
-                        if port == 53 || ip.is_loopback() || allowed_ips.contains(&IpAddr::V4(ip)) {
+                        if port == 53
+                            || ip.is_loopback()
+                            || allowed_ips.contains(&IpAddr::V4(ip))
+                            || matches_wildcard(IpAddr::V4(ip), &wildcard_patterns)
+                        {
                             allowed = true;
                         }
                     } else if family == AF_INET6 {
@@ -432,7 +540,11 @@ fn main() {
                         let ip = Ipv6Addr::from(sin6.sin6_addr.s6_addr);
                         let port = u16::from_be(sin6.sin6_port);
                         // Allow DNS queries (port 53) and loopback unconditionally
-                        if port == 53 || ip.is_loopback() || allowed_ips.contains(&IpAddr::V6(ip)) {
+                        if port == 53
+                            || ip.is_loopback()
+                            || allowed_ips.contains(&IpAddr::V6(ip))
+                            || matches_wildcard(IpAddr::V6(ip), &wildcard_patterns)
+                        {
                             allowed = true;
                         }
                     }
