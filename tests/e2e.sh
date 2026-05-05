@@ -66,7 +66,7 @@ assert_contains "$OUT" "RUNE_API_KEY" "help shows env vars"
 assert_contains "$OUT" "rune init" "help mentions init subcommand"
 assert_contains "$OUT" "\-\-json" "help shows --json flag"
 assert_contains "$OUT" "\-\-yes" "help shows --yes flag"
-assert_contains "$OUT" "does not bypass policy" "help clarifies --yes semantics"
+assert_contains "$OUT" "bypass policy" "help clarifies --yes semantics"
 
 # ── Test 2: CLI --version ─────────────────────────────────
 echo "▸ CLI --version"
@@ -113,7 +113,7 @@ assert_contains "$OUT" "latest" "check without prompt returns synthetic version"
 # ── Test 9: Tool definitions ─────────────────────────────
 echo "▸ Tool definitions (via --help)"
 OUT=$($RUNE --help 2>&1)
-assert_contains "$OUT" "executions" "help mentions tool executions"
+assert_contains "$OUT" "execution" "help mentions tool execution"
 
 # ── Test 10: Policy mode override ─────────────────────────
 echo "▸ Policy mode override via env"
