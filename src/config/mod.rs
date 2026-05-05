@@ -10,6 +10,7 @@ pub struct PolicyConfig {
     /// - "confirm": interactive CLI default — prompts user before dangerous tools
     /// - "allowlist": pipe/Concourse CI default — auto-executes within allowlist, blocks the rest
     /// - "unrestricted": all policy checks skipped (opt-in via --policy-mode or config)
+    #[serde(default = "default_policy_mode")]
     pub mode: String,
     /// Commands allowed to execute (enforced in "confirm" and "allowlist" modes).
     #[serde(default)]
@@ -36,6 +37,10 @@ pub struct PolicyConfig {
     /// Max child processes (0 = no limit).
     #[serde(default)]
     pub max_pids: u32,
+}
+
+fn default_policy_mode() -> String {
+    "confirm".to_string()
 }
 
 impl Default for PolicyConfig {

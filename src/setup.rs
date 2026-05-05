@@ -166,7 +166,7 @@ pub async fn run_setup() {
     } else {
         provider_input
     };
-    let (base_url, provider_name, _provider_id, key_hint) = match provider_choice.trim() {
+    let (base_url, provider_name, provider_id, key_hint) = match provider_choice.trim() {
         "1" => (
             None,
             "GitHub Copilot",
@@ -381,6 +381,7 @@ pub async fn run_setup() {
 
     let mut toml_content = String::new();
     toml_content.push_str(&format!("model = \"{}\"\n", model));
+    toml_content.push_str(&format!("provider = \"{}\"\n", provider_id));
     if !api_key.is_empty() {
         toml_content.push_str(&format!("api_key = \"{}\"\n", api_key));
     }
