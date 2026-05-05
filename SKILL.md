@@ -162,9 +162,6 @@ resources:
       sandbox:
         network:
           allowed_domains: ["wttr.in"]
-        filesystem:
-          read_write_paths: ["/tmp"]
-          read_only_paths: ["/usr", "/bin", "/lib", "/etc"]
 
 jobs:
   - name: weather-check
