@@ -174,7 +174,7 @@ pub async fn run_setup() {
             "GitHub PAT (starts with ghu_ or ghp_)",
         ),
         "2" => (
-            Some("https://generativelanguage.googleapis.com/v1beta/openai".to_string()),
+            Some("https://generativelanguage.googleapis.com/v1beta".to_string()),
             "Google Gemini",
             "gemini",
             "Gemini API key (starts with AIza)",

@@ -956,18 +956,39 @@ pub async fn run() {
         if emb_cfg.api_key.is_none() {
             emb_cfg.api_key = cfg.api_key.clone();
         }
-        // Auto-detect base_url for Copilot and use token refresh
+        // Auto-detect provider for embedding
         let is_copilot = cfg
             .api_key
             .as_ref()
             .map(|k| k.starts_with("ghu_") || k.starts_with("ghp_"))
             .unwrap_or(false);
+        let is_gemini = cfg
+            .api_key
+            .as_ref()
+            .map(|k| k.starts_with("AIza"))
+            .unwrap_or(false)
+            || cfg
+                .provider
+                .as_deref()
+                .map(|p| p == "gemini")
+                .unwrap_or(false);
+
         if is_copilot {
             if emb_cfg.base_url.is_none() {
                 emb_cfg.base_url = Some("https://api.githubcopilot.com".to_string());
             }
             let pat = cfg.api_key.clone().unwrap_or_default();
             Some(crate::embedding::EmbeddingEngine::new_copilot(emb_cfg, pat))
+        } else if is_gemini {
+            if emb_cfg.base_url.is_none() {
+                emb_cfg.base_url =
+                    Some("https://generativelanguage.googleapis.com/v1beta/openai".to_string());
+            }
+            if emb_cfg.model.is_none() || emb_cfg.model.as_deref() == Some("text-embedding-3-small")
+            {
+                emb_cfg.model = Some("gemini-embedding-2".to_string());
+            }
+            Some(crate::embedding::EmbeddingEngine::new(emb_cfg))
         } else {
             Some(crate::embedding::EmbeddingEngine::new(emb_cfg))
         }
