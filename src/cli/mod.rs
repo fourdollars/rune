@@ -156,6 +156,11 @@ fn print_help() {
     println!();
 
     println!("  {}", "Other".bold());
+    println!(
+        "    {:<24} {}",
+        "/thinking [level]".green(),
+        "Show/set thinking: none|low|medium|high"
+    );
     println!("    {:<24} {}", "/version".green(), "Show version info");
     println!("    {:<24} {}", "/help".green(), "Show this help");
     println!("    {:<24} {}", "/exit, /quit".green(), "Exit the CLI");
@@ -360,6 +365,11 @@ fn show_info(cfg: &config::RuneConfig, agent: &crate::agent::Agent) {
         );
     }
     println!("    {} model: {}", "•".dimmed(), cfg.model.green());
+    println!(
+        "    {} thinking: {}",
+        "•".dimmed(),
+        cfg.thinking.as_deref().unwrap_or("none").cyan()
+    );
     if let Some(ref url) = cfg.base_url {
         println!("    {} endpoint: {}", "•".dimmed(), url.dimmed());
     }
@@ -1086,6 +1096,30 @@ pub async fn run() {
                         "disabled (use --trace to enable)".dimmed().to_string()
                     }
                 );
+            }
+            cmd if cmd == "/thinking" || cmd.starts_with("/thinking ") => {
+                let arg = cmd.strip_prefix("/thinking").unwrap().trim();
+                if arg.is_empty() {
+                    let current = agent.config.thinking.as_deref().unwrap_or("none");
+                    println!("{} {}", "Thinking:".bold(), current.cyan());
+                } else {
+                    match arg {
+                        "none" | "low" | "medium" | "high" => {
+                            agent.config.thinking = if arg == "none" {
+                                None
+                            } else {
+                                Some(arg.to_string())
+                            };
+                            println!("  {} Thinking set to: {}", "✓".green(), arg.cyan());
+                        }
+                        _ => {
+                            eprintln!(
+                                "  {} Invalid level. Use: none, low, medium, high",
+                                "⚠".yellow()
+                            );
+                        }
+                    }
+                }
             }
             "/version" => {
                 println!("{} v{}", "Rune".cyan().bold(), VERSION);

@@ -84,6 +84,9 @@ pub struct RuneConfig {
     pub mcp_servers: Vec<crate::mcp::McpServerConfig>,
     #[serde(default)]
     pub embedding: crate::embedding::EmbeddingConfig,
+    /// Thinking/reasoning level: "none", "low", "medium", "high". None = provider default.
+    #[serde(default)]
+    pub thinking: Option<String>,
 }
 
 impl Default for RuneConfig {
@@ -107,6 +110,7 @@ impl Default for RuneConfig {
             policy: PolicyConfig::default(),
             mcp_servers: Vec::new(),
             embedding: crate::embedding::EmbeddingConfig::default(),
+            thinking: None,
         }
     }
 }
@@ -130,6 +134,7 @@ struct PartialConfig {
     policy: Option<PolicyConfig>,
     mcp_servers: Option<Vec<crate::mcp::McpServerConfig>>,
     embedding: Option<crate::embedding::EmbeddingConfig>,
+    thinking: Option<String>,
 }
 
 /// CLI argument overrides.
@@ -293,6 +298,7 @@ pub fn load() -> anyhow::Result<RuneConfig> {
         policy: None, // Policy loaded from TOML only (too complex for single env var)
         mcp_servers: None,
         embedding: None,
+        thinking: env::var("RUNE_THINKING").ok(),
     };
     let env_json_output = env::var("RUNE_JSON_OUTPUT")
         .ok()
@@ -439,6 +445,11 @@ pub fn load() -> anyhow::Result<RuneConfig> {
             .or_else(|| lc.and_then(|c| c.embedding.clone()))
             .or_else(|| uc.and_then(|c| c.embedding.clone()))
             .unwrap_or_default(),
+        thinking: pick_option(&[
+            &cwdc.and_then(|c| c.thinking.clone()),
+            &lc.and_then(|c| c.thinking.clone()),
+            &uc.and_then(|c| c.thinking.clone()),
+        ]),
     })
 }
 

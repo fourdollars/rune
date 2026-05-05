@@ -774,6 +774,7 @@ impl Agent {
                 Some(tool_defs)
             },
             max_tokens: None,
+            thinking: self.config.thinking.clone(),
         }
     }
 

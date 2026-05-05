@@ -18,6 +18,9 @@ pub struct LlmRequest {
     pub tools: Option<Vec<serde_json::Value>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub max_tokens: Option<u32>,
+    /// Thinking/reasoning effort level (provider-specific handling).
+    #[serde(skip)]
+    pub thinking: Option<String>,
 }
 
 /// Content part for multi-modal messages (text + images).
@@ -391,7 +394,17 @@ impl Provider for OpenAiProvider {
 
         Box::pin(async move {
             // Build the full request payload using serde
-            let payload = serde_json::to_string(&request)
+            let mut payload_value: serde_json::Value = serde_json::to_value(&request)
+                .map_err(|e| anyhow!("failed to serialize request: {}", e))?;
+
+            // Inject thinking/reasoning_effort if set
+            if let Some(ref thinking) = request.thinking {
+                if thinking != "none" {
+                    payload_value["reasoning_effort"] = serde_json::Value::String(thinking.clone());
+                }
+            }
+
+            let payload = serde_json::to_string(&payload_value)
                 .map_err(|e| anyhow!("failed to serialize request: {}", e))?;
 
             let url = format!("{}/chat/completions", base_url.trim_end_matches('/'));
@@ -1449,6 +1462,7 @@ mod tests {
             messages: vec![],
             tools: None,
             max_tokens: None,
+            thinking: None,
         };
         let res = reg
             .chat(req)
@@ -1473,6 +1487,7 @@ mod tests {
             messages: vec![],
             tools: None,
             max_tokens: None,
+            thinking: None,
         };
         let res = reg.chat_with("p1", req).await.expect("should find p1");
         assert_eq!(res.content, Some("hello".to_string()));
@@ -1510,6 +1525,7 @@ mod tests {
             messages: vec![],
             tools: None,
             max_tokens: None,
+            thinking: None,
         };
         let err = reg
             .chat(req)
@@ -1681,6 +1697,7 @@ mod tests {
             messages: vec![],
             tools: None,
             max_tokens: None,
+            thinking: None,
         };
 
         let res = reg
