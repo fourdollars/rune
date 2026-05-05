@@ -241,6 +241,15 @@ impl EmbeddingEngine {
     }
 }
 
+impl Clone for EmbeddingEngine {
+    fn clone(&self) -> Self {
+        Self {
+            config: self.config.clone(),
+            client: self.client.clone(),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -927,7 +927,15 @@ pub async fn run() {
         cfg.policy.mode = "allowlist".to_string();
     }
 
-    let mut agent = Agent::new(cfg.clone(), provider, stdin_is_terminal);
+    let embedding_engine = if cfg.embedding.enabled {
+        Some(crate::embedding::EmbeddingEngine::new(
+            cfg.embedding.clone(),
+        ))
+    } else {
+        None
+    };
+
+    let mut agent = Agent::new(cfg.clone(), provider, stdin_is_terminal, embedding_engine);
     agent.set_system_prompt(
         "You are Rune, a high-performance AI agent running in a terminal. \
          You have access to tools: read_file, write_file, list_dir, execute_cmd, fetch_url. \
@@ -1072,7 +1080,7 @@ pub async fn run() {
             "/info context" => show_context(&agent),
             "/compact" => {
                 let before = agent.message_count();
-                agent.compact();
+                agent.compact().await;
                 let after = agent.message_count();
                 println!(
                     "{} Context compacted: {} → {} messages",

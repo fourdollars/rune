@@ -377,7 +377,7 @@ async fn run_agent_prompt(
         anyhow::bail!("source.api_key is required");
     }
 
-    let mut agent = Agent::new(cfg, provider, false);
+    let mut agent = Agent::new(cfg, provider, false, None);
 
     let mut sys = system_prompt
         .map(|s| s.to_string())

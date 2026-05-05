@@ -1,4 +1,5 @@
 use crate::config::RuneConfig;
+use crate::embedding::EmbeddingEngine;
 use crate::provider::{
     ContentPart, LlmMessage, LlmRequest, LlmResponse, LlmToolCall, ProviderRegistry,
 };
@@ -9,6 +10,7 @@ use anyhow::Result;
 use colored::Colorize;
 use std::io::Write;
 use std::path::PathBuf;
+
 use tracing::{debug, info, warn};
 
 /// Agent's stop reason.
@@ -56,10 +58,17 @@ pub struct Agent {
     skill_tools_allow: Option<Vec<String>>,
     /// Skill-scoped tool deny list (None = nothing denied)
     skill_tools_deny: Option<Vec<String>>,
+    /// Optional embedding engine for RAG-based compaction and skill search
+    pub embedding: Option<EmbeddingEngine>,
 }
 
 impl Agent {
-    pub fn new(config: RuneConfig, provider: ProviderRegistry, interactive: bool) -> Self {
+    pub fn new(
+        config: RuneConfig,
+        provider: ProviderRegistry,
+        interactive: bool,
+        embedding: Option<EmbeddingEngine>,
+    ) -> Self {
         let mut config = config;
         // Auto-add CWD to allowed_paths_ro so read_file in project dir does not require confirm
         if let Ok(cwd) = std::env::current_dir() {
@@ -117,6 +126,7 @@ impl Agent {
             tool_call_names: Vec::new(),
             skill_tools_allow: None,
             skill_tools_deny: None,
+            embedding,
         }
     }
 
@@ -228,8 +238,34 @@ impl Agent {
         text
     }
 
-    /// Compact context: keep system prompt + summarize older messages.
-    pub fn compact(&mut self) {
+    /// Compact context: use embedding-based RAG if available, otherwise simple truncation.
+    pub async fn compact(&mut self) {
+        let keep_last = self.config.compact_keep_last.max(1);
+        if self.messages.len() <= keep_last + 1 {
+            return;
+        }
+
+        // Try RAG-based compaction if embedding is available
+        if let Some(engine) = self.embedding.clone() {
+            if self.config.embedding.enabled {
+                match self.compact_rag(&engine, keep_last).await {
+                    Ok(new_msgs) => {
+                        self.messages = new_msgs;
+                        return;
+                    }
+                    Err(e) => {
+                        warn!(error = %e, "RAG compaction failed; falling back to simple");
+                    }
+                }
+            }
+        }
+
+        // Fallback: simple compaction
+        self.compact_simple();
+    }
+
+    /// Simple compaction: summarize older messages, keep last N.
+    fn compact_simple(&mut self) {
         let keep_last = self.config.compact_keep_last.max(1);
         if self.messages.len() <= keep_last + 1 {
             return;
@@ -272,6 +308,115 @@ impl Agent {
         new_messages.extend(self.messages[total - keep_last..].iter().cloned());
         self.messages = new_messages;
     }
+
+    /// RAG-based compaction: keep messages most relevant to the latest user query.
+    async fn compact_rag(
+        &self,
+        engine: &EmbeddingEngine,
+        keep_last: usize,
+    ) -> Result<Vec<LlmMessage>> {
+        let total = self.messages.len();
+        let summarize_end = total.saturating_sub(keep_last);
+        if summarize_end <= 1 {
+            anyhow::bail!("not enough messages to compact");
+        }
+
+        // Find latest user message as the relevance query
+        let latest_user = self
+            .messages
+            .iter()
+            .rev()
+            .find(|m| m.role == "user")
+            .and_then(|m| m.content.as_deref())
+            .unwrap_or("")
+            .to_string();
+
+        if latest_user.is_empty() {
+            anyhow::bail!("no user message found for RAG query");
+        }
+
+        let user_vec = engine.embed_one(&latest_user).await?;
+
+        // Collect candidate messages (skip system at index 0, skip last keep_last)
+        let mut candidate_texts: Vec<String> = Vec::new();
+        let mut candidate_indices: Vec<usize> = Vec::new();
+        for (i, m) in self
+            .messages
+            .iter()
+            .enumerate()
+            .skip(1)
+            .take(summarize_end - 1)
+        {
+            candidate_indices.push(i);
+            candidate_texts.push(self.message_text(m));
+        }
+
+        if candidate_texts.is_empty() {
+            anyhow::bail!("no candidate messages to score");
+        }
+
+        // Embed candidates in batches
+        let mut all_vecs: Vec<Vec<f32>> = Vec::new();
+        for chunk in candidate_texts.chunks(32) {
+            let refs: Vec<&str> = chunk.iter().map(|s| s.as_str()).collect();
+            let vecs = engine.embed(&refs).await?;
+            all_vecs.extend(vecs);
+        }
+
+        // Score by cosine similarity
+        let mut scored: Vec<(f32, usize)> = all_vecs
+            .iter()
+            .enumerate()
+            .map(|(i, v)| {
+                let sim = crate::embedding::cosine_similarity(&user_vec, v);
+                (sim, candidate_indices[i])
+            })
+            .collect();
+        scored.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
+
+        // Keep top-K most relevant (max 20) + last keep_last
+        let top_k = scored.len().min(20);
+        let mut keep_set: std::collections::BTreeSet<usize> = std::collections::BTreeSet::new();
+        for &(_, idx) in scored.iter().take(top_k) {
+            keep_set.insert(idx);
+        }
+        for i in (total - keep_last)..total {
+            keep_set.insert(i);
+        }
+
+        // Build summary of removed messages
+        let removed_count = (1..summarize_end).filter(|i| !keep_set.contains(i)).count();
+
+        let summary = format!(
+            "[Context compacted via RAG: {} messages removed, {} kept by relevance]",
+            removed_count, top_k
+        );
+
+        let mut new_messages: Vec<LlmMessage> = Vec::new();
+        // Keep system prompt
+        if let Some(sys) = self.messages.first() {
+            new_messages.push(sys.clone());
+        }
+        // Add compaction summary
+        new_messages.push(LlmMessage {
+            role: "system".to_string(),
+            content: Some(summary),
+            tool_calls: None,
+            tool_call_id: None,
+            content_parts: None,
+        });
+        // Add kept candidate messages in order
+        for &idx in keep_set.iter() {
+            if idx > 0 && idx < summarize_end {
+                new_messages.push(self.messages[idx].clone());
+            }
+        }
+        // Add the final keep_last messages
+        new_messages.extend(self.messages[total - keep_last..].iter().cloned());
+
+        Ok(new_messages)
+    }
+
     pub fn reset(&mut self) {
         let system = self.messages.first().cloned();
         self.messages.clear();
@@ -377,7 +522,7 @@ impl Agent {
                     compact_threshold = self.config.compact_threshold,
                     "context window threshold exceeded; compacting"
                 );
-                self.compact();
+                self.compact().await;
             }
 
             self.step_count += 1;
