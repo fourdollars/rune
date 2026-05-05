@@ -239,6 +239,16 @@ h1.glow {
     font-size: 0.75rem;
 }
 
+/* Concourse */
+.concourse { padding: 2rem; max-width: 700px; margin: 0 auto; }
+
+.section-desc {
+    text-align: center;
+    color: var(--text-dim);
+    font-size: 1rem;
+    margin-bottom: 1.5rem;
+}
+
 /* Install */
 .install { padding: 2rem; max-width: 700px; margin: 0 auto; }
 
