@@ -141,15 +141,22 @@ impl ToolRegistry {
                 read_only.push(pb);
             }
         }
-        // Always include CWD so sandboxed commands can access the working directory
+        // Always include CWD and its parents so sandboxed commands can access the working directory.
+        // Landlock requires rules on parent directories for path traversal.
         if let Ok(cwd) = std::env::current_dir() {
-            if !read_only.contains(&cwd) && !self.allowed_dirs.contains(&cwd) {
+            if !read_only.contains(&cwd) {
                 read_only.push(cwd);
             }
         }
+        // Canonicalize allowed_dirs (resolve "." to absolute path for Landlock)
+        let rw_paths: Vec<PathBuf> = self
+            .allowed_dirs
+            .iter()
+            .map(|p| std::fs::canonicalize(p).unwrap_or_else(|_| p.clone()))
+            .collect();
         let config = SandboxConfig {
             timeout_secs,
-            read_write_paths: self.allowed_dirs.clone(),
+            read_write_paths: rw_paths,
             read_only_paths: read_only,
             allowed_domains: self.allowed_domains.clone(),
             allowed_syscalls: self.policy_allowed_syscalls.clone(),
