@@ -327,7 +327,7 @@ resources:
       prompt: "Fetch the weather for Taoyuan from wttr.in using curl."
       sandbox:
         network:
-          allowed_domains: ["api.githubcopilot.com", "wttr.in"]
+          allowed_domains: ["wttr.in"]
         filesystem:
           read_write_paths: ["/tmp"]
           read_only_paths: ["/usr", "/bin", "/lib", "/etc"]
