@@ -449,8 +449,13 @@ pub async fn run_setup() {
         } else {
             toml_content.push_str("\n[embedding]\n");
             toml_content.push_str("enabled = true\n");
-            toml_content.push_str("model = \"text-embedding-3-small\"\n");
-            toml_content.push_str("threshold = 0.6\n");
+            let emb_model = if provider_choice.trim() == "2" {
+                "gemini-embedding-2"
+            } else {
+                "text-embedding-3-small"
+            };
+            toml_content.push_str(&format!("model = \"{}\"\n", emb_model));
+            toml_content.push_str("threshold = 0.3\n");
         }
     }
 
