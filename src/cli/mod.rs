@@ -8,7 +8,7 @@ use std::time::Duration;
 
 use crate::agent::{Agent, StopReason};
 use crate::config;
-use crate::provider::{OpenAiProvider, ProviderRegistry};
+use crate::provider::{CopilotProvider, GeminiProvider, OpenAiProvider, ProviderRegistry};
 use crate::skills::SkillLoader;
 use crate::tools::ToolRegistry;
 
@@ -320,24 +320,43 @@ fn show_info(cfg: &config::RuneConfig, agent: &crate::agent::Agent) {
 
     // LLM Provider
     println!("  {}", "LLM Provider:".bold());
-    if let Some(ref key) = cfg.api_key {
-        let provider = if key.starts_with("ghu_") || key.starts_with("ghp_") {
-            "GitHub Copilot"
+    let provider_display = if let Some(ref p) = cfg.provider {
+        match p.as_str() {
+            "github-copilot" | "copilot" => "GitHub Copilot".to_string(),
+            "gemini" | "google" => "Google Gemini".to_string(),
+            "openrouter" => "OpenRouter".to_string(),
+            "anthropic" => "Anthropic".to_string(),
+            "ollama" => "Ollama".to_string(),
+            "openai" => "OpenAI".to_string(),
+            other => other.to_string(),
+        }
+    } else if let Some(ref key) = cfg.api_key {
+        if key.starts_with("ghu_") || key.starts_with("ghp_") {
+            "GitHub Copilot".to_string()
         } else if key.starts_with("AIza") {
-            "Google Gemini"
+            "Google Gemini".to_string()
         } else if key.starts_with("sk-or-") {
-            "OpenRouter"
+            "OpenRouter".to_string()
         } else if key.starts_with("sk-") {
-            "OpenAI"
+            "OpenAI".to_string()
         } else {
-            "Custom"
-        };
-        println!("    {} provider: {}", "•".dimmed(), provider.green());
+            "Custom".to_string()
+        }
     } else {
+        "(not configured)".to_string()
+    };
+
+    if provider_display == "(not configured)" {
         println!(
             "    {} provider: {}",
             "•".dimmed(),
             "(not configured)".red()
+        );
+    } else {
+        println!(
+            "    {} provider: {}",
+            "•".dimmed(),
+            provider_display.green()
         );
     }
     println!("    {} model: {}", "•".dimmed(), cfg.model.green());
@@ -596,7 +615,19 @@ fn show_policy_full(cfg: &config::RuneConfig) {
     println!();
 
     println!("  {}", "LLM Provider:".bold());
-    if let Some(ref key) = cfg.api_key {
+    if let Some(ref p) = cfg.provider {
+        match p.as_str() {
+            "github-copilot" | "copilot" => {
+                println!("    {} GitHub Copilot (auto token refresh)", "•".dimmed())
+            }
+            "gemini" | "google" => println!("    {} Google Gemini", "•".dimmed()),
+            "openrouter" => println!("    {} OpenRouter", "•".dimmed()),
+            "anthropic" => println!("    {} Anthropic", "•".dimmed()),
+            "ollama" => println!("    {} Ollama (local)", "•".dimmed()),
+            "openai" => println!("    {} OpenAI", "•".dimmed()),
+            other => println!("    {} {} (custom)", "•".dimmed(), other),
+        }
+    } else if let Some(ref key) = cfg.api_key {
         if key.starts_with("ghu_") || key.starts_with("ghp_") {
             println!("    {} GitHub Copilot (auto token refresh)", "•".dimmed());
         } else if key.starts_with("AIza") {
@@ -724,40 +755,55 @@ async fn execute_prompt(agent: &mut Agent, input: &str) -> StopReason {
 
 /// Initialize the provider registry from config.
 fn init_provider(cfg: &config::RuneConfig) -> ProviderRegistry {
-    use crate::provider::CopilotProvider;
-
     let mut registry = ProviderRegistry::new();
 
     if let Some(ref key) = cfg.api_key {
-        // Detect GitHub Copilot PAT (starts with ghu_ or ghp_)
-        let is_copilot = key.starts_with("ghu_")
-            || key.starts_with("ghp_")
-            || cfg
-                .base_url
-                .as_deref()
-                .map(|u| u.contains("githubcopilot"))
-                .unwrap_or(false);
+        // If the user explicitly set --provider / RUNE_PROVIDER, prefer it.
+        // Otherwise auto-detect from api_key prefixes or base_url.
+        let provider_name = cfg.provider.as_deref().unwrap_or_else(|| {
+            if key.starts_with("ghu_")
+                || key.starts_with("ghp_")
+                || cfg
+                    .base_url
+                    .as_deref()
+                    .map(|u| u.contains("githubcopilot"))
+                    .unwrap_or(false)
+            {
+                "github-copilot"
+            } else if key.starts_with("AIza")
+                || cfg
+                    .base_url
+                    .as_deref()
+                    .map(|u| u.contains("generativelanguage.googleapis.com"))
+                    .unwrap_or(false)
+            {
+                "gemini"
+            } else if key.starts_with("sk-or-") {
+                "openrouter"
+            } else {
+                "openai"
+            }
+        });
 
-        // Detect Google Gemini API key (starts with AIza)
-        let is_gemini = key.starts_with("AIza")
-            || cfg
-                .base_url
-                .as_deref()
-                .map(|u| u.contains("generativelanguage.googleapis.com"))
-                .unwrap_or(false);
-
-        if is_copilot {
-            let provider = CopilotProvider::new(key.clone());
-            registry.register(Box::new(provider));
-        } else if is_gemini {
-            use crate::provider::GeminiProvider;
-            let provider =
-                GeminiProvider::new(key.clone(), Some(cfg.model.clone()), cfg.base_url.clone());
-            registry.register(Box::new(provider));
-        } else {
-            let provider =
-                OpenAiProvider::new("openai".to_string(), key.clone(), cfg.base_url.clone());
-            registry.register(Box::new(provider));
+        match provider_name {
+            "github-copilot" | "copilot" => {
+                registry.register(Box::new(CopilotProvider::new(key.clone())));
+            }
+            "gemini" | "google" => {
+                registry.register(Box::new(GeminiProvider::new(
+                    key.clone(),
+                    Some(cfg.model.clone()),
+                    cfg.base_url.clone(),
+                )));
+            }
+            // Default: OpenAI-compatible provider (OpenAI, OpenRouter, Anthropic proxy, Ollama)
+            other => {
+                registry.register(Box::new(OpenAiProvider::new(
+                    other.to_string(),
+                    key.clone(),
+                    cfg.base_url.clone(),
+                )));
+            }
         }
     }
 
