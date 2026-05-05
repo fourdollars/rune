@@ -155,6 +155,7 @@ resources:
       model: gpt-4o-mini
       prompt: "Fetch the weather for Taoyuan from wttr.in using curl."
       sandbox:
+        allowed_commands: ["curl"]
         network:
           allowed_domains: ["wttr.in"]
 
