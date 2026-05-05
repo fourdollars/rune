@@ -860,4 +860,90 @@ mod tests {
             vec!["git", "rm"]
         );
     }
+
+    #[test]
+    fn test_normalize_path_basic() {
+        assert_eq!(
+            ToolRegistry::normalize_path("/home/u/project/."),
+            "/home/u/project"
+        );
+        assert_eq!(
+            ToolRegistry::normalize_path("/home/u/project/./src"),
+            "/home/u/project/src"
+        );
+        assert_eq!(
+            ToolRegistry::normalize_path("/home/u/project/../other"),
+            "/home/u/other"
+        );
+        assert_eq!(
+            ToolRegistry::normalize_path("/home/u/./project/"),
+            "/home/u/project"
+        );
+        assert_eq!(ToolRegistry::normalize_path("/"), "/");
+    }
+
+    #[test]
+    fn test_is_path_in_list_relative_cwd() {
+        let cwd = std::env::current_dir()
+            .unwrap()
+            .to_string_lossy()
+            .to_string();
+        let registry = ToolRegistry::new(vec![]);
+        let list = vec![cwd.clone()];
+        assert!(registry.is_path_in_list("test.md", &list));
+        assert!(registry.is_path_in_list("subdir/file.txt", &list));
+    }
+
+    #[test]
+    fn test_is_path_in_list_dot_dir() {
+        let cwd = std::env::current_dir()
+            .unwrap()
+            .to_string_lossy()
+            .to_string();
+        let allowed = format!("{}/.", cwd);
+        let registry = ToolRegistry::new(vec![]);
+        let list = vec![allowed];
+        assert!(registry.is_path_in_list("myfile.rs", &list));
+    }
+
+    #[test]
+    fn test_is_path_in_list_absolute_match() {
+        let registry = ToolRegistry::new(vec![]);
+        let list = vec!["/tmp".to_string()];
+        assert!(registry.is_path_in_list("/tmp/test.txt", &list));
+        assert!(!registry.is_path_in_list("/home/other.txt", &list));
+    }
+
+    #[test]
+    fn test_is_path_in_list_no_partial_prefix() {
+        let registry = ToolRegistry::new(vec![]);
+        let list = vec!["/tmp".to_string()];
+        assert!(!registry.is_path_in_list("/tmpfoo/file.txt", &list));
+    }
+
+    #[test]
+    fn test_resolve_path_relative() {
+        let registry = ToolRegistry::new(vec![]);
+        let cwd = std::env::current_dir()
+            .unwrap()
+            .to_string_lossy()
+            .to_string();
+        let resolved = registry.resolve_path("hello.txt");
+        assert_eq!(resolved, format!("{}/hello.txt", cwd));
+    }
+
+    #[test]
+    fn test_resolve_path_absolute() {
+        let registry = ToolRegistry::new(vec![]);
+        assert_eq!(registry.resolve_path("/usr/bin/test"), "/usr/bin/test");
+    }
+
+    #[test]
+    fn test_resolve_path_dotdot() {
+        let registry = ToolRegistry::new(vec![]);
+        assert_eq!(
+            registry.resolve_path("/home/u/project/../other/file.txt"),
+            "/home/u/other/file.txt"
+        );
+    }
 }
