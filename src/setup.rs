@@ -449,6 +449,10 @@ pub async fn run_setup() {
                 // Gemini: ensure model is gemini-embedding-2
                 let updated = update_toml_field(emb, "model", "gemini-embedding-2");
                 toml_content.push_str(&updated);
+            } else if provider_choice.trim() == "1" {
+                // Copilot: ensure model is text-embedding-3-small
+                let updated = update_toml_field(emb, "model", "text-embedding-3-small");
+                toml_content.push_str(&updated);
             } else {
                 toml_content.push_str(emb);
             }
