@@ -1013,7 +1013,8 @@ impl Provider for GeminiProvider {
                                 .cloned()
                                 .unwrap_or(Value::Object(serde_json::Map::new()));
                             // Capture thought_signature if present (required for Gemini thinking mode)
-                            let thought_sig = fc
+                            // thought_signature is on the part level, not inside functionCall
+                            let thought_sig = part
                                 .get("thought_signature")
                                 .and_then(|t| t.as_str())
                                 .unwrap_or("")
@@ -1230,7 +1231,7 @@ impl Provider for GeminiProvider {
                                     .get("args")
                                     .cloned()
                                     .unwrap_or(Value::Object(serde_json::Map::new()));
-                                let thought_sig = fc
+                                let thought_sig = part
                                     .get("thought_signature")
                                     .and_then(|t| t.as_str())
                                     .unwrap_or("")
