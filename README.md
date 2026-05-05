@@ -305,6 +305,57 @@ echo "Use @sysadmin skill. Check disk usage." | rune --json --yes
 
 ## Concourse CI Resource Type
 
+### Quick Start — Weather Check
+
+The simplest possible pipeline using Rune as a Concourse resource type:
+
+```yaml
+resource_types:
+  - name: rune-agent
+    type: registry-image
+    source:
+      repository: ghcr.io/fourdollars/rune
+      tag: latest
+
+resources:
+  - name: weather
+    type: rune-agent
+    check_every: 1h
+    source:
+      api_key: ((copilot-pat))
+      model: gpt-4o-mini
+      prompt: "Fetch the weather for Taoyuan from wttr.in using curl."
+      sandbox:
+        network:
+          allowed_domains: ["api.githubcopilot.com", "wttr.in"]
+        filesystem:
+          read_write_paths: ["/tmp"]
+          read_only_paths: ["/usr", "/bin", "/lib", "/etc"]
+
+jobs:
+  - name: weather-check
+    plan:
+      - get: weather
+        trigger: true
+      - task: show
+        config:
+          platform: linux
+          image_resource:
+            type: registry-image
+            source: { repository: ghcr.io/fourdollars/rune, tag: latest }
+          inputs: [{name: weather}]
+          run:
+            path: sh
+            args: [-c, "cat weather/response.txt"]
+```
+
+That's it! Rune handles:
+- AI prompt → tool selection → sandboxed execution → response
+- Network filtering (only `wttr.in` allowed)
+- Automatic version tracking (content hash)
+
+### Detailed Usage
+
 Rune acts as a content-aware Concourse resource type. **All three resource steps (`check` / `in` / `out`) run through the same sandboxed Rune agent pipeline as pipe mode.**
 
 - `check` executes the prompt, hashes the final answer, and returns `{"ref":"sha256:..."}`

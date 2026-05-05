@@ -137,6 +137,52 @@ Rune supports loading skills via `@skill_name` in prompts:
 
 Skills are stored in the `skills_dir` (default: `./skills`).
 
+
+
+## Concourse CI Resource Type
+
+Rune can be used as a Concourse CI resource type. Minimal example:
+
+```yaml
+resource_types:
+  - name: rune-agent
+    type: registry-image
+    source:
+      repository: ghcr.io/fourdollars/rune
+      tag: latest
+
+resources:
+  - name: weather
+    type: rune-agent
+    check_every: 1h
+    source:
+      api_key: ((copilot-pat))
+      model: gpt-4o-mini
+      prompt: "Fetch the weather for Taoyuan from wttr.in using curl."
+      sandbox:
+        network:
+          allowed_domains: ["api.githubcopilot.com", "wttr.in"]
+        filesystem:
+          read_write_paths: ["/tmp"]
+          read_only_paths: ["/usr", "/bin", "/lib", "/etc"]
+
+jobs:
+  - name: weather-check
+    plan:
+      - get: weather
+        trigger: true
+      - task: show
+        config:
+          platform: linux
+          image_resource:
+            type: registry-image
+            source: { repository: ghcr.io/fourdollars/rune, tag: latest }
+          inputs: [{name: weather}]
+          run:
+            path: sh
+            args: [-c, "cat weather/response.txt"]
+```
+
 ## Examples
 
 ```bash
