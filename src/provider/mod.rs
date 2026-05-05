@@ -1928,4 +1928,108 @@ mod tests {
         assert_eq!(part["functionCall"]["name"], "list_dir");
         assert!(part.get("thoughtSignature").is_none() || part["thoughtSignature"].is_null());
     }
+
+    #[test]
+    fn test_gemini_function_call_id_preserved_in_assistant() {
+        // functionCall.id from Gemini should be preserved in reconstructed model message
+        let messages = vec![LlmMessage {
+            role: "assistant".to_string(),
+            content: None,
+            content_parts: None,
+            tool_calls: Some(vec![LlmToolCall {
+                id: "execute_cmd|iofonrJ2|sigABC".to_string(),
+                call_type: "function".to_string(),
+                function: LlmFunction {
+                    name: "execute_cmd".to_string(),
+                    arguments: r#"{"cmd":"echo hi"}"#.to_string(),
+                },
+            }]),
+            tool_call_id: None,
+        }];
+        let (_, contents) = GeminiProvider::convert_messages(&messages);
+        let fc = &contents[0]["parts"][0]["functionCall"];
+        assert_eq!(fc["name"], "execute_cmd");
+        assert_eq!(fc["id"], "iofonrJ2");
+    }
+
+    #[test]
+    fn test_gemini_function_response_includes_id() {
+        // functionResponse should include the id from functionCall
+        let messages = vec![LlmMessage {
+            role: "tool".to_string(),
+            content: Some(r#"{"result":"hello"}"#.to_string()),
+            content_parts: None,
+            tool_calls: None,
+            tool_call_id: Some("execute_cmd|iofonrJ2|sigXYZ".to_string()),
+        }];
+        let (_, contents) = GeminiProvider::convert_messages(&messages);
+        let fr = &contents[0]["parts"][0]["functionResponse"];
+        assert_eq!(fr["name"], "execute_cmd");
+        assert_eq!(fr["id"], "iofonrJ2");
+        // thoughtSignature at part level
+        assert_eq!(contents[0]["parts"][0]["thoughtSignature"], "sigXYZ");
+    }
+
+    #[test]
+    fn test_gemini_id_format_parsing_all_fields() {
+        // Full ID format: "fn_name|fc_id|thought_sig"
+        let messages = vec![
+            LlmMessage {
+                role: "assistant".to_string(),
+                content: Some("Let me check.".to_string()),
+                content_parts: None,
+                tool_calls: Some(vec![LlmToolCall {
+                    id: "fetch_url|abc123|longThoughtSigBase64==".to_string(),
+                    call_type: "function".to_string(),
+                    function: LlmFunction {
+                        name: "fetch_url".to_string(),
+                        arguments: r#"{"url":"https://example.com"}"#.to_string(),
+                    },
+                }]),
+                tool_call_id: None,
+            },
+            LlmMessage {
+                role: "tool".to_string(),
+                content: Some(r#"{"body":"<html>..."}"#.to_string()),
+                content_parts: None,
+                tool_calls: None,
+                tool_call_id: Some("fetch_url|abc123|longThoughtSigBase64==".to_string()),
+            },
+        ];
+        let (_, contents) = GeminiProvider::convert_messages(&messages);
+        // Assistant (model) message
+        let model_part = &contents[0]["parts"][1];
+        assert_eq!(model_part["functionCall"]["name"], "fetch_url");
+        assert_eq!(model_part["functionCall"]["id"], "abc123");
+        assert_eq!(model_part["thoughtSignature"], "longThoughtSigBase64==");
+        // Tool (function) response
+        let tool_part = &contents[1]["parts"][0];
+        assert_eq!(tool_part["functionResponse"]["name"], "fetch_url");
+        assert_eq!(tool_part["functionResponse"]["id"], "abc123");
+        assert_eq!(tool_part["thoughtSignature"], "longThoughtSigBase64==");
+    }
+
+    #[test]
+    fn test_gemini_empty_fc_id_not_included() {
+        // When fc_id is empty, id field should not be in the output
+        let messages = vec![LlmMessage {
+            role: "assistant".to_string(),
+            content: None,
+            content_parts: None,
+            tool_calls: Some(vec![LlmToolCall {
+                id: "list_dir||".to_string(),
+                call_type: "function".to_string(),
+                function: LlmFunction {
+                    name: "list_dir".to_string(),
+                    arguments: r#"{"path":"."}"#.to_string(),
+                },
+            }]),
+            tool_call_id: None,
+        }];
+        let (_, contents) = GeminiProvider::convert_messages(&messages);
+        let fc = &contents[0]["parts"][0]["functionCall"];
+        assert_eq!(fc["name"], "list_dir");
+        // Empty id should not be present
+        assert!(fc.get("id").is_none() || fc["id"].is_null());
+    }
 }
