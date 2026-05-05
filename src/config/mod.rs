@@ -143,70 +143,89 @@ struct PartialConfig {
     name = "rune",
     version,
     about = "ᚱ Rune — High-performance zero-trust AI Agent",
-    long_about = "ᚱ Rune — High-performance zero-trust AI Agent\n\n\
-        Single binary, dual mode: interactive CLI assistant and Concourse CI resource type.\n\
-        All tool executions are sandboxed with network isolation (unshare --user --net).\n\n\
-        SUBCOMMANDS:\n  \
-        rune init    Interactive setup wizard to configure LLM provider\n\n\
-        EXAMPLES:\n  \
-        rune                 Start interactive CLI\n  \
-        rune init            Run setup wizard\n  \
-        rune --model gpt-4o  Start with a specific model\n\n\
-        CONFIG PRECEDENCE:\n  \
-        CLI flags > env vars (RUNE_*) > .rune/rune.toml > ~/.rune/rune.toml > defaults"
+    long_about = "ᚱ Rune — High-performance zero-trust AI Agent\n\
+\n\
+Single binary, dual mode: interactive CLI assistant and Concourse CI\n\
+resource type. Every tool execution is sandboxed through 5 kernel-level\n\
+isolation layers (cgroups, seccomp, landlock, net-guard, namespace).\n\
+\n\
+SUBCOMMANDS:\n\
+  rune init              Interactive setup wizard\n\
+\n\
+EXAMPLES:\n\
+  rune                   Start interactive CLI (streaming, confirm mode)\n\
+  rune init              Run first-time setup wizard\n\
+  rune --provider gemini Start with Google Gemini\n\
+  rune --model gpt-4o    Override model\n\
+  rune --yes             Auto-approve tool execution\n\
+  rune --json            Machine-readable JSON output\n\
+  echo \"...\" | rune     Pipe mode (one-shot, non-interactive)\n\
+\n\
+CONFIG PRECEDENCE:\n\
+  CLI flags > env vars (RUNE_*) > ./rune.toml > .rune/rune.toml > ~/.rune/rune.toml > defaults\n\
+\n\
+TOOLS (built-in, all sandboxed):\n\
+  read_file, write_file, list_dir, execute_cmd, fetch_url, inspect_process\n\
+\n\
+SANDBOX LAYERS:\n\
+  1. cgroups v2 (memory + process limits)\n\
+  2. rune-net-guard (seccomp user notification — per-domain network filter)\n\
+  3. rune-seccomp (BPF syscall filter)\n\
+  4. rune-landlock (filesystem restriction)\n\
+  5. DNS allowlist (wildcard domain support)"
 )]
 struct CliArgs {
-    /// LLM model name (e.g. gpt-4o-mini, anthropic/claude-3.5-sonnet)
-    #[arg(long, env = "RUNE_MODEL")]
-    model: Option<String>,
-
-    /// LLM provider API key
-    #[arg(long, env = "RUNE_API_KEY")]
-    api_key: Option<String>,
-
-    /// Provider base URL (default: https://api.openai.com/v1)
-    #[arg(long, env = "RUNE_BASE_URL")]
-    base_url: Option<String>,
-
-    /// Directory containing skill definitions
-    #[arg(long, env = "RUNE_SKILLS_DIR")]
-    skills_dir: Option<String>,
-
-    /// Log level: trace, debug, info, warn, error
-    #[arg(long, env = "RUNE_LOG_LEVEL")]
-    log_level: Option<String>,
-
-    /// Maximum agent loop iterations per run
-    #[arg(long, env = "RUNE_MAX_STEPS")]
-    max_steps: Option<u32>,
-
-    /// Maximum tokens per run
-    #[arg(long, env = "RUNE_TOKEN_BUDGET")]
-    token_budget: Option<u32>,
-
-    /// Default command timeout in seconds
-    #[arg(long, env = "RUNE_TIMEOUT_SECS")]
-    timeout_secs: Option<u64>,
-
-    /// Enable trace recording to .rune/traces/
-    #[arg(long, env = "RUNE_TRACE")]
-    trace: Option<bool>,
-
-    /// LLM provider: github-copilot, gemini, openai, openrouter, ollama, anthropic
-    #[arg(long, env = "RUNE_PROVIDER")]
+    /// LLM provider [github-copilot, gemini, openai, openrouter, ollama, anthropic]
+    #[arg(long, env = "RUNE_PROVIDER", help_heading = "Provider")]
     provider: Option<String>,
 
-    /// Policy mode: confirm, allowlist, or unrestricted
-    #[arg(long, env = "RUNE_POLICY_MODE")]
+    /// Model name [e.g. gpt-4o, gemini-2.0-flash, claude-3.5-sonnet]
+    #[arg(long, env = "RUNE_MODEL", help_heading = "Provider")]
+    model: Option<String>,
+
+    /// API key for the LLM provider
+    #[arg(long, env = "RUNE_API_KEY", help_heading = "Provider")]
+    api_key: Option<String>,
+
+    /// Provider base URL (auto-detected for Copilot/Gemini)
+    #[arg(long, env = "RUNE_BASE_URL", help_heading = "Provider")]
+    base_url: Option<String>,
+
+    /// Sandbox policy: confirm (interactive), allowlist (pipe/CI), unrestricted
+    #[arg(long, env = "RUNE_POLICY_MODE", help_heading = "Security")]
     policy_mode: Option<String>,
 
-    /// Output in JSON format (machine-readable)
-    #[arg(long, action = clap::ArgAction::SetTrue)]
+    /// Auto-approve dangerous tool calls (does NOT bypass policy allowlist)
+    #[arg(long, short = 'y', action = clap::ArgAction::SetTrue, help_heading = "Security")]
+    yes: bool,
+
+    /// Maximum agent loop iterations [default: unlimited]
+    #[arg(long, env = "RUNE_MAX_STEPS", help_heading = "Limits")]
+    max_steps: Option<u32>,
+
+    /// Maximum tokens per run [default: unlimited]
+    #[arg(long, env = "RUNE_TOKEN_BUDGET", help_heading = "Limits")]
+    token_budget: Option<u32>,
+
+    /// Command timeout in seconds [default: 30]
+    #[arg(long, env = "RUNE_TIMEOUT_SECS", help_heading = "Limits")]
+    timeout_secs: Option<u64>,
+
+    /// Output in JSON format (machine-readable, for scripting)
+    #[arg(long, action = clap::ArgAction::SetTrue, help_heading = "Output")]
     json: bool,
 
-    /// Auto-approve tool execution prompts (does not bypass policy allowlist checks)
-    #[arg(long, short = 'y', action = clap::ArgAction::SetTrue)]
-    yes: bool,
+    /// Enable trace recording to .rune/traces/
+    #[arg(long, env = "RUNE_TRACE", help_heading = "Output")]
+    trace: Option<bool>,
+
+    /// Log level [trace, debug, info, warn, error]
+    #[arg(long, env = "RUNE_LOG_LEVEL", help_heading = "Output")]
+    log_level: Option<String>,
+
+    /// Directory containing skill definitions
+    #[arg(long, env = "RUNE_SKILLS_DIR", help_heading = "Advanced")]
+    skills_dir: Option<String>,
 }
 
 fn parse_boolish(value: &str) -> Option<bool> {
