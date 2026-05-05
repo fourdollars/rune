@@ -140,6 +140,8 @@ impl SandboxExecutor {
             }
         }
 
+        let mut use_net_guard_empty = false;
+
         // Layer 2: Network isolation strategy
         //  - allowed_domains contains "*" → no restriction
         //  - allowed_domains non-empty (specific domains) → rune-net-guard (seccomp user notification)
@@ -158,12 +160,21 @@ impl SandboxExecutor {
                 info!(domains = ?self.config.allowed_domains, "sandbox: net-guard active");
             }
         } else if has_unshare {
+            // Full isolation via network namespace
             wrapper_parts.push("unshare --user --net --".to_string());
             active_layers.push("netns(isolated)".to_string());
             info!("sandbox: network namespace fully isolated");
         } else {
-            warn!("sandbox: unshare not available, skipping network isolation");
-            degraded = true;
+            // Fallback: use rune-net-guard with empty allowlist (blocks all non-loopback)
+            let has_net_guard_fallback = probe_tool("rune-net-guard").await;
+            if has_net_guard_fallback {
+                use_net_guard_empty = true;
+                active_layers.push("net-guard(none)".to_string());
+                info!("sandbox: net-guard blocking all (empty allowlist, unshare unavailable)");
+            } else {
+                warn!("sandbox: no network isolation available (unshare and rune-net-guard both unavailable)");
+                degraded = true;
+            }
         }
 
         // Layer 3: Seccomp filter via rune-seccomp
@@ -185,7 +196,10 @@ impl SandboxExecutor {
         }
 
         // Network guard layer
-        let mut net_guard_wrapper = None;
+        let mut net_guard_wrapper: Option<String> = None;
+        if use_net_guard_empty {
+            net_guard_wrapper = Some("rune-net-guard --allow-domains \"\" --".to_string());
+        }
         if !self.config.allowed_domains.is_empty()
             && !self.config.allowed_domains.iter().any(|d| d == "*")
         {

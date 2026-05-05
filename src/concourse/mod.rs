@@ -25,6 +25,20 @@ pub struct ResourceSource {
     pub pre_commands: Vec<String>,
     /// Sandbox configuration (network/filesystem/syscalls/resources).
     pub sandbox: Option<Value>,
+    /// Policy fields (can be at source level instead of nested in sandbox).
+    #[serde(default)]
+    pub policy: Option<SourcePolicySpec>,
+}
+
+/// Top-level policy spec for resource source.
+#[derive(Debug, Clone, Deserialize, Default)]
+pub struct SourcePolicySpec {
+    #[serde(default)]
+    pub allowed_commands: Vec<String>,
+    #[serde(default)]
+    pub allowed_domains: Vec<String>,
+    #[serde(default)]
+    pub allowed_syscalls: Vec<String>,
 }
 
 /// Parameters for put step.
@@ -165,6 +179,12 @@ fn sandbox_spec(source: &ResourceSource) -> Option<SandboxSpec> {
 /// Merge Concourse sandbox config into Rune policy config.
 fn build_policy_from_source(source: &ResourceSource) -> PolicyConfig {
     let mut policy = PolicyConfig::default();
+    // Merge from source.policy (top-level)
+    if let Some(ref p) = source.policy {
+        extend_unique(&mut policy.allowed_commands, p.allowed_commands.clone());
+        extend_unique(&mut policy.allowed_domains, p.allowed_domains.clone());
+        extend_unique(&mut policy.allowed_syscalls, p.allowed_syscalls.clone());
+    }
     if let Some(spec) = sandbox_spec(source) {
         extend_unique(&mut policy.allowed_domains, spec.network.allowed_domains);
         extend_unique(&mut policy.allowed_commands, spec.allowed_commands);
@@ -681,6 +701,7 @@ mod tests {
             base_url: None,
             prompt: None,
             pre_commands: vec![],
+            policy: None,
             sandbox: Some(json!({
                 "network": {"allowed_domains": ["github.com"]},
                 "filesystem": {
@@ -720,6 +741,7 @@ mod tests {
             base_url: None,
             prompt: None,
             pre_commands: vec![],
+            policy: None,
             sandbox: None,
         };
         let cfg = build_runtime_config(&source);
@@ -737,6 +759,7 @@ mod tests {
             base_url: None,
             prompt: None,
             pre_commands: vec![],
+            policy: None,
             sandbox: Some(json!({
                 "policy_mode": "unrestricted"
             })),
@@ -756,6 +779,7 @@ mod tests {
             base_url: None,
             prompt: None,
             pre_commands: vec![],
+            policy: None,
             sandbox: Some(json!({
                 "policy_mode": "confirm"
             })),
