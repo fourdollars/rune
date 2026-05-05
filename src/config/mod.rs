@@ -17,9 +17,10 @@ pub struct PolicyConfig {
     /// Network domains allowed (empty = block all).
     #[serde(default)]
     pub allowed_domains: Vec<String>,
-    /// Syscalls to deny via seccomp.
+    /// Dangerous syscalls to ALLOW through seccomp (empty = block all dangerous syscalls).
+    /// Dangerous syscalls: ptrace, mount, kexec_load, bpf, setns, unshare
     #[serde(default)]
-    pub denied_syscalls: Vec<String>,
+    pub allowed_syscalls: Vec<String>,
     /// Paths with read-write access.
     #[serde(default)]
     pub allowed_paths_rw: Vec<String>,
@@ -43,13 +44,7 @@ impl Default for PolicyConfig {
             mode: "confirm".to_string(),
             allowed_commands: Vec::new(),
             allowed_domains: Vec::new(),
-            denied_syscalls: vec![
-                "ptrace".to_string(),
-                "mount".to_string(),
-                "kexec_load".to_string(),
-                "bpf".to_string(),
-                "setns".to_string(),
-            ],
+            allowed_syscalls: Vec::new(), // empty = block all dangerous syscalls
             allowed_paths_rw: vec!["/tmp".to_string()],
             allowed_paths_ro: vec!["/bin".to_string(), "/usr".to_string(), "/lib".to_string()],
             denied_paths: vec!["/root".to_string(), "/etc/shadow".to_string()],
@@ -673,9 +668,7 @@ mod config_tests {
         assert_eq!(p.mode, "confirm");
         assert!(p.allowed_commands.is_empty());
         assert!(p.allowed_domains.is_empty());
-        assert!(p.denied_syscalls.contains(&"ptrace".to_string()));
-        assert!(p.denied_syscalls.contains(&"mount".to_string()));
-        assert!(p.denied_syscalls.contains(&"bpf".to_string()));
+        assert!(p.allowed_syscalls.is_empty()); // empty = block all dangerous syscalls
         assert!(p.allowed_paths_rw.contains(&"/tmp".to_string()));
         assert!(p.allowed_paths_ro.contains(&"/bin".to_string()));
         assert!(p.denied_paths.contains(&"/root".to_string()));

@@ -120,7 +120,7 @@ struct SandboxFilesystemSpec {
 #[derive(Debug, Clone, Deserialize, Default)]
 struct SandboxSyscallsSpec {
     #[serde(default)]
-    deny: Vec<String>,
+    allow: Vec<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
@@ -177,7 +177,7 @@ fn build_policy_from_source(source: &ResourceSource) -> PolicyConfig {
             spec.filesystem.read_only_paths,
         );
         extend_unique(&mut policy.denied_paths, spec.filesystem.denied_paths);
-        extend_unique(&mut policy.denied_syscalls, spec.syscalls.deny);
+        extend_unique(&mut policy.allowed_syscalls, spec.syscalls.allow);
         if let Some(max_memory_mb) = spec.resources.max_memory_mb {
             policy.max_memory_mb = max_memory_mb;
         }
@@ -208,6 +208,7 @@ fn build_sandbox_config(source: &ResourceSource) -> SandboxConfig {
             memory_limit: 0,
             cpu_limit_secs: 0,
             max_pids: 0,
+            allowed_syscalls: vec!["*".to_string()],
         };
     }
 
@@ -222,6 +223,7 @@ fn build_sandbox_config(source: &ResourceSource) -> SandboxConfig {
         read_only_paths: policy.allowed_paths_ro.iter().map(PathBuf::from).collect(),
         denied_paths: policy.denied_paths.iter().map(PathBuf::from).collect(),
         timeout_secs,
+        allowed_syscalls: policy.allowed_syscalls.clone(),
         uid: 0,
         gid: 0,
         memory_limit: policy.max_memory_mb.saturating_mul(1024 * 1024),
@@ -686,7 +688,7 @@ mod tests {
                     "read_only_paths": ["/usr"],
                     "denied_paths": ["/root"]
                 },
-                "syscalls": {"deny": ["ptrace"]},
+                "syscalls": {"allow": ["ptrace"]},
                 "resources": {"timeout_secs": 10, "max_memory_mb": 256, "max_pids": 32}
             })),
         };
@@ -696,7 +698,7 @@ mod tests {
         assert!(policy.allowed_paths_rw.contains(&"/workspace".to_string()));
         assert!(policy.allowed_paths_ro.contains(&"/usr".to_string()));
         assert!(policy.denied_paths.contains(&"/root".to_string()));
-        assert!(policy.denied_syscalls.contains(&"ptrace".to_string()));
+        assert!(policy.allowed_syscalls.contains(&"ptrace".to_string()));
         assert_eq!(policy.max_memory_mb, 256);
         assert_eq!(policy.max_pids, 32);
 

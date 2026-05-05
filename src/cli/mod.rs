@@ -476,7 +476,7 @@ fn show_policy_summary(cfg: &config::RuneConfig) {
     println!(
         "  {} denied syscalls: {}",
         "•".dimmed(),
-        p.denied_syscalls.join(", ")
+        p.allowed_syscalls.join(", ")
     );
     println!(
         "  {} paths rw: {}",

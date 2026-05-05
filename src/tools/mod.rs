@@ -32,7 +32,7 @@ impl ToolOutput {
 pub struct ToolRegistry {
     policy_mode: String,
     policy_allowed_commands: Vec<String>,
-    policy_denied_syscalls: Vec<String>,
+    policy_allowed_syscalls: Vec<String>,
     policy_denied_paths: Vec<String>,
     policy_allowed_paths_rw: Vec<String>,
     policy_allowed_paths_ro: Vec<String>,
@@ -47,7 +47,7 @@ impl ToolRegistry {
             allowed_domains: Vec::new(),
             policy_mode: "confirm".to_string(),
             policy_allowed_commands: Vec::new(),
-            policy_denied_syscalls: Vec::new(),
+            policy_allowed_syscalls: Vec::new(),
             policy_denied_paths: Vec::new(),
             policy_allowed_paths_rw: Vec::new(),
             policy_allowed_paths_ro: Vec::new(),
@@ -91,7 +91,7 @@ impl ToolRegistry {
     pub fn set_policy(&mut self, policy: &crate::config::PolicyConfig) {
         self.policy_mode = policy.mode.clone();
         self.policy_allowed_commands = policy.allowed_commands.clone();
-        self.policy_denied_syscalls = policy.denied_syscalls.clone();
+        self.policy_allowed_syscalls = policy.allowed_syscalls.clone();
         self.policy_denied_paths = policy.denied_paths.clone();
         self.policy_allowed_paths_rw = policy.allowed_paths_rw.clone();
         self.policy_allowed_paths_ro = policy.allowed_paths_ro.clone();
@@ -133,6 +133,7 @@ impl ToolRegistry {
             read_write_paths: self.allowed_dirs.clone(),
             read_only_paths: read_only,
             allowed_domains: self.allowed_domains.clone(),
+            allowed_syscalls: self.policy_allowed_syscalls.clone(),
 
             ..SandboxConfig::default()
         };

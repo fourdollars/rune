@@ -63,24 +63,59 @@ fn bpf_jump(code: u16, k: u32, jt: u8, jf: u8) -> SockFilter {
     SockFilter { code, jt, jf, k }
 }
 
+fn syscall_name_to_nr(name: &str) -> Option<u32> {
+    match name.trim() {
+        "ptrace" => Some(SYS_PTRACE),
+        "mount" => Some(SYS_MOUNT),
+        "unshare" => Some(SYS_UNSHARE),
+        "kexec_load" => Some(SYS_KEXEC_LOAD),
+        "bpf" => Some(SYS_BPF),
+        "setns" => Some(SYS_SETNS),
+        "socket" => Some(SYS_SOCKET),
+        "connect" => Some(SYS_CONNECT),
+        "accept" => Some(SYS_ACCEPT),
+        "bind" => Some(SYS_BIND),
+        "listen" => Some(SYS_LISTEN),
+        _ => None,
+    }
+}
+
 fn main() {
     let args: Vec<String> = env::args().collect();
     if args.len() < 2 {
-        eprintln!("Usage: rune-seccomp [--block-network] <command> [args...]");
+        eprintln!(
+            "Usage: rune-seccomp [--block-network] [--allow-syscalls <list>] <command> [args...]"
+        );
         std::process::exit(1);
     }
 
     let mut block_net = false;
+    let mut allowed_syscalls: Vec<String> = Vec::new();
     let mut cmd_idx = 1;
-    if args[1] == "--block-network" {
-        block_net = true;
-        cmd_idx = 2;
+
+    let mut i = 1;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--block-network" => block_net = true,
+            "--allow-syscalls" => {
+                i += 1;
+                if i < args.len() {
+                    allowed_syscalls = args[i].split(',').map(|s| s.trim().to_string()).collect();
+                }
+            }
+            _ => {
+                cmd_idx = i;
+                break;
+            }
+        }
+        i += 1;
     }
     if cmd_idx >= args.len() {
         std::process::exit(1);
     }
 
-    let mut blocked = vec![
+    // Build blocked list: all dangerous syscalls EXCEPT those in allowed_syscalls
+    let all_dangerous = vec![
         SYS_PTRACE,
         SYS_MOUNT,
         SYS_UNSHARE,
@@ -88,6 +123,24 @@ fn main() {
         SYS_BPF,
         SYS_SETNS,
     ];
+
+    // If allowed_syscalls contains "*", block nothing
+    let wildcard = allowed_syscalls.iter().any(|s| s == "*");
+
+    let mut blocked: Vec<u32> = if wildcard {
+        Vec::new()
+    } else {
+        all_dangerous
+            .into_iter()
+            .filter(|&nr| {
+                // Keep in blocked list only if NOT in allowed_syscalls
+                !allowed_syscalls
+                    .iter()
+                    .any(|name| syscall_name_to_nr(name) == Some(nr))
+            })
+            .collect()
+    };
+
     if block_net {
         blocked.push(SYS_SOCKET);
         blocked.push(SYS_CONNECT);

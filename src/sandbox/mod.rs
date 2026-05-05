@@ -29,6 +29,8 @@ pub struct SandboxConfig {
     pub cpu_limit_secs: u64,
     /// Max number of child processes (0 = no limit).
     pub max_pids: u32,
+    /// Dangerous syscalls to allow through (empty = block all dangerous).
+    pub allowed_syscalls: Vec<String>,
 }
 
 impl Default for SandboxConfig {
@@ -50,6 +52,7 @@ impl Default for SandboxConfig {
             memory_limit: 512 * 1024 * 1024, // 512MB default
             cpu_limit_secs: 0,
             max_pids: 64,
+            allowed_syscalls: Vec::new(),
         }
     }
 }
@@ -305,12 +308,18 @@ impl SandboxExecutor {
             .unwrap_or(false);
 
         if rune_seccomp {
-            info!("sandbox: seccomp via rune-seccomp (BPF filter: ptrace,mount,unshare,kexec_load,bpf,setns)");
-            if block_net {
-                return Some("rune-seccomp --block-network".to_string());
-            } else {
-                return Some("rune-seccomp".to_string());
+            let mut cmd = "rune-seccomp".to_string();
+            if !self.config.allowed_syscalls.is_empty() {
+                cmd.push_str(&format!(
+                    " --allow-syscalls {}",
+                    self.config.allowed_syscalls.join(",")
+                ));
             }
+            if block_net {
+                cmd.push_str(" --block-network");
+            }
+            info!(allowed = ?self.config.allowed_syscalls, "sandbox: seccomp via rune-seccomp");
+            return Some(cmd);
         }
 
         // Fallback: setpriv --no-new-privs (weaker but still useful)
