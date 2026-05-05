@@ -375,7 +375,39 @@ pub async fn run_setup() {
     }
     println!();
 
-    // 6. Build config — preserve existing [policy] and [embedding] sections
+    // 6. Thinking level
+    println!("{}", "6. Thinking (reasoning effort):".bold());
+    println!("   {} off     — no extended reasoning", "[1]".cyan());
+    println!("   {} low     — minimal reasoning", "[2]".cyan());
+    println!("   {} medium  — balanced", "[3]".cyan());
+    println!("   {} high    — deep reasoning", "[4]".cyan());
+    println!("   {} xhigh   — maximum reasoning effort", "[5]".cyan());
+    if let Some(ref t) = existing.thinking {
+        println!("   {}", format!("(current: {})", t).dimmed());
+    }
+    println!();
+    let thinking_default = existing.thinking.as_deref().unwrap_or("off");
+    let thinking_prompt = format!(
+        "  Select [1-5] or type level (Enter={}): ",
+        thinking_default
+    );
+    let thinking_input = prompt(&thinking_prompt).unwrap_or_default();
+    let thinking = if thinking_input.trim().is_empty() {
+        thinking_default.to_string()
+    } else {
+        match thinking_input.trim() {
+            "1" | "off" | "none" => "off".to_string(),
+            "2" | "low" => "low".to_string(),
+            "3" | "medium" => "medium".to_string(),
+            "4" | "high" => "high".to_string(),
+            "5" | "xhigh" => "xhigh".to_string(),
+            other => other.to_string(),
+        }
+    };
+    println!("  {} Thinking: {}", "✓".green(), thinking.cyan());
+    println!();
+
+    // 7. Build config — preserve existing [policy] and [embedding] sections
     let config_dir = dirs_home().join(".rune");
     let config_path = config_dir.join("rune.toml");
 
@@ -390,8 +422,8 @@ pub async fn run_setup() {
     }
     toml_content.push_str(&format!("skills_dir = \"{}\"\n", skills_dir));
     toml_content.push_str("log_level = \"warn\"\n");
-    if let Some(ref t) = existing.thinking {
-        toml_content.push_str(&format!("thinking = \"{}\"\n", t));
+    if thinking != "off" && thinking != "none" {
+        toml_content.push_str(&format!("thinking = \"{}\"\n", thinking));
     }
     toml_content.push('\n');
 

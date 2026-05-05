@@ -159,7 +159,7 @@ fn print_help() {
     println!(
         "    {:<24} {}",
         "/thinking [level]".green(),
-        "Show/set thinking: none|low|medium|high"
+        "Show/set thinking: off|low|medium|high|xhigh"
     );
     println!("    {:<24} {}", "/version".green(), "Show version info");
     println!("    {:<24} {}", "/help".green(), "Show this help");
@@ -1104,8 +1104,8 @@ pub async fn run() {
                     println!("{} {}", "Thinking:".bold(), current.cyan());
                 } else {
                     match arg {
-                        "none" | "low" | "medium" | "high" => {
-                            agent.config.thinking = if arg == "none" {
+                        "none" | "off" | "low" | "medium" | "high" | "xhigh" => {
+                            agent.config.thinking = if arg == "none" || arg == "off" {
                                 None
                             } else {
                                 Some(arg.to_string())
@@ -1114,7 +1114,7 @@ pub async fn run() {
                         }
                         _ => {
                             eprintln!(
-                                "  {} Invalid level. Use: none, low, medium, high",
+                                "  {} Invalid level. Use: off, low, medium, high, xhigh",
                                 "⚠".yellow()
                             );
                         }
