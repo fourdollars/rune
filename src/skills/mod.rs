@@ -151,16 +151,17 @@ impl SkillLoader {
                     let skill_file = path.join("SKILL.md");
                     if skill_file.exists() && skill_file.is_file() {
                         if let Ok(raw) = fs::read_to_string(&skill_file) {
-                            let (meta, body) = parse_frontmatter(&raw, &skill_file, None);
+                            let (meta, _body) = parse_frontmatter(&raw, &skill_file, None);
                             let name = meta.name.clone();
                             if seen.contains(&name) {
                                 continue;
                             }
                             seen.insert(name.clone());
-                            let text = match &meta.description {
-                                Some(d) => format!("{}\n\n{}", d, &body[..body.len().min(500)]),
-                                None => body[..body.len().min(500)].to_string(),
-                            };
+                            let text = format!(
+                                "{}: {}",
+                                meta.name,
+                                meta.description.as_deref().unwrap_or("")
+                            );
                             let needs = match store.entries.iter().find(|e| e.key == name) {
                                 Some(e) => e.text != text,
                                 None => true,
