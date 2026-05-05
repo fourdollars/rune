@@ -29,7 +29,7 @@ A high-performance, zero-trust AI agent built in Rust. Single binary, dual mode:
 ## Quick Start
 
 ```bash
-# Build (produces 3 binaries: rune, rune-seccomp, rune-landlock)
+# Build (produces 4 binaries: rune, rune-seccomp, rune-landlock, rune-net-guard)
 cargo build --release
 
 # Interactive setup
@@ -112,9 +112,10 @@ In interactive mode, use ↑/↓ to browse previous prompts. History is persiste
 # ~/.rune/rune.toml
 model = "gpt-4o"
 api_key = "ghu_..."          # GitHub Copilot (auto-detected)
-# api_key = "AIza..."        # Google Gemini
-# api_key = "sk-or-..."      # OpenRouter
-# base_url = "https://..."   # Custom endpoint (not needed for Copilot)
+# provider = "github-copilot"  # explicit (auto-detected if omitted)
+# api_key = "AIza..."        # Google Gemini (provider = "gemini")
+# api_key = "sk-or-..."      # OpenRouter (provider = "openrouter")
+# base_url = "https://..."   # Custom endpoint (not needed for Copilot/Gemini)
 
 skills_dir = "./skills"
 log_level = "warn"
@@ -122,6 +123,9 @@ log_level = "warn"
 # token_budget = 16384    # optional (unlimited if not set)
 # timeout_secs = 30       # optional (unlimited if not set)
 trace = false
+context_window = 128000       # model context window in tokens
+# compact_threshold = 0.85   # auto-compact at this % of context_window
+# compact_keep_last = 6      # keep last N messages when compacting
 
 [policy]
 mode = "confirm"             # confirm | allowlist | unrestricted
@@ -401,7 +405,7 @@ src/
 ## Development
 
 ```bash
-cargo build --release    # Build all 3 binaries
+cargo build --release    # Build all 4 binaries
 cargo test               # Unit tests (95)
 ./tests/e2e.sh           # E2E tests (16)
 make check-all           # Both
@@ -410,8 +414,8 @@ make check-all           # Both
 ## Requirements
 
 - Rust 1.78+ (tested on 1.94-nightly)
-- Linux kernel 5.13+ (for Landlock ABI)
-- `curl` on PATH (only needed for sandboxed fetch_url tool)
+- Linux kernel 5.13+ (Landlock ABI), 5.0+ (seccomp user notification)
+- `curl` on PATH (only needed inside sandbox for `fetch_url` tool) (only needed for sandboxed fetch_url tool)
 
 ## License
 
