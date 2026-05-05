@@ -8,7 +8,7 @@ use std::path::PathBuf;
 pub struct PolicyConfig {
     /// Execution mode:
     /// - "confirm": interactive CLI default — prompts user before dangerous tools
-    /// - "allowlist": pipe/Concourse default — auto-executes within allowlist, blocks the rest
+    /// - "allowlist": pipe/Concourse CI default — auto-executes within allowlist, blocks the rest
     /// - "unrestricted": all policy checks skipped (opt-in via --policy-mode or config)
     pub mode: String,
     /// Commands allowed to execute (enforced in "confirm" and "allowlist" modes).

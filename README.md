@@ -233,7 +233,7 @@ Override with `--policy-mode <mode>`, `RUNE_POLICY_MODE=<mode>`, or in `rune.tom
 mode = "unrestricted"
 ```
 
-In Concourse pipelines, set via `source.sandbox.policy_mode`:
+In Concourse CI pipelines, set via `source.sandbox.policy_mode`:
 
 ```yaml
 resources:
@@ -307,7 +307,7 @@ echo "Use @sysadmin skill. Check disk usage." | rune --json --yes
 
 ### Quick Start — Weather Check
 
-The simplest possible pipeline using Rune as a Concourse resource type:
+The simplest possible pipeline using Rune as a Concourse CI resource type:
 
 ```yaml
 resource_types:
@@ -353,7 +353,7 @@ That's it! Rune handles:
 
 ### Detailed Usage
 
-Rune acts as a content-aware Concourse resource type. **All three resource steps (`check` / `in` / `out`) run through the same sandboxed Rune agent pipeline as pipe mode.**
+Rune acts as a content-aware Concourse CI resource type. **All three resource steps (`check` / `in` / `out`) run through the same sandboxed Rune agent pipeline as pipe mode.**
 
 - `check` executes the prompt, hashes the final answer, and returns `{"ref":"sha256:..."}`
 - `in` re-executes the prompt and writes `payload.json` + `response.txt`
@@ -430,7 +430,7 @@ src/
 ├── main.rs              — Entry point, routing
 ├── agent/mod.rs         — Agent loop, tool orchestration, confirm flow
 ├── cli/mod.rs           — Interactive CLI, commands, JSON mode
-├── concourse/mod.rs     — Concourse check/in/out (sandboxed agent pipeline)
+├── concourse/mod.rs     — Concourse CI check/in/out (sandboxed agent pipeline)
 ├── config/mod.rs        — Layered config + PolicyConfig
 ├── mcp/mod.rs           — MCP client (stdio JSON-RPC)
 ├── precommands.rs       — Pre-command execution

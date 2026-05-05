@@ -28,7 +28,7 @@ async fn main() {
         return;
     }
 
-    // Detect Concourse mode BEFORE clap parses args (in/out receive positional args)
+    // Detect Concourse CI mode BEFORE clap parses args (in/out receive positional args)
     let argv0 = env::args().next().unwrap_or_else(|| "rune".into());
     let prog_name = Path::new(&argv0)
         .file_name()
