@@ -439,42 +439,70 @@ impl Agent {
     }
 
     /// Resolve @skill references in user input and inject skill content as system context.
-    fn inject_skills(&mut self, user_input: &str) {
+    /// If no explicit @skill refs found and embedding is enabled, try semantic search.
+    async fn inject_skills(&mut self, user_input: &str) {
         let skill_refs = SkillLoader::extract_skill_refs(user_input);
-        if skill_refs.is_empty() {
+
+        if !skill_refs.is_empty() {
+            // Explicit @skill references take priority
+            for name in &skill_refs {
+                self.load_and_inject_skill(name);
+            }
             return;
         }
 
-        for name in &skill_refs {
-            match self.skill_loader.load(name) {
-                Ok(skill) => {
-                    info!(skill = %name, "loaded skill");
-                    eprintln!("  {} Loaded skill: {}", "📚".dimmed(), name.green());
-                    // Skill safety: restrict tools if skill defines tools_allow/tools_deny
-                    if let Some(ref allowed) = skill.metadata.tools_allow {
-                        self.skill_tools_allow = Some(allowed.clone());
-                        eprintln!("    {} tools_allow: {}", "🔒".dimmed(), allowed.join(", "));
+        // No explicit refs — try semantic search if embeddings enabled
+        if let Some(ref engine) = self.embedding {
+            if self.config.embedding.enabled {
+                let threshold = self.config.embedding.threshold;
+                match self
+                    .skill_loader
+                    .semantic_search(engine, user_input, threshold, 1)
+                    .await
+                {
+                    Ok(results) if !results.is_empty() => {
+                        let (_score, name) = &results[0];
+                        info!(skill = %name, score = _score, "semantic matched skill");
+                        eprintln!("  {} Semantic skill match: {}", "🔎".dimmed(), name.green());
+                        self.load_and_inject_skill(name);
                     }
-                    if let Some(ref denied) = skill.metadata.tools_deny {
-                        self.skill_tools_deny = Some(denied.clone());
-                        eprintln!("    {} tools_deny: {}", "🔒".dimmed(), denied.join(", "));
+                    Err(e) => {
+                        warn!(error = %e, "semantic skill search failed");
                     }
-                    // Inject skill content as a system message
-                    self.messages.push(LlmMessage {
-                        role: "system".to_string(),
-                        content: Some(format!(
-                            "[Skill: {}]\n{}\n[End Skill: {}]",
-                            skill.metadata.name, skill.content, skill.metadata.name
-                        )),
-                        tool_calls: None,
-                        tool_call_id: None,
-                        content_parts: None,
-                    });
+                    _ => {}
                 }
-                Err(e) => {
-                    warn!(skill = %name, error = %e, "failed to load skill");
-                    eprintln!("  {} Skill '{}' not found: {}", "⚠".yellow(), name, e);
+            }
+        }
+    }
+
+    /// Load a skill by name and inject it as a system message.
+    fn load_and_inject_skill(&mut self, name: &str) {
+        match self.skill_loader.load(name) {
+            Ok(skill) => {
+                info!(skill = %name, "loaded skill");
+                eprintln!("  {} Loaded skill: {}", "📚".dimmed(), name.green());
+                if let Some(ref allowed) = skill.metadata.tools_allow {
+                    self.skill_tools_allow = Some(allowed.clone());
+                    eprintln!("    {} tools_allow: {}", "🔒".dimmed(), allowed.join(", "));
                 }
+                if let Some(ref denied) = skill.metadata.tools_deny {
+                    self.skill_tools_deny = Some(denied.clone());
+                    eprintln!("    {} tools_deny: {}", "🔒".dimmed(), denied.join(", "));
+                }
+                self.messages.push(LlmMessage {
+                    role: "system".to_string(),
+                    content: Some(format!(
+                        "[Skill: {}]\n{}\n[End Skill: {}]",
+                        skill.metadata.name, skill.content, skill.metadata.name
+                    )),
+                    tool_calls: None,
+                    tool_call_id: None,
+                    content_parts: None,
+                });
+            }
+            Err(e) => {
+                warn!(skill = %name, error = %e, "failed to load skill");
+                eprintln!("  {} Skill '{}' not found: {}", "⚠".yellow(), name, e);
             }
         }
     }
@@ -484,7 +512,7 @@ impl Agent {
         // Resolve and inject @skill references
         self.executed_commands.clear();
         self.tool_call_names.clear();
-        self.inject_skills(user_input);
+        self.inject_skills(user_input).await;
 
         // Add user message
         self.messages.push(LlmMessage {

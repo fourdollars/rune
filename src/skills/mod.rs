@@ -5,6 +5,8 @@ use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use crate::embedding::{EmbeddingEngine, VectorStore};
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct SkillMetadata {
     pub name: String,
@@ -117,6 +119,129 @@ impl SkillLoader {
             skills.push(s);
         }
         Ok(skills)
+    }
+
+    /// Index all discoverable skills into a VectorStore for semantic search.
+    pub async fn index_skills(&self, engine: &EmbeddingEngine) -> Result<VectorStore> {
+        let store_path = Self::vector_store_path();
+        let mut store = VectorStore::load(&store_path);
+        let model = engine
+            .config
+            .model
+            .as_deref()
+            .unwrap_or("text-embedding-3-small")
+            .to_string();
+
+        let dirs = self.all_skill_dirs();
+        let mut to_embed_keys: Vec<String> = Vec::new();
+        let mut to_embed_texts: Vec<String> = Vec::new();
+        let mut seen: HashSet<String> = HashSet::new();
+
+        for base in &dirs {
+            if !base.exists() || !base.is_dir() {
+                continue;
+            }
+            let entries = match fs::read_dir(base) {
+                Ok(e) => e,
+                Err(_) => continue,
+            };
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.is_dir() {
+                    let skill_file = path.join("SKILL.md");
+                    if skill_file.exists() && skill_file.is_file() {
+                        if let Ok(raw) = fs::read_to_string(&skill_file) {
+                            let (meta, body) = parse_frontmatter(&raw, &skill_file, None);
+                            let name = meta.name.clone();
+                            if seen.contains(&name) {
+                                continue;
+                            }
+                            seen.insert(name.clone());
+                            let text = match &meta.description {
+                                Some(d) => format!("{}\n\n{}", d, &body[..body.len().min(500)]),
+                                None => body[..body.len().min(500)].to_string(),
+                            };
+                            let needs = match store.entries.iter().find(|e| e.key == name) {
+                                Some(e) => e.text != text,
+                                None => true,
+                            };
+                            if needs {
+                                to_embed_keys.push(name);
+                                to_embed_texts.push(text);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        if !to_embed_keys.is_empty() {
+            for (chunk_idx, texts_chunk) in to_embed_texts.chunks(16).enumerate() {
+                let refs: Vec<&str> = texts_chunk.iter().map(|s| s.as_str()).collect();
+                let vectors = engine.embed(&refs).await?;
+                for (i, vec) in vectors.into_iter().enumerate() {
+                    let global_idx = chunk_idx * 16 + i;
+                    if global_idx >= to_embed_keys.len() {
+                        break;
+                    }
+                    let key = to_embed_keys[global_idx].clone();
+                    let text = to_embed_texts[global_idx].clone();
+                    if store.dimensions == 0 {
+                        store.dimensions = vec.len();
+                    }
+                    store.upsert(key, text, vec);
+                }
+            }
+        }
+
+        store.model = model;
+        store.save(&store_path)?;
+        Ok(store)
+    }
+
+    /// Semantic search for skills relevant to a query.
+    pub async fn semantic_search(
+        &self,
+        engine: &EmbeddingEngine,
+        query: &str,
+        threshold: f32,
+        max_results: usize,
+    ) -> Result<Vec<(f32, String)>> {
+        let store_path = Self::vector_store_path();
+        let store = VectorStore::load(&store_path);
+        if store.entries.is_empty() {
+            return Ok(Vec::new());
+        }
+        let qvec = engine.embed_one(query).await?;
+        let results = store.search(&qvec, threshold, max_results);
+        Ok(results
+            .into_iter()
+            .map(|(s, e)| (s, e.key.clone()))
+            .collect())
+    }
+
+    /// Path for the skill vector store.
+    fn vector_store_path() -> PathBuf {
+        let home = env::var("HOME").unwrap_or_else(|_| ".".to_string());
+        PathBuf::from(home)
+            .join(".rune")
+            .join("vectors")
+            .join("skills.json")
+    }
+
+    /// Collect all skill search directories.
+    fn all_skill_dirs(&self) -> Vec<PathBuf> {
+        let mut dirs: Vec<PathBuf> = self.search_paths.clone();
+        if let Ok(rune_home) = env::var("RUNE_HOME") {
+            dirs.push(PathBuf::from(rune_home).join("skills"));
+        }
+        if let Ok(home) = env::var("HOME") {
+            dirs.push(PathBuf::from(home).join(".rune").join("skills"));
+        }
+        if let Ok(cur) = env::current_dir() {
+            dirs.push(cur.join(".rune").join("skills"));
+        }
+        dirs
     }
 }
 
