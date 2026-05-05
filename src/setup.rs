@@ -373,6 +373,37 @@ pub async fn run_setup() {
             "ℹ".dimmed()
         );
     }
+
+    // 5b. Embedding model (only if enabled)
+    let embedding_model = if embedding_enabled {
+        let default_emb_model = match provider_choice.trim() {
+            "1" => "text-embedding-3-small",
+            "2" => "gemini-embedding-2",
+            "4" => "nvidia/llama-nemotron-embed-vl-1b-v2:free",
+            _ => "text-embedding-3-small",
+        };
+        // Check existing config for model
+        let current_emb_model = existing.embedding_section.as_ref().and_then(|s| {
+            s.lines()
+                .find(|l| l.trim().starts_with("model"))
+                .and_then(|l| l.split('"').nth(1))
+                .map(|s| s.to_string())
+        });
+        let emb_model_default = current_emb_model.as_deref().unwrap_or(default_emb_model);
+        println!();
+        println!("   {}", "Embedding model:".bold());
+        let emb_model_prompt = format!("  Model [{}]: ", emb_model_default);
+        let emb_model_input = prompt(&emb_model_prompt).unwrap_or_default();
+        let model = if emb_model_input.trim().is_empty() {
+            emb_model_default.to_string()
+        } else {
+            emb_model_input.trim().to_string()
+        };
+        println!("  {} Embedding model: {}", "✓".green(), model.cyan());
+        Some(model)
+    } else {
+        None
+    };
     println!();
 
     // 6. Thinking level
@@ -440,31 +471,20 @@ pub async fn run_setup() {
 
     // Embedding section
     if embedding_enabled {
+        let emb_model_str = embedding_model
+            .as_deref()
+            .unwrap_or("text-embedding-3-small");
         if let Some(ref emb) = existing.embedding_section {
-            // Preserve existing embedding config but update model for Gemini
+            // Update model in existing section to what user chose
             if !toml_content.ends_with('\n') {
                 toml_content.push('\n');
             }
-            if provider_choice.trim() == "2" {
-                // Gemini: ensure model is gemini-embedding-2
-                let updated = update_toml_field(emb, "model", "gemini-embedding-2");
-                toml_content.push_str(&updated);
-            } else if provider_choice.trim() == "1" {
-                // Copilot: ensure model is text-embedding-3-small
-                let updated = update_toml_field(emb, "model", "text-embedding-3-small");
-                toml_content.push_str(&updated);
-            } else {
-                toml_content.push_str(emb);
-            }
+            let updated = update_toml_field(emb, "model", emb_model_str);
+            toml_content.push_str(&updated);
         } else {
             toml_content.push_str("\n[embedding]\n");
             toml_content.push_str("enabled = true\n");
-            let emb_model = if provider_choice.trim() == "2" {
-                "gemini-embedding-2"
-            } else {
-                "text-embedding-3-small"
-            };
-            toml_content.push_str(&format!("model = \"{}\"\n", emb_model));
+            toml_content.push_str(&format!("model = \"{}\"\n", emb_model_str));
             toml_content.push_str("threshold = 0.3\n");
         }
     }

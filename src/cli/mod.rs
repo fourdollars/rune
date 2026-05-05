@@ -989,6 +989,10 @@ pub async fn run() {
             }
             Some(crate::embedding::EmbeddingEngine::new(emb_cfg))
         } else {
+            // For other providers (OpenRouter, OpenAI, etc.): use main base_url if set
+            if emb_cfg.base_url.is_none() {
+                emb_cfg.base_url = cfg.base_url.clone();
+            }
             Some(crate::embedding::EmbeddingEngine::new(emb_cfg))
         }
     } else {
