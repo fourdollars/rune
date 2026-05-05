@@ -752,14 +752,16 @@ impl Agent {
                         }
                     }
 
-                    // Persist ALL binaries in the pipeline, not just the first one
-                    let all_binaries = Self::extract_all_command_binaries(&args);
-                    for bin in &all_binaries {
-                        if !self.config.policy.allowed_commands.contains(bin) {
-                            self.tools.add_allowed_command(bin);
-                            self.config.policy.allowed_commands.push(bin.clone());
-                            crate::config::persist_command(bin);
-                            added.push(format!("command '{}' → allowed_commands", bin));
+                    // Persist only the command currently being confirmed.
+                    // Later pipeline commands will be prompted separately when they are reached.
+                    if tc.function.name == "execute_cmd" {
+                        if let Some(ref bin) = involved_cmd {
+                            if !self.config.policy.allowed_commands.contains(bin) {
+                                self.tools.add_allowed_command(bin);
+                                self.config.policy.allowed_commands.push(bin.clone());
+                                crate::config::persist_command(bin);
+                                added.push(format!("command '{}' → allowed_commands", bin));
+                            }
                         }
                     }
 
@@ -838,9 +840,13 @@ impl Agent {
             }
         }
 
-        let output = self.tools.execute(&tc.function.name, args.clone()).await;
+        let mut output = self.tools.execute(&tc.function.name, args.clone()).await;
 
-        if output.is_error {
+        loop {
+            if !output.is_error {
+                break;
+            }
+
             // Check if it's a domain block we can interactively resolve
             if let Some(domain) = Self::extract_blocked_domain(&output.content) {
                 if self.interactive {
@@ -863,26 +869,8 @@ impl Agent {
                             )
                             .green()
                         );
-                        // Retry the tool call
-                        let retry_output = self.tools.execute(&tc.function.name, args).await;
-                        if retry_output.is_error {
-                            eprintln!(
-                                "  {} {}",
-                                "✗".red(),
-                                retry_output.content[..retry_output.content.len().min(200)]
-                                    .dimmed()
-                            );
-                            if Self::is_policy_blocked(&retry_output.content) {
-                                return Err(StopReason::Error(retry_output.content));
-                            }
-                        } else {
-                            eprintln!(
-                                "  {} {}",
-                                "✓".green(),
-                                format!("{}...ok", tc.function.name).dimmed()
-                            );
-                        }
-                        return Ok(retry_output.content);
+                        output = self.tools.execute(&tc.function.name, args.clone()).await;
+                        continue;
                     }
                 }
                 // User said no, or non-interactive
@@ -894,6 +882,45 @@ impl Agent {
                 return Err(StopReason::Error(output.content));
             }
 
+            // Check if it's a command block we can interactively resolve
+            if let Some(command) = Self::extract_blocked_command(&output.content) {
+                if self.interactive {
+                    eprint!(
+                        "\n  {} Add '{}' to allowed_commands? [Y/n] ",
+                        "🔓".yellow(),
+                        command
+                    );
+                    std::io::Write::flush(&mut std::io::stderr()).ok();
+                    let answer = Self::prompt_yn();
+                    if answer {
+                        self.tools.add_allowed_command(&command);
+                        self.config.policy.allowed_commands.push(command.clone());
+                        crate::config::persist_command(&command);
+                        eprintln!(
+                            "{}",
+                            format!(
+                                "  ✓ '{}' added to allowed_commands (saved to config)",
+                                command
+                            )
+                            .green()
+                        );
+                        output = self.tools.execute(&tc.function.name, args.clone()).await;
+                        continue;
+                    }
+                }
+                // User said no, or non-interactive
+                eprintln!(
+                    "  {} {}",
+                    "✗".red(),
+                    output.content[..output.content.len().min(200)].dimmed()
+                );
+                return Err(StopReason::Error(output.content));
+            }
+
+            break;
+        }
+
+        if output.is_error {
             eprintln!(
                 "  {} {}",
                 "✗".red(),
@@ -914,6 +941,22 @@ impl Agent {
             );
         }
 
+        // Show sandbox diagnostics to interactive users
+        if self.interactive {
+            if let Some(ref layers) = output.active_layers {
+                if !layers.is_empty() {
+                    eprintln!(
+                        "    {} {}",
+                        "🔎".dimmed(),
+                        format!("sandbox: {}", layers.join(", ")).dimmed()
+                    );
+                }
+            }
+            if let Some(true) = output.degraded {
+                eprintln!("    {} {}", "⚠".yellow(), "sandbox degraded".yellow());
+            }
+        }
+
         Ok(output.content)
     }
 
@@ -925,6 +968,25 @@ impl Agent {
                 let after = &content[start + 8..];
                 if let Some(end) = after.find('\'') {
                     return Some(after[..end].to_string());
+                }
+            }
+        }
+        None
+    }
+
+    /// Extract blocked command from error message, if applicable.
+    fn extract_blocked_command(content: &str) -> Option<String> {
+        // Pattern: "BLOCKED by policy: command 'xxx' is not in allowed_commands"
+        if content.contains("is not in allowed_commands") {
+            if let Some(start) = content.find("command '") {
+                let after = &content[start + 9..];
+                if let Some(end) = after.find('\'') {
+                    let command = after[..end].trim().trim_matches(|c: char| {
+                        matches!(c, '(' | ')' | '{' | '}' | '[' | ']' | '!')
+                    });
+                    if !command.is_empty() {
+                        return Some(command.to_string());
+                    }
                 }
             }
         }
@@ -1017,11 +1079,9 @@ impl Agent {
     fn extract_command_from_args(tool_name: &str, args: &serde_json::Value) -> Option<String> {
         if tool_name == "execute_cmd" {
             if let Some(cmd) = args.get("cmd").and_then(|v| v.as_str()) {
-                let first_token = cmd.split_whitespace().next().unwrap_or("");
-                let binary = first_token.rsplit('/').next().unwrap_or(first_token);
-                if !binary.is_empty() {
-                    return Some(binary.to_string());
-                }
+                return crate::tools::extract_command_binaries_pub(cmd)
+                    .into_iter()
+                    .next();
             }
         }
         None

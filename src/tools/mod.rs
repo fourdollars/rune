@@ -11,6 +11,10 @@ const MAX_FILE_SIZE: usize = 32 * 1024; // 32KB
 pub struct ToolOutput {
     pub content: String,
     pub is_error: bool,
+    /// Diagnostics about which sandbox layers were active (if available).
+    pub active_layers: Option<Vec<String>>,
+    /// Whether the sandbox fell back to degraded mode (if available).
+    pub degraded: Option<bool>,
 }
 
 impl ToolOutput {
@@ -18,13 +22,22 @@ impl ToolOutput {
         Self {
             content: content.into(),
             is_error: false,
+            active_layers: None,
+            degraded: None,
         }
     }
     fn err(content: impl Into<String>) -> Self {
         Self {
             content: content.into(),
             is_error: true,
+            active_layers: None,
+            degraded: None,
         }
+    }
+    fn with_sandbox(mut self, layers: Vec<String>, degraded: bool) -> Self {
+        self.active_layers = Some(layers);
+        self.degraded = Some(degraded);
+        self
     }
 }
 
@@ -145,21 +158,40 @@ impl ToolRegistry {
         let executor = self.sandbox(timeout_secs);
         match executor.run_shell_command(cmd, cwd, None).await {
             Ok(result) => {
+                // Include sandbox diagnostics in all returned ToolOutput values
                 if result.timed_out {
-                    return ToolOutput::err(format!("command timed out after {}s", timeout_secs));
+                    return ToolOutput {
+                        content: format!("command timed out after {}s", timeout_secs),
+                        is_error: true,
+                        active_layers: Some(result.active_layers),
+                        degraded: Some(result.degraded),
+                    };
                 }
                 let output = if !result.stderr.is_empty() && result.exit_code != 0 {
-                    format!("{}\n{}", result.stdout, result.stderr)
+                    format!("{}
+{}", result.stdout, result.stderr)
                 } else {
                     result.stdout.clone()
                 };
                 if result.exit_code != 0 {
-                    ToolOutput::err(format!(
-                        "exit_code: {}\nstdout: {}\nstderr: {}",
-                        result.exit_code, result.stdout, result.stderr
-                    ))
+                    ToolOutput {
+                        content: format!(
+                            "exit_code: {}
+stdout: {}
+stderr: {}",
+                            result.exit_code, result.stdout, result.stderr
+                        ),
+                        is_error: true,
+                        active_layers: Some(result.active_layers),
+                        degraded: Some(result.degraded),
+                    }
                 } else {
-                    ToolOutput::ok(output)
+                    ToolOutput {
+                        content: output,
+                        is_error: false,
+                        active_layers: Some(result.active_layers),
+                        degraded: Some(result.degraded),
+                    }
                 }
             }
             Err(e) => ToolOutput::err(format!("sandbox error: {}", e)),
@@ -333,7 +365,7 @@ impl ToolRegistry {
         if result.is_error {
             return result;
         }
-        ToolOutput::ok(format!("Written {} bytes to {}", content.len(), path))
+        { let mut o = ToolOutput::ok(format!("Written {} bytes to {}", content.len(), path)); o.active_layers = result.active_layers.clone(); o.degraded = result.degraded; o }
     }
 
     async fn list_dir(&self, args: serde_json::Value) -> ToolOutput {
@@ -408,10 +440,11 @@ impl ToolRegistry {
             return result;
         }
         if result.content.len() > MAX_FILE_SIZE {
-            ToolOutput::ok(format!(
-                "{}\n[Content Truncated at 32KB]",
-                &result.content[..MAX_FILE_SIZE]
-            ))
+            let mut o = ToolOutput::ok(format!("{}
+[Content Truncated at 32KB]", &result.content[..MAX_FILE_SIZE]));
+            o.active_layers = result.active_layers.clone();
+            o.degraded = result.degraded;
+            o
         } else {
             result
         }
@@ -523,13 +556,61 @@ fn extract_command_binaries(cmd: &str) -> Vec<String> {
         if trimmed.is_empty() {
             continue;
         }
-        let first_token = trimmed.split_whitespace().next().unwrap_or("");
-        let binary = first_token.rsplit('/').next().unwrap_or(first_token);
-        if !binary.is_empty() {
-            binaries.push(binary.to_string());
+        if let Some(binary) = extract_primary_binary(trimmed) {
+            binaries.push(binary);
         }
     }
     binaries
+}
+
+fn extract_primary_binary(segment: &str) -> Option<String> {
+    for token in segment.split_whitespace() {
+        let token = token
+            .trim_start_matches(|c: char| matches!(c, '(' | ')' | '{' | '}' | '[' | ']' | '!'));
+        let token =
+            token.trim_end_matches(|c: char| matches!(c, '(' | ')' | '{' | '}' | '[' | ']'));
+        if token.is_empty() {
+            continue;
+        }
+        if is_shell_assignment(token) || is_shell_keyword(token) {
+            continue;
+        }
+        let binary = token.rsplit('/').next().unwrap_or(token);
+        let binary = binary.trim_matches(|c: char| matches!(c, '(' | ')' | '{' | '}' | '[' | ']'));
+        if !binary.is_empty() {
+            return Some(binary.to_string());
+        }
+    }
+    None
+}
+
+fn is_shell_assignment(token: &str) -> bool {
+    let Some(eq) = token.find('=') else {
+        return false;
+    };
+    let (name, value) = token.split_at(eq);
+    !name.is_empty()
+        && !value[1..].is_empty()
+        && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+}
+
+fn is_shell_keyword(token: &str) -> bool {
+    matches!(
+        token,
+        "if" | "then"
+            | "else"
+            | "elif"
+            | "fi"
+            | "do"
+            | "done"
+            | "case"
+            | "esac"
+            | "while"
+            | "until"
+            | "for"
+            | "in"
+            | "time"
+    )
 }
 
 /// Extract domain from a URL string.
@@ -718,11 +799,19 @@ mod tests {
 
     #[test]
     fn test_extract_binaries_env_prefix() {
-        // env var prefix before command
+        // env var prefix before command should be skipped
+        assert_eq!(extract_command_binaries("FOO=bar baz"), vec!["baz"]);
         assert_eq!(
-            extract_command_binaries("FOO=bar baz"),
-            // Extracts FOO=bar as first token
-            vec!["FOO=bar"]
+            extract_command_binaries("FOO=bar BAR=baz /usr/bin/ls -la"),
+            vec!["ls"]
+        );
+    }
+
+    #[test]
+    fn test_extract_binaries_subshell_marker() {
+        assert_eq!(
+            extract_command_binaries("git clone repo || (rm -rf /tmp/foo)"),
+            vec!["git", "rm"]
         );
     }
 }
