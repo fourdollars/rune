@@ -9,7 +9,42 @@ struct ExistingConfig {
     model: Option<String>,
     base_url: Option<String>,
     skills_dir: Option<String>,
+    thinking: Option<String>,
     embedding_enabled: Option<bool>,
+    /// Raw [policy] section to preserve (includes header)
+    policy_section: Option<String>,
+    /// Raw [embedding] section to preserve (includes header)
+    embedding_section: Option<String>,
+}
+
+/// Extract a raw TOML section (from [header] line to next [header] or EOF).
+pub fn extract_toml_section(content: &str, header: &str) -> Option<String> {
+    let mut result = String::new();
+    let mut in_section = false;
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with('[') {
+            if trimmed == header
+                || trimmed.starts_with(&format!("{}.", &header[..header.len() - 1]))
+            {
+                in_section = true;
+                result.push_str(line);
+                result.push('\n');
+                continue;
+            } else if in_section {
+                break;
+            }
+        }
+        if in_section {
+            result.push_str(line);
+            result.push('\n');
+        }
+    }
+    if result.is_empty() {
+        None
+    } else {
+        Some(result)
+    }
 }
 
 fn load_existing_config() -> ExistingConfig {
@@ -21,11 +56,18 @@ fn load_existing_config() -> ExistingConfig {
             model: None,
             base_url: None,
             skills_dir: None,
+            thinking: None,
             embedding_enabled: None,
+            policy_section: None,
+            embedding_section: None,
         };
     }
     let content = std::fs::read_to_string(&path).unwrap_or_default();
     let table: toml::Table = content.parse().unwrap_or_default();
+
+    let policy_section = extract_toml_section(&content, "[policy]");
+    let embedding_section = extract_toml_section(&content, "[embedding]");
+
     ExistingConfig {
         provider: table
             .get("provider")
@@ -47,11 +89,17 @@ fn load_existing_config() -> ExistingConfig {
             .get("skills_dir")
             .and_then(|v| v.as_str())
             .map(|s| s.to_string()),
+        thinking: table
+            .get("thinking")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string()),
         embedding_enabled: table
             .get("embedding")
             .and_then(|v| v.as_table())
             .and_then(|t| t.get("enabled"))
             .and_then(|v| v.as_bool()),
+        policy_section,
+        embedding_section,
     }
 }
 
@@ -118,7 +166,7 @@ pub async fn run_setup() {
     } else {
         provider_input
     };
-    let (base_url, provider_name, provider_id, key_hint) = match provider_choice.trim() {
+    let (base_url, provider_name, _provider_id, key_hint) = match provider_choice.trim() {
         "1" => (
             None,
             "GitHub Copilot",
@@ -327,7 +375,7 @@ pub async fn run_setup() {
     }
     println!();
 
-    // 6. Write config
+    // 6. Build config — preserve existing [policy] and [embedding] sections
     let config_dir = dirs_home().join(".rune");
     let config_path = config_dir.join("rune.toml");
 
@@ -341,16 +389,36 @@ pub async fn run_setup() {
     }
     toml_content.push_str(&format!("skills_dir = \"{}\"\n", skills_dir));
     toml_content.push_str("log_level = \"warn\"\n");
+    if let Some(ref t) = existing.thinking {
+        toml_content.push_str(&format!("thinking = \"{}\"\n", t));
+    }
     toml_content.push('\n');
-    toml_content.push_str("[policy]\n");
-    toml_content.push_str("mode = \"confirm\"\n");
-    toml_content.push_str("allowed_commands = [\"ls\", \"cat\", \"head\", \"ps\", \"echo\", \"uname\", \"free\", \"df\", \"date\", \"hostname\"]\n");
-    toml_content.push_str("allowed_domains = []\n");
+
+    // Preserve existing [policy] section (with all its accumulated allowlists)
+    if let Some(ref policy) = existing.policy_section {
+        toml_content.push_str(policy);
+    } else {
+        // Fresh install defaults
+        toml_content.push_str("[policy]\n");
+        toml_content.push_str("mode = \"confirm\"\n");
+        toml_content.push_str("allowed_commands = [\"ls\", \"cat\", \"head\", \"ps\", \"echo\", \"uname\", \"free\", \"df\", \"date\", \"hostname\"]\n");
+        toml_content.push_str("allowed_domains = []\n");
+    }
+
+    // Embedding section
     if embedding_enabled {
-        toml_content.push_str("\n[embedding]\n");
-        toml_content.push_str("enabled = true\n");
-        toml_content.push_str("model = \"text-embedding-3-small\"\n");
-        toml_content.push_str("threshold = 0.6\n");
+        if let Some(ref emb) = existing.embedding_section {
+            // Preserve existing embedding config (may have custom model/threshold/api_key)
+            if !toml_content.ends_with('\n') {
+                toml_content.push('\n');
+            }
+            toml_content.push_str(emb);
+        } else {
+            toml_content.push_str("\n[embedding]\n");
+            toml_content.push_str("enabled = true\n");
+            toml_content.push_str("model = \"text-embedding-3-small\"\n");
+            toml_content.push_str("threshold = 0.6\n");
+        }
     }
 
     // Show preview
@@ -418,4 +486,105 @@ fn dirs_home() -> PathBuf {
     std::env::var("HOME")
         .map(PathBuf::from)
         .unwrap_or_else(|_| PathBuf::from("."))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_extract_toml_section_policy() {
+        let content = r#"model = "gpt-4o"
+api_key = "test"
+
+[policy]
+mode = "confirm"
+allowed_commands = ["ls", "cat", "curl", "git"]
+allowed_domains = ["wttr.in", "api.github.com"]
+allowed_syscalls = ["clock_gettime"]
+
+[embedding]
+enabled = true
+"#;
+        let section = extract_toml_section(content, "[policy]").unwrap();
+        assert!(section.contains("[policy]"));
+        assert!(section.contains("allowed_commands"));
+        assert!(section.contains("curl"));
+        assert!(section.contains("git"));
+        assert!(section.contains("wttr.in"));
+        assert!(section.contains("api.github.com"));
+        assert!(section.contains("allowed_syscalls"));
+        // Should NOT contain embedding section
+        assert!(!section.contains("[embedding]"));
+    }
+
+    #[test]
+    fn test_extract_toml_section_embedding() {
+        let content = r#"model = "gpt-4o"
+
+[policy]
+mode = "confirm"
+
+[embedding]
+enabled = true
+model = "text-embedding-3-small"
+threshold = 0.7
+api_key = "sk-custom-embed-key"
+"#;
+        let section = extract_toml_section(content, "[embedding]").unwrap();
+        assert!(section.contains("[embedding]"));
+        assert!(section.contains("enabled = true"));
+        assert!(section.contains("threshold = 0.7"));
+        assert!(section.contains("sk-custom-embed-key"));
+        assert!(!section.contains("[policy]"));
+    }
+
+    #[test]
+    fn test_extract_toml_section_missing() {
+        let content = "model = \"gpt-4o\"\napi_key = \"test\"\n";
+        assert!(extract_toml_section(content, "[policy]").is_none());
+        assert!(extract_toml_section(content, "[embedding]").is_none());
+    }
+
+    #[test]
+    fn test_extract_toml_section_preserves_accumulated_values() {
+        // Simulate a config that has been modified by /add-rw-dir and domain allows
+        let content = r#"model = "gpt-4o"
+api_key = "ghu_test123"
+skills_dir = "./skills"
+
+[policy]
+mode = "confirm"
+allowed_commands = ["ls", "cat", "head", "ps", "echo", "uname", "free", "df", "date", "hostname", "git", "cargo", "rustc", "make"]
+allowed_domains = ["wttr.in", "api.github.com", "crates.io", "registry.npmjs.org"]
+allowed_paths_rw = ["/home/u/project", "/tmp"]
+allowed_paths_ro = ["/home/u/project", "/usr/share/doc"]
+denied_paths = ["/root", "/etc/shadow"]
+"#;
+        let section = extract_toml_section(content, "[policy]").unwrap();
+        // All accumulated values must be preserved
+        assert!(section.contains("git"));
+        assert!(section.contains("cargo"));
+        assert!(section.contains("rustc"));
+        assert!(section.contains("crates.io"));
+        assert!(section.contains("registry.npmjs.org"));
+        assert!(section.contains("allowed_paths_rw"));
+        assert!(section.contains("/home/u/project"));
+        assert!(section.contains("denied_paths"));
+    }
+
+    #[test]
+    fn test_extract_toml_section_at_end_of_file() {
+        // Section is the last thing in the file (no trailing section header)
+        let content = r#"model = "gpt-4o"
+
+[policy]
+mode = "allowlist"
+allowed_commands = ["curl"]
+allowed_domains = ["example.com"]"#;
+        let section = extract_toml_section(content, "[policy]").unwrap();
+        assert!(section.contains("mode = \"allowlist\""));
+        assert!(section.contains("curl"));
+        assert!(section.contains("example.com"));
+    }
 }
