@@ -1762,4 +1762,115 @@ mod tests {
         assert_eq!(rx.recv().await.as_deref(), Some("hello stream"));
         assert!(rx.recv().await.is_none());
     }
+
+    #[test]
+    fn test_gemini_tool_response_plain_text_wrapped() {
+        // Plain text tool output must be wrapped in {"result": "..."} for Gemini
+        let messages = vec![LlmMessage {
+            role: "tool".to_string(),
+            content: Some("obvious".to_string()),
+            content_parts: None,
+            tool_calls: None,
+            tool_call_id: Some("execute_cmd|gemini_tc_1".to_string()),
+        }];
+        let (_, contents) = GeminiProvider::convert_messages(&messages);
+        assert_eq!(contents.len(), 1);
+        let resp = &contents[0]["parts"][0]["functionResponse"]["response"];
+        assert_eq!(resp["result"], "obvious");
+    }
+
+    #[test]
+    fn test_gemini_tool_response_json_object_preserved() {
+        // JSON object tool output should be passed through as-is
+        let messages = vec![LlmMessage {
+            role: "tool".to_string(),
+            content: Some(r#"{"name":"test","value":42}"#.to_string()),
+            content_parts: None,
+            tool_calls: None,
+            tool_call_id: Some("fetch_url|gemini_tc_1".to_string()),
+        }];
+        let (_, contents) = GeminiProvider::convert_messages(&messages);
+        let resp = &contents[0]["parts"][0]["functionResponse"]["response"];
+        assert_eq!(resp["name"], "test");
+        assert_eq!(resp["value"], 42);
+    }
+
+    #[test]
+    fn test_gemini_tool_response_fn_name_from_id() {
+        // Function name should be extracted from tool_call_id format "name|gemini_tc_N"
+        let messages = vec![LlmMessage {
+            role: "tool".to_string(),
+            content: Some("{}".to_string()),
+            content_parts: None,
+            tool_calls: None,
+            tool_call_id: Some("read_file|gemini_tc_2".to_string()),
+        }];
+        let (_, contents) = GeminiProvider::convert_messages(&messages);
+        let name = &contents[0]["parts"][0]["functionResponse"]["name"];
+        assert_eq!(name, "read_file");
+    }
+
+    #[test]
+    fn test_gemini_thought_signature_preserved_in_assistant() {
+        // When assistant message has tool calls with thought_signature in ID,
+        // the reconstructed functionCall part should include thought_signature
+        let messages = vec![LlmMessage {
+            role: "assistant".to_string(),
+            content: None,
+            content_parts: None,
+            tool_calls: Some(vec![LlmToolCall {
+                id: "execute_cmd|gemini_tc_1|abc123sig".to_string(),
+                call_type: "function".to_string(),
+                function: LlmFunction {
+                    name: "execute_cmd".to_string(),
+                    arguments: r#"{"cmd":"ls"}"#.to_string(),
+                },
+            }]),
+            tool_call_id: None,
+        }];
+        let (_, contents) = GeminiProvider::convert_messages(&messages);
+        assert_eq!(contents.len(), 1);
+        let part = &contents[0]["parts"][0];
+        assert_eq!(part["functionCall"]["name"], "execute_cmd");
+        assert_eq!(part["thought_signature"], "abc123sig");
+    }
+
+    #[test]
+    fn test_gemini_thought_signature_in_tool_response() {
+        // Function response should include thought_signature from tool_call_id
+        let messages = vec![LlmMessage {
+            role: "tool".to_string(),
+            content: Some(r#"{"output":"done"}"#.to_string()),
+            content_parts: None,
+            tool_calls: None,
+            tool_call_id: Some("execute_cmd|gemini_tc_1|sig456xyz".to_string()),
+        }];
+        let (_, contents) = GeminiProvider::convert_messages(&messages);
+        let part = &contents[0]["parts"][0];
+        assert_eq!(part["functionResponse"]["name"], "execute_cmd");
+        assert_eq!(part["thought_signature"], "sig456xyz");
+    }
+
+    #[test]
+    fn test_gemini_no_thought_signature_when_absent() {
+        // No thought_signature in ID → no field in output
+        let messages = vec![LlmMessage {
+            role: "assistant".to_string(),
+            content: None,
+            content_parts: None,
+            tool_calls: Some(vec![LlmToolCall {
+                id: "list_dir|gemini_tc_1".to_string(),
+                call_type: "function".to_string(),
+                function: LlmFunction {
+                    name: "list_dir".to_string(),
+                    arguments: r#"{"path":"."}"#.to_string(),
+                },
+            }]),
+            tool_call_id: None,
+        }];
+        let (_, contents) = GeminiProvider::convert_messages(&messages);
+        let part = &contents[0]["parts"][0];
+        assert_eq!(part["functionCall"]["name"], "list_dir");
+        assert!(part.get("thought_signature").is_none() || part["thought_signature"].is_null());
+    }
 }
