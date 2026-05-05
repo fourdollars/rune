@@ -85,14 +85,13 @@ In Concourse pipelines, override via `source.sandbox.policy_mode`.
 
 ## Sandbox Layers
 
-Up to 5 isolation layers per tool invocation:
+Up to 5 isolation layers per tool invocation (best-effort; the executor applies available protections in a runtime-dependent order):
 
-1. **Network namespace** (`unshare --user --net`) — no network by default
-2. **cgroups** (`systemd-run`) — memory/PID limits
+1. **cgroups** (`systemd-run`) — memory/PID limits
+2. **Network isolation / net-guard** (`unshare --user --net` or `rune-net-guard`) — namespace-based or domain-allowlist network controls
 3. **Seccomp BPF** (`rune-seccomp`) — syscall filtering
 4. **Landlock** (`rune-landlock`) — filesystem restriction
-5. **DNS/Domain allowlist** — selective network access
-
+5. **DNS/Domain allowlist** — selective network access (represented via net-guard/allowed_domains)
 ## Skills
 
 Skills are `@name`-referenced bundles (`SKILL.md` + metadata). On reference:
@@ -148,8 +147,8 @@ src/
 ├── setup.rs         — `rune init` wizard
 └── bin/
     ├── rune-landlock.rs
-    └── rune-seccomp.rs
-```
+    ├── rune-seccomp.rs
+    └── rune-net-guard.rs
 
 ## Extending
 
@@ -162,8 +161,8 @@ src/
 ## Testing
 
 ```bash
-cargo test                    # 95 unit tests
-./tests/e2e.sh               # 16 E2E integration tests
+cargo test                    # 124 unit tests
+./tests/e2e.sh               # 18 E2E integration tests
 cargo llvm-cov --summary-only # coverage report
 cargo build --release         # release build (~5MB)
 ```

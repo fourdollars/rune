@@ -4,12 +4,12 @@ A high-performance, zero-trust AI agent built in Rust. Single binary, dual mode:
 
 ## Features
 
-- **Zero-Trust Sandbox** — ALL tool executions run through 5 isolation layers:
-  - Network namespace (`unshare --user --net`)
-  - cgroups v2 resource limits (`systemd-run --scope`)
-  - Seccomp BPF syscall filter (`rune-seccomp`)
-  - Landlock filesystem restriction (`rune-landlock`)
-  - DNS allowlist (domain-level network control)
+- **Zero-Trust Sandbox** — ALL tool executions run through 5 isolation layers (best-effort; the runtime applies these protections when available):
+  - cgroups v2 resource limits (`systemd-run --scope`) — memory/PID limits
+  - Network isolation (namespace or net-guard) (`unshare --user --net` or `rune-net-guard`) — namespace-based isolation or domain-allowlist filtering
+  - Seccomp BPF syscall filter (`rune-seccomp`) — syscall filtering
+  - Landlock filesystem restriction (`rune-landlock`) — file access limits
+  - DNS / Domain allowlist — selective outbound network access (configured via `allowed_domains`)
 - **Tool Calling** — 6 built-in tools: `read_file`, `write_file`, `list_dir`, `execute_cmd`, `fetch_url`, `inspect_process`
 - **Command Policy** — Three modes: `confirm` (interactive Y/n/A), `allowlist` (whitelist only), `unrestricted`
 - **Skills System** — Load contextual abilities via `@skill_name` in prompts
@@ -451,8 +451,8 @@ src/
 
 ```bash
 cargo build --release    # Build all 4 binaries
-cargo test               # Unit tests (95)
-./tests/e2e.sh           # E2E tests (16)
+cargo test               # Unit tests (124)
+./tests/e2e.sh           # E2E tests (18)
 make check-all           # Both
 ```
 

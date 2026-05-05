@@ -40,13 +40,17 @@ All notable changes to this project will be documented in this file.
   - Coverage summary in GitHub Actions job summary
   - `lcov.info` artifact upload (30-day retention)
   - Binary size reporting
-- **Unit Tests** — 34 → 95 tests
-  - `config/mod.rs`: 18 tests (pick, parse_boolish, defaults, load_toml, persist)
+- **Unit Tests** — 34 → 124 tests
+  - `config/mod.rs`: 22 tests (pick, parse_boolish, defaults, load_toml, persist)
   - `trace/mod.rs`: 12 tests (redact patterns, disabled mode, all StepKinds) → 100% coverage
   - `skills/mod.rs`: 20 tests (extract_refs, frontmatter, loader, resolve)
-  - `tools/mod.rs`: 34 tests (quote-aware parser, pipeline, redirect)
+  - `tools/mod.rs`: 17 tests (quote-aware parser, pipeline, redirect)
   - `embedding/mod.rs`: 13 tests (cosine similarity, vector store CRUD)
-  - `concourse/mod.rs`: 7 tests (sha256, check/in/out behavior)
+  - `concourse/mod.rs`: 8 tests (sha256, check/in/out behavior)
+  - `provider/mod.rs`: 14 tests (provider backoff, token refresh)
+  - `sandbox/mod.rs`: 6 tests (basic execution, timeout, nonzero exit, degraded mode)
+  - `agent/mod.rs`: 4 tests (stop reasons, agent loop edge cases)
+  - helper bins (src/bin/*.rs): 6 tests (net-guard, seccomp helper tests)
 
 ### Changed
 - **Config limits now optional** — `max_steps`, `token_budget`, `timeout_secs` are `Option` types; unlimited when not set

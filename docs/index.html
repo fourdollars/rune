@@ -35,7 +35,7 @@
             <div class="feature-card fade-in">
                 <div class="feature-icon">🛡️</div>
                 <h3>5-Layer Sandbox</h3>
-                <p>Network namespace, cgroups, Seccomp BPF, Landlock, DNS allowlist. Every tool call is isolated.</p>
+                <p>cgroups v2, Network namespace (or net-guard), Seccomp BPF, Landlock, DNS allowlist. Every tool call is isolated.</p>
             </div>
             <div class="feature-card fade-in">
                 <div class="feature-icon">🔧</div>
@@ -93,44 +93,154 @@
     <!-- Security -->
     <section class="security" id="security">
         <h2 class="section-title">🔐 Security Model</h2>
-        <div class="sandbox-stack">
-            <div class="layer fade-in" style="--layer-color: #ff6b6b">
-                <span class="layer-num">1</span>
-                <div>
-                    <strong>cgroups v2</strong>
-                    <small>Memory 512MB, max 64 processes</small>
-                </div>
-            </div>
-            <div class="layer fade-in" style="--layer-color: #feca57">
-                <span class="layer-num">2</span>
-                <div>
-                    <strong>Network Namespace</strong>
-                    <small>unshare --user --net — all outbound blocked</small>
-                </div>
-            </div>
-            <div class="layer fade-in" style="--layer-color: #48dbfb">
-                <span class="layer-num">3</span>
-                <div>
-                    <strong>Seccomp BPF</strong>
-                    <small>Blocks ptrace, mount, kexec_load, bpf, setns</small>
-                </div>
-            </div>
-            <div class="layer fade-in" style="--layer-color: #ff9ff3">
-                <span class="layer-num">4</span>
-                <div>
-                    <strong>Landlock</strong>
-                    <small>Filesystem restriction — only allowed paths</small>
-                </div>
-            </div>
-            <div class="layer fade-in" style="--layer-color: #54a0ff">
-                <span class="layer-num">5</span>
-                <div>
-                    <strong>DNS Allowlist</strong>
-                    <small>Domain-level network control + wildcard</small>
-                </div>
-            </div>
+        <div class="code-block" style="padding:1.25rem; background: linear-gradient(180deg, rgba(18,18,42,0.95), rgba(12,12,28,0.98)); border:1px solid #2a2a4a; box-shadow: 0 20px 60px rgba(0,0,0,0.35);">
+            <svg viewBox="0 0 1120 520" width="100%" role="img" aria-labelledby="securityTitle securityDesc" style="display:block; height:auto; overflow:visible;">
+                <title id="securityTitle">Rune layered security model</title>
+                <desc id="securityDesc">Concentric protection rings showing cgroups, Network Namespace / net-guard, Seccomp, Landlock, and DNS allowlist around the core runtime.</desc>
+                <defs>
+                    <linearGradient id="ringOuter" x1="0" y1="0" x2="1" y2="1">
+                        <stop offset="0%" stop-color="#54a0ff"/>
+                        <stop offset="100%" stop-color="#00d4ff"/>
+                    </linearGradient>
+                    <linearGradient id="ringNetwork" x1="0" y1="0" x2="1" y2="1">
+                        <stop offset="0%" stop-color="#feca57"/>
+                        <stop offset="100%" stop-color="#ffd700"/>
+                    </linearGradient>
+                    <linearGradient id="ringSeccomp" x1="0" y1="0" x2="1" y2="1">
+                        <stop offset="0%" stop-color="#48dbfb"/>
+                        <stop offset="100%" stop-color="#00bcd4"/>
+                    </linearGradient>
+                    <linearGradient id="ringLandlock" x1="0" y1="0" x2="1" y2="1">
+                        <stop offset="0%" stop-color="#ff9ff3"/>
+                        <stop offset="100%" stop-color="#ff6bcb"/>
+                    </linearGradient>
+                    <linearGradient id="ringCore" x1="0" y1="0" x2="1" y2="1">
+                        <stop offset="0%" stop-color="#9b59b6"/>
+                        <stop offset="100%" stop-color="#6c5ce7"/>
+                    </linearGradient>
+                    <filter id="glow" x="-50%" y="-50%" width="200%" height="200%">
+                        <feGaussianBlur stdDeviation="8" result="blur"/>
+                        <feMerge>
+                            <feMergeNode in="blur"/>
+                            <feMergeNode in="SourceGraphic"/>
+                        </feMerge>
+                    </filter>
+                    <filter id="softShadow" x="-30%" y="-30%" width="160%" height="160%">
+                        <feDropShadow dx="0" dy="10" stdDeviation="14" flood-color="#000000" flood-opacity="0.35"/>
+                    </filter>
+                    <style>
+                        .s-label { font: 700 18px/1.2 'Segoe UI', system-ui, sans-serif; fill: #e0e0e8; letter-spacing: .02em; }
+                        .s-sub { font: 500 13px/1.4 'Segoe UI', system-ui, sans-serif; fill: #9aa0c2; }
+                        .s-small { font: 500 12px/1.4 'Segoe UI', system-ui, sans-serif; fill: #b6bbdd; }
+                        .s-chip { font: 700 12px/1 'Segoe UI', system-ui, sans-serif; fill: #09111f; letter-spacing: .08em; }
+                        .ring { stroke-width: 16; fill: none; stroke-linecap: round; stroke-linejoin: round; }
+                        .ring-label { filter: url(#softShadow); }
+                        .arrow { stroke: #6a6a8a; stroke-width: 2; stroke-dasharray: 4 6; fill: none; opacity: .9; }
+                        .node { rx: 14; ry: 14; filter: url(#softShadow); }
+                        .legend-card { fill: #15152e; stroke: #2a2a4a; stroke-width: 1; rx: 14; ry: 14; }
+                    </style>
+                </defs>
+
+                <rect x="18" y="18" width="1084" height="484" rx="24" ry="24" fill="#101027" stroke="#2a2a4a" opacity="0.95"/>
+
+                <!-- Left: layered onion diagram -->
+                <g transform="translate(330 260)" filter="url(#glow)">
+                    <!-- outermost: DNS Allowlist -->
+                    <circle r="168" class="ring" stroke="url(#ringOuter)" opacity="0.95"/>
+                    <circle r="156" class="ring" stroke="#12324b" opacity="0.75" stroke-dasharray="2 12"/>
+
+                    <!-- Network Namespace -->
+                    <circle r="130" class="ring" stroke="url(#ringNetwork)" opacity="0.9"/>
+                    <circle r="118" class="ring" stroke="#3f3511" opacity="0.45" stroke-dasharray="6 10"/>
+
+                    <!-- Seccomp -->
+                    <circle r="92" class="ring" stroke="url(#ringSeccomp)" opacity="0.9"/>
+                    <circle r="80" class="ring" stroke="#104b59" opacity="0.45" stroke-dasharray="8 8"/>
+
+                    <!-- Landlock -->
+                    <circle r="56" class="ring" stroke="url(#ringLandlock)" opacity="0.92"/>
+                    <circle r="44" class="ring" stroke="#4d2345" opacity="0.45" stroke-dasharray="8 9"/>
+
+                    <!-- Core -->
+                    <circle r="24" fill="url(#ringCore)" stroke="#d9d9ff" stroke-width="2"/>
+                    <circle r="10" fill="#0b1020" opacity="0.8"/>
+
+                    <text x="0" y="6" text-anchor="middle" class="s-chip">CORE</text>
+                </g>
+
+                <!-- Labels around the rings -->
+                <g class="ring-label">
+                    <rect x="78" y="56" width="232" height="54" class="node" fill="#16203a" stroke="#54a0ff"/>
+                    <text x="96" y="80" class="s-label">DNS Allowlist</text>
+                    <text x="96" y="99" class="s-small">Domain-level egress gate · wttr.in only</text>
+
+                    <rect x="98" y="162" width="210" height="54" class="node" fill="#201d14" stroke="#feca57"/>
+                    <text x="116" y="186" class="s-label">Network Namespace</text>
+                    <text x="116" y="205" class="s-small">Isolated net stack · outbound blocked by default</text>
+
+                    <rect x="98" y="370" width="210" height="54" class="node" fill="#12212a" stroke="#48dbfb"/>
+                    <text x="116" y="394" class="s-label">Seccomp BPF</text>
+                    <text x="116" y="413" class="s-small">Blocks ptrace, mount, kexec_load, bpf, setns</text>
+
+                    <rect x="382" y="384" width="188" height="54" class="node" fill="#211423" stroke="#ff9ff3"/>
+                    <text x="400" y="408" class="s-label">Landlock</text>
+                    <text x="400" y="427" class="s-small">Filesystem limits · only allowed paths</text>
+
+                    <rect x="706" y="156" width="192" height="54" class="node" fill="#17172d" stroke="#9b59b6"/>
+                    <text x="724" y="180" class="s-label">cgroups v2</text>
+                    <text x="724" y="199" class="s-small">Memory / process budget · pressure control</text>
+                </g>
+
+                <!-- Connecting hints -->
+                <g opacity="0.75">
+                    <path d="M 310 103 C 350 113, 370 132, 390 156" class="arrow"/>
+                    <path d="M 310 189 C 356 190, 375 210, 407 232" class="arrow"/>
+                    <path d="M 318 300 C 358 292, 382 276, 410 258" class="arrow"/>
+                    <path d="M 534 395 C 516 366, 493 343, 468 318" class="arrow"/>
+                    <path d="M 748 183 C 702 197, 656 219, 598 240" class="arrow"/>
+                </g>
+
+                <!-- Status badge -->
+                <g transform="translate(796 48)">
+                    <rect x="0" y="0" width="248" height="62" rx="16" ry="16" fill="#231814" stroke="#ffb86b"/>
+                    <text x="18" y="26" class="s-label" fill="#ffd6ad">DEGRADED</text>
+                    <text x="18" y="45" class="s-small">Verbose mode can reveal which layer caused the fallback</text>
+                </g>
+
+                <!-- Right: concise diagnostic legend -->
+                <g transform="translate(656 138)">
+                    <text x="0" y="0" class="s-label">Layer order</text>
+                    <text x="0" y="24" class="s-sub">outer → inner · each ring narrows what the agent can touch</text>
+
+                    <g transform="translate(0 44)">
+                        <rect x="0" y="0" width="372" height="250" class="legend-card"/>
+                        <g transform="translate(20 26)">
+                            <rect x="0" y="0" width="14" height="14" rx="4" fill="#9b59b6"/>
+                            <text x="24" y="12" class="s-label" font-size="15">1. cgroups v2</text>
+                            <text x="24" y="33" class="s-small">Caps memory and process count; keeps the core contained.</text>
+
+                            <rect x="0" y="48" width="14" height="14" rx="4" fill="#feca57"/>
+                            <text x="24" y="60" class="s-label" font-size="15">2. Network (netns / net-guard)</text>
+                            <text x="24" y="81" class="s-small">Namespace or domain-allowlist-based network controls.</text>
+
+                            <rect x="0" y="96" width="14" height="14" rx="4" fill="#48dbfb"/>
+                            <text x="24" y="108" class="s-label" font-size="15">3. Seccomp BPF</text>
+                            <text x="24" y="129" class="s-small">Disallows dangerous syscalls and lateral movement.</text>
+
+                            <rect x="0" y="144" width="14" height="14" rx="4" fill="#ff9ff3"/>
+                            <text x="24" y="156" class="s-label" font-size="15">4. Landlock</text>
+                            <text x="24" y="177" class="s-small">Restricts file reads/writes to approved paths.</text>
+
+                            <rect x="0" y="192" width="14" height="14" rx="4" fill="#54a0ff"/>
+                            <text x="24" y="204" class="s-label" font-size="15">5. DNS Allowlist</text>
+                            <text x="24" y="225" class="s-small">Only approved domains can be reached.</text>
+                        </g>
+                    </g>
+                </g>
+            </svg>
         </div>
     </section>
+
 
     <!-- Install -->
     
@@ -138,15 +248,19 @@
     <section class="concourse" id="concourse">
         <h2 class="section-title">🚀 Concourse CI — Quick Start</h2>
         <p class="section-desc">Use Rune as a Concourse CI resource type. Minimal weather pipeline:</p>
-        <div class="code-block">
-            <pre><code>resource_types:
+        <div class="install-steps">
+            <div class="code-block">
+                <div class="code-header">Resource type definition</div>
+                <pre><code>resource_types:
   - name: rune-agent
     type: registry-image
     source:
       repository: ghcr.io/fourdollars/rune
-      tag: latest
-
-resources:
+      tag: latest</code></pre>
+            </div>
+            <div class="code-block">
+                <div class="code-header">Resource — weather check with sandbox policy</div>
+                <pre><code>resources:
   - name: weather
     type: rune-agent
     check_every: 1h
@@ -156,13 +270,16 @@ resources:
       prompt: "Fetch the weather for Taoyuan from wttr.in using curl."
       policy:
         allowed_commands: ["curl"]
-        allowed_domains: ["wttr.in"]
-
-jobs:
+        allowed_domains: ["wttr.in"]</code></pre>
+            </div>
+            <div class="code-block">
+                <div class="code-header">Job — trigger on new versions</div>
+                <pre><code>jobs:
   - name: weather-check
     plan:
       - get: weather
         trigger: true</code></pre>
+            </div>
         </div>
     </section>
 
