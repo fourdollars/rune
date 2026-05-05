@@ -848,13 +848,26 @@ fn resolve_path(path: &str) -> String {
     };
 
     // Make absolute if relative
-    if expanded.starts_with('/') {
+    let abs = if expanded.starts_with('/') {
         expanded
     } else {
         std::env::current_dir()
             .map(|cwd| format!("{}/{}", cwd.display(), expanded))
             .unwrap_or(expanded)
+    };
+
+    // Normalize: collapse . and .. components
+    let mut parts: Vec<&str> = Vec::new();
+    for component in abs.split('/') {
+        match component {
+            "" | "." => {}
+            ".." => {
+                parts.pop();
+            }
+            _ => parts.push(component),
+        }
     }
+    format!("/{}", parts.join("/"))
 }
 
 /// Main CLI entry point.

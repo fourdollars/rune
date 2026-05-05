@@ -477,12 +477,47 @@ impl ToolRegistry {
         if self.policy_mode == "unrestricted" {
             return false;
         }
-        self.policy_denied_paths.iter().any(|d| path.starts_with(d))
+        let resolved = self.resolve_path(path);
+        self.policy_denied_paths
+            .iter()
+            .any(|d| resolved.starts_with(d))
     }
 
     /// Check if a path starts with any entry in a given list.
     fn is_path_in_list(&self, path: &str, list: &[String]) -> bool {
-        list.iter().any(|p| path.starts_with(p))
+        let resolved = self.resolve_path(path);
+        list.iter().any(|p| {
+            let norm_p = p.trim_end_matches('/');
+            let norm_p = norm_p.trim_end_matches("/.");
+            resolved == norm_p || resolved.starts_with(&format!("{}/", norm_p))
+        })
+    }
+
+    /// Resolve a relative path to absolute for policy matching.
+    fn resolve_path(&self, path: &str) -> String {
+        if path.starts_with('/') {
+            Self::normalize_path(path)
+        } else {
+            let abs = std::env::current_dir()
+                .map(|cwd| format!("{}/{}", cwd.display(), path))
+                .unwrap_or_else(|_| path.to_string());
+            Self::normalize_path(&abs)
+        }
+    }
+
+    /// Simple path normalization: collapse . and .. components, remove trailing /.
+    fn normalize_path(path: &str) -> String {
+        let mut parts: Vec<&str> = Vec::new();
+        for component in path.split('/') {
+            match component {
+                "" | "." => {}
+                ".." => {
+                    parts.pop();
+                }
+                _ => parts.push(component),
+            }
+        }
+        format!("/{}", parts.join("/"))
     }
 }
 

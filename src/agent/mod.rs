@@ -100,6 +100,19 @@ impl Agent {
         let mut tools = ToolRegistry::new(allowed_dirs);
         tools.set_policy(&config.policy);
         let skill_loader = SkillLoader::new(vec![PathBuf::from(&config.skills_dir)]);
+        // Spawn background indexing of skills into vector store when embedding is configured.
+        if let Some(ref eng) = embedding {
+            let eng_clone = eng.clone();
+            let skills_dir_clone = config.skills_dir.clone();
+            tokio::spawn(async move {
+                let loader = SkillLoader::new(vec![PathBuf::from(skills_dir_clone)]);
+                match loader.index_skills(&eng_clone).await {
+                    Ok(_) => info!("skill index complete"),
+                    Err(e) => warn!(error = %e, "skill index failed"),
+                }
+            });
+        }
+
         let trace = if config.trace {
             Some(TraceWriter::new(
                 TraceWriter::generate_run_id(),
