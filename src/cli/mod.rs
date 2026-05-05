@@ -1000,11 +1000,29 @@ pub async fn run() {
     };
 
     let mut agent = Agent::new(cfg.clone(), provider, stdin_is_terminal, embedding_engine);
-    agent.set_system_prompt(
-        "You are Rune, a high-performance AI agent running in a terminal. \
+
+    // Build system prompt: base + optional AGENTS.md from CWD
+    let mut sys_prompt = "You are Rune, a high-performance AI agent running in a terminal. \
          You have access to tools: read_file, write_file, list_dir, execute_cmd, fetch_url. \
-         Use them when needed. Be concise and accurate.",
-    );
+         Use them when needed. Be concise and accurate."
+        .to_string();
+
+    // Auto-load AGENTS.md from current directory if present
+    if let Ok(agents_content) = std::fs::read_to_string("AGENTS.md") {
+        if !agents_content.trim().is_empty() {
+            sys_prompt.push_str("\n\n[Project Context: AGENTS.md]\n");
+            sys_prompt.push_str(&agents_content);
+            sys_prompt.push_str("\n[End AGENTS.md]");
+            if stdin_is_terminal {
+                eprintln!(
+                    "  {} Loaded AGENTS.md from current directory",
+                    "📚".dimmed()
+                );
+            }
+        }
+    }
+
+    agent.set_system_prompt(&sys_prompt);
 
     let history_path = std::env::var("HOME")
         .ok()
