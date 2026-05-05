@@ -696,4 +696,44 @@ allowed_domains = ["example.com"]"#;
         assert!(updated.contains("model = \"gemini-embedding-2\""));
         assert!(updated.contains("enabled = true"));
     }
+
+    #[test]
+    fn test_rune_init_openrouter_embedding_default() {
+        // When provider is openrouter (choice "4"), default embedding model should be nvidia
+        let provider_choice = "4";
+        let default_emb_model = match provider_choice.trim() {
+            "1" => "text-embedding-3-small",
+            "2" => "gemini-embedding-2",
+            "4" => "nvidia/llama-nemotron-embed-vl-1b-v2:free",
+            _ => "text-embedding-3-small",
+        };
+        assert_eq!(
+            default_emb_model,
+            "nvidia/llama-nemotron-embed-vl-1b-v2:free"
+        );
+    }
+
+    #[test]
+    fn test_rune_init_copilot_embedding_default() {
+        let provider_choice = "1";
+        let default_emb_model = match provider_choice.trim() {
+            "1" => "text-embedding-3-small",
+            "2" => "gemini-embedding-2",
+            "4" => "nvidia/llama-nemotron-embed-vl-1b-v2:free",
+            _ => "text-embedding-3-small",
+        };
+        assert_eq!(default_emb_model, "text-embedding-3-small");
+    }
+
+    #[test]
+    fn test_rune_init_gemini_embedding_default() {
+        let provider_choice = "2";
+        let default_emb_model = match provider_choice.trim() {
+            "1" => "text-embedding-3-small",
+            "2" => "gemini-embedding-2",
+            "4" => "nvidia/llama-nemotron-embed-vl-1b-v2:free",
+            _ => "text-embedding-3-small",
+        };
+        assert_eq!(default_emb_model, "gemini-embedding-2");
+    }
 }

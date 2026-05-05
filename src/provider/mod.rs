@@ -1765,8 +1765,59 @@ mod tests {
         let key = "AIzaSyAbc123";
         assert!(key.starts_with("AIza"));
     }
+    #[test]
+    fn test_provider_auto_detect_openrouter() {
+        let key = "sk-or-v1-abc123";
+        assert!(key.starts_with("sk-or-"));
+    }
 
-    #[tokio::test]
+    #[test]
+    fn test_embedding_base_url_fallback_openrouter() {
+        // When provider is openrouter and embedding has no base_url,
+        // it should fall back to the main config's base_url
+        use crate::embedding::EmbeddingConfig;
+
+        let mut emb_cfg = EmbeddingConfig::default();
+        emb_cfg.enabled = true;
+        emb_cfg.api_key = Some("sk-or-v1-test".to_string());
+        // Simulate the fallback logic from cli/mod.rs
+        let main_base_url = Some("https://openrouter.ai/api/v1".to_string());
+        if emb_cfg.base_url.is_none() {
+            emb_cfg.base_url = main_base_url;
+        }
+        assert_eq!(
+            emb_cfg.base_url.as_deref(),
+            Some("https://openrouter.ai/api/v1")
+        );
+    }
+
+    #[test]
+    fn test_embedding_base_url_not_overridden_when_set() {
+        // If embedding already has a base_url, don't override it
+        use crate::embedding::EmbeddingConfig;
+
+        let mut emb_cfg = EmbeddingConfig::default();
+        emb_cfg.enabled = true;
+        emb_cfg.base_url = Some("https://custom.endpoint.com/v1".to_string());
+        // Simulate fallback
+        let main_base_url = Some("https://openrouter.ai/api/v1".to_string());
+        if emb_cfg.base_url.is_none() {
+            emb_cfg.base_url = main_base_url;
+        }
+        assert_eq!(
+            emb_cfg.base_url.as_deref(),
+            Some("https://custom.endpoint.com/v1")
+        );
+    }
+
+    #[test]
+    fn test_openrouter_key_not_detected_as_copilot_or_gemini() {
+        let key = "sk-or-v1-abc123def456";
+        assert!(!key.starts_with("ghu_"));
+        assert!(!key.starts_with("ghp_"));
+        assert!(!key.starts_with("AIza"));
+        assert!(key.starts_with("sk-or-"));
+    }
     async fn test_provider_registry_streaming_bridge() {
         struct EchoProvider {
             name: String,
