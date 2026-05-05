@@ -411,7 +411,7 @@ make check-all           # Both
 
 - Rust 1.78+ (tested on 1.94-nightly)
 - Linux kernel 5.13+ (for Landlock ABI)
-- `curl` on PATH
+- `curl` on PATH (only needed for sandboxed fetch_url tool)
 
 ## License
 

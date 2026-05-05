@@ -6,9 +6,6 @@ use serde_json::Value;
 use std::collections::BTreeMap;
 use std::future::Future;
 use std::pin::Pin;
-use std::process::Stdio;
-use tokio::io::AsyncBufReadExt;
-use tokio::process::Command;
 use tokio::sync::mpsc::Sender;
 use tracing::{debug, info};
 
@@ -401,45 +398,28 @@ impl Provider for OpenAiProvider {
 
             debug!(url = %url, payload_len = payload.len(), "sending LLM request");
 
-            // Use a temp file to pass the payload to curl (avoids shell escaping issues)
-            let tmp_path = format!("/tmp/rune_llm_req_{}.json", std::process::id());
-            tokio::fs::write(&tmp_path, &payload)
+            let client = Client::new();
+            let response = client
+                .post(&url)
+                .bearer_auth(&api_key)
+                .header("Content-Type", "application/json")
+                .timeout(std::time::Duration::from_secs(120))
+                .body(payload)
+                .send()
                 .await
-                .map_err(|e| anyhow!("failed to write temp payload: {}", e))?;
+                .map_err(|e| anyhow!("HTTP request failed: {}", e))?;
 
-            let output = Command::new("curl")
-                .args([
-                    "-s",
-                    "-S",
-                    "-X",
-                    "POST",
-                    "-H",
-                    "Content-Type: application/json",
-                    "-H",
-                    &format!("Authorization: Bearer {}", api_key),
-                    "-d",
-                    &format!("@{}", tmp_path),
-                    "--max-time",
-                    "120",
-                    &url,
-                ])
-                .stdout(Stdio::piped())
-                .stderr(Stdio::piped())
-                .output()
+            let status = response.status();
+            let stdout = response
+                .text()
                 .await
-                .map_err(|e| anyhow!("failed to spawn curl: {}", e))?;
+                .map_err(|e| anyhow!("failed to read response body: {}", e))?;
 
-            // Clean up temp file (best effort)
-            let _ = tokio::fs::remove_file(&tmp_path).await;
-
-            let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-            let stderr = String::from_utf8_lossy(&output.stderr).to_string();
-
-            if !output.status.success() {
+            if !status.is_success() {
                 return Err(anyhow!(
-                    "curl failed (exit {:?}): {}",
-                    output.status.code(),
-                    stderr
+                    "API request failed ({}): {}",
+                    status,
+                    &stdout[..stdout.len().min(500)]
                 ));
             }
 
@@ -579,27 +559,29 @@ impl CopilotProvider {
 
         // Fetch new token
         debug!("refreshing GitHub Copilot session token");
-        let output = Command::new("curl")
-            .args([
-                "-sS",
-                "--max-time",
-                "10",
-                "-H",
-                &format!("Authorization: token {}", self.pat),
-                "-H",
-                "editor-version: vscode/1.96.0",
-                "https://api.github.com/copilot_internal/v2/token",
-            ])
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .output()
+        let client = Client::new();
+        let response = client
+            .get("https://api.github.com/copilot_internal/v2/token")
+            .header("Authorization", format!("token {}", self.pat))
+            .header("editor-version", "vscode/1.96.0")
+            .timeout(std::time::Duration::from_secs(10))
+            .send()
             .await
             .map_err(|e| anyhow!("failed to refresh copilot token: {}", e))?;
 
-        let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-        if !output.status.success() {
-            return Err(anyhow!("copilot token refresh failed: {}", stdout));
+        if !response.status().is_success() {
+            let body = response.text().await.unwrap_or_default();
+            return Err(anyhow!(
+                "copilot token refresh failed ({}): {}",
+                "non-2xx",
+                &body[..body.len().min(200)]
+            ));
         }
+
+        let stdout = response
+            .text()
+            .await
+            .map_err(|e| anyhow!("failed to read token response body: {}", e))?;
 
         let v: serde_json::Value = serde_json::from_str(&stdout).map_err(|e| {
             anyhow!(
@@ -654,43 +636,30 @@ impl Provider for CopilotProvider {
                 .map_err(|e| anyhow!("failed to serialize request: {}", e))?;
 
             let url = format!("{}/chat/completions", endpoint.trim_end_matches('/'));
-            let tmp_path = format!("/tmp/rune_copilot_req_{}.json", std::process::id());
-            tokio::fs::write(&tmp_path, &payload)
+
+            let client = Client::new();
+            let response = client
+                .post(&url)
+                .bearer_auth(&token)
+                .header("Content-Type", "application/json")
+                .header("editor-version", "vscode/1.96.0")
+                .timeout(std::time::Duration::from_secs(120))
+                .body(payload)
+                .send()
                 .await
-                .map_err(|e| anyhow!("failed to write temp payload: {}", e))?;
+                .map_err(|e| anyhow!("HTTP request failed: {}", e))?;
 
-            let output = Command::new("curl")
-                .args([
-                    "-sS",
-                    "-X",
-                    "POST",
-                    "-H",
-                    "Content-Type: application/json",
-                    "-H",
-                    &format!("Authorization: Bearer {}", token),
-                    "-H",
-                    "editor-version: vscode/1.96.0",
-                    "-d",
-                    &format!("@{}", tmp_path),
-                    "--max-time",
-                    "120",
-                    &url,
-                ])
-                .stdout(Stdio::piped())
-                .stderr(Stdio::piped())
-                .output()
+            let status = response.status();
+            let stdout = response
+                .text()
                 .await
-                .map_err(|e| anyhow!("failed to spawn curl: {}", e))?;
+                .map_err(|e| anyhow!("failed to read response body: {}", e))?;
 
-            let _ = tokio::fs::remove_file(&tmp_path).await;
-
-            let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-            if !output.status.success() {
-                let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+            if !status.is_success() {
                 return Err(anyhow!(
-                    "curl failed (exit {:?}): {}",
-                    output.status.code(),
-                    stderr
+                    "Copilot API request failed ({}): {}",
+                    status,
+                    &stdout[..stdout.len().min(500)]
                 ));
             }
 
@@ -927,41 +896,33 @@ impl Provider for GeminiProvider {
                 api_key
             );
 
-            let tmp_path = format!("/tmp/rune_gemini_req_{}.json", std::process::id());
             let payload_str = serde_json::to_string(&payload)
                 .map_err(|e| anyhow!("failed to serialize Gemini request: {}", e))?;
-            tokio::fs::write(&tmp_path, &payload_str)
-                .await
-                .map_err(|e| anyhow!("failed to write temp payload: {}", e))?;
 
             debug!(url = %url, payload_len = payload_str.len(), "sending Gemini request");
 
-            let output = Command::new("curl")
-                .args([
-                    "-s",
-                    "-S",
-                    "-X",
-                    "POST",
-                    "-H",
-                    "Content-Type: application/json",
-                    "-d",
-                    &format!("@{}", tmp_path),
-                    "--max-time",
-                    "120",
-                    &url,
-                ])
-                .stdout(Stdio::piped())
-                .stderr(Stdio::piped())
-                .output()
+            let client = Client::new();
+            let response = client
+                .post(&url)
+                .header("Content-Type", "application/json")
+                .timeout(std::time::Duration::from_secs(120))
+                .body(payload_str)
+                .send()
                 .await
-                .map_err(|e| anyhow!("failed to spawn curl: {}", e))?;
+                .map_err(|e| anyhow!("Gemini HTTP request failed: {}", e))?;
 
-            let _ = tokio::fs::remove_file(&tmp_path).await;
+            let status = response.status();
+            let stdout = response
+                .text()
+                .await
+                .map_err(|e| anyhow!("failed to read Gemini response body: {}", e))?;
 
-            let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-            if !output.status.success() {
-                let stderr = String::from_utf8_lossy(&output.stderr).to_string();
-                return Err(anyhow!("curl failed: {}", stderr));
+            if !status.is_success() {
+                return Err(anyhow!(
+                    "Gemini API request failed ({}): {}",
+                    status,
+                    &stdout[..stdout.len().min(500)]
+                ));
             }
 
             let v: Value = serde_json::from_str(&stdout).map_err(|e| {
@@ -1094,145 +1055,134 @@ impl Provider for GeminiProvider {
                 api_key
             );
 
-            let tmp_path = format!("/tmp/rune_gemini_stream_{}.json", std::process::id());
             let payload_str = serde_json::to_string(&payload)
                 .map_err(|e| anyhow!("failed to serialize Gemini request: {}", e))?;
-            tokio::fs::write(&tmp_path, &payload_str)
-                .await
-                .map_err(|e| anyhow!("failed to write temp payload: {}", e))?;
 
             debug!(url = %url, payload_len = payload_str.len(), "sending Gemini streaming request");
 
-            let mut child = Command::new("curl")
-                .args([
-                    "-s",
-                    "-S",
-                    "-N",
-                    "-X",
-                    "POST",
-                    "-H",
-                    "Content-Type: application/json",
-                    "-d",
-                    &format!("@{}", tmp_path),
-                    "--max-time",
-                    "120",
-                    &url,
-                ])
-                .stdout(Stdio::piped())
-                .stderr(Stdio::inherit())
-                .spawn()
-                .map_err(|e| anyhow!("failed to spawn curl: {}", e))?;
+            let client = Client::new();
+            let response = client
+                .post(&url)
+                .header("Content-Type", "application/json")
+                .timeout(std::time::Duration::from_secs(120))
+                .body(payload_str)
+                .send()
+                .await
+                .map_err(|e| anyhow!("Gemini streaming request failed: {}", e))?;
 
-            let stdout = child
-                .stdout
-                .take()
-                .ok_or_else(|| anyhow!("failed to capture curl stdout"))?;
-            let reader = tokio::io::BufReader::new(stdout);
-            let mut lines = reader.lines();
+            if !response.status().is_success() {
+                let status = response.status();
+                let body = response.text().await.unwrap_or_default();
+                return Err(anyhow!(
+                    "Gemini streaming request failed ({}): {}",
+                    status,
+                    &body[..body.len().min(500)]
+                ));
+            }
 
+            let mut stream = response.bytes_stream();
+            let mut buffer = String::new();
             let mut content_text = String::new();
             let mut tool_calls: Vec<LlmToolCall> = Vec::new();
             let mut tc_counter = 0u32;
             let mut usage = TokenUsage::default();
             let mut response_model = model.clone();
 
-            while let Some(line) = lines
-                .next_line()
-                .await
-                .map_err(|e| anyhow!("failed to read streaming response: {}", e))?
-            {
-                let line = line.trim();
-                if line.is_empty() {
-                    continue;
-                }
-                if !line.starts_with("data:") {
-                    continue;
-                }
+            while let Some(chunk) = stream.next().await {
+                let chunk = chunk.map_err(|e| anyhow!("Gemini stream read error: {}", e))?;
+                buffer.push_str(&String::from_utf8_lossy(&chunk));
 
-                let payload = line
-                    .strip_prefix("data: ")
-                    .or_else(|| line.strip_prefix("data:"))
-                    .unwrap_or("")
-                    .trim();
-                if payload.is_empty() || payload == "[DONE]" {
-                    continue;
-                }
+                while let Some(pos) = buffer.find('\n') {
+                    let mut line = buffer.drain(..=pos).collect::<String>();
+                    if line.ends_with('\n') {
+                        line.pop();
+                    }
+                    if line.ends_with('\r') {
+                        line.pop();
+                    }
 
-                let v: Value = match serde_json::from_str(payload) {
-                    Ok(v) => v,
-                    Err(e) => {
-                        debug!(error = %e, chunk = %payload, "skipping malformed Gemini SSE chunk");
+                    let line = line.trim();
+                    if line.is_empty() {
                         continue;
                     }
-                };
-
-                if let Some(um) = v.get("usageMetadata") {
-                    usage = TokenUsage {
-                        prompt_tokens: um
-                            .get("promptTokenCount")
-                            .and_then(|v| v.as_u64())
-                            .unwrap_or(0) as u32,
-                        completion_tokens: um
-                            .get("candidatesTokenCount")
-                            .and_then(|v| v.as_u64())
-                            .unwrap_or(0) as u32,
-                        total_tokens: um
-                            .get("totalTokenCount")
-                            .and_then(|v| v.as_u64())
-                            .unwrap_or(0) as u32,
-                    };
-                }
-
-                if let Some(mv) = v.get("modelVersion").and_then(|m| m.as_str()) {
-                    if !mv.is_empty() {
-                        response_model = mv.to_string();
+                    if !line.starts_with("data:") {
+                        continue;
                     }
-                }
 
-                if let Some(parts) = v
-                    .pointer("/candidates/0/content/parts")
-                    .and_then(|p| p.as_array())
-                {
-                    for part in parts {
-                        if let Some(text) = part.get("text").and_then(|t| t.as_str()) {
-                            if !text.is_empty() {
-                                on_token(text);
-                                content_text.push_str(text);
+                    let data = line
+                        .strip_prefix("data: ")
+                        .or_else(|| line.strip_prefix("data:"))
+                        .unwrap_or("")
+                        .trim();
+                    if data.is_empty() || data == "[DONE]" {
+                        continue;
+                    }
+
+                    let v: Value = match serde_json::from_str(data) {
+                        Ok(v) => v,
+                        Err(e) => {
+                            debug!(error = %e, chunk = %data, "skipping malformed Gemini SSE chunk");
+                            continue;
+                        }
+                    };
+
+                    if let Some(um) = v.get("usageMetadata") {
+                        usage = TokenUsage {
+                            prompt_tokens: um
+                                .get("promptTokenCount")
+                                .and_then(|v| v.as_u64())
+                                .unwrap_or(0) as u32,
+                            completion_tokens: um
+                                .get("candidatesTokenCount")
+                                .and_then(|v| v.as_u64())
+                                .unwrap_or(0) as u32,
+                            total_tokens: um
+                                .get("totalTokenCount")
+                                .and_then(|v| v.as_u64())
+                                .unwrap_or(0) as u32,
+                        };
+                    }
+
+                    if let Some(mv) = v.get("modelVersion").and_then(|m| m.as_str()) {
+                        if !mv.is_empty() {
+                            response_model = mv.to_string();
+                        }
+                    }
+
+                    if let Some(parts) = v
+                        .pointer("/candidates/0/content/parts")
+                        .and_then(|p| p.as_array())
+                    {
+                        for part in parts {
+                            if let Some(text) = part.get("text").and_then(|t| t.as_str()) {
+                                if !text.is_empty() {
+                                    on_token(text);
+                                    content_text.push_str(text);
+                                }
+                            }
+                            if let Some(fc) = part.get("functionCall") {
+                                let name = fc
+                                    .get("name")
+                                    .and_then(|n| n.as_str())
+                                    .unwrap_or("")
+                                    .to_string();
+                                let args = fc
+                                    .get("args")
+                                    .cloned()
+                                    .unwrap_or(Value::Object(serde_json::Map::new()));
+                                tc_counter += 1;
+                                tool_calls.push(LlmToolCall {
+                                    id: format!("gemini_tc_{}", tc_counter),
+                                    call_type: "function".to_string(),
+                                    function: LlmFunction {
+                                        name,
+                                        arguments: serde_json::to_string(&args).unwrap_or_default(),
+                                    },
+                                });
                             }
                         }
-                        if let Some(fc) = part.get("functionCall") {
-                            let name = fc
-                                .get("name")
-                                .and_then(|n| n.as_str())
-                                .unwrap_or("")
-                                .to_string();
-                            let args = fc
-                                .get("args")
-                                .cloned()
-                                .unwrap_or(Value::Object(serde_json::Map::new()));
-                            tc_counter += 1;
-                            tool_calls.push(LlmToolCall {
-                                id: format!("gemini_tc_{}", tc_counter),
-                                call_type: "function".to_string(),
-                                function: LlmFunction {
-                                    name,
-                                    arguments: serde_json::to_string(&args).unwrap_or_default(),
-                                },
-                            });
-                        }
                     }
                 }
-            }
-
-            let status = child
-                .wait()
-                .await
-                .map_err(|e| anyhow!("failed to wait for curl: {}", e))?;
-
-            let _ = tokio::fs::remove_file(&tmp_path).await;
-
-            if !status.success() {
-                return Err(anyhow!("curl failed with status: {}", status));
             }
 
             let usage = if usage.total_tokens == 0 {
