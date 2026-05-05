@@ -141,6 +141,12 @@ impl ToolRegistry {
                 read_only.push(pb);
             }
         }
+        // Always include CWD so sandboxed commands can access the working directory
+        if let Ok(cwd) = std::env::current_dir() {
+            if !read_only.contains(&cwd) && !self.allowed_dirs.contains(&cwd) {
+                read_only.push(cwd);
+            }
+        }
         let config = SandboxConfig {
             timeout_secs,
             read_write_paths: self.allowed_dirs.clone(),
