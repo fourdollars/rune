@@ -159,10 +159,9 @@ resources:
       api_key: ((copilot-pat))
       model: gpt-4o-mini
       prompt: "Fetch the weather for Taoyuan from wttr.in using curl."
-      sandbox:
+      policy:
         allowed_commands: ["curl"]
-        network:
-          allowed_domains: ["wttr.in"]
+        allowed_domains: ["wttr.in"]
 
 jobs:
   - name: weather-check

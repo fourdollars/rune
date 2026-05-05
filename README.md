@@ -325,10 +325,9 @@ resources:
       api_key: ((copilot-pat))
       model: gpt-4o-mini
       prompt: "Fetch the weather for Taoyuan from wttr.in using curl."
-      sandbox:
+      policy:
         allowed_commands: ["curl"]
-        network:
-          allowed_domains: ["wttr.in"]
+        allowed_domains: ["wttr.in"]
 
 jobs:
   - name: weather-check
@@ -377,12 +376,9 @@ resources:
       api_key: ((copilot_key))          # ghu_/ghp_ auto-refreshed
       model: gpt-4o-mini
       prompt: "List top 3 trending AI topics today. One line each."
-      sandbox:
-        network:
-          allowed_domains: ["news.google.com", "api.github.com"]
-        filesystem:
-          read_write_paths: ["/workspace"]
-          read_only_paths: ["/bin", "/usr", "/lib"]
+      policy:
+        allowed_commands: ["curl", "ls", "cat"]
+        allowed_domains: ["news.google.com", "api.github.com"]
 
 jobs:
   - name: news-digest
