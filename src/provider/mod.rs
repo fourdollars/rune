@@ -805,22 +805,27 @@ impl GeminiProvider {
                         for tc in tool_calls {
                             let args: Value = serde_json::from_str(&tc.function.arguments)
                                 .unwrap_or(Value::Object(serde_json::Map::new()));
-                            // Extract thought_signature from ID format: "name|gemini_tc_N|sig"
+                            // Extract from ID format: "fn_name|fc_id|thought_sig"
                             let id_parts: Vec<&str> = tc.id.splitn(3, '|').collect();
+                            let fc_id = if id_parts.len() >= 2 { id_parts[1] } else { "" };
                             let thought_sig = if id_parts.len() >= 3 {
                                 Some(id_parts[2])
                             } else {
                                 None
                             };
+                            let mut fc_obj = serde_json::json!({
+                                "name": tc.function.name,
+                                "args": args
+                            });
+                            if !fc_id.is_empty() {
+                                fc_obj["id"] = serde_json::Value::String(fc_id.to_string());
+                            }
                             let mut fc_part = serde_json::json!({
-                                "functionCall": {
-                                    "name": tc.function.name,
-                                    "args": args
-                                }
+                                "functionCall": fc_obj
                             });
                             if let Some(sig) = thought_sig {
                                 if !sig.is_empty() {
-                                    fc_part["thought_signature"] =
+                                    fc_part["thoughtSignature"] =
                                         serde_json::Value::String(sig.to_string());
                                 }
                             }
@@ -843,25 +848,34 @@ impl GeminiProvider {
                         _ => serde_json::json!({"result": raw_content}),
                     };
 
-                    // Parse tool_call_id format: "fn_name|gemini_tc_N" or "fn_name|gemini_tc_N|thought_sig"
+                    // Parse tool_call_id format: "fn_name|fc_id|thought_sig"
                     let raw_id = msg.tool_call_id.as_deref().unwrap_or("unknown");
                     let parts_vec: Vec<&str> = raw_id.splitn(3, '|').collect();
                     let fn_name = parts_vec.first().copied().unwrap_or("unknown");
+                    let fc_id = if parts_vec.len() >= 2 {
+                        parts_vec[1]
+                    } else {
+                        ""
+                    };
                     let thought_sig = if parts_vec.len() >= 3 {
                         Some(parts_vec[2])
                     } else {
                         None
                     };
 
+                    let mut fr_obj = serde_json::json!({
+                        "name": fn_name,
+                        "response": response_data
+                    });
+                    if !fc_id.is_empty() {
+                        fr_obj["id"] = serde_json::Value::String(fc_id.to_string());
+                    }
                     let mut fr_part = serde_json::json!({
-                        "functionResponse": {
-                            "name": fn_name,
-                            "response": response_data
-                        }
+                        "functionResponse": fr_obj
                     });
                     if let Some(sig) = thought_sig {
                         if !sig.is_empty() {
-                            fr_part["thought_signature"] =
+                            fr_part["thoughtSignature"] =
                                 serde_json::Value::String(sig.to_string());
                         }
                     }
@@ -937,6 +951,25 @@ impl Provider for GeminiProvider {
                 payload["tools"] = t;
             }
 
+            // Gemini thinking config
+            if let Some(ref thinking) = request.thinking {
+                let budget = match thinking.as_str() {
+                    "low" => Some(1024),
+                    "medium" => Some(4096),
+                    "high" => Some(8192),
+                    "xhigh" => Some(16384),
+                    "none" | "off" => Some(0),
+                    _ => None,
+                };
+                if let Some(b) = budget {
+                    payload["generationConfig"] = serde_json::json!({
+                        "thinkingConfig": {
+                            "thinkingBudget": b
+                        }
+                    });
+                }
+            }
+
             let url = format!(
                 "{}/models/{}:generateContent?key={}",
                 base_url.trim_end_matches('/'),
@@ -994,7 +1027,7 @@ impl Provider for GeminiProvider {
             let candidate = v.pointer("/candidates/0/content");
             let mut content_text = String::new();
             let mut tool_calls: Vec<LlmToolCall> = Vec::new();
-            let mut tc_counter = 0u32;
+            let _tc_counter = 0u32;
 
             if let Some(cand_content) = candidate {
                 if let Some(parts) = cand_content.get("parts").and_then(|p| p.as_array()) {
@@ -1012,20 +1045,21 @@ impl Provider for GeminiProvider {
                                 .get("args")
                                 .cloned()
                                 .unwrap_or(Value::Object(serde_json::Map::new()));
-                            // Capture thought_signature if present (required for Gemini thinking mode)
-                            // thought_signature is on the part level, not inside functionCall
+                            // Gemini function call has an "id" field we must echo back
+                            let fc_id = fc
+                                .get("id")
+                                .and_then(|i| i.as_str())
+                                .unwrap_or("")
+                                .to_string();
+                            // Capture thoughtSignature from part level
                             let thought_sig = part
-                                .get("thought_signature")
+                                .get("thoughtSignature")
                                 .and_then(|t| t.as_str())
                                 .unwrap_or("")
                                 .to_string();
-                            tc_counter += 1;
-                            // Encode name + thought_signature into the ID for later retrieval
-                            let id = if thought_sig.is_empty() {
-                                format!("{}|gemini_tc_{}", name, tc_counter)
-                            } else {
-                                format!("{}|gemini_tc_{}|{}", name, tc_counter, thought_sig)
-                            };
+
+                            // Encode: fn_name|fc_id|thought_sig
+                            let id = format!("{}|{}|{}", name, fc_id, thought_sig);
                             tool_calls.push(LlmToolCall {
                                 id,
                                 call_type: "function".to_string(),
@@ -1109,6 +1143,25 @@ impl Provider for GeminiProvider {
                 payload["tools"] = t;
             }
 
+            // Gemini thinking config
+            if let Some(ref thinking) = request.thinking {
+                let budget = match thinking.as_str() {
+                    "low" => Some(1024),
+                    "medium" => Some(4096),
+                    "high" => Some(8192),
+                    "xhigh" => Some(16384),
+                    "none" | "off" => Some(0),
+                    _ => None,
+                };
+                if let Some(b) = budget {
+                    payload["generationConfig"] = serde_json::json!({
+                        "thinkingConfig": {
+                            "thinkingBudget": b
+                        }
+                    });
+                }
+            }
+
             let url = format!(
                 "{}/models/{}:streamGenerateContent?alt=sse&key={}",
                 base_url.trim_end_matches('/'),
@@ -1145,7 +1198,7 @@ impl Provider for GeminiProvider {
             let mut buffer = String::new();
             let mut content_text = String::new();
             let mut tool_calls: Vec<LlmToolCall> = Vec::new();
-            let mut tc_counter = 0u32;
+            let _tc_counter = 0u32;
             let mut usage = TokenUsage::default();
             let mut response_model = model.clone();
 
@@ -1231,17 +1284,18 @@ impl Provider for GeminiProvider {
                                     .get("args")
                                     .cloned()
                                     .unwrap_or(Value::Object(serde_json::Map::new()));
+                                let fc_id = fc
+                                    .get("id")
+                                    .and_then(|i| i.as_str())
+                                    .unwrap_or("")
+                                    .to_string();
                                 let thought_sig = part
-                                    .get("thought_signature")
+                                    .get("thoughtSignature")
                                     .and_then(|t| t.as_str())
                                     .unwrap_or("")
                                     .to_string();
-                                tc_counter += 1;
-                                let id = if thought_sig.is_empty() {
-                                    format!("{}|gemini_tc_{}", name, tc_counter)
-                                } else {
-                                    format!("{}|gemini_tc_{}|{}", name, tc_counter, thought_sig)
-                                };
+
+                                let id = format!("{}|{}|{}", name, fc_id, thought_sig);
                                 tool_calls.push(LlmToolCall {
                                     id,
                                     call_type: "function".to_string(),
@@ -1772,7 +1826,7 @@ mod tests {
             content: Some("obvious".to_string()),
             content_parts: None,
             tool_calls: None,
-            tool_call_id: Some("execute_cmd|gemini_tc_1".to_string()),
+            tool_call_id: Some("execute_cmd|fc_id_1|".to_string()),
         }];
         let (_, contents) = GeminiProvider::convert_messages(&messages);
         assert_eq!(contents.len(), 1);
@@ -1788,7 +1842,7 @@ mod tests {
             content: Some(r#"{"name":"test","value":42}"#.to_string()),
             content_parts: None,
             tool_calls: None,
-            tool_call_id: Some("fetch_url|gemini_tc_1".to_string()),
+            tool_call_id: Some("fetch_url|fc_id_1|".to_string()),
         }];
         let (_, contents) = GeminiProvider::convert_messages(&messages);
         let resp = &contents[0]["parts"][0]["functionResponse"]["response"];
@@ -1804,7 +1858,7 @@ mod tests {
             content: Some("{}".to_string()),
             content_parts: None,
             tool_calls: None,
-            tool_call_id: Some("read_file|gemini_tc_2".to_string()),
+            tool_call_id: Some("read_file|fc_id_2|".to_string()),
         }];
         let (_, contents) = GeminiProvider::convert_messages(&messages);
         let name = &contents[0]["parts"][0]["functionResponse"]["name"];
@@ -1820,7 +1874,7 @@ mod tests {
             content: None,
             content_parts: None,
             tool_calls: Some(vec![LlmToolCall {
-                id: "execute_cmd|gemini_tc_1|abc123sig".to_string(),
+                id: "execute_cmd|fc_id_1|abc123sig".to_string(),
                 call_type: "function".to_string(),
                 function: LlmFunction {
                     name: "execute_cmd".to_string(),
@@ -1833,7 +1887,7 @@ mod tests {
         assert_eq!(contents.len(), 1);
         let part = &contents[0]["parts"][0];
         assert_eq!(part["functionCall"]["name"], "execute_cmd");
-        assert_eq!(part["thought_signature"], "abc123sig");
+        assert_eq!(part["thoughtSignature"], "abc123sig");
     }
 
     #[test]
@@ -1844,12 +1898,12 @@ mod tests {
             content: Some(r#"{"output":"done"}"#.to_string()),
             content_parts: None,
             tool_calls: None,
-            tool_call_id: Some("execute_cmd|gemini_tc_1|sig456xyz".to_string()),
+            tool_call_id: Some("execute_cmd|fc_id_1|sig456xyz".to_string()),
         }];
         let (_, contents) = GeminiProvider::convert_messages(&messages);
         let part = &contents[0]["parts"][0];
         assert_eq!(part["functionResponse"]["name"], "execute_cmd");
-        assert_eq!(part["thought_signature"], "sig456xyz");
+        assert_eq!(part["thoughtSignature"], "sig456xyz");
     }
 
     #[test]
@@ -1860,7 +1914,7 @@ mod tests {
             content: None,
             content_parts: None,
             tool_calls: Some(vec![LlmToolCall {
-                id: "list_dir|gemini_tc_1".to_string(),
+                id: "list_dir|fc_id_1|".to_string(),
                 call_type: "function".to_string(),
                 function: LlmFunction {
                     name: "list_dir".to_string(),
@@ -1872,6 +1926,6 @@ mod tests {
         let (_, contents) = GeminiProvider::convert_messages(&messages);
         let part = &contents[0]["parts"][0];
         assert_eq!(part["functionCall"]["name"], "list_dir");
-        assert!(part.get("thought_signature").is_none() || part["thought_signature"].is_null());
+        assert!(part.get("thoughtSignature").is_none() || part["thoughtSignature"].is_null());
     }
 }
