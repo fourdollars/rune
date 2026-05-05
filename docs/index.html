@@ -93,153 +93,203 @@
     <!-- Security -->
     <section class="security" id="security">
         <h2 class="section-title">🔐 Security Model</h2>
-        <div class="code-block" style="padding:1.25rem; background: linear-gradient(180deg, rgba(18,18,42,0.95), rgba(12,12,28,0.98)); border:1px solid #2a2a4a; box-shadow: 0 20px 60px rgba(0,0,0,0.35);">
-            <svg viewBox="0 0 1120 520" width="100%" role="img" aria-labelledby="securityTitle securityDesc" style="display:block; height:auto; overflow:visible;">
-                <title id="securityTitle">Rune layered security model</title>
-                <desc id="securityDesc">Concentric protection rings showing cgroups, Network Namespace / net-guard, Seccomp, Landlock, and DNS allowlist around the core runtime.</desc>
+        <div class="magic-circle-container">
+            <svg viewBox="0 0 800 800" width="100%" role="img" aria-labelledby="secTitle secDesc" class="magic-circle-svg">
+                <title id="secTitle">Rune Security Model — layered protection wards</title>
+                <desc id="secDesc">Five concentric protection circles forming a runic ward: cgroups, net-guard, seccomp, landlock, and the protected core.</desc>
                 <defs>
-                    <linearGradient id="ringOuter" x1="0" y1="0" x2="1" y2="1">
-                        <stop offset="0%" stop-color="#54a0ff"/>
-                        <stop offset="100%" stop-color="#00d4ff"/>
-                    </linearGradient>
-                    <linearGradient id="ringNetwork" x1="0" y1="0" x2="1" y2="1">
-                        <stop offset="0%" stop-color="#feca57"/>
-                        <stop offset="100%" stop-color="#ffd700"/>
-                    </linearGradient>
-                    <linearGradient id="ringSeccomp" x1="0" y1="0" x2="1" y2="1">
-                        <stop offset="0%" stop-color="#48dbfb"/>
-                        <stop offset="100%" stop-color="#00bcd4"/>
-                    </linearGradient>
-                    <linearGradient id="ringLandlock" x1="0" y1="0" x2="1" y2="1">
-                        <stop offset="0%" stop-color="#ff9ff3"/>
-                        <stop offset="100%" stop-color="#ff6bcb"/>
-                    </linearGradient>
-                    <linearGradient id="ringCore" x1="0" y1="0" x2="1" y2="1">
+                    <linearGradient id="mcGrad1" x1="0" y1="0" x2="1" y2="1">
                         <stop offset="0%" stop-color="#9b59b6"/>
                         <stop offset="100%" stop-color="#6c5ce7"/>
                     </linearGradient>
-                    <filter id="glow" x="-50%" y="-50%" width="200%" height="200%">
-                        <feGaussianBlur stdDeviation="8" result="blur"/>
-                        <feMerge>
-                            <feMergeNode in="blur"/>
-                            <feMergeNode in="SourceGraphic"/>
-                        </feMerge>
+                    <linearGradient id="mcGrad2" x1="0" y1="0" x2="1" y2="1">
+                        <stop offset="0%" stop-color="#00d4ff"/>
+                        <stop offset="100%" stop-color="#54a0ff"/>
+                    </linearGradient>
+                    <linearGradient id="mcGrad3" x1="0" y1="0" x2="1" y2="1">
+                        <stop offset="0%" stop-color="#feca57"/>
+                        <stop offset="100%" stop-color="#ff9f43"/>
+                    </linearGradient>
+                    <linearGradient id="mcGrad4" x1="0" y1="0" x2="1" y2="1">
+                        <stop offset="0%" stop-color="#ff6b6b"/>
+                        <stop offset="100%" stop-color="#ee5a24"/>
+                    </linearGradient>
+                    <linearGradient id="mcGrad5" x1="0" y1="0" x2="1" y2="1">
+                        <stop offset="0%" stop-color="#48dbfb"/>
+                        <stop offset="100%" stop-color="#0abde3"/>
+                    </linearGradient>
+                    <filter id="mcGlow">
+                        <feGaussianBlur stdDeviation="4" result="blur"/>
+                        <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
                     </filter>
-                    <filter id="softShadow" x="-30%" y="-30%" width="160%" height="160%">
-                        <feDropShadow dx="0" dy="10" stdDeviation="14" flood-color="#000000" flood-opacity="0.35"/>
+                    <filter id="mcGlowStrong">
+                        <feGaussianBlur stdDeviation="8" result="blur"/>
+                        <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
                     </filter>
                     <style>
-                        .s-label { font: 700 18px/1.2 'Segoe UI', system-ui, sans-serif; fill: #e0e0e8; letter-spacing: .02em; }
-                        .s-sub { font: 500 13px/1.4 'Segoe UI', system-ui, sans-serif; fill: #9aa0c2; }
-                        .s-small { font: 500 12px/1.4 'Segoe UI', system-ui, sans-serif; fill: #b6bbdd; }
-                        .s-chip { font: 700 12px/1 'Segoe UI', system-ui, sans-serif; fill: #09111f; letter-spacing: .08em; }
-                        .ring { stroke-width: 16; fill: none; stroke-linecap: round; stroke-linejoin: round; }
-                        .ring-label { filter: url(#softShadow); }
-                        .arrow { stroke: #6a6a8a; stroke-width: 2; stroke-dasharray: 4 6; fill: none; opacity: .9; }
-                        .node { rx: 14; ry: 14; filter: url(#softShadow); }
-                        .legend-card { fill: #15152e; stroke: #2a2a4a; stroke-width: 1; rx: 14; ry: 14; }
+                        .mc-ring { fill: none; stroke-width: 2; opacity: 0.9; }
+                        .mc-ring-deco { fill: none; stroke-width: 1; stroke-dasharray: 8 4; opacity: 0.5; }
+                        .mc-runes { font: 18px serif; fill: currentColor; opacity: 0.7; }
+                        .mc-label { font: 700 14px/1.2 'Segoe UI', system-ui, sans-serif; fill: #e0e0e8; }
+                        .mc-sublabel { font: 400 11px/1.2 'Segoe UI', system-ui, sans-serif; fill: #9aa0c2; }
+                        .mc-connector { stroke-width: 1; fill: none; opacity: 0.4; stroke-dasharray: 3 6; }
+                        @keyframes spin-slow { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+                        @keyframes spin-reverse { from { transform: rotate(360deg); } to { transform: rotate(0deg); } }
+                        @keyframes pulse-glow { 0%,100% { opacity: 0.6; } 50% { opacity: 1; } }
+                        .mc-spin-cw { animation: spin-slow 120s linear infinite; transform-origin: 400px 400px; }
+                        .mc-spin-ccw { animation: spin-reverse 90s linear infinite; transform-origin: 400px 400px; }
+                        .mc-spin-slow { animation: spin-slow 200s linear infinite; transform-origin: 400px 400px; }
+                        .mc-pulse { animation: pulse-glow 4s ease-in-out infinite; }
                     </style>
                 </defs>
 
-                <rect x="18" y="18" width="1084" height="484" rx="24" ry="24" fill="#101027" stroke="#2a2a4a" opacity="0.95"/>
+                <!-- Background circle field -->
+                <circle cx="400" cy="400" r="380" fill="none" stroke="#1a1a3e" stroke-width="1" opacity="0.5"/>
 
-                <!-- Left: layered onion diagram -->
-                <g transform="translate(330 260)" filter="url(#glow)">
-                    <!-- outermost: DNS Allowlist -->
-                    <circle r="168" class="ring" stroke="url(#ringOuter)" opacity="0.95"/>
-                    <circle r="156" class="ring" stroke="#12324b" opacity="0.75" stroke-dasharray="2 12"/>
+                <!-- Layer 5 (outermost): cgroups — Resource Ward -->
+                <g class="mc-spin-slow" filter="url(#mcGlow)">
+                    <circle cx="400" cy="400" r="360" class="mc-ring" stroke="url(#mcGrad4)"/>
+                    <circle cx="400" cy="400" r="352" class="mc-ring-deco" stroke="#ff6b6b"/>
+                    <!-- Rune inscriptions along outer ring -->
+                    <text class="mc-runes" fill="#ff6b6b">
+                        <textPath href="#outerPath" startOffset="0%">ᚠ ᚢ ᚦ ᚨ ᚱ ᚲ ᚷ ᚹ ᚺ ᚾ ᛁ ᛃ ᛇ ᛈ ᛉ ᛊ ᛏ ᛒ ᛖ ᛗ ᛚ ᛝ ᛞ ᛟ ᚠ ᚢ ᚦ ᚨ ᚱ ᚲ ᚷ ᚹ ᚺ ᚾ ᛁ ᛃ</textPath>
+                    </text>
+                </g>
+                <path id="outerPath" d="M 400 40 A 360 360 0 1 1 399.99 40" fill="none" stroke="none"/>
 
-                    <!-- Network Namespace -->
-                    <circle r="130" class="ring" stroke="url(#ringNetwork)" opacity="0.9"/>
-                    <circle r="118" class="ring" stroke="#3f3511" opacity="0.45" stroke-dasharray="6 10"/>
+                <!-- Pentagram-like connectors (outer ward lines) -->
+                <g opacity="0.3" stroke="#9b59b6" stroke-width="0.5">
+                    <line x1="400" y1="80" x2="200" y2="640"/>
+                    <line x1="200" y1="640" x2="680" y2="280"/>
+                    <line x1="680" y1="280" x2="120" y2="280"/>
+                    <line x1="120" y1="280" x2="600" y2="640"/>
+                    <line x1="600" y1="640" x2="400" y2="80"/>
+                </g>
+
+                <!-- Layer 4: Network (net-guard / netns) -->
+                <g class="mc-spin-ccw" filter="url(#mcGlow)">
+                    <circle cx="400" cy="400" r="280" class="mc-ring" stroke="url(#mcGrad5)"/>
+                    <circle cx="400" cy="400" r="272" class="mc-ring-deco" stroke="#48dbfb"/>
+                    <text class="mc-runes" fill="#48dbfb">
+                        <textPath href="#ring4Path" startOffset="5%">ᛊ ᛏ ᛒ ᛖ ᛗ ᛚ ᛝ ᛞ ᛟ ᚠ ᚢ ᚦ ᚨ ᚱ ᚲ ᚷ ᚹ ᚺ ᚾ ᛁ ᛃ ᛇ ᛈ ᛉ</textPath>
+                    </text>
+                </g>
+                <path id="ring4Path" d="M 400 120 A 280 280 0 1 1 399.99 120" fill="none" stroke="none"/>
+
+                <!-- Hexagram connectors (middle ward) -->
+                <g opacity="0.25" stroke="#00d4ff" stroke-width="0.5">
+                    <polygon points="400,150 570,530 230,530" fill="none"/>
+                    <polygon points="400,640 230,270 570,270" fill="none"/>
+                </g>
+
+                <!-- Layer 3: Seccomp BPF -->
+                <g class="mc-spin-cw" filter="url(#mcGlow)">
+                    <circle cx="400" cy="400" r="200" class="mc-ring" stroke="url(#mcGrad3)"/>
+                    <circle cx="400" cy="400" r="192" class="mc-ring-deco" stroke="#feca57"/>
+                    <text class="mc-runes" fill="#feca57" font-size="15">
+                        <textPath href="#ring3Path" startOffset="10%">ᚱ ᚢ ᚾ ᛖ · ᛊ ᛖ ᚲ ᚲ ᛟ ᛗ ᛈ · ᚠ ᛁ ᛚ ᛏ ᛖ ᚱ</textPath>
+                    </text>
+                </g>
+                <path id="ring3Path" d="M 400 200 A 200 200 0 1 1 399.99 200" fill="none" stroke="none"/>
+
+                <!-- Layer 2: Landlock -->
+                <g class="mc-spin-ccw" filter="url(#mcGlow)">
+                    <circle cx="400" cy="400" r="130" class="mc-ring" stroke="url(#mcGrad2)"/>
+                    <circle cx="400" cy="400" r="122" class="mc-ring-deco" stroke="#54a0ff"/>
+                    <text class="mc-runes" fill="#54a0ff" font-size="14">
+                        <textPath href="#ring2Path" startOffset="15%">ᛚ ᚨ ᚾ ᛞ ᛚ ᛟ ᚲ ᚲ · ᚠ ᛊ</textPath>
+                    </text>
+                </g>
+                <path id="ring2Path" d="M 400 270 A 130 130 0 1 1 399.99 270" fill="none" stroke="none"/>
+
+                <!-- Core: Protected Process -->
+                <g filter="url(#mcGlowStrong)" class="mc-pulse">
+                    <circle cx="400" cy="400" r="60" fill="url(#mcGrad1)" opacity="0.9"/>
+                    <circle cx="400" cy="400" r="50" fill="#0a0a1a" opacity="0.8"/>
+                    <text x="400" y="395" text-anchor="middle" font-size="28" fill="#9b59b6" font-family="serif">ᚱ</text>
+                    <text x="400" y="418" text-anchor="middle" class="mc-sublabel" fill="#d4b8f0">CORE</text>
+                </g>
+
+                <!-- Cardinal rune markers on outer ring -->
+                <g font-size="22" font-family="serif" fill="#ff6b6b" opacity="0.8">
+                    <text x="400" y="55" text-anchor="middle">ᛟ</text>
+                    <text x="400" y="760" text-anchor="middle">ᛊ</text>
+                    <text x="55" y="405" text-anchor="middle">ᚺ</text>
+                    <text x="745" y="405" text-anchor="middle">ᛏ</text>
+                </g>
+
+                <!-- Layer labels (static, outside animation) -->
+                <g class="mc-label">
+                    <!-- cgroups -->
+                    <text x="400" y="28" text-anchor="middle" fill="#ff6b6b" font-size="12">cgroups v2 — Resource Ward</text>
+
+                    <!-- Network -->
+                    <text x="710" y="160" text-anchor="start" fill="#48dbfb">net-guard</text>
+                    <text x="710" y="175" text-anchor="start" class="mc-sublabel">Network isolation</text>
 
                     <!-- Seccomp -->
-                    <circle r="92" class="ring" stroke="url(#ringSeccomp)" opacity="0.9"/>
-                    <circle r="80" class="ring" stroke="#104b59" opacity="0.45" stroke-dasharray="8 8"/>
+                    <text x="620" y="440" text-anchor="start" fill="#feca57">Seccomp BPF</text>
+                    <text x="620" y="455" text-anchor="start" class="mc-sublabel">Syscall filter</text>
 
                     <!-- Landlock -->
-                    <circle r="56" class="ring" stroke="url(#ringLandlock)" opacity="0.92"/>
-                    <circle r="44" class="ring" stroke="#4d2345" opacity="0.45" stroke-dasharray="8 9"/>
+                    <text x="100" y="440" text-anchor="end" fill="#54a0ff">Landlock</text>
+                    <text x="100" y="455" text-anchor="end" class="mc-sublabel">Filesystem seal</text>
 
                     <!-- Core -->
-                    <circle r="24" fill="url(#ringCore)" stroke="#d9d9ff" stroke-width="2"/>
-                    <circle r="10" fill="#0b1020" opacity="0.8"/>
-
-                    <text x="0" y="6" text-anchor="middle" class="s-chip">CORE</text>
+                    <text x="100" y="160" text-anchor="end" fill="#9b59b6">Protected Core</text>
+                    <text x="100" y="175" text-anchor="end" class="mc-sublabel">Zero-trust agent runtime</text>
                 </g>
 
-                <!-- Labels around the rings -->
-                <g class="ring-label">
-                    <rect x="78" y="56" width="232" height="54" class="node" fill="#16203a" stroke="#54a0ff"/>
-                    <text x="96" y="80" class="s-label">DNS Allowlist</text>
-                    <text x="96" y="99" class="s-small">Domain-level egress gate · wttr.in only</text>
-
-                    <rect x="98" y="162" width="210" height="54" class="node" fill="#201d14" stroke="#feca57"/>
-                    <text x="116" y="186" class="s-label">Network Namespace</text>
-                    <text x="116" y="205" class="s-small">Isolated net stack · outbound blocked by default</text>
-
-                    <rect x="98" y="370" width="210" height="54" class="node" fill="#12212a" stroke="#48dbfb"/>
-                    <text x="116" y="394" class="s-label">Seccomp BPF</text>
-                    <text x="116" y="413" class="s-small">Blocks ptrace, mount, kexec_load, bpf, setns</text>
-
-                    <rect x="382" y="384" width="188" height="54" class="node" fill="#211423" stroke="#ff9ff3"/>
-                    <text x="400" y="408" class="s-label">Landlock</text>
-                    <text x="400" y="427" class="s-small">Filesystem limits · only allowed paths</text>
-
-                    <rect x="706" y="156" width="192" height="54" class="node" fill="#17172d" stroke="#9b59b6"/>
-                    <text x="724" y="180" class="s-label">cgroups v2</text>
-                    <text x="724" y="199" class="s-small">Memory / process budget · pressure control</text>
-                </g>
-
-                <!-- Connecting hints -->
-                <g opacity="0.75">
-                    <path d="M 310 103 C 350 113, 370 132, 390 156" class="arrow"/>
-                    <path d="M 310 189 C 356 190, 375 210, 407 232" class="arrow"/>
-                    <path d="M 318 300 C 358 292, 382 276, 410 258" class="arrow"/>
-                    <path d="M 534 395 C 516 366, 493 343, 468 318" class="arrow"/>
-                    <path d="M 748 183 C 702 197, 656 219, 598 240" class="arrow"/>
-                </g>
-
-                <!-- Status badge -->
-                <g transform="translate(796 48)">
-                    <rect x="0" y="0" width="248" height="62" rx="16" ry="16" fill="#231814" stroke="#ffb86b"/>
-                    <text x="18" y="26" class="s-label" fill="#ffd6ad">DEGRADED</text>
-                    <text x="18" y="45" class="s-small">Verbose mode can reveal which layer caused the fallback</text>
-                </g>
-
-                <!-- Right: concise diagnostic legend -->
-                <g transform="translate(656 138)">
-                    <text x="0" y="0" class="s-label">Layer order</text>
-                    <text x="0" y="24" class="s-sub">outer → inner · each ring narrows what the agent can touch</text>
-
-                    <g transform="translate(0 44)">
-                        <rect x="0" y="0" width="372" height="250" class="legend-card"/>
-                        <g transform="translate(20 26)">
-                            <rect x="0" y="0" width="14" height="14" rx="4" fill="#9b59b6"/>
-                            <text x="24" y="12" class="s-label" font-size="15">1. cgroups v2</text>
-                            <text x="24" y="33" class="s-small">Caps memory and process count; keeps the core contained.</text>
-
-                            <rect x="0" y="48" width="14" height="14" rx="4" fill="#feca57"/>
-                            <text x="24" y="60" class="s-label" font-size="15">2. Network (netns / net-guard)</text>
-                            <text x="24" y="81" class="s-small">Namespace or domain-allowlist-based network controls.</text>
-
-                            <rect x="0" y="96" width="14" height="14" rx="4" fill="#48dbfb"/>
-                            <text x="24" y="108" class="s-label" font-size="15">3. Seccomp BPF</text>
-                            <text x="24" y="129" class="s-small">Disallows dangerous syscalls and lateral movement.</text>
-
-                            <rect x="0" y="144" width="14" height="14" rx="4" fill="#ff9ff3"/>
-                            <text x="24" y="156" class="s-label" font-size="15">4. Landlock</text>
-                            <text x="24" y="177" class="s-small">Restricts file reads/writes to approved paths.</text>
-
-                            <rect x="0" y="192" width="14" height="14" rx="4" fill="#54a0ff"/>
-                            <text x="24" y="204" class="s-label" font-size="15">5. DNS Allowlist</text>
-                            <text x="24" y="225" class="s-small">Only approved domains can be reached.</text>
-                        </g>
-                    </g>
+                <!-- Connecting lines from labels to rings -->
+                <g class="mc-connector" stroke="#6a6a8a">
+                    <path d="M 695 165 C 660 180, 620 200, 590 230"/>
+                    <path d="M 615 445 C 580 430, 560 410, 540 395"/>
+                    <path d="M 115 445 C 150 430, 200 410, 270 395"/>
+                    <path d="M 115 165 C 160 190, 220 240, 290 300"/>
                 </g>
             </svg>
+
+            <!-- Legend below the circle -->
+            <div class="magic-legend">
+                <div class="magic-legend-item">
+                    <span class="legend-dot" style="background:#ff6b6b"></span>
+                    <div>
+                        <strong>1. cgroups v2</strong>
+                        <small>Memory 512MB · max 64 processes</small>
+                    </div>
+                </div>
+                <div class="magic-legend-item">
+                    <span class="legend-dot" style="background:#48dbfb"></span>
+                    <div>
+                        <strong>2. net-guard / netns</strong>
+                        <small>Seccomp user-notif network filter · domain allowlist</small>
+                    </div>
+                </div>
+                <div class="magic-legend-item">
+                    <span class="legend-dot" style="background:#feca57"></span>
+                    <div>
+                        <strong>3. Seccomp BPF</strong>
+                        <small>Blocks ptrace, mount, kexec_load, bpf, setns</small>
+                    </div>
+                </div>
+                <div class="magic-legend-item">
+                    <span class="legend-dot" style="background:#54a0ff"></span>
+                    <div>
+                        <strong>4. Landlock</strong>
+                        <small>Filesystem restriction · only allowed paths</small>
+                    </div>
+                </div>
+                <div class="magic-legend-item">
+                    <span class="legend-dot" style="background:#9b59b6"></span>
+                    <div>
+                        <strong>Core</strong>
+                        <small>Protected zero-trust agent runtime</small>
+                    </div>
+                </div>
+            </div>
         </div>
     </section>
+
 
 
     <!-- Install -->
