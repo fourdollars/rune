@@ -73,54 +73,121 @@ fn print_banner() {
 /// Print available commands.
 fn print_help() {
     println!("{}", "Commands:".bold());
-    println!("  {}      Send a prompt to the agent", "<text>".green());
+    println!();
+
+    println!("  {}", "Prompts".bold());
     println!(
-        "  {}    Enter multi-line mode (end with ';;' on its own line)",
-        "/multi".green()
-    );
-    println!("  {}      Show current configuration", "/config".green());
-    println!("  {}       List available built-in tools", "/tools".green());
-    println!("  {}      List loaded skills", "/skills".green());
-    println!("  {}       Show trace output directory", "/trace".green());
-    println!("  {}     Show version info", "/version".green());
-    println!("  {}        Clear the screen", "/clear".green());
-    println!("  {}       Reset conversation history", "/reset".green());
-    println!(
-        "  {}     Compact (summarize) conversation context",
-        "/compact".green()
+        "    {:<24} {}",
+        "<text>".green(),
+        "Send a prompt to the agent"
     );
     println!(
-        "  {}      Show current session status (model, context, skills)",
-        "/info".green()
+        "    {:<24} {}",
+        "/multi".green(),
+        "Enter multi-line mode (end with ';;')"
     );
     println!(
-        "  {}    Show policy summary (use /policy full for details)",
-        "/policy".green()
-    );
-    println!("  {}  Attach an image to next message", "/image".green());
-    println!("  {}   Show this help", "/help".green());
-    println!("  {}  Exit the CLI", "/exit | /quit".green());
-    println!("  {} Add dir to read-only paths", "/add-dir <path>".green());
-    println!(
-        "  {} Add dir to read-write paths",
-        "/add-rw-dir <path>".green()
+        "    {:<24} {}",
+        "/image <path>".green(),
+        "Attach an image to the next message"
     );
     println!();
-    println!("{}", "Tips:".dimmed());
+
+    println!("  {}", "Session".bold());
     println!(
-        "  {} Type your prompt directly (without 'run') for quick execution",
+        "    {:<24} {}",
+        "/info".green(),
+        "Show session status (model, provider, context)"
+    );
+    println!(
+        "    {:<24} {}",
+        "/info context".green(),
+        "Show detailed context usage (tokens, %)"
+    );
+    println!(
+        "    {:<24} {}",
+        "/compact".green(),
+        "Compact (summarize) older conversation context"
+    );
+    println!(
+        "    {:<24} {}",
+        "/reset".green(),
+        "Reset conversation history"
+    );
+    println!("    {:<24} {}", "/clear".green(), "Clear the screen");
+    println!();
+
+    println!("  {}", "Configuration".bold());
+    println!(
+        "    {:<24} {}",
+        "/config".green(),
+        "Show current configuration"
+    );
+    println!("    {:<24} {}", "/policy".green(), "Show policy summary");
+    println!(
+        "    {:<24} {}",
+        "/policy full".green(),
+        "Show full sandbox + policy status"
+    );
+    println!(
+        "    {:<24} {}",
+        "/tools".green(),
+        "List available built-in tools"
+    );
+    println!("    {:<24} {}", "/skills".green(), "List loaded skills");
+    println!(
+        "    {:<24} {}",
+        "/trace".green(),
+        "Show trace output directory"
+    );
+    println!();
+
+    println!("  {}", "Runtime".bold());
+    println!(
+        "    {:<24} {}",
+        "/add-dir <path>".green(),
+        "Add directory to read-only paths (saved)"
+    );
+    println!(
+        "    {:<24} {}",
+        "/add-rw-dir <path>".green(),
+        "Add directory to read-write paths (saved)"
+    );
+    println!();
+
+    println!("  {}", "Other".bold());
+    println!("    {:<24} {}", "/version".green(), "Show version info");
+    println!("    {:<24} {}", "/help".green(), "Show this help");
+    println!("    {:<24} {}", "/exit, /quit".green(), "Exit the CLI");
+    println!();
+
+    println!("{}", "Tips:".bold());
+    println!(
+        "    {} Type your prompt directly — no prefix needed",
         "•".dimmed()
     );
     println!(
-        "  {} Use @skill_name in prompts to load skill context",
-        "•".dimmed()
+        "    {} Use {} in prompts to load skill context",
+        "•".dimmed(),
+        "@skill_name".cyan()
     );
-    println!("  {} Use ↑/↓ to browse previous prompts", "•".dimmed());
     println!(
-        "  {} Set RUNE_API_KEY or --api-key to connect to an LLM provider",
-        "•".dimmed()
+        "    {} Use {}/{} to browse command history",
+        "•".dimmed(),
+        "↑".cyan(),
+        "↓".cyan()
     );
-    println!("  {} Ctrl+C interrupts the current agent run", "•".dimmed());
+    println!(
+        "    {} {} interrupts the current agent run",
+        "•".dimmed(),
+        "Ctrl+C".cyan()
+    );
+    println!(
+        "    {} Use {} or {} to attach images for vision models",
+        "•".dimmed(),
+        "/image".cyan(),
+        "/img".cyan()
+    );
 }
 
 /// Create a spinner for LLM thinking.
