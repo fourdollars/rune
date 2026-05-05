@@ -805,12 +805,26 @@ impl GeminiProvider {
                         for tc in tool_calls {
                             let args: Value = serde_json::from_str(&tc.function.arguments)
                                 .unwrap_or(Value::Object(serde_json::Map::new()));
-                            parts.push(serde_json::json!({
+                            // Extract thought_signature from ID format: "name|gemini_tc_N|sig"
+                            let id_parts: Vec<&str> = tc.id.splitn(3, '|').collect();
+                            let thought_sig = if id_parts.len() >= 3 {
+                                Some(id_parts[2])
+                            } else {
+                                None
+                            };
+                            let mut fc_part = serde_json::json!({
                                 "functionCall": {
                                     "name": tc.function.name,
                                     "args": args
                                 }
-                            }));
+                            });
+                            if let Some(sig) = thought_sig {
+                                if !sig.is_empty() {
+                                    fc_part["thought_signature"] =
+                                        serde_json::Value::String(sig.to_string());
+                                }
+                            }
+                            parts.push(fc_part);
                         }
                     }
                     if !parts.is_empty() {
@@ -821,21 +835,39 @@ impl GeminiProvider {
                     }
                 }
                 "tool" => {
-                    let response_data: Value = serde_json::from_str(
-                        msg.content.as_deref().unwrap_or("{}"),
-                    )
-                    .unwrap_or(serde_json::json!({"result": msg.content.as_deref().unwrap_or("")}));
+                    let raw_content = msg.content.as_deref().unwrap_or("");
+                    // Gemini requires functionResponse.response to be a JSON object (Struct).
+                    // If the tool output is not valid JSON or not an object, wrap it.
+                    let response_data: Value = match serde_json::from_str::<Value>(raw_content) {
+                        Ok(v) if v.is_object() => v,
+                        _ => serde_json::json!({"result": raw_content}),
+                    };
 
-                    // Try to find the tool name from tool_call_id
-                    let name = msg.tool_call_id.as_deref().unwrap_or("unknown");
+                    // Parse tool_call_id format: "fn_name|gemini_tc_N" or "fn_name|gemini_tc_N|thought_sig"
+                    let raw_id = msg.tool_call_id.as_deref().unwrap_or("unknown");
+                    let parts_vec: Vec<&str> = raw_id.splitn(3, '|').collect();
+                    let fn_name = parts_vec.first().copied().unwrap_or("unknown");
+                    let thought_sig = if parts_vec.len() >= 3 {
+                        Some(parts_vec[2])
+                    } else {
+                        None
+                    };
+
+                    let mut fr_part = serde_json::json!({
+                        "functionResponse": {
+                            "name": fn_name,
+                            "response": response_data
+                        }
+                    });
+                    if let Some(sig) = thought_sig {
+                        if !sig.is_empty() {
+                            fr_part["thought_signature"] =
+                                serde_json::Value::String(sig.to_string());
+                        }
+                    }
                     contents.push(serde_json::json!({
                         "role": "function",
-                        "parts": [{
-                            "functionResponse": {
-                                "name": name,
-                                "response": response_data
-                            }
-                        }]
+                        "parts": [fr_part]
                     }));
                 }
                 _ => {
@@ -980,9 +1012,21 @@ impl Provider for GeminiProvider {
                                 .get("args")
                                 .cloned()
                                 .unwrap_or(Value::Object(serde_json::Map::new()));
+                            // Capture thought_signature if present (required for Gemini thinking mode)
+                            let thought_sig = fc
+                                .get("thought_signature")
+                                .and_then(|t| t.as_str())
+                                .unwrap_or("")
+                                .to_string();
                             tc_counter += 1;
+                            // Encode name + thought_signature into the ID for later retrieval
+                            let id = if thought_sig.is_empty() {
+                                format!("{}|gemini_tc_{}", name, tc_counter)
+                            } else {
+                                format!("{}|gemini_tc_{}|{}", name, tc_counter, thought_sig)
+                            };
                             tool_calls.push(LlmToolCall {
-                                id: format!("gemini_tc_{}", tc_counter),
+                                id,
                                 call_type: "function".to_string(),
                                 function: LlmFunction {
                                     name,
@@ -1186,9 +1230,19 @@ impl Provider for GeminiProvider {
                                     .get("args")
                                     .cloned()
                                     .unwrap_or(Value::Object(serde_json::Map::new()));
+                                let thought_sig = fc
+                                    .get("thought_signature")
+                                    .and_then(|t| t.as_str())
+                                    .unwrap_or("")
+                                    .to_string();
                                 tc_counter += 1;
+                                let id = if thought_sig.is_empty() {
+                                    format!("{}|gemini_tc_{}", name, tc_counter)
+                                } else {
+                                    format!("{}|gemini_tc_{}|{}", name, tc_counter, thought_sig)
+                                };
                                 tool_calls.push(LlmToolCall {
-                                    id: format!("gemini_tc_{}", tc_counter),
+                                    id,
                                     call_type: "function".to_string(),
                                     function: LlmFunction {
                                         name,
