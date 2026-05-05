@@ -183,7 +183,25 @@ pub async fn run_setup() {
     println!("  {} Skills dir: {}", "✓".green(), skills_dir);
     println!();
 
-    // 5. Write config
+    // 5. Embedding
+    println!("{}", "5. Enable semantic features (embedding)?".bold());
+    println!("   Embedding enables:");
+    println!("   • Automatic skill matching (no @name needed)");
+    println!("   • Smart context compaction (keeps relevant history)");
+    println!();
+    let emb_choice = prompt("  Enable embedding? [Y/n]: ").unwrap_or_default();
+    let embedding_enabled = !emb_choice.trim().eq_ignore_ascii_case("n");
+    if embedding_enabled {
+        println!("  {} Embedding enabled", "✓".green());
+    } else {
+        println!(
+            "  {} Embedding disabled (can enable later in rune.toml)",
+            "ℹ".dimmed()
+        );
+    }
+    println!();
+
+    // 6. Write config
     let config_dir = dirs_home().join(".rune");
     let config_path = config_dir.join("rune.toml");
 
@@ -202,6 +220,12 @@ pub async fn run_setup() {
     toml_content.push_str("mode = \"confirm\"\n");
     toml_content.push_str("allowed_commands = [\"ls\", \"cat\", \"head\", \"ps\", \"echo\", \"uname\", \"free\", \"df\", \"date\", \"hostname\"]\n");
     toml_content.push_str("allowed_domains = []\n");
+    if embedding_enabled {
+        toml_content.push_str("\n[embedding]\n");
+        toml_content.push_str("enabled = true\n");
+        toml_content.push_str("model = \"text-embedding-3-small\"\n");
+        toml_content.push_str("threshold = 0.6\n");
+    }
 
     // Show preview
     println!("{}", "─".repeat(50).dimmed());

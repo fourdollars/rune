@@ -941,9 +941,20 @@ pub async fn run() {
     }
 
     let embedding_engine = if cfg.embedding.enabled {
-        Some(crate::embedding::EmbeddingEngine::new(
-            cfg.embedding.clone(),
-        ))
+        let mut emb_cfg = cfg.embedding.clone();
+        // Fallback: use main api_key if embedding-specific key not set
+        if emb_cfg.api_key.is_none() {
+            emb_cfg.api_key = cfg.api_key.clone();
+        }
+        // Auto-detect base_url for Copilot
+        if emb_cfg.base_url.is_none() {
+            if let Some(ref key) = cfg.api_key {
+                if key.starts_with("ghu_") || key.starts_with("ghp_") {
+                    emb_cfg.base_url = Some("https://api.githubcopilot.com/v1".to_string());
+                }
+            }
+        }
+        Some(crate::embedding::EmbeddingEngine::new(emb_cfg))
     } else {
         None
     };
