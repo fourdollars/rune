@@ -168,8 +168,11 @@ impl ToolRegistry {
                     };
                 }
                 let output = if !result.stderr.is_empty() && result.exit_code != 0 {
-                    format!("{}
-{}", result.stdout, result.stderr)
+                    format!(
+                        "{}
+{}",
+                        result.stdout, result.stderr
+                    )
                 } else {
                     result.stdout.clone()
                 };
@@ -365,7 +368,12 @@ stderr: {}",
         if result.is_error {
             return result;
         }
-        { let mut o = ToolOutput::ok(format!("Written {} bytes to {}", content.len(), path)); o.active_layers = result.active_layers.clone(); o.degraded = result.degraded; o }
+        {
+            let mut o = ToolOutput::ok(format!("Written {} bytes to {}", content.len(), path));
+            o.active_layers = result.active_layers.clone();
+            o.degraded = result.degraded;
+            o
+        }
     }
 
     async fn list_dir(&self, args: serde_json::Value) -> ToolOutput {
@@ -440,8 +448,11 @@ stderr: {}",
             return result;
         }
         if result.content.len() > MAX_FILE_SIZE {
-            let mut o = ToolOutput::ok(format!("{}
-[Content Truncated at 32KB]", &result.content[..MAX_FILE_SIZE]));
+            let mut o = ToolOutput::ok(format!(
+                "{}
+[Content Truncated at 32KB]",
+                &result.content[..MAX_FILE_SIZE]
+            ));
             o.active_layers = result.active_layers.clone();
             o.degraded = result.degraded;
             o
