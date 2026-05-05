@@ -142,6 +142,8 @@ struct SandboxSpec {
     syscalls: SandboxSyscallsSpec,
     #[serde(default)]
     resources: SandboxResourcesSpec,
+    #[serde(default)]
+    allowed_commands: Vec<String>,
 }
 
 fn extend_unique(dst: &mut Vec<String>, src: Vec<String>) {
@@ -165,6 +167,7 @@ fn build_policy_from_source(source: &ResourceSource) -> PolicyConfig {
     let mut policy = PolicyConfig::default();
     if let Some(spec) = sandbox_spec(source) {
         extend_unique(&mut policy.allowed_domains, spec.network.allowed_domains);
+        extend_unique(&mut policy.allowed_commands, spec.allowed_commands);
         extend_unique(
             &mut policy.allowed_paths_rw,
             spec.filesystem.read_write_paths,

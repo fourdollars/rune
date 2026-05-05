@@ -365,7 +365,6 @@ impl ToolRegistry {
         // Applies in both "allowlist" and "confirm" modes when allowed_commands is set
         // Skipped entirely in "unrestricted" mode
         if self.policy_mode != "unrestricted"
-            && !self.policy_allowed_commands.is_empty()
             && !self.policy_allowed_commands.iter().any(|a| a == "*")
         {
             let binaries = extract_command_binaries(&cmd);
