@@ -563,6 +563,7 @@ impl CopilotProvider {
         let response = client
             .get("https://api.github.com/copilot_internal/v2/token")
             .header("Authorization", format!("token {}", self.pat))
+            .header("User-Agent", "rune/0.1.0")
             .header("editor-version", "vscode/1.96.0")
             .timeout(std::time::Duration::from_secs(10))
             .send()
@@ -642,6 +643,7 @@ impl Provider for CopilotProvider {
                 .post(&url)
                 .bearer_auth(&token)
                 .header("Content-Type", "application/json")
+                .header("User-Agent", "rune/0.1.0")
                 .header("editor-version", "vscode/1.96.0")
                 .timeout(std::time::Duration::from_secs(120))
                 .body(payload)
@@ -738,6 +740,7 @@ impl Provider for CopilotProvider {
             let builder = client
                 .post(url)
                 .bearer_auth(token)
+                .header("User-Agent", "rune/0.1.0")
                 .header("editor-version", "vscode/1.96.0")
                 .header("Accept", "text/event-stream")
                 .json(&payload);
