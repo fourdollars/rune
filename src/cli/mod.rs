@@ -956,15 +956,21 @@ pub async fn run() {
         if emb_cfg.api_key.is_none() {
             emb_cfg.api_key = cfg.api_key.clone();
         }
-        // Auto-detect base_url for Copilot
-        if emb_cfg.base_url.is_none() {
-            if let Some(ref key) = cfg.api_key {
-                if key.starts_with("ghu_") || key.starts_with("ghp_") {
-                    emb_cfg.base_url = Some("https://api.githubcopilot.com".to_string());
-                }
+        // Auto-detect base_url for Copilot and use token refresh
+        let is_copilot = cfg
+            .api_key
+            .as_ref()
+            .map(|k| k.starts_with("ghu_") || k.starts_with("ghp_"))
+            .unwrap_or(false);
+        if is_copilot {
+            if emb_cfg.base_url.is_none() {
+                emb_cfg.base_url = Some("https://api.githubcopilot.com".to_string());
             }
+            let pat = cfg.api_key.clone().unwrap_or_default();
+            Some(crate::embedding::EmbeddingEngine::new_copilot(emb_cfg, pat))
+        } else {
+            Some(crate::embedding::EmbeddingEngine::new(emb_cfg))
         }
-        Some(crate::embedding::EmbeddingEngine::new(emb_cfg))
     } else {
         None
     };

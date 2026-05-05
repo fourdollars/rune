@@ -20,7 +20,7 @@ fn default_true() -> bool {
 }
 
 fn default_threshold() -> f32 {
-    0.6
+    0.3
 }
 
 impl Default for EmbeddingConfig {
@@ -30,7 +30,7 @@ impl Default for EmbeddingConfig {
             model: None,
             base_url: None,
             api_key: None,
-            threshold: 0.6,
+            threshold: 0.3,
         }
     }
 }
@@ -151,9 +151,14 @@ pub fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
 }
 
 /// Embedding provider — calls /v1/embeddings endpoint.
+/// Supports Copilot token refresh when copilot_pat is set.
 pub struct EmbeddingEngine {
     pub config: EmbeddingConfig,
     client: reqwest::Client,
+    /// If set, this is a GitHub Copilot PAT that needs token refresh.
+    copilot_pat: Option<String>,
+    /// Cached Copilot session token.
+    copilot_token: std::sync::Arc<tokio::sync::Mutex<Option<(String, u64)>>>,
 }
 
 impl EmbeddingEngine {
@@ -161,6 +166,66 @@ impl EmbeddingEngine {
         Self {
             config,
             client: reqwest::Client::new(),
+            copilot_pat: None,
+            copilot_token: std::sync::Arc::new(tokio::sync::Mutex::new(None)),
+        }
+    }
+
+    /// Create an embedding engine configured for GitHub Copilot.
+    pub fn new_copilot(config: EmbeddingConfig, pat: String) -> Self {
+        Self {
+            config,
+            client: reqwest::Client::new(),
+            copilot_pat: Some(pat),
+            copilot_token: std::sync::Arc::new(tokio::sync::Mutex::new(None)),
+        }
+    }
+
+    /// Get a valid Bearer token (refreshing Copilot token if needed).
+    async fn get_bearer_token(&self) -> Result<String> {
+        if let Some(ref pat) = self.copilot_pat {
+            // Check cached token
+            let mut cache = self.copilot_token.lock().await;
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs();
+            if let Some((ref token, expires)) = *cache {
+                if now < expires.saturating_sub(60) {
+                    return Ok(token.clone());
+                }
+            }
+            // Refresh token
+            let resp = self
+                .client
+                .get("https://api.github.com/copilot_internal/v2/token")
+                .header("Authorization", format!("token {}", pat))
+                .header("User-Agent", "rune/0.1.0")
+                .header("editor-version", "vscode/1.96.0")
+                .timeout(std::time::Duration::from_secs(10))
+                .send()
+                .await?;
+            if !resp.status().is_success() {
+                anyhow::bail!("copilot token refresh failed: {}", resp.status());
+            }
+            let body: serde_json::Value = resp.json().await?;
+            let token = body
+                .get("token")
+                .and_then(|t| t.as_str())
+                .ok_or_else(|| anyhow::anyhow!("no token in copilot response"))?
+                .to_string();
+            let expires_at = body
+                .get("expires_at")
+                .and_then(|e| e.as_u64())
+                .unwrap_or(now + 1800);
+            *cache = Some((token.clone(), expires_at));
+            Ok(token)
+        } else {
+            // Use the configured api_key directly
+            self.config
+                .api_key
+                .clone()
+                .ok_or_else(|| anyhow::anyhow!("embedding api_key not configured"))
         }
     }
 
@@ -183,25 +248,26 @@ impl EmbeddingEngine {
 
         let url = format!("{}/embeddings", base_url.trim_end_matches('/'));
 
-        let api_key = self
-            .config
-            .api_key
-            .as_deref()
-            .ok_or_else(|| anyhow::anyhow!("embedding api_key not configured"))?;
+        let api_key = self.get_bearer_token().await?;
 
         let body = serde_json::json!({
             "input": texts,
             "model": model,
         });
 
-        let resp = self
+        let mut req = self
             .client
             .post(&url)
             .header("Authorization", format!("Bearer {}", api_key))
-            .header("Content-Type", "application/json")
-            .json(&body)
-            .send()
-            .await?;
+            .header("Content-Type", "application/json");
+
+        // Copilot requires editor-version header
+        if self.copilot_pat.is_some() {
+            req = req.header("editor-version", "vscode/1.96.0");
+            req = req.header("Copilot-Integration-Id", "vscode-chat");
+        }
+
+        let resp = req.json(&body).send().await?;
 
         if !resp.status().is_success() {
             let status = resp.status();
@@ -246,6 +312,8 @@ impl Clone for EmbeddingEngine {
         Self {
             config: self.config.clone(),
             client: self.client.clone(),
+            copilot_pat: self.copilot_pat.clone(),
+            copilot_token: self.copilot_token.clone(),
         }
     }
 }
@@ -391,6 +459,6 @@ mod tests {
         let cfg = EmbeddingConfig::default();
         assert!(!cfg.enabled);
         assert!(cfg.model.is_none());
-        assert!((cfg.threshold - 0.6).abs() < 1e-6);
+        assert!((cfg.threshold - 0.3).abs() < 1e-6);
     }
 }
