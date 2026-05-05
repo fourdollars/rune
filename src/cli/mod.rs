@@ -984,8 +984,7 @@ pub async fn run() {
                 emb_cfg.base_url =
                     Some("https://generativelanguage.googleapis.com/v1beta/openai".to_string());
             }
-            if emb_cfg.model.is_none() || emb_cfg.model.as_deref() == Some("text-embedding-3-small")
-            {
+            if emb_cfg.model.is_none() {
                 emb_cfg.model = Some("gemini-embedding-2".to_string());
             }
             Some(crate::embedding::EmbeddingEngine::new(emb_cfg))
