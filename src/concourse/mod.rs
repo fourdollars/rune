@@ -2,12 +2,20 @@ use crate::agent::{Agent, StopReason};
 use crate::config::{PolicyConfig, RuneConfig};
 use crate::provider::{CopilotProvider, OpenAiProvider, ProviderRegistry};
 use crate::sandbox::{SandboxConfig, SandboxExecutor};
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 use std::collections::HashSet;
 use std::io::{self, Read};
 use std::path::{Path, PathBuf};
+
+/// Deserialize null or missing as empty Vec<String>.
+fn null_as_empty_vec<'de, D>(d: D) -> Result<Vec<String>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    Option::<Vec<String>>::deserialize(d).map(|o| o.unwrap_or_default())
+}
 
 /// Source configuration for the Rune resource type.
 #[derive(Debug, Clone, Deserialize)]
@@ -117,23 +125,23 @@ fn sha256_ref(content: &str) -> String {
 
 #[derive(Debug, Clone, Deserialize, Default)]
 struct SandboxNetworkSpec {
-    #[serde(default)]
+    #[serde(default, deserialize_with = "null_as_empty_vec")]
     allowed_domains: Vec<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
 struct SandboxFilesystemSpec {
-    #[serde(default)]
+    #[serde(default, deserialize_with = "null_as_empty_vec")]
     read_write_paths: Vec<String>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "null_as_empty_vec")]
     read_only_paths: Vec<String>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "null_as_empty_vec")]
     denied_paths: Vec<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
 struct SandboxSyscallsSpec {
-    #[serde(default)]
+    #[serde(default, deserialize_with = "null_as_empty_vec")]
     allow: Vec<String>,
 }
 
