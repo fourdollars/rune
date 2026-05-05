@@ -960,7 +960,7 @@ pub async fn run() {
         if emb_cfg.base_url.is_none() {
             if let Some(ref key) = cfg.api_key {
                 if key.starts_with("ghu_") || key.starts_with("ghp_") {
-                    emb_cfg.base_url = Some("https://api.githubcopilot.com/v1".to_string());
+                    emb_cfg.base_url = Some("https://api.githubcopilot.com".to_string());
                 }
             }
         }
