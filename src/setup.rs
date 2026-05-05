@@ -441,11 +441,17 @@ pub async fn run_setup() {
     // Embedding section
     if embedding_enabled {
         if let Some(ref emb) = existing.embedding_section {
-            // Preserve existing embedding config (may have custom model/threshold/api_key)
+            // Preserve existing embedding config but update model for Gemini
             if !toml_content.ends_with('\n') {
                 toml_content.push('\n');
             }
-            toml_content.push_str(emb);
+            if provider_choice.trim() == "2" {
+                // Gemini: ensure model is gemini-embedding-2
+                let updated = update_toml_field(emb, "model", "gemini-embedding-2");
+                toml_content.push_str(&updated);
+            } else {
+                toml_content.push_str(emb);
+            }
         } else {
             toml_content.push_str("\n[embedding]\n");
             toml_content.push_str("enabled = true\n");
@@ -508,6 +514,28 @@ pub async fn run_setup() {
         "rune".cyan().bold()
     );
     println!();
+}
+
+/// Update or insert a key=value field in a raw TOML section string.
+fn update_toml_field(section: &str, key: &str, value: &str) -> String {
+    let mut result = String::new();
+    let mut found = false;
+    for line in section.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with(&format!("{}\x20", key)) || trimmed.starts_with(&format!("{}=", key))
+        {
+            result.push_str(&format!("{} = \"{}\"\n", key, value));
+            found = true;
+        } else {
+            result.push_str(line);
+            result.push('\n');
+        }
+    }
+    if !found {
+        // Insert after section header
+        result.push_str(&format!("{} = \"{}\"\n", key, value));
+    }
+    result
 }
 
 /// Read a line from stdin with a prompt.
@@ -624,5 +652,24 @@ allowed_domains = ["example.com"]"#;
         assert!(section.contains("mode = \"allowlist\""));
         assert!(section.contains("curl"));
         assert!(section.contains("example.com"));
+    }
+
+    #[test]
+    fn test_update_toml_field_existing() {
+        let section =
+            "[embedding]\nenabled = true\nmodel = \"text-embedding-3-small\"\nthreshold = 0.3\n";
+        let updated = update_toml_field(section, "model", "gemini-embedding-2");
+        assert!(updated.contains("model = \"gemini-embedding-2\""));
+        assert!(!updated.contains("text-embedding-3-small"));
+        assert!(updated.contains("enabled = true"));
+        assert!(updated.contains("threshold = 0.3"));
+    }
+
+    #[test]
+    fn test_update_toml_field_missing() {
+        let section = "[embedding]\nenabled = true\nthreshold = 0.3\n";
+        let updated = update_toml_field(section, "model", "gemini-embedding-2");
+        assert!(updated.contains("model = \"gemini-embedding-2\""));
+        assert!(updated.contains("enabled = true"));
     }
 }
