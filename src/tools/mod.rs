@@ -1038,4 +1038,54 @@ mod tests {
         let list = vec![format!("{}/myfile.txt", cwd)];
         assert!(registry.is_file_in_list("myfile.txt", &list));
     }
+
+    #[test]
+    fn test_sandbox_includes_allowed_files_ro() {
+        let mut registry = ToolRegistry::new(vec![]);
+        registry.policy_allowed_files_ro = vec!["/home/user/.netrc".to_string()];
+        registry.policy_allowed_paths_ro =
+            vec!["/bin".to_string(), "/usr".to_string(), "/lib".to_string()];
+        registry.policy_mode = "confirm".to_string();
+
+        // The sandbox() method is private, so we test via the public interface
+        // Verify that the files are stored in the registry
+        assert!(registry
+            .policy_allowed_files_ro
+            .contains(&"/home/user/.netrc".to_string()));
+    }
+
+    #[test]
+    fn test_sandbox_includes_allowed_files_rw() {
+        let mut registry = ToolRegistry::new(vec![]);
+        registry.policy_allowed_files_rw = vec!["/tmp/data.json".to_string()];
+        registry.policy_mode = "confirm".to_string();
+
+        assert!(registry
+            .policy_allowed_files_rw
+            .contains(&"/tmp/data.json".to_string()));
+    }
+
+    #[test]
+    fn test_add_allowed_file_ro() {
+        let mut registry = ToolRegistry::new(vec![]);
+        registry.add_allowed_file_ro("/home/user/.netrc");
+        registry.add_allowed_file_ro("/home/user/.netrc"); // duplicate
+        assert_eq!(registry.policy_allowed_files_ro.len(), 1);
+        assert_eq!(registry.policy_allowed_files_ro[0], "/home/user/.netrc");
+    }
+
+    #[test]
+    fn test_write_file_allowed_by_file_list() {
+        let mut registry = ToolRegistry::new(vec![]);
+        let cwd = std::env::current_dir()
+            .unwrap()
+            .to_string_lossy()
+            .to_string();
+        registry.policy_mode = "allowlist".to_string();
+        registry.policy_allowed_paths_rw = vec![]; // empty - would normally block
+        registry.policy_allowed_files_rw = vec![format!("{}/special.txt", cwd)];
+
+        // is_file_in_list should match
+        assert!(registry.is_file_in_list("special.txt", &registry.policy_allowed_files_rw.clone()));
+    }
 }

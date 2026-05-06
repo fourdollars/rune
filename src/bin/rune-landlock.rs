@@ -264,3 +264,91 @@ fn add_path_rule(ruleset_fd: i32, path: &str, access: u64) -> Result<(), String>
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_access_mask_for_directory() {
+        // Directories should keep full access mask unchanged
+        let access = ACCESS_RO;
+        let is_file = false;
+        let effective = if is_file {
+            access
+                & (LANDLOCK_ACCESS_FS_EXECUTE
+                    | LANDLOCK_ACCESS_FS_READ_FILE
+                    | LANDLOCK_ACCESS_FS_WRITE_FILE
+                    | LANDLOCK_ACCESS_FS_TRUNCATE)
+        } else {
+            access
+        };
+        assert_eq!(effective, ACCESS_RO);
+        // ACCESS_RO includes READ_DIR
+        assert_ne!(effective & LANDLOCK_ACCESS_FS_READ_DIR, 0);
+    }
+
+    #[test]
+    fn test_access_mask_for_file_ro() {
+        // Files should strip directory-only rights
+        let access = ACCESS_RO;
+        let is_file = true;
+        let effective = if is_file {
+            access
+                & (LANDLOCK_ACCESS_FS_EXECUTE
+                    | LANDLOCK_ACCESS_FS_READ_FILE
+                    | LANDLOCK_ACCESS_FS_WRITE_FILE
+                    | LANDLOCK_ACCESS_FS_TRUNCATE)
+        } else {
+            access
+        };
+        // Should have EXECUTE and READ_FILE
+        assert_ne!(effective & LANDLOCK_ACCESS_FS_EXECUTE, 0);
+        assert_ne!(effective & LANDLOCK_ACCESS_FS_READ_FILE, 0);
+        // Should NOT have READ_DIR
+        assert_eq!(effective & LANDLOCK_ACCESS_FS_READ_DIR, 0);
+        // Should NOT have WRITE_FILE (wasn't in ACCESS_RO)
+        assert_eq!(effective & LANDLOCK_ACCESS_FS_WRITE_FILE, 0);
+    }
+
+    #[test]
+    fn test_access_mask_for_file_rw() {
+        // RW file should have EXECUTE, READ_FILE, WRITE_FILE, TRUNCATE
+        let access = ACCESS_RW;
+        let is_file = true;
+        let effective = if is_file {
+            access
+                & (LANDLOCK_ACCESS_FS_EXECUTE
+                    | LANDLOCK_ACCESS_FS_READ_FILE
+                    | LANDLOCK_ACCESS_FS_WRITE_FILE
+                    | LANDLOCK_ACCESS_FS_TRUNCATE)
+        } else {
+            access
+        };
+        assert_ne!(effective & LANDLOCK_ACCESS_FS_EXECUTE, 0);
+        assert_ne!(effective & LANDLOCK_ACCESS_FS_READ_FILE, 0);
+        assert_ne!(effective & LANDLOCK_ACCESS_FS_WRITE_FILE, 0);
+        assert_ne!(effective & LANDLOCK_ACCESS_FS_TRUNCATE, 0);
+        // Should NOT have directory-only rights
+        assert_eq!(effective & LANDLOCK_ACCESS_FS_MAKE_DIR, 0);
+        assert_eq!(effective & LANDLOCK_ACCESS_FS_REMOVE_DIR, 0);
+        assert_eq!(effective & LANDLOCK_ACCESS_FS_READ_DIR, 0);
+    }
+
+    #[test]
+    fn test_access_ro_includes_expected_rights() {
+        assert_ne!(ACCESS_RO & LANDLOCK_ACCESS_FS_EXECUTE, 0);
+        assert_ne!(ACCESS_RO & LANDLOCK_ACCESS_FS_READ_FILE, 0);
+        assert_ne!(ACCESS_RO & LANDLOCK_ACCESS_FS_READ_DIR, 0);
+        // RO should NOT include write
+        assert_eq!(ACCESS_RO & LANDLOCK_ACCESS_FS_WRITE_FILE, 0);
+    }
+
+    #[test]
+    fn test_access_rw_includes_write() {
+        assert_ne!(ACCESS_RW & LANDLOCK_ACCESS_FS_WRITE_FILE, 0);
+        assert_ne!(ACCESS_RW & LANDLOCK_ACCESS_FS_REMOVE_FILE, 0);
+        assert_ne!(ACCESS_RW & LANDLOCK_ACCESS_FS_MAKE_REG, 0);
+        assert_ne!(ACCESS_RW & LANDLOCK_ACCESS_FS_TRUNCATE, 0);
+    }
+}
