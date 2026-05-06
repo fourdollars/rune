@@ -571,7 +571,7 @@ pub fn persist_path_rw(path: &str) {
 }
 
 /// Generic helper to persist a value into a policy array field.
-fn persist_policy_array(field: &str, value: &str) {
+pub fn persist_policy_array(field: &str, value: &str) {
     let config_path = match env::var("HOME") {
         Ok(h) => PathBuf::from(h).join(".rune").join("rune.toml"),
         Err(_) => return,

@@ -1132,6 +1132,43 @@ impl Agent {
                 }
             }
 
+            // Check if it's a file/binary permission error we can resolve
+            if let Some(file_path) = Self::extract_permission_denied_path(&output.content) {
+                if self.interactive {
+                    // Determine if it's an executable (exit code 126) or a file read/write
+                    let is_exec = output.content.contains("exit_code: 126")
+                        || output.content.contains("exit_code=126");
+                    let label = if is_exec {
+                        "Binary not in allowed paths"
+                    } else {
+                        "File access blocked"
+                    };
+                    eprint!(
+                        "\n  {} {}: '{}'. Add to allowed_files_ro? [Y/n] ",
+                        "🔓".yellow(),
+                        label,
+                        file_path
+                    );
+                    std::io::Write::flush(&mut std::io::stderr()).ok();
+                    let answer = Self::prompt_yn();
+                    if answer {
+                        self.config.policy.allowed_files_ro.push(file_path.clone());
+                        self.tools.add_allowed_file_ro(&file_path);
+                        crate::config::persist_policy_array("allowed_files_ro", &file_path);
+                        eprintln!(
+                            "{}",
+                            format!(
+                                "  ✓ '{}' added to allowed_files_ro (saved to config)",
+                                file_path
+                            )
+                            .green()
+                        );
+                        output = self.tools.execute(&tc.function.name, args.clone()).await;
+                        continue;
+                    }
+                }
+            }
+
             break;
         }
 
@@ -1258,6 +1295,54 @@ impl Agent {
                         return Some(domain.to_string());
                     }
                 }
+            }
+        }
+        None
+    }
+
+    /// Extract file/binary path from Permission denied errors.
+    fn extract_permission_denied_path(content: &str) -> Option<String> {
+        if !content.contains("Permission denied") {
+            return None;
+        }
+        // Pattern: "sh: N: <binary>: Permission denied" (exit code 126 - binary found but can't exec)
+        // Try to find the binary name and resolve its path
+        for line in content.lines() {
+            let trimmed = line.trim();
+            if trimmed.contains("Permission denied") {
+                // "sh: 1: jira: Permission denied"
+                let parts: Vec<&str> = trimmed.split(':').collect();
+                if parts.len() >= 3 {
+                    let candidate = parts[parts.len() - 2].trim();
+                    if !candidate.is_empty()
+                        && !candidate.contains(' ')
+                        && candidate != "exec failed"
+                    {
+                        // If it looks like a binary name (no spaces, not a path)
+                        if !candidate.starts_with('/') {
+                            // Try to find it in common paths
+                            for dir in &["/usr/local/bin", "/usr/bin", "/home"] {
+                                let check = format!("{}/{}", dir, candidate);
+                                if std::path::Path::new(&check).exists() {
+                                    return Some(check);
+                                }
+                            }
+                            // Check ~/.cargo/bin and ~/.local/bin
+                            if let Ok(home) = std::env::var("HOME") {
+                                for subdir in &[".cargo/bin", ".local/bin", "bin", "go/bin"] {
+                                    let check = format!("{}/{}/{}", home, subdir, candidate);
+                                    if std::path::Path::new(&check).exists() {
+                                        return Some(check);
+                                    }
+                                }
+                            }
+                        } else {
+                            return Some(candidate.to_string());
+                        }
+                    }
+                }
+                // "rune-landlock: exec failed: Permission denied (os error 13)"
+                // In this case, it's the sandboxed binary itself — less useful to extract
             }
         }
         None

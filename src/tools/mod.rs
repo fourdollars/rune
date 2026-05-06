@@ -104,6 +104,13 @@ impl ToolRegistry {
         }
     }
 
+    /// Add an individual file to the runtime read-only allowlist.
+    pub fn add_allowed_file_ro(&mut self, path: &str) {
+        if !self.policy_allowed_files_ro.iter().any(|p| p == path) {
+            self.policy_allowed_files_ro.push(path.to_string());
+        }
+    }
+
     /// Set command execution policy.
     pub fn set_policy(&mut self, policy: &crate::config::PolicyConfig) {
         self.policy_mode = policy.mode.clone();
