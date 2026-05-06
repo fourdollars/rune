@@ -178,14 +178,18 @@ impl ToolRegistry {
             .map(|p| std::fs::canonicalize(p).unwrap_or_else(|_| p.clone()))
             .collect();
         // Add individual allowed files and their parent directories for traversal
+        let mut traverse_paths: Vec<PathBuf> = Vec::new();
         for f in &self.policy_allowed_files_rw {
             let pb = PathBuf::from(f);
             rw_paths.push(pb.clone());
-            // Add parent dir to read_only for Landlock path traversal
+            // Parent needs traverse-only access for Landlock lookup
             if let Some(parent) = pb.parent() {
                 let parent = parent.to_path_buf();
-                if !read_only.contains(&parent) && !rw_paths.contains(&parent) {
-                    read_only.push(parent);
+                if !read_only.contains(&parent)
+                    && !rw_paths.contains(&parent)
+                    && !traverse_paths.contains(&parent)
+                {
+                    traverse_paths.push(parent);
                 }
             }
         }
@@ -194,11 +198,14 @@ impl ToolRegistry {
             if !read_only.contains(&pb) {
                 read_only.push(pb.clone());
             }
-            // Add parent dir to read_only for Landlock path traversal
+            // Parent needs traverse-only access for Landlock lookup
             if let Some(parent) = pb.parent() {
                 let parent = parent.to_path_buf();
-                if !read_only.contains(&parent) && !rw_paths.contains(&parent) {
-                    read_only.push(parent);
+                if !read_only.contains(&parent)
+                    && !rw_paths.contains(&parent)
+                    && !traverse_paths.contains(&parent)
+                {
+                    traverse_paths.push(parent);
                 }
             }
         }
@@ -206,6 +213,7 @@ impl ToolRegistry {
             timeout_secs,
             read_write_paths: rw_paths,
             read_only_paths: read_only,
+            traverse_paths,
             allowed_domains: self.allowed_domains.clone(),
             allowed_syscalls: self.policy_allowed_syscalls.clone(),
 

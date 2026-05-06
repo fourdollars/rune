@@ -76,6 +76,7 @@ fn main() {
     // Parse arguments: --rw <path> --ro <path> -- <cmd> [args]
     let mut rw_paths: Vec<String> = Vec::new();
     let mut ro_paths: Vec<String> = Vec::new();
+    let mut traverse_paths: Vec<String> = Vec::new();
     let mut cmd_start = 0;
 
     let mut i = 1;
@@ -91,6 +92,12 @@ fn main() {
                 i += 1;
                 if i < args.len() {
                     ro_paths.push(args[i].clone());
+                }
+            }
+            "--traverse" => {
+                i += 1;
+                if i < args.len() {
+                    traverse_paths.push(args[i].clone());
                 }
             }
             "--" => {
@@ -169,6 +176,16 @@ fn main() {
         if let Err(e) = add_path_rule(ruleset_fd as i32, path, ACCESS_RO) {
             eprintln!(
                 "rune-landlock: warning: failed to add ro rule for {}: {}",
+                path, e
+            );
+        }
+    }
+
+    // Add traverse-only rules (EXECUTE only — for directory path traversal)
+    for path in &traverse_paths {
+        if let Err(e) = add_path_rule(ruleset_fd as i32, path, LANDLOCK_ACCESS_FS_EXECUTE) {
+            eprintln!(
+                "rune-landlock: warning: failed to add traverse rule for {}: {}",
                 path, e
             );
         }

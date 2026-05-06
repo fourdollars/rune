@@ -17,6 +17,8 @@ pub struct SandboxConfig {
     pub read_only_paths: Vec<PathBuf>,
     /// Paths explicitly denied.
     pub denied_paths: Vec<PathBuf>,
+    /// Paths that only need traverse/lookup access (EXECUTE only).
+    pub traverse_paths: Vec<PathBuf>,
     /// Maximum execution time in seconds.
     pub timeout_secs: u64,
     /// UID to run the sandboxed process as (0 = no change).
@@ -46,6 +48,7 @@ impl Default for SandboxConfig {
                 PathBuf::from("/etc"),
             ],
             denied_paths: vec![PathBuf::from("/root"), PathBuf::from("/etc/shadow")],
+            traverse_paths: Vec::new(),
             timeout_secs: 30,
             uid: 0,
             gid: 0,
@@ -378,6 +381,10 @@ impl SandboxExecutor {
         }
         for p in &self.config.read_only_paths {
             parts.push("--ro".to_string());
+            parts.push(p.display().to_string());
+        }
+        for p in &self.config.traverse_paths {
+            parts.push("--traverse".to_string());
             parts.push(p.display().to_string());
         }
         parts.push("--".to_string());

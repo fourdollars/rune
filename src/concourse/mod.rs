@@ -228,6 +228,7 @@ fn build_sandbox_config(source: &ResourceSource) -> SandboxConfig {
             read_write_paths: vec![PathBuf::from("/")],
             read_only_paths: vec![],
             denied_paths: vec![],
+            traverse_paths: Vec::new(),
             timeout_secs: sandbox_spec(source)
                 .and_then(|s| s.resources.timeout_secs)
                 .unwrap_or(30),
@@ -246,6 +247,7 @@ fn build_sandbox_config(source: &ResourceSource) -> SandboxConfig {
         .unwrap_or(30);
 
     SandboxConfig {
+        traverse_paths: Vec::new(),
         allowed_domains: policy.allowed_domains,
         read_write_paths: policy.allowed_paths_rw.iter().map(PathBuf::from).collect(),
         read_only_paths: policy.allowed_paths_ro.iter().map(PathBuf::from).collect(),
