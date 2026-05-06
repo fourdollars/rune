@@ -12,6 +12,12 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates curl \
     && rm -rf /var/lib/apt/lists/*
 
+RUN useradd --uid 1000 --create-home --home-dir /home/rune --shell /usr/sbin/nologin rune \
+    && mkdir -p /opt/resource \
+    && ln -sf /usr/local/bin/rune /opt/resource/check \
+    && ln -sf /usr/local/bin/rune /opt/resource/in \
+    && ln -sf /usr/local/bin/rune /opt/resource/out
+
 # Install all rune binaries
 COPY --from=builder /app/target/release/rune /usr/local/bin/rune
 COPY --from=builder /app/target/release/rune-seccomp /usr/local/bin/rune-seccomp
@@ -19,12 +25,6 @@ COPY --from=builder /app/target/release/rune-landlock /usr/local/bin/rune-landlo
 COPY --from=builder /app/target/release/rune-net-guard /usr/local/bin/rune-net-guard
 RUN chmod 0755 /usr/local/bin/rune /usr/local/bin/rune-seccomp /usr/local/bin/rune-landlock /usr/local/bin/rune-net-guard
 
-# Concourse resource type: /opt/resource/{check,in,out}
-RUN mkdir -p /opt/resource \
-    && ln -sf /usr/local/bin/rune /opt/resource/check \
-    && ln -sf /usr/local/bin/rune /opt/resource/in \
-    && ln -sf /usr/local/bin/rune /opt/resource/out
-
-RUN useradd --uid 1000 --create-home --home-dir /home/rune --shell /usr/sbin/nologin rune
-
+USER rune
+WORKDIR /home/rune
 ENTRYPOINT ["/usr/local/bin/rune"]

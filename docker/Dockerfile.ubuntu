@@ -12,7 +12,7 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
-RUN useradd --uid 1000 --create-home --home-dir /home/rune --shell /usr/sbin/nologin rune \
+RUN useradd --create-home --home-dir /home/rune --shell /usr/sbin/nologin rune \
     && mkdir -p /opt/resource \
     && ln -sf /usr/local/bin/rune /opt/resource/check \
     && ln -sf /usr/local/bin/rune /opt/resource/in \
@@ -22,4 +22,5 @@ COPY --from=builder /app/target/release/rune /usr/local/bin/rune
 RUN chmod 0755 /usr/local/bin/rune
 
 USER rune
+WORKDIR /home/rune
 ENTRYPOINT ["/usr/local/bin/rune"]
