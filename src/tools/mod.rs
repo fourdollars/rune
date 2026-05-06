@@ -49,6 +49,8 @@ pub struct ToolRegistry {
     policy_denied_paths: Vec<String>,
     policy_allowed_paths_rw: Vec<String>,
     policy_allowed_paths_ro: Vec<String>,
+    policy_allowed_files_ro: Vec<String>,
+    policy_allowed_files_rw: Vec<String>,
     allowed_dirs: Vec<PathBuf>,
     allowed_domains: Vec<String>,
 }
@@ -64,6 +66,8 @@ impl ToolRegistry {
             policy_denied_paths: Vec::new(),
             policy_allowed_paths_rw: Vec::new(),
             policy_allowed_paths_ro: Vec::new(),
+            policy_allowed_files_ro: Vec::new(),
+            policy_allowed_files_rw: Vec::new(),
         }
     }
 
@@ -108,6 +112,8 @@ impl ToolRegistry {
         self.policy_denied_paths = policy.denied_paths.clone();
         self.policy_allowed_paths_rw = policy.allowed_paths_rw.clone();
         self.policy_allowed_paths_ro = policy.allowed_paths_ro.clone();
+        self.policy_allowed_files_ro = policy.allowed_files_ro.clone();
+        self.policy_allowed_files_rw = policy.allowed_files_rw.clone();
         self.allowed_domains = policy.allowed_domains.clone();
     }
 
@@ -159,11 +165,21 @@ impl ToolRegistry {
             }
         }
         // Canonicalize allowed_dirs (resolve "." to absolute path for Landlock)
-        let rw_paths: Vec<PathBuf> = self
+        let mut rw_paths: Vec<PathBuf> = self
             .allowed_dirs
             .iter()
             .map(|p| std::fs::canonicalize(p).unwrap_or_else(|_| p.clone()))
             .collect();
+        // Add individual allowed files
+        for f in &self.policy_allowed_files_rw {
+            rw_paths.push(PathBuf::from(f));
+        }
+        for f in &self.policy_allowed_files_ro {
+            let pb = PathBuf::from(f);
+            if !read_only.contains(&pb) {
+                read_only.push(pb);
+            }
+        }
         let config = SandboxConfig {
             timeout_secs,
             read_write_paths: rw_paths,
@@ -373,6 +389,7 @@ stderr: {}",
         }
         if !self.policy_allowed_paths_rw.is_empty()
             && !self.is_path_in_list(path, &self.policy_allowed_paths_rw)
+            && !self.is_file_in_list(path, &self.policy_allowed_files_rw)
         {
             return ToolOutput::err(format!(
                 "BLOCKED by policy: path '{}' is not in allowed_paths_rw",
@@ -514,6 +531,15 @@ impl ToolRegistry {
             let norm_p = norm_p.trim_end_matches("/.");
             resolved == norm_p || resolved.starts_with(&format!("{}/", norm_p))
         })
+    }
+
+    /// Check if a resolved file path exactly matches any entry in the list.
+    fn is_file_in_list(&self, path: &str, list: &[String]) -> bool {
+        if list.is_empty() {
+            return false;
+        }
+        let resolved = self.resolve_path(path);
+        list.iter().any(|f| resolved == *f)
     }
 
     /// Resolve a relative path to absolute for policy matching.

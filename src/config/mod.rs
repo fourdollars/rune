@@ -28,6 +28,12 @@ pub struct PolicyConfig {
     /// Paths with read-only access.
     #[serde(default)]
     pub allowed_paths_ro: Vec<String>,
+    /// Individual files with read-only access (absolute paths).
+    #[serde(default)]
+    pub allowed_files_ro: Vec<String>,
+    /// Individual files with read-write access (absolute paths).
+    #[serde(default)]
+    pub allowed_files_rw: Vec<String>,
     /// Paths explicitly denied.
     #[serde(default)]
     pub denied_paths: Vec<String>,
@@ -52,6 +58,8 @@ impl Default for PolicyConfig {
             allowed_syscalls: Vec::new(), // empty = block all dangerous syscalls
             allowed_paths_rw: vec!["/tmp".to_string()],
             allowed_paths_ro: vec!["/bin".to_string(), "/usr".to_string(), "/lib".to_string()],
+            allowed_files_ro: Vec::new(),
+            allowed_files_rw: Vec::new(),
             denied_paths: vec!["/root".to_string(), "/etc/shadow".to_string()],
             max_memory_mb: 512,
             max_pids: 64,
