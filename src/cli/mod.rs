@@ -213,24 +213,24 @@ fn create_spinner(msg: &str) -> ProgressBar {
 fn display_result(reason: &StopReason, streamed: bool) {
     match reason {
         StopReason::FinalAnswer(ans) => {
-            println!();
-            println!("{}", "─".repeat(60).dimmed());
+            eprintln!();
+            eprintln!("{}", "─".repeat(60).dimmed());
             if !streamed {
                 println!("{}", ans);
             }
-            println!("{}", "─".repeat(60).dimmed());
+            eprintln!("{}", "─".repeat(60).dimmed());
         }
         StopReason::MaxSteps => {
-            println!("\n{}", "⚠ Stopped: maximum steps reached".yellow());
+            eprintln!("\n{}", "⚠ Stopped: maximum steps reached".yellow());
         }
         StopReason::TokenBudgetExhausted => {
-            println!("\n{}", "⚠ Stopped: token budget exhausted".yellow());
+            eprintln!("\n{}", "⚠ Stopped: token budget exhausted".yellow());
         }
         StopReason::Error(e) => {
-            println!("\n{} {}", "✗ Error:".red().bold(), e);
+            eprintln!("\n{} {}", "✗ Error:".red().bold(), e);
         }
         StopReason::UserInterrupt => {
-            println!("\n{}", "⚡ Interrupted by user".yellow());
+            eprintln!("\n{}", "⚡ Interrupted by user".yellow());
         }
     }
 }
@@ -745,14 +745,14 @@ async fn execute_prompt(agent: &mut Agent, input: &str) -> StopReason {
     // Show executed commands summary
     let cmds = agent.executed_commands();
     if !cmds.is_empty() {
-        println!("  {} commands executed: {}", "📋".dimmed(), cmds.len());
+        eprintln!("  {} commands executed: {}", "📋".dimmed(), cmds.len());
         for c in cmds {
-            println!("    {} {}", "▸".dimmed(), c.dimmed());
+            eprintln!("    {} {}", "▸".dimmed(), c.dimmed());
         }
     }
     // Run summary
     if agent.step_count() > 0 {
-        println!(
+        eprintln!(
             "  {} [{} steps | {} tokens | {} tool calls]",
             "⚡".dimmed(),
             agent.step_count(),
