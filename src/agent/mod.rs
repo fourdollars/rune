@@ -1134,8 +1134,23 @@ impl Agent {
 
             // Check if it's a file/binary permission error we can resolve
             if let Some(file_path) = Self::extract_permission_denied_path(&output.content) {
+                // Don't prompt for the same file twice
+                if self
+                    .config
+                    .policy
+                    .allowed_files_ro
+                    .iter()
+                    .any(|f| f == &file_path)
+                    || self
+                        .config
+                        .policy
+                        .allowed_paths_ro
+                        .iter()
+                        .any(|p| file_path.starts_with(p))
+                {
+                    break; // Already allowed, can't fix further
+                }
                 if self.interactive {
-                    // Determine if it's an executable (exit code 126) or a file read/write
                     let is_exec = output.content.contains("exit_code: 126")
                         || output.content.contains("exit_code=126");
                     let label = if is_exec {
@@ -1143,23 +1158,29 @@ impl Agent {
                     } else {
                         "File access blocked"
                     };
+                    // For Landlock: add the parent directory (path_beneath needs a directory)
+                    let dir_to_add = std::path::Path::new(&file_path)
+                        .parent()
+                        .map(|p| p.to_string_lossy().to_string())
+                        .unwrap_or_else(|| file_path.clone());
                     eprint!(
-                        "\n  {} {}: '{}'. Add to allowed_files_ro? [Y/n] ",
+                        "\n  {} {}: '{}'.\n      Add '{}' to allowed_paths_ro? [Y/n] ",
                         "🔓".yellow(),
                         label,
-                        file_path
+                        file_path,
+                        dir_to_add
                     );
                     std::io::Write::flush(&mut std::io::stderr()).ok();
                     let answer = Self::prompt_yn();
                     if answer {
-                        self.config.policy.allowed_files_ro.push(file_path.clone());
-                        self.tools.add_allowed_file_ro(&file_path);
-                        crate::config::persist_policy_array("allowed_files_ro", &file_path);
+                        self.config.policy.allowed_paths_ro.push(dir_to_add.clone());
+                        self.tools.add_allowed_path_ro(&dir_to_add);
+                        crate::config::persist_policy_array("allowed_paths_ro", &dir_to_add);
                         eprintln!(
                             "{}",
                             format!(
-                                "  ✓ '{}' added to allowed_files_ro (saved to config)",
-                                file_path
+                                "  ✓ '{}' added to allowed_paths_ro (saved to config)",
+                                dir_to_add
                             )
                             .green()
                         );
@@ -1654,5 +1675,37 @@ mod tests {
         let result = Agent::extract_permission_denied_path(content);
         // "exec failed" should be filtered out
         assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_permission_denied_parent_dir_extraction() {
+        // When we find a binary, we should add its parent directory (for Landlock)
+        let binary_path = "/home/linuxbrew/.linuxbrew/Cellar/jira-cli/1.7.0/bin/jira";
+        let parent = std::path::Path::new(binary_path)
+            .parent()
+            .map(|p| p.to_string_lossy().to_string())
+            .unwrap();
+        assert_eq!(
+            parent,
+            "/home/linuxbrew/.linuxbrew/Cellar/jira-cli/1.7.0/bin"
+        );
+    }
+
+    #[test]
+    fn test_permission_denied_no_infinite_loop() {
+        // If the path is already in allowed_paths_ro, should not prompt again
+        let file_path = "/usr/local/bin/mytool";
+        let allowed_paths_ro = vec!["/usr/local/bin".to_string()];
+        // Simulates the check: file_path starts_with an already-allowed path
+        let already_allowed = allowed_paths_ro.iter().any(|p| file_path.starts_with(p));
+        assert!(already_allowed);
+    }
+
+    #[test]
+    fn test_permission_denied_not_already_allowed() {
+        let file_path = "/home/user/.local/bin/tool";
+        let allowed_paths_ro = vec!["/usr/local/bin".to_string(), "/bin".to_string()];
+        let already_allowed = allowed_paths_ro.iter().any(|p| file_path.starts_with(p));
+        assert!(!already_allowed);
     }
 }
