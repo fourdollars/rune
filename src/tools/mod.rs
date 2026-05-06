@@ -177,14 +177,29 @@ impl ToolRegistry {
             .iter()
             .map(|p| std::fs::canonicalize(p).unwrap_or_else(|_| p.clone()))
             .collect();
-        // Add individual allowed files
+        // Add individual allowed files and their parent directories for traversal
         for f in &self.policy_allowed_files_rw {
-            rw_paths.push(PathBuf::from(f));
+            let pb = PathBuf::from(f);
+            rw_paths.push(pb.clone());
+            // Add parent dir to read_only for Landlock path traversal
+            if let Some(parent) = pb.parent() {
+                let parent = parent.to_path_buf();
+                if !read_only.contains(&parent) && !rw_paths.contains(&parent) {
+                    read_only.push(parent);
+                }
+            }
         }
         for f in &self.policy_allowed_files_ro {
             let pb = PathBuf::from(f);
             if !read_only.contains(&pb) {
-                read_only.push(pb);
+                read_only.push(pb.clone());
+            }
+            // Add parent dir to read_only for Landlock path traversal
+            if let Some(parent) = pb.parent() {
+                let parent = parent.to_path_buf();
+                if !read_only.contains(&parent) && !rw_paths.contains(&parent) {
+                    read_only.push(parent);
+                }
             }
         }
         let config = SandboxConfig {
