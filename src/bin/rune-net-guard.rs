@@ -122,13 +122,13 @@ macro_rules! _IOWR {
 }
 
 const SECCOMP_IOC_MAGIC: u8 = b'!';
-const SECCOMP_IOCTL_NOTIF_RECV: u64 =
-    _IOWR!(SECCOMP_IOC_MAGIC, 0, std::mem::size_of::<SeccompNotif>()) as u64;
-const SECCOMP_IOCTL_NOTIF_SEND: u64 = _IOWR!(
+const SECCOMP_IOCTL_NOTIF_RECV: libc::Ioctl =
+    _IOWR!(SECCOMP_IOC_MAGIC, 0, std::mem::size_of::<SeccompNotif>()) as libc::Ioctl;
+const SECCOMP_IOCTL_NOTIF_SEND: libc::Ioctl = _IOWR!(
     SECCOMP_IOC_MAGIC,
     1,
     std::mem::size_of::<SeccompNotifResp>()
-) as u64;
+) as libc::Ioctl;
 
 fn resolve_domains(domains: &[&str]) -> (HashSet<IpAddr>, Vec<String>) {
     let mut ips = HashSet::new();
