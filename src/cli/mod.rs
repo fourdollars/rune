@@ -1007,17 +1007,28 @@ pub async fn run() {
          Use them when needed. Be concise and accurate."
         .to_string();
 
-    // Auto-load AGENTS.md from current directory if present
+    // Auto-load AGENTS.md from current directory if present (with confirmation in interactive mode)
     if let Ok(agents_content) = std::fs::read_to_string("AGENTS.md") {
         if !agents_content.trim().is_empty() {
-            sys_prompt.push_str("\n\n[Project Context: AGENTS.md]\n");
-            sys_prompt.push_str(&agents_content);
-            sys_prompt.push_str("\n[End AGENTS.md]");
-            if stdin_is_terminal {
-                eprintln!(
-                    "  {} Loaded AGENTS.md from current directory",
-                    "📚".dimmed()
+            let should_load = if stdin_is_terminal {
+                eprint!(
+                    "  {} Found AGENTS.md in current directory. Load? [Y/n] ",
+                    "📚"
                 );
+                std::io::Write::flush(&mut std::io::stderr()).ok();
+                let mut input = String::new();
+                let _ = std::io::stdin().read_line(&mut input);
+                !input.trim().eq_ignore_ascii_case("n")
+            } else {
+                true // Always load in pipe mode
+            };
+            if should_load {
+                sys_prompt.push_str("\n\n[Project Context: AGENTS.md]\n");
+                sys_prompt.push_str(&agents_content);
+                sys_prompt.push_str("\n[End AGENTS.md]");
+                if stdin_is_terminal {
+                    eprintln!("  {} Loaded AGENTS.md", "✓".green());
+                }
             }
         }
     }
