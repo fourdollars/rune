@@ -227,24 +227,27 @@ impl ToolRegistry {
         let executor = self.sandbox(timeout_secs);
 
         // Build a PATH that includes directories from allowed_paths_ro where allowed
-        // commands may reside. Without this, sandboxed `sh -c` only sees system dirs.
-        let mut env_map = std::collections::HashMap::new();
+        // commands may reside. The sandbox chains multiple wrappers (systemd-run,
+        // rune-net-guard, rune-landlock, rune-seccomp) before the inner `sh -c`,
+        // and env vars set on the outer process don't propagate through all layers.
+        // So we prepend `export PATH=...;` directly into the command string.
         let system_path = std::env::var("PATH").unwrap_or_else(|_| "/usr/local/bin:/usr/bin:/bin".to_string());
         let mut extra_paths: Vec<String> = Vec::new();
         for p in &self.policy_allowed_paths_ro {
-            // Include paths that look like binary directories
             let path = std::path::Path::new(p);
             if path.is_dir() && !system_path.contains(p.as_str()) {
                 extra_paths.push(p.clone());
             }
         }
-        if !extra_paths.is_empty() {
+        let effective_cmd = if !extra_paths.is_empty() {
             extra_paths.push(system_path);
-            env_map.insert("PATH".to_string(), extra_paths.join(":"));
-        }
-        let env_ref = if env_map.is_empty() { None } else { Some(&env_map) };
+            let path_val = extra_paths.join(":");
+            format!("export PATH='{}'; {}", path_val, cmd)
+        } else {
+            cmd.to_string()
+        };
 
-        match executor.run_shell_command(cmd, cwd, env_ref).await {
+        match executor.run_shell_command(&effective_cmd, cwd, None).await {
             Ok(result) => {
                 // Include sandbox diagnostics in all returned ToolOutput values
                 if result.timed_out {

@@ -469,7 +469,7 @@ impl Provider for OpenAiProvider {
                 .and_then(|u| serde_json::from_value::<TokenUsage>(u.clone()).ok())
                 .unwrap_or_default();
 
-            debug!(model = %model, content_len = content.as_ref().map(|c| c.len()).unwrap_or(0),
+            debug!(model = %model, content_len = content.as_ref().map(|s| s.len()).unwrap_or(0),
                    tool_calls = tool_calls.len(), tokens = usage.total_tokens, "LLM response received");
 
             Ok(LlmResponse {
@@ -1457,7 +1457,6 @@ impl ProviderRegistry {
     }
 }
 
-#[cfg(test)]
 /// Parse content and tool_calls from potentially multi-choice API responses.
 /// Some providers (e.g. Copilot + Claude with thinking) split content and
 /// tool_calls across multiple choices. This scans all choices to collect both.

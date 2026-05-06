@@ -86,6 +86,17 @@ impl Agent {
                 config.policy.allowed_paths_ro.push(cwd_str);
             }
         }
+        // Auto-add skills_dir to allowed_paths_ro so agent can read skill references
+        {
+            let sd = config.skills_dir.clone();
+            if !sd.is_empty()
+                && !config.policy.allowed_paths_ro.iter().any(|p| sd.starts_with(p.trim_end_matches("/")))
+                && !config.policy.allowed_paths_rw.iter().any(|p| sd.starts_with(p.trim_end_matches("/")))
+            {
+                config.policy.allowed_paths_ro.push(sd);
+            }
+        }
+
         let allowed_dirs = if config.policy.allowed_paths_rw.is_empty() {
             vec![PathBuf::from("/tmp"), PathBuf::from(".")]
         } else {
@@ -1627,4 +1638,63 @@ mod tests {
         let already_allowed = allowed_paths_ro.iter().any(|p| file_path.starts_with(p));
         assert!(!already_allowed);
     }
+
+    #[test]
+    fn test_skills_dir_auto_added_to_allowed_paths_ro() {
+        use crate::config::RuneConfig;
+        let mut cfg = RuneConfig::default();
+        cfg.skills_dir = "/home/u/skills".to_string();
+        cfg.policy.allowed_paths_ro = vec!["/some/other/path".to_string()];
+
+        // Simulate the logic from Agent::new
+        let sd = cfg.skills_dir.clone();
+        if !sd.is_empty()
+            && !cfg.policy.allowed_paths_ro.iter().any(|p| sd.starts_with(p.trim_end_matches("/")))
+            && !cfg.policy.allowed_paths_rw.iter().any(|p| sd.starts_with(p.trim_end_matches("/")))
+        {
+            cfg.policy.allowed_paths_ro.push(sd);
+        }
+
+        assert!(cfg.policy.allowed_paths_ro.contains(&"/home/u/skills".to_string()));
+    }
+
+    #[test]
+    fn test_skills_dir_not_duplicated_if_covered() {
+        use crate::config::RuneConfig;
+        let mut cfg = RuneConfig::default();
+        cfg.skills_dir = "/home/u/skills".to_string();
+        // skills_dir is already covered by a broader path
+        cfg.policy.allowed_paths_ro = vec!["/home/u".to_string()];
+
+        let sd = cfg.skills_dir.clone();
+        let already_covered = cfg.policy.allowed_paths_ro.iter().any(|p| sd.starts_with(p.trim_end_matches("/")))
+            || cfg.policy.allowed_paths_rw.iter().any(|p| sd.starts_with(p.trim_end_matches("/")));
+
+        assert!(already_covered, "skills_dir should be covered by /home/u");
+        // Should NOT be added again
+        let count_before = cfg.policy.allowed_paths_ro.len();
+        if !already_covered {
+            cfg.policy.allowed_paths_ro.push(sd);
+        }
+        assert_eq!(cfg.policy.allowed_paths_ro.len(), count_before);
+    }
+
+    #[test]
+    fn test_skills_dir_empty_not_added() {
+        use crate::config::RuneConfig;
+        let mut cfg = RuneConfig::default();
+        cfg.skills_dir = "".to_string();
+        cfg.policy.allowed_paths_ro = vec![];
+
+        let sd = cfg.skills_dir.clone();
+        if !sd.is_empty()
+            && !cfg.policy.allowed_paths_ro.iter().any(|p| sd.starts_with(p.trim_end_matches("/")))
+            && !cfg.policy.allowed_paths_rw.iter().any(|p| sd.starts_with(p.trim_end_matches("/")))
+        {
+            cfg.policy.allowed_paths_ro.push(sd);
+        }
+
+        assert!(cfg.policy.allowed_paths_ro.is_empty(), "empty skills_dir should not be added");
+    }
+
 }
