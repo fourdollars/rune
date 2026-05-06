@@ -90,8 +90,16 @@ impl Agent {
         {
             let sd = config.skills_dir.clone();
             if !sd.is_empty()
-                && !config.policy.allowed_paths_ro.iter().any(|p| sd.starts_with(p.trim_end_matches("/")))
-                && !config.policy.allowed_paths_rw.iter().any(|p| sd.starts_with(p.trim_end_matches("/")))
+                && !config
+                    .policy
+                    .allowed_paths_ro
+                    .iter()
+                    .any(|p| sd.starts_with(p.trim_end_matches("/")))
+                && !config
+                    .policy
+                    .allowed_paths_rw
+                    .iter()
+                    .any(|p| sd.starts_with(p.trim_end_matches("/")))
             {
                 config.policy.allowed_paths_ro.push(sd);
             }
@@ -512,11 +520,16 @@ impl Agent {
                     self.skill_tools_deny = Some(denied.clone());
                     eprintln!("    {} tools_deny: {}", "🔒".dimmed(), denied.join(", "));
                 }
+                let skill_dir = skill
+                    .source_path
+                    .parent()
+                    .map(|p| p.display().to_string())
+                    .unwrap_or_default();
                 self.messages.push(LlmMessage {
                     role: "system".to_string(),
                     content: Some(format!(
-                        "[Skill: {}]\n{}\n[End Skill: {}]",
-                        skill.metadata.name, skill.content, skill.metadata.name
+                        "[Skill: {} | path: {}]\n{}\n[End Skill: {}]",
+                        skill.metadata.name, skill_dir, skill.content, skill.metadata.name
                     )),
                     tool_calls: None,
                     tool_call_id: None,
@@ -1649,13 +1662,24 @@ mod tests {
         // Simulate the logic from Agent::new
         let sd = cfg.skills_dir.clone();
         if !sd.is_empty()
-            && !cfg.policy.allowed_paths_ro.iter().any(|p| sd.starts_with(p.trim_end_matches("/")))
-            && !cfg.policy.allowed_paths_rw.iter().any(|p| sd.starts_with(p.trim_end_matches("/")))
+            && !cfg
+                .policy
+                .allowed_paths_ro
+                .iter()
+                .any(|p| sd.starts_with(p.trim_end_matches("/")))
+            && !cfg
+                .policy
+                .allowed_paths_rw
+                .iter()
+                .any(|p| sd.starts_with(p.trim_end_matches("/")))
         {
             cfg.policy.allowed_paths_ro.push(sd);
         }
 
-        assert!(cfg.policy.allowed_paths_ro.contains(&"/home/u/skills".to_string()));
+        assert!(cfg
+            .policy
+            .allowed_paths_ro
+            .contains(&"/home/u/skills".to_string()));
     }
 
     #[test]
@@ -1667,8 +1691,16 @@ mod tests {
         cfg.policy.allowed_paths_ro = vec!["/home/u".to_string()];
 
         let sd = cfg.skills_dir.clone();
-        let already_covered = cfg.policy.allowed_paths_ro.iter().any(|p| sd.starts_with(p.trim_end_matches("/")))
-            || cfg.policy.allowed_paths_rw.iter().any(|p| sd.starts_with(p.trim_end_matches("/")));
+        let already_covered = cfg
+            .policy
+            .allowed_paths_ro
+            .iter()
+            .any(|p| sd.starts_with(p.trim_end_matches("/")))
+            || cfg
+                .policy
+                .allowed_paths_rw
+                .iter()
+                .any(|p| sd.starts_with(p.trim_end_matches("/")));
 
         assert!(already_covered, "skills_dir should be covered by /home/u");
         // Should NOT be added again
@@ -1688,13 +1720,40 @@ mod tests {
 
         let sd = cfg.skills_dir.clone();
         if !sd.is_empty()
-            && !cfg.policy.allowed_paths_ro.iter().any(|p| sd.starts_with(p.trim_end_matches("/")))
-            && !cfg.policy.allowed_paths_rw.iter().any(|p| sd.starts_with(p.trim_end_matches("/")))
+            && !cfg
+                .policy
+                .allowed_paths_ro
+                .iter()
+                .any(|p| sd.starts_with(p.trim_end_matches("/")))
+            && !cfg
+                .policy
+                .allowed_paths_rw
+                .iter()
+                .any(|p| sd.starts_with(p.trim_end_matches("/")))
         {
             cfg.policy.allowed_paths_ro.push(sd);
         }
 
-        assert!(cfg.policy.allowed_paths_ro.is_empty(), "empty skills_dir should not be added");
+        assert!(
+            cfg.policy.allowed_paths_ro.is_empty(),
+            "empty skills_dir should not be added"
+        );
     }
 
+    #[test]
+    fn test_skill_injection_includes_path() {
+        // Verify the format string produces the expected header with path
+        let skill_name = "launchpad";
+        let skill_dir = "/home/u/skills/lp-api/launchpad";
+        let skill_body = "# Launchpad API\nSome content here.";
+
+        let injected = format!(
+            "[Skill: {} | path: {}]\n{}\n[End Skill: {}]",
+            skill_name, skill_dir, skill_body, skill_name
+        );
+
+        assert!(injected.starts_with("[Skill: launchpad | path: /home/u/skills/lp-api/launchpad]"));
+        assert!(injected.contains("# Launchpad API"));
+        assert!(injected.ends_with("[End Skill: launchpad]"));
+    }
 }

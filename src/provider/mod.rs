@@ -1484,7 +1484,8 @@ fn parse_choices(v: &serde_json::Value) -> (Option<String>, Vec<LlmToolCall>) {
             // Collect tool_calls from any choice that has them
             if let Some(tc) = msg.and_then(|m| m.get("tool_calls")) {
                 if tc.is_array() {
-                    if let Some(calls) = serde_json::from_value::<Vec<LlmToolCall>>(tc.clone()).ok() {
+                    if let Some(calls) = serde_json::from_value::<Vec<LlmToolCall>>(tc.clone()).ok()
+                    {
                         tool_calls.extend(calls);
                     }
                 }
@@ -2264,5 +2265,4 @@ mod tests {
         assert!(content.is_none());
         assert!(tool_calls.is_empty());
     }
-
 }

@@ -231,7 +231,8 @@ impl ToolRegistry {
         // rune-net-guard, rune-landlock, rune-seccomp) before the inner `sh -c`,
         // and env vars set on the outer process don't propagate through all layers.
         // So we prepend `export PATH=...;` directly into the command string.
-        let system_path = std::env::var("PATH").unwrap_or_else(|_| "/usr/local/bin:/usr/bin:/bin".to_string());
+        let system_path =
+            std::env::var("PATH").unwrap_or_else(|_| "/usr/local/bin:/usr/bin:/bin".to_string());
         let mut extra_paths: Vec<String> = Vec::new();
         for p in &self.policy_allowed_paths_ro {
             let path = std::path::Path::new(p);
@@ -1203,10 +1204,7 @@ mod tests {
     #[test]
     fn test_sandbox_path_includes_allowed_paths_ro() {
         // Simulate the PATH building logic from sandboxed_cmd
-        let policy_allowed_paths_ro = vec![
-            "/home/u/bin".to_string(),
-            "/opt/tools".to_string(),
-        ];
+        let policy_allowed_paths_ro = vec!["/home/u/bin".to_string(), "/opt/tools".to_string()];
         let system_path = "/usr/local/bin:/usr/bin:/bin".to_string();
 
         let mut extra_paths: Vec<String> = Vec::new();
@@ -1230,10 +1228,7 @@ mod tests {
     #[test]
     fn test_sandbox_path_no_duplicates_with_system() {
         // If an allowed_path is already in system PATH, don't add it again
-        let policy_allowed_paths_ro = vec![
-            "/usr/bin".to_string(),
-            "/home/u/bin".to_string(),
-        ];
+        let policy_allowed_paths_ro = vec!["/usr/bin".to_string(), "/home/u/bin".to_string()];
         let system_path = "/usr/local/bin:/usr/bin:/bin".to_string();
 
         let mut extra_paths: Vec<String> = Vec::new();
@@ -1263,5 +1258,4 @@ mod tests {
 
         assert!(extra_paths.is_empty());
     }
-
 }
