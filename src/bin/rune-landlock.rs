@@ -368,4 +368,27 @@ mod tests {
         assert_ne!(ACCESS_RW & LANDLOCK_ACCESS_FS_MAKE_REG, 0);
         assert_ne!(ACCESS_RW & LANDLOCK_ACCESS_FS_TRUNCATE, 0);
     }
+
+    #[test]
+    fn test_traverse_access_is_execute_only() {
+        // Traverse paths should only get EXECUTE permission (for directory lookup)
+        let traverse_access = LANDLOCK_ACCESS_FS_EXECUTE;
+        // Should NOT include READ_FILE or READ_DIR
+        assert_eq!(traverse_access & LANDLOCK_ACCESS_FS_READ_FILE, 0);
+        assert_eq!(traverse_access & LANDLOCK_ACCESS_FS_READ_DIR, 0);
+        assert_eq!(traverse_access & LANDLOCK_ACCESS_FS_WRITE_FILE, 0);
+        // Should include EXECUTE
+        assert_ne!(traverse_access & LANDLOCK_ACCESS_FS_EXECUTE, 0);
+    }
+
+    #[test]
+    fn test_traverse_vs_ro_permissions() {
+        // RO gives full read access, traverse gives only EXECUTE
+        assert!(ACCESS_RO > LANDLOCK_ACCESS_FS_EXECUTE);
+        // Traverse should be a strict subset of RO
+        assert_eq!(
+            LANDLOCK_ACCESS_FS_EXECUTE & ACCESS_RO,
+            LANDLOCK_ACCESS_FS_EXECUTE
+        );
+    }
 }

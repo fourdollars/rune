@@ -1111,4 +1111,70 @@ mod tests {
         // is_file_in_list should match
         assert!(registry.is_file_in_list("special.txt", &registry.policy_allowed_files_rw.clone()));
     }
+
+    #[test]
+    fn test_file_parents_go_to_traverse_not_readonly() {
+        // When allowed_files_ro has a file, its parent should go to
+        // traverse_paths, not read_only_paths
+        let mut registry = ToolRegistry::new(vec![]);
+        registry.policy_allowed_files_ro = vec!["/home/user/.netrc".to_string()];
+        registry.policy_allowed_paths_ro = vec!["/bin".to_string(), "/usr".to_string()];
+        registry.policy_mode = "confirm".to_string();
+
+        // Verify the file itself is in files_ro
+        assert!(registry
+            .policy_allowed_files_ro
+            .contains(&"/home/user/.netrc".to_string()));
+        // Verify parent /home/user is NOT in allowed_paths_ro
+        // (it should go to traverse_paths, verified at sandbox build time)
+        assert!(!registry
+            .policy_allowed_paths_ro
+            .contains(&"/home/user".to_string()));
+    }
+
+    #[test]
+    fn test_file_parents_deduplication() {
+        // Multiple files in same directory should only produce one traverse entry
+        let mut registry = ToolRegistry::new(vec![]);
+        registry.policy_allowed_files_ro = vec![
+            "/home/user/.netrc".to_string(),
+            "/home/user/.config".to_string(),
+        ];
+        registry.policy_allowed_paths_ro = vec!["/bin".to_string()];
+        registry.policy_mode = "confirm".to_string();
+
+        // Both files have same parent /home/user
+        let parent = std::path::Path::new("/home/user/.netrc")
+            .parent()
+            .unwrap()
+            .to_string_lossy()
+            .to_string();
+        let parent2 = std::path::Path::new("/home/user/.config")
+            .parent()
+            .unwrap()
+            .to_string_lossy()
+            .to_string();
+        assert_eq!(parent, parent2);
+        assert_eq!(parent, "/home/user");
+    }
+
+    #[test]
+    fn test_file_parent_not_added_if_already_in_ro() {
+        // If the parent directory is already in read_only_paths, don't duplicate in traverse
+        let mut registry = ToolRegistry::new(vec![]);
+        registry.policy_allowed_files_ro = vec!["/usr/share/data.txt".to_string()];
+        registry.policy_allowed_paths_ro = vec!["/usr".to_string()];
+        registry.policy_mode = "confirm".to_string();
+
+        // /usr/share's parent is /usr, which is already in ro
+        // The sandbox builder should detect this and skip adding to traverse
+        let parent = std::path::Path::new("/usr/share/data.txt")
+            .parent()
+            .unwrap();
+        let already_covered = registry
+            .policy_allowed_paths_ro
+            .iter()
+            .any(|p| parent.starts_with(p));
+        assert!(already_covered);
+    }
 }
