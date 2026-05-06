@@ -225,7 +225,26 @@ impl ToolRegistry {
     /// Run a command in sandbox and return ToolOutput.
     async fn sandboxed_cmd(&self, cmd: &str, timeout_secs: u64, cwd: Option<&str>) -> ToolOutput {
         let executor = self.sandbox(timeout_secs);
-        match executor.run_shell_command(cmd, cwd, None).await {
+
+        // Build a PATH that includes directories from allowed_paths_ro where allowed
+        // commands may reside. Without this, sandboxed `sh -c` only sees system dirs.
+        let mut env_map = std::collections::HashMap::new();
+        let system_path = std::env::var("PATH").unwrap_or_else(|_| "/usr/local/bin:/usr/bin:/bin".to_string());
+        let mut extra_paths: Vec<String> = Vec::new();
+        for p in &self.policy_allowed_paths_ro {
+            // Include paths that look like binary directories
+            let path = std::path::Path::new(p);
+            if path.is_dir() && !system_path.contains(p.as_str()) {
+                extra_paths.push(p.clone());
+            }
+        }
+        if !extra_paths.is_empty() {
+            extra_paths.push(system_path);
+            env_map.insert("PATH".to_string(), extra_paths.join(":"));
+        }
+        let env_ref = if env_map.is_empty() { None } else { Some(&env_map) };
+
+        match executor.run_shell_command(cmd, cwd, env_ref).await {
             Ok(result) => {
                 // Include sandbox diagnostics in all returned ToolOutput values
                 if result.timed_out {
