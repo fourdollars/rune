@@ -75,6 +75,28 @@ allowed_commands = ["ls", "cat", "head", "ps", "echo", "date"]
 allowed_domains = ["wttr.in"]
 ```
 
+
+## Container Usage
+
+Run Rune via Docker without installing locally:
+
+```bash
+# First-time setup
+docker run --rm -it -v ~/.rune:/home/rune/.rune ghcr.io/fourdollars/rune init
+
+# Interactive with skills
+docker run --rm -it \
+  -v ~/.rune:/home/rune/.rune \
+  -v ./skills:/home/rune/skills \
+  ghcr.io/fourdollars/rune
+
+# Run against a project directory
+docker run --rm -it \
+  -v ~/.rune:/home/rune/.rune \
+  -v $(pwd):/workspace -w /workspace \
+  ghcr.io/fourdollars/rune
+```
+
 ## Security Model
 
 All tool executions are sandboxed:

@@ -150,6 +150,45 @@ src/
     ├── rune-seccomp.rs
     └── rune-net-guard.rs
 
+
+## Container Deployment
+
+The container image `ghcr.io/fourdollars/rune` packages all binaries in a Debian-slim base with `curl` and `ca-certificates`.
+
+```bash
+# First-time setup — creates config at ~/.rune/rune.toml
+docker run --rm -it -v ~/.rune:/home/rune/.rune ghcr.io/fourdollars/rune init
+
+# Interactive agent with config + project directory
+docker run --rm -it \
+  -v ~/.rune:/home/rune/.rune \
+  -v $(pwd):/workspace -w /workspace \
+  ghcr.io/fourdollars/rune
+
+# With custom skills
+docker run --rm -it \
+  -v ~/.rune:/home/rune/.rune \
+  -v ./skills:/home/rune/skills \
+  -v $(pwd):/workspace -w /workspace \
+  ghcr.io/fourdollars/rune
+
+# Pipe mode (non-interactive, one-shot)
+echo "Explain this codebase" | docker run --rm -i \
+  -v ~/.rune:/home/rune/.rune \
+  -v $(pwd):/workspace -w /workspace \
+  ghcr.io/fourdollars/rune --json --yes
+```
+
+Concourse CI resource type (symlinks pre-configured at `/opt/resource/{check,in,out}`):
+```yaml
+resource_types:
+  - name: rune-agent
+    type: registry-image
+    source:
+      repository: ghcr.io/fourdollars/rune
+      tag: latest
+```
+
 ## Extending
 
 **New tool:** implement in `src/tools/mod.rs` → add JSON schema to `tool_definitions()` → sandbox handles execution automatically.

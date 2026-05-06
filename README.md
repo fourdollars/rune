@@ -52,6 +52,40 @@ EOF
 ./target/release/rune
 ```
 
+
+## Container Usage
+
+Rune is available as a container image at `ghcr.io/fourdollars/rune`:
+
+```bash
+# First-time setup — creates ~/.rune/rune.toml interactively
+docker run --rm -it -v ~/.rune:/home/rune/.rune ghcr.io/fourdollars/rune init
+
+# Interactive mode (mount config)
+docker run --rm -it -v ~/.rune:/home/rune/.rune ghcr.io/fourdollars/rune
+
+# With skills directory
+docker run --rm -it \
+  -v ~/.rune:/home/rune/.rune \
+  -v ./skills:/home/rune/skills \
+  ghcr.io/fourdollars/rune
+
+# Mount a project directory as working directory
+docker run --rm -it \
+  -v ~/.rune:/home/rune/.rune \
+  -v $(pwd):/workspace -w /workspace \
+  ghcr.io/fourdollars/rune
+
+# Pipe mode (one-shot, non-interactive)
+echo "Summarize the README.md in this project" | \
+  docker run --rm -i \
+  -v ~/.rune:/home/rune/.rune \
+  -v $(pwd):/workspace -w /workspace \
+  ghcr.io/fourdollars/rune --json --yes
+```
+
+Available tags: `latest` (Debian-based, built from main branch), `<sha>` (specific commit).
+
 ## CLI Usage
 
 ```
