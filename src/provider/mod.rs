@@ -461,38 +461,7 @@ impl Provider for OpenAiProvider {
                 .unwrap_or("")
                 .to_string();
 
-            // Some providers split content and tool_calls across multiple choices
-            // (e.g. Claude with thinking via Copilot/OpenRouter). Scan all choices.
-            let choices = v.get("choices").and_then(|c| c.as_array());
-
-            let mut content: Option<String> = None;
-            let mut tool_calls: Vec<LlmToolCall> = Vec::new();
-
-            if let Some(choices_arr) = choices {
-                for choice in choices_arr {
-                    let msg = choice.get("message");
-                    // Collect content from the first choice that has it
-                    if content.is_none() {
-                        if let Some(c) = msg.and_then(|m| m.get("content")) {
-                            if !c.is_null() {
-                                if let Some(s) = c.as_str() {
-                                    if !s.is_empty() {
-                                        content = Some(s.to_string());
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    // Collect tool_calls from any choice that has them
-                    if let Some(tc) = msg.and_then(|m| m.get("tool_calls")) {
-                        if tc.is_array() {
-                            if let Some(calls) = serde_json::from_value::<Vec<LlmToolCall>>(tc.clone()).ok() {
-                                tool_calls.extend(calls);
-                            }
-                        }
-                    }
-                }
-            }
+            let (content, tool_calls) = parse_choices(&v);
 
             // Parse usage
             let usage = v
@@ -706,36 +675,7 @@ impl Provider for CopilotProvider {
                 .and_then(|m| m.as_str())
                 .unwrap_or("")
                 .to_string();
-            // Some providers (e.g. Copilot + Claude with thinking) split content and
-            // tool_calls across multiple choices. Scan all choices to collect both.
-            let choices = v.get("choices").and_then(|c| c.as_array());
-
-            let mut content: Option<String> = None;
-            let mut tool_calls: Vec<LlmToolCall> = Vec::new();
-
-            if let Some(choices_arr) = choices {
-                for choice in choices_arr {
-                    let msg = choice.get("message");
-                    // Collect content from the first choice that has it
-                    if content.is_none() {
-                        if let Some(c) = msg.and_then(|m| m.get("content")) {
-                            if !c.is_null() {
-                                if let Some(s) = c.as_str() {
-                                    if !s.is_empty() {
-                                        content = Some(s.to_string());
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    // Collect tool_calls from any choice that has them
-                    if let Some(tc) = msg.and_then(|m| m.get("tool_calls")) {
-                        if let Some(calls) = serde_json::from_value::<Vec<LlmToolCall>>(tc.clone()).ok() {
-                            tool_calls.extend(calls);
-                        }
-                    }
-                }
-            }
+            let (content, tool_calls) = parse_choices(&v);
 
             let usage = v
                 .get("usage")
@@ -1518,6 +1458,44 @@ impl ProviderRegistry {
 }
 
 #[cfg(test)]
+/// Parse content and tool_calls from potentially multi-choice API responses.
+/// Some providers (e.g. Copilot + Claude with thinking) split content and
+/// tool_calls across multiple choices. This scans all choices to collect both.
+fn parse_choices(v: &serde_json::Value) -> (Option<String>, Vec<LlmToolCall>) {
+    let choices = v.get("choices").and_then(|c| c.as_array());
+
+    let mut content: Option<String> = None;
+    let mut tool_calls: Vec<LlmToolCall> = Vec::new();
+
+    if let Some(choices_arr) = choices {
+        for choice in choices_arr {
+            let msg = choice.get("message");
+            // Collect content from the first choice that has it
+            if content.is_none() {
+                if let Some(c) = msg.and_then(|m| m.get("content")) {
+                    if !c.is_null() {
+                        if let Some(s) = c.as_str() {
+                            if !s.is_empty() {
+                                content = Some(s.to_string());
+                            }
+                        }
+                    }
+                }
+            }
+            // Collect tool_calls from any choice that has them
+            if let Some(tc) = msg.and_then(|m| m.get("tool_calls")) {
+                if tc.is_array() {
+                    if let Some(calls) = serde_json::from_value::<Vec<LlmToolCall>>(tc.clone()).ok() {
+                        tool_calls.extend(calls);
+                    }
+                }
+            }
+        }
+    }
+
+    (content, tool_calls)
+}
+
 mod tests {
     use super::*;
 
@@ -2103,4 +2081,189 @@ mod tests {
         // Empty id should not be present
         assert!(fc.get("id").is_none() || fc["id"].is_null());
     }
+
+    #[test]
+    fn test_parse_choices_single_choice_with_content_only() {
+        let v = serde_json::json!({
+            "choices": [{
+                "message": {
+                    "role": "assistant",
+                    "content": "Hello world"
+                }
+            }]
+        });
+        let (content, tool_calls) = parse_choices(&v);
+        assert_eq!(content, Some("Hello world".to_string()));
+        assert!(tool_calls.is_empty());
+    }
+
+    #[test]
+    fn test_parse_choices_single_choice_with_tool_calls() {
+        let v = serde_json::json!({
+            "choices": [{
+                "message": {
+                    "role": "assistant",
+                    "content": null,
+                    "tool_calls": [{
+                        "id": "call_1",
+                        "type": "function",
+                        "function": {
+                            "name": "execute_cmd",
+                            "arguments": "{\"cmd\":\"ls\"}"
+                        }
+                    }]
+                }
+            }]
+        });
+        let (content, tool_calls) = parse_choices(&v);
+        assert!(content.is_none());
+        assert_eq!(tool_calls.len(), 1);
+        assert_eq!(tool_calls[0].function.name, "execute_cmd");
+    }
+
+    #[test]
+    fn test_parse_choices_multi_choice_split_content_and_tools() {
+        // This is the Claude-via-Copilot thinking pattern:
+        // choices[0] has content + reasoning, choices[1] has tool_calls
+        let v = serde_json::json!({
+            "choices": [
+                {
+                    "finish_reason": "tool_calls",
+                    "message": {
+                        "content": "Let me look that up for you.",
+                        "reasoning_text": "I should use lp-api to fetch the bug.",
+                        "role": "assistant"
+                    }
+                },
+                {
+                    "finish_reason": "tool_calls",
+                    "message": {
+                        "role": "assistant",
+                        "tool_calls": [{
+                            "id": "toolu_abc123",
+                            "type": "function",
+                            "function": {
+                                "name": "execute_cmd",
+                                "arguments": "{\"cmd\":\"lp-api get bugs/1234567\"}"
+                            }
+                        }]
+                    }
+                }
+            ]
+        });
+        let (content, tool_calls) = parse_choices(&v);
+        assert_eq!(content, Some("Let me look that up for you.".to_string()));
+        assert_eq!(tool_calls.len(), 1);
+        assert_eq!(tool_calls[0].id, "toolu_abc123");
+        assert_eq!(tool_calls[0].function.name, "execute_cmd");
+        assert!(tool_calls[0].function.arguments.contains("lp-api"));
+    }
+
+    #[test]
+    fn test_parse_choices_multi_choice_tools_in_multiple_choices() {
+        // Edge case: tool_calls spread across multiple choices
+        let v = serde_json::json!({
+            "choices": [
+                {
+                    "message": {
+                        "role": "assistant",
+                        "content": "Running commands...",
+                        "tool_calls": [{
+                            "id": "call_1",
+                            "type": "function",
+                            "function": {
+                                "name": "read_file",
+                                "arguments": "{\"path\":\"/tmp/a.txt\"}"
+                            }
+                        }]
+                    }
+                },
+                {
+                    "message": {
+                        "role": "assistant",
+                        "tool_calls": [{
+                            "id": "call_2",
+                            "type": "function",
+                            "function": {
+                                "name": "execute_cmd",
+                                "arguments": "{\"cmd\":\"date\"}"
+                            }
+                        }]
+                    }
+                }
+            ]
+        });
+        let (content, tool_calls) = parse_choices(&v);
+        assert_eq!(content, Some("Running commands...".to_string()));
+        assert_eq!(tool_calls.len(), 2);
+        assert_eq!(tool_calls[0].function.name, "read_file");
+        assert_eq!(tool_calls[1].function.name, "execute_cmd");
+    }
+
+    #[test]
+    fn test_parse_choices_empty_content_skipped() {
+        // Empty string content should be treated as None
+        let v = serde_json::json!({
+            "choices": [
+                {
+                    "message": {
+                        "role": "assistant",
+                        "content": ""
+                    }
+                },
+                {
+                    "message": {
+                        "role": "assistant",
+                        "content": "Actual answer"
+                    }
+                }
+            ]
+        });
+        let (content, tool_calls) = parse_choices(&v);
+        assert_eq!(content, Some("Actual answer".to_string()));
+        assert!(tool_calls.is_empty());
+    }
+
+    #[test]
+    fn test_parse_choices_null_content_skipped() {
+        let v = serde_json::json!({
+            "choices": [
+                {
+                    "message": {
+                        "role": "assistant",
+                        "content": null,
+                        "tool_calls": [{
+                            "id": "call_x",
+                            "type": "function",
+                            "function": {
+                                "name": "fetch_url",
+                                "arguments": "{\"url\":\"https://example.com\"}"
+                            }
+                        }]
+                    }
+                }
+            ]
+        });
+        let (content, tool_calls) = parse_choices(&v);
+        assert!(content.is_none());
+        assert_eq!(tool_calls.len(), 1);
+        assert_eq!(tool_calls[0].function.name, "fetch_url");
+    }
+
+    #[test]
+    fn test_parse_choices_no_choices_field() {
+        let v = serde_json::json!({ "model": "test" });
+        let (content, tool_calls) = parse_choices(&v);
+        assert!(content.is_none());
+        assert!(tool_calls.is_empty());
+    }
+
+    #[test]
+    fn test_parse_choices_empty_choices_array() {
+        let v = serde_json::json!({ "choices": [] });
+        let (content, tool_calls) = parse_choices(&v);
+        assert!(content.is_none());
+        assert!(tool_calls.is_empty());
+    }
+
 }

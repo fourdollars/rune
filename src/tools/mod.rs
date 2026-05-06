@@ -1196,4 +1196,69 @@ mod tests {
             .any(|p| parent.starts_with(p));
         assert!(already_covered);
     }
+
+    #[test]
+    fn test_sandbox_path_includes_allowed_paths_ro() {
+        // Simulate the PATH building logic from sandboxed_cmd
+        let policy_allowed_paths_ro = vec![
+            "/home/u/bin".to_string(),
+            "/opt/tools".to_string(),
+        ];
+        let system_path = "/usr/local/bin:/usr/bin:/bin".to_string();
+
+        let mut extra_paths: Vec<String> = Vec::new();
+        for p in &policy_allowed_paths_ro {
+            if !system_path.contains(p.as_str()) {
+                extra_paths.push(p.clone());
+            }
+        }
+
+        assert_eq!(extra_paths.len(), 2);
+        assert!(extra_paths.contains(&"/home/u/bin".to_string()));
+        assert!(extra_paths.contains(&"/opt/tools".to_string()));
+
+        extra_paths.push(system_path.clone());
+        let final_path = extra_paths.join(":");
+        assert!(final_path.starts_with("/home/u/bin:"));
+        assert!(final_path.contains("/opt/tools:"));
+        assert!(final_path.ends_with("/usr/local/bin:/usr/bin:/bin"));
+    }
+
+    #[test]
+    fn test_sandbox_path_no_duplicates_with_system() {
+        // If an allowed_path is already in system PATH, don't add it again
+        let policy_allowed_paths_ro = vec![
+            "/usr/bin".to_string(),
+            "/home/u/bin".to_string(),
+        ];
+        let system_path = "/usr/local/bin:/usr/bin:/bin".to_string();
+
+        let mut extra_paths: Vec<String> = Vec::new();
+        for p in &policy_allowed_paths_ro {
+            if !system_path.contains(p.as_str()) {
+                extra_paths.push(p.clone());
+            }
+        }
+
+        // /usr/bin is already in system_path, so only /home/u/bin should be added
+        assert_eq!(extra_paths.len(), 1);
+        assert_eq!(extra_paths[0], "/home/u/bin");
+    }
+
+    #[test]
+    fn test_sandbox_path_empty_when_no_extra_dirs() {
+        // When all allowed paths are already in system PATH, env_map should be empty
+        let policy_allowed_paths_ro = vec!["/usr/bin".to_string()];
+        let system_path = "/usr/local/bin:/usr/bin:/bin".to_string();
+
+        let mut extra_paths: Vec<String> = Vec::new();
+        for p in &policy_allowed_paths_ro {
+            if !system_path.contains(p.as_str()) {
+                extra_paths.push(p.clone());
+            }
+        }
+
+        assert!(extra_paths.is_empty());
+    }
+
 }
