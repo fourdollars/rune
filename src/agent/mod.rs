@@ -1196,13 +1196,37 @@ impl Agent {
         // "dial tcp: lookup example.com: no such host"
         // "Could not resolve host: example.com"
         // "Failed to connect to example.com port 443"
+        // 'Get "https://domain.com/...": dial tcp ...: connect: operation not permitted'
         if content.contains("network is unreachable")
             || content.contains("no such host")
             || content.contains("Could not resolve host")
             || content.contains("Failed to connect to")
             || content.contains("Connection refused")
             || content.contains("Name or service not known")
+            || content.contains("operation not permitted")
         {
+            // Try URL pattern: Get "https://<domain>/..." or "http://<domain>/..."
+            if let Some(start) = content.find("https://").or_else(|| content.find("http://")) {
+                let scheme_end = if content[start..].starts_with("https://") {
+                    start + 8
+                } else {
+                    start + 7
+                };
+                let after = &content[scheme_end..];
+                if let Some(end) =
+                    after.find(|c: char| c == '/' || c == '"' || c == ':' || c == ' ')
+                {
+                    let domain = &after[..end];
+                    if domain.contains('.') && !domain.is_empty() {
+                        return Some(domain.to_string());
+                    }
+                } else if after.contains('.') {
+                    let domain = after.trim_end_matches(|c: char| c == '"' || c.is_whitespace());
+                    if !domain.is_empty() {
+                        return Some(domain.to_string());
+                    }
+                }
+            }
             // Try "lookup <domain> on" pattern
             if let Some(start) = content.find("lookup ") {
                 let after = &content[start + 7..];
@@ -1225,7 +1249,7 @@ impl Agent {
                     }
                 }
             }
-            // Try "connect to <domain> port" pattern
+            // Try "connect to <domain> port" or "connect to <domain>:" pattern
             if let Some(start) = content.find("connect to ") {
                 let after = &content[start + 11..];
                 if let Some(end) = after.find(|c: char| c == ' ' || c == ':') {
