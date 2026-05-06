@@ -1320,19 +1320,19 @@ impl Agent {
                     {
                         // If it looks like a binary name (no spaces, not a path)
                         if !candidate.starts_with('/') {
-                            // Try to find it in common paths
-                            for dir in &["/usr/local/bin", "/usr/bin", "/home"] {
-                                let check = format!("{}/{}", dir, candidate);
-                                if std::path::Path::new(&check).exists() {
-                                    return Some(check);
-                                }
-                            }
-                            // Check ~/.cargo/bin and ~/.local/bin
-                            if let Ok(home) = std::env::var("HOME") {
-                                for subdir in &[".cargo/bin", ".local/bin", "bin", "go/bin"] {
-                                    let check = format!("{}/{}/{}", home, subdir, candidate);
+                            // Search PATH for the binary and resolve to realpath
+                            if let Ok(path_var) = std::env::var("PATH") {
+                                for dir in path_var.split(':') {
+                                    let check = format!("{}/{}", dir, candidate);
                                     if std::path::Path::new(&check).exists() {
-                                        return Some(check);
+                                        return Some(
+                                            std::fs::canonicalize(&check)
+                                                .unwrap_or_else(|_| {
+                                                    std::path::PathBuf::from(&check)
+                                                })
+                                                .to_string_lossy()
+                                                .to_string(),
+                                        );
                                     }
                                 }
                             }
