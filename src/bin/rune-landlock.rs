@@ -222,8 +222,22 @@ fn add_path_rule(ruleset_fd: i32, path: &str, access: u64) -> Result<(), String>
         ));
     }
 
+    // Determine if this is a file or directory and adjust access rights accordingly.
+    // Files don't support READ_DIR, REMOVE_DIR, MAKE_* operations.
+    let is_file = std::path::Path::new(path).is_file();
+    let effective_access = if is_file {
+        // File-only access: EXECUTE, READ_FILE, WRITE_FILE, TRUNCATE
+        access
+            & (LANDLOCK_ACCESS_FS_EXECUTE
+                | LANDLOCK_ACCESS_FS_READ_FILE
+                | LANDLOCK_ACCESS_FS_WRITE_FILE
+                | LANDLOCK_ACCESS_FS_TRUNCATE)
+    } else {
+        access
+    };
+
     let path_beneath = LandlockPathBeneathAttr {
-        allowed_access: access,
+        allowed_access: effective_access,
         parent_fd: fd,
     };
 
