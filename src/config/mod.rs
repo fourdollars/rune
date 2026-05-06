@@ -82,7 +82,8 @@ pub struct RuneConfig {
     pub token_budget: Option<u32>,
     pub timeout_secs: Option<u64>,
     pub base_url: Option<String>,
-    pub trace: bool,
+    /// Trace output directory. None = disabled, Some(path) = enabled.
+    pub trace: Option<String>,
     pub json_output: bool,
     pub auto_approve: bool,
     /// Approximate model context window in tokens.
@@ -109,12 +110,12 @@ impl Default for RuneConfig {
             api_key: None,
             provider: None,
             skills_dir: "./skills".to_string(),
-            log_level: "info".to_string(),
-            max_steps: None,
-            token_budget: None,
-            timeout_secs: None,
+            log_level: "error".to_string(),
+            max_steps: Some(50),
+            token_budget: Some(262144),
+            timeout_secs: Some(30),
             base_url: None,
-            trace: false,
+            trace: None,
             json_output: false,
             auto_approve: false,
             context_window: 128000,
@@ -140,7 +141,7 @@ struct PartialConfig {
     token_budget: Option<u32>,
     timeout_secs: Option<u64>,
     base_url: Option<String>,
-    trace: Option<bool>,
+    trace: Option<String>,
     context_window: Option<usize>,
     compact_threshold: Option<f64>,
     compact_keep_last: Option<usize>,
@@ -204,23 +205,23 @@ struct CliArgs {
     #[arg(long, env = "RUNE_BASE_URL", help_heading = "Provider")]
     base_url: Option<String>,
 
-    /// Sandbox policy: confirm (interactive), allowlist (pipe/CI), unrestricted
-    #[arg(long, env = "RUNE_POLICY_MODE", help_heading = "Security")]
-    policy_mode: Option<String>,
+    /// Disable all security policy checks (sandbox, allowlists, confirm prompts)
+    #[arg(long, help_heading = "Security")]
+    unrestricted: bool,
 
     /// Auto-approve dangerous tool calls (does NOT bypass policy allowlist)
     #[arg(long, short = 'y', action = clap::ArgAction::SetTrue, help_heading = "Security")]
     yes: bool,
 
-    /// Maximum agent loop iterations [default: unlimited]
+    /// Maximum agent loop iterations [default: 50, 0 = unlimited]
     #[arg(long, env = "RUNE_MAX_STEPS", help_heading = "Limits")]
     max_steps: Option<u32>,
 
-    /// Maximum tokens per run [default: unlimited]
+    /// Maximum tokens per run [default: 256k, 0 = unlimited]
     #[arg(long, env = "RUNE_TOKEN_BUDGET", help_heading = "Limits")]
     token_budget: Option<u32>,
 
-    /// Command timeout in seconds [default: 30]
+    /// Command timeout in seconds [default: 30, 0 = unlimited]
     #[arg(long, env = "RUNE_TIMEOUT_SECS", help_heading = "Limits")]
     timeout_secs: Option<u64>,
 
@@ -228,9 +229,9 @@ struct CliArgs {
     #[arg(long, action = clap::ArgAction::SetTrue, help_heading = "Output")]
     json: bool,
 
-    /// Enable trace recording to .rune/traces/
+    /// Enable trace recording to specified directory [empty = disabled]
     #[arg(long, env = "RUNE_TRACE", help_heading = "Output")]
-    trace: Option<bool>,
+    trace: Option<String>,
 
     /// Log level [trace, debug, info, warn, error]
     #[arg(long, env = "RUNE_LOG_LEVEL", help_heading = "Output")]
@@ -345,11 +346,11 @@ pub fn load() -> anyhow::Result<RuneConfig> {
         .or_else(|| uc.and_then(|c| c.policy.clone()))
         .unwrap_or_default();
 
-    // CLI --policy-mode overrides
-    if let Some(ref mode) = cli.policy_mode {
-        policy.mode = mode.clone();
+    // CLI --unrestricted flag overrides policy mode
+    if cli.unrestricted {
+        policy.mode = "unrestricted".to_string();
     }
-    // Env var override for mode
+    // Env var override for mode (legacy support)
     if let Some(mode) = env::var("RUNE_POLICY_MODE").ok() {
         policy.mode = mode;
     }
@@ -423,10 +424,10 @@ pub fn load() -> anyhow::Result<RuneConfig> {
         trace: cli
             .trace
             .or(env_partial.trace)
-            .or(cwdc.and_then(|c| c.trace))
-            .or(lc.and_then(|c| c.trace))
-            .or(uc.and_then(|c| c.trace))
-            .unwrap_or(defaults.trace),
+            .or(cwdc.and_then(|c| c.trace.clone()))
+            .or(lc.and_then(|c| c.trace.clone()))
+            .or(uc.and_then(|c| c.trace.clone()))
+            .or(defaults.trace),
         json_output: cli.json || env_json_output.unwrap_or(defaults.json_output),
         auto_approve: cli.yes || env_auto_approve.unwrap_or(defaults.auto_approve),
         context_window: env_partial
@@ -706,12 +707,12 @@ mod config_tests {
         assert_eq!(c.model, "gpt-4");
         assert!(c.api_key.is_none());
         assert_eq!(c.skills_dir, "./skills");
-        assert_eq!(c.log_level, "info");
-        assert!(c.max_steps.is_none());
-        assert!(c.token_budget.is_none());
-        assert!(c.timeout_secs.is_none());
+        assert_eq!(c.log_level, "error");
+        assert_eq!(c.max_steps, Some(50));
+        assert_eq!(c.token_budget, Some(262144));
+        assert_eq!(c.timeout_secs, Some(30));
         assert!(c.base_url.is_none());
-        assert!(!c.trace);
+        assert!(c.trace.is_none());
         assert!(!c.json_output);
         assert!(!c.auto_approve);
     }

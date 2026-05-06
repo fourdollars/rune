@@ -944,7 +944,7 @@ pub async fn run() {
     // Non-interactive (pipe) mode defaults to allowlist policy unless explicitly overridden
     if !stdin_is_terminal && cfg.policy.mode == "confirm" {
         eprintln!(
-            "  {} pipe mode: defaulting policy to allowlist (use --policy-mode to override)",
+            "  {} pipe mode: defaulting policy to allowlist (use --unrestricted to disable)",
             "ℹ".dimmed()
         );
         cfg.policy.mode = "allowlist".to_string();
@@ -1147,7 +1147,7 @@ pub async fn run() {
                 println!(
                     "  {} {}",
                     "status:".dimmed(),
-                    if cfg.trace {
+                    if cfg.trace.is_some() {
                         "enabled".green().to_string()
                     } else {
                         "disabled (use --trace to enable)".dimmed().to_string()

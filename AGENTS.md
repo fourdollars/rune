@@ -77,9 +77,9 @@ is_dangerous_tool(name)?
 **Policy modes:**
 | Mode | Behavior | Default for |
 |------|----------|-------------|
-| `confirm` | Interactive Y/n/A prompts | Interactive CLI |
-| `allowlist` | Auto-execute within allowlist, block the rest | Pipe mode, Concourse CI |
-| `unrestricted` | All policy checks bypassed | Opt-in only (`--policy-mode unrestricted`) |
+| `confirm` | Interactive Y/n prompts | Interactive CLI (auto-detected) |
+| `allowlist` | Auto-execute within allowlist, block the rest | Pipe mode, Concourse CI (auto-detected) |
+| `unrestricted` | All policy checks bypassed | Opt-in only (`--unrestricted unrestricted`) |
 
 In Concourse pipelines, override via `source.sandbox.policy_mode`.
 

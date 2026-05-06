@@ -70,7 +70,7 @@ model = "gpt-4o"
 api_key = "ghu_..."  # GitHub Copilot PAT (auto-detected)
 
 [policy]
-mode = "allowlist"
+# mode auto-detected (confirm for interactive, allowlist for pipe)
 allowed_commands = ["ls", "cat", "head", "ps", "echo", "date"]
 allowed_domains = ["wttr.in"]
 ```

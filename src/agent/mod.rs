@@ -131,7 +131,7 @@ impl Agent {
             });
         }
 
-        let trace = if config.trace {
+        let trace = if config.trace.is_some() {
             Some(TraceWriter::new(
                 TraceWriter::generate_run_id(),
                 config.model.clone(),
@@ -561,14 +561,14 @@ impl Agent {
 
         loop {
             if let Some(max) = self.config.max_steps {
-                if self.step_count >= max {
+                if max > 0 && self.step_count >= max {
                     let r = StopReason::MaxSteps;
                     self.finish_trace(&r);
                     return r;
                 }
             }
             if let Some(budget) = self.config.token_budget {
-                if self.tokens_used >= budget {
+                if budget > 0 && self.tokens_used >= budget {
                     let r = StopReason::TokenBudgetExhausted;
                     self.finish_trace(&r);
                     return r;

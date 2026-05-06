@@ -11,7 +11,7 @@ A high-performance, zero-trust AI agent built in Rust. Single binary, dual mode:
   - Landlock filesystem restriction (`rune-landlock`) — file access limits
   - DNS / Domain allowlist — selective outbound network access (configured via `allowed_domains`)
 - **Tool Calling** — 6 built-in tools: `read_file`, `write_file`, `list_dir`, `execute_cmd`, `fetch_url`, `inspect_process`
-- **Command Policy** — Three modes: `confirm` (interactive Y/n/A), `allowlist` (whitelist only), `unrestricted`
+- **Command Policy** — Two auto-detected modes: `confirm` (interactive), `allowlist` (whitelist only), `unrestricted`
 - **Skills System** — Load contextual abilities via `@skill_name` in prompts
 - **Provider Registry** — GitHub Copilot (auto token refresh), OpenRouter, Google Gemini, any OpenAI-compatible
 - **MCP Client** — Stdio-based JSON-RPC client for Model Context Protocol servers
@@ -155,8 +155,10 @@ skills_dir = "./skills"
 log_level = "warn"
 # max_steps = 20          # optional (unlimited if not set)
 # token_budget = 16384    # optional (unlimited if not set)
-# timeout_secs = 30       # optional (unlimited if not set)
-trace = false
+# max_steps = 50          # default 50, 0 = unlimited
+# timeout_secs = 30       # default 30, 0 = unlimited
+# token_budget = 262144   # default 256k, 0 = unlimited
+# trace = "/path/to/traces"  # empty = disabled
 context_window = 128000       # model context window in tokens
 # compact_threshold = 0.85   # auto-compact at this % of context_window
 # compact_keep_last = 6      # keep last N messages when compacting
@@ -188,7 +190,7 @@ max_pids = 64
 | `RUNE_PROVIDER` | Provider name (github-copilot, gemini, openai, openrouter, ollama, anthropic) |
 | `RUNE_MODEL` | Model name |
 | `RUNE_BASE_URL` | Provider base URL |
-| `RUNE_POLICY_MODE` | Policy mode override |
+| `RUNE_POLICY_MODE` (legacy) | Policy mode override |
 | `RUNE_LOG_LEVEL` | Log level |
 | `RUNE_TRACE` | Enable trace (true/false) |
 | `RUNE_CONTEXT_WINDOW` | Model context window in tokens (default: 128000) |
@@ -253,14 +255,14 @@ Every tool invocation passes through up to 5 isolation layers:
 |------|----------|-------------|
 | `confirm` | Ask user Y/n/A(lways) before dangerous tools | Interactive CLI |
 | `allowlist` | Auto-execute within allowlist, block everything else | Pipe mode, Concourse CI |
-| `unrestricted` | All policy checks skipped | Opt-in via `--policy-mode unrestricted` |
+| `unrestricted` | All policy checks skipped | Opt-in via `--unrestricted` flag |
 
 **Defaults by context:**
 - **Interactive CLI** (`rune`): `confirm` — prompts before each dangerous tool call
 - **Pipe mode** (`echo "..." \| rune`): `allowlist` — runs within configured allowlists
 - **Concourse CI** (check/get/put): `allowlist` — enforces sandbox policy from pipeline YAML
 
-Override with `--policy-mode <mode>`, `RUNE_POLICY_MODE=<mode>`, or in `rune.toml`:
+Override with `--unrestricted` flag or `RUNE_POLICY_MODE=unrestricted` env var:
 
 ```toml
 [policy]

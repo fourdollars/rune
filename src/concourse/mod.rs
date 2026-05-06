@@ -275,7 +275,7 @@ fn build_runtime_config(source: &ResourceSource) -> RuneConfig {
         cfg.policy.mode = "allowlist".to_string();
     }
     cfg.json_output = false;
-    cfg.trace = false;
+    cfg.trace = None;
     cfg.auto_approve = true;
     cfg
 }
