@@ -27,7 +27,6 @@ pub enum StopReason {
 enum ConfirmResult {
     Yes,
     No,
-    Always,
 }
 
 /// Rough token estimator using a chars/4 approximation.
@@ -913,91 +912,14 @@ impl Agent {
                 return Err(StopReason::Error(msg));
             }
 
-            // Show what we're about to do
-            let involved_domain = Self::extract_domain_from_args(&tc.function.name, &args);
-            let involved_cmd = Self::extract_command_from_args(&tc.function.name, &args);
-            let involved_path = Self::extract_path_from_args(&tc.function.name, &args);
-
             eprint!(
                 "
-  {} Execute? [Y/n/A(lways)] ",
+  {} Execute? [Y/n] ",
                 "⚠".yellow().bold()
             );
             std::io::Write::flush(&mut std::io::stderr()).ok();
-            match Self::prompt_confirm_with_always() {
+            match Self::prompt_confirm() {
                 ConfirmResult::Yes => eprintln!("{}", "approved".green()),
-                ConfirmResult::Always => {
-                    // Permanently allow: persist domain/command to config
-                    let mut added: Vec<String> = Vec::new();
-
-                    if let Some(ref domain) = involved_domain {
-                        if !self.config.policy.allowed_domains.contains(domain) {
-                            self.tools.add_allowed_domain(domain);
-                            self.config.policy.allowed_domains.push(domain.clone());
-                            crate::config::persist_domain(domain);
-                            added.push(format!("domain '{}' → allowed_domains", domain));
-                        }
-                    }
-
-                    // Persist only the command currently being confirmed.
-                    // Later pipeline commands will be prompted separately when they are reached.
-                    if tc.function.name == "execute_cmd" {
-                        if let Some(ref bin) = involved_cmd {
-                            if !self.config.policy.allowed_commands.contains(bin) {
-                                self.tools.add_allowed_command(bin);
-                                self.config.policy.allowed_commands.push(bin.clone());
-                                crate::config::persist_command(bin);
-                                added.push(format!("command '{}' → allowed_commands", bin));
-                            }
-                        }
-                    }
-
-                    if let Some(ref path) = involved_path {
-                        // Persist the parent directory for path-based tools
-                        let dir = std::path::Path::new(path.as_str())
-                            .parent()
-                            .map(|p| p.to_string_lossy().to_string())
-                            .unwrap_or_else(|| path.clone());
-                        let dir = if dir.is_empty() { ".".to_string() } else { dir };
-                        let resolved = self.resolve_tool_path(&dir);
-                        if tc.function.name == "write_file" {
-                            if !self
-                                .is_path_in_list(&resolved, &self.config.policy.allowed_paths_rw)
-                            {
-                                self.tools.add_allowed_path_rw(&resolved);
-                                self.config.policy.allowed_paths_rw.push(resolved.clone());
-                                crate::config::persist_path_rw(&resolved);
-                                added.push(format!("path '{}' → allowed_paths_rw", resolved));
-                            }
-                        } else {
-                            // read_file
-                            if !self
-                                .is_path_in_list(&resolved, &self.config.policy.allowed_paths_ro)
-                                && !self.is_path_in_list(
-                                    &resolved,
-                                    &self.config.policy.allowed_paths_rw,
-                                )
-                            {
-                                self.tools.add_allowed_path_ro(&resolved);
-                                self.config.policy.allowed_paths_ro.push(resolved.clone());
-                                crate::config::persist_path_ro(&resolved);
-                                added.push(format!("path '{}' → allowed_paths_ro", resolved));
-                            }
-                        }
-                    }
-
-                    if added.is_empty() {
-                        eprintln!("{}", "approved (already in allowlist)".green());
-                    } else {
-                        eprintln!(
-                            "{}",
-                            "permanently allowed → saved to ~/.rune/rune.toml".green()
-                        );
-                        for item in &added {
-                            eprintln!("    {} {}", "+".green(), item);
-                        }
-                    }
-                }
                 ConfirmResult::No => {
                     eprintln!("{}", "denied".red());
                     return Ok("DENIED: user rejected tool execution".to_string());
@@ -1537,7 +1459,7 @@ impl Agent {
     }
 
     /// Prompt user for Y/n confirmation via /dev/tty (bypasses stdin pipe).
-    fn prompt_confirm_with_always() -> ConfirmResult {
+    fn prompt_confirm() -> ConfirmResult {
         use std::io::{BufRead, Write};
         if let Ok(tty) = std::fs::File::open("/dev/tty") {
             let mut reader = std::io::BufReader::new(tty);
@@ -1545,9 +1467,6 @@ impl Agent {
             let mut input = String::new();
             if reader.read_line(&mut input).is_ok() {
                 let trimmed = input.trim().to_lowercase();
-                if trimmed == "a" || trimmed == "always" {
-                    return ConfirmResult::Always;
-                }
                 if trimmed == "n" || trimmed == "no" {
                     return ConfirmResult::No;
                 }
