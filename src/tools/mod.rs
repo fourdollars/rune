@@ -141,6 +141,16 @@ impl ToolRegistry {
                 read_only.push(pb);
             }
         }
+        // Include the directory containing rune helper binaries (rune-seccomp, rune-landlock, etc.)
+        // They may be in ~/.cargo/bin or /usr/local/bin — Landlock needs read+exec access.
+        if let Ok(exe_path) = std::env::current_exe() {
+            if let Some(exe_dir) = exe_path.parent() {
+                let exe_dir = exe_dir.to_path_buf();
+                if !read_only.contains(&exe_dir) {
+                    read_only.push(exe_dir);
+                }
+            }
+        }
         // Always include CWD and its parents so sandboxed commands can access the working directory.
         // Landlock requires rules on parent directories for path traversal.
         if let Ok(cwd) = std::env::current_dir() {
