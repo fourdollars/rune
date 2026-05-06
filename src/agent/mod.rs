@@ -1104,6 +1104,34 @@ impl Agent {
                 return Err(StopReason::Error(output.content));
             }
 
+            // Check if it's a network error we can resolve by adding a domain
+            if let Some(domain) = Self::extract_network_blocked_domain(&output.content) {
+                if self.interactive {
+                    eprint!(
+                        "\n  {} Network blocked for '{}'. Add to allowed_domains? [Y/n] ",
+                        "🔓".yellow(),
+                        domain
+                    );
+                    std::io::Write::flush(&mut std::io::stderr()).ok();
+                    let answer = Self::prompt_yn();
+                    if answer {
+                        self.tools.add_allowed_domain(&domain);
+                        self.config.policy.allowed_domains.push(domain.clone());
+                        crate::config::persist_domain(&domain);
+                        eprintln!(
+                            "{}",
+                            format!(
+                                "  ✓ '{}' added to allowed_domains (saved to config)",
+                                domain
+                            )
+                            .green()
+                        );
+                        output = self.tools.execute(&tc.function.name, args.clone()).await;
+                        continue;
+                    }
+                }
+            }
+
             break;
         }
 
@@ -1155,6 +1183,56 @@ impl Agent {
                 let after = &content[start + 8..];
                 if let Some(end) = after.find('\'') {
                     return Some(after[..end].to_string());
+                }
+            }
+        }
+        None
+    }
+
+    /// Extract domain from network error messages (DNS failure, connection refused, etc.)
+    fn extract_network_blocked_domain(content: &str) -> Option<String> {
+        // Patterns:
+        // "lookup api.launchpad.net on 127.0.0.53:53: ... network is unreachable"
+        // "dial tcp: lookup example.com: no such host"
+        // "Could not resolve host: example.com"
+        // "Failed to connect to example.com port 443"
+        if content.contains("network is unreachable")
+            || content.contains("no such host")
+            || content.contains("Could not resolve host")
+            || content.contains("Failed to connect to")
+            || content.contains("Connection refused")
+            || content.contains("Name or service not known")
+        {
+            // Try "lookup <domain> on" pattern
+            if let Some(start) = content.find("lookup ") {
+                let after = &content[start + 7..];
+                if let Some(end) = after.find(|c: char| c == ' ' || c == ':') {
+                    let domain = &after[..end];
+                    if domain.contains('.') && !domain.contains('/') {
+                        return Some(domain.to_string());
+                    }
+                }
+            }
+            // Try "resolve host: <domain>" pattern
+            if let Some(start) = content.find("resolve host: ") {
+                let after = &content[start + 14..];
+                if let Some(end) =
+                    after.find(|c: char| !c.is_alphanumeric() && c != '.' && c != '-')
+                {
+                    let domain = &after[..end];
+                    if domain.contains('.') {
+                        return Some(domain.to_string());
+                    }
+                }
+            }
+            // Try "connect to <domain> port" pattern
+            if let Some(start) = content.find("connect to ") {
+                let after = &content[start + 11..];
+                if let Some(end) = after.find(|c: char| c == ' ' || c == ':') {
+                    let domain = &after[..end];
+                    if domain.contains('.') && !domain.contains('/') {
+                        return Some(domain.to_string());
+                    }
                 }
             }
         }
