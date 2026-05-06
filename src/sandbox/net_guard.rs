@@ -344,8 +344,10 @@ fn recv_fd(sock: RawFd) -> std::io::Result<RawFd> {
     }
 }
 
-fn main() {
-    let args: Vec<String> = env::args().collect();
+/// Entry point when invoked as `rune _landlock` / `_seccomp` / `_net-guard` subcommand.
+pub fn run() {
+    let all_args: Vec<String> = env::args().collect();
+    let args: Vec<String> = all_args[1..].to_vec(); // skip binary name, keep subcommand as args[0]
     if args.len() < 4 {
         eprintln!("Usage: rune-net-guard --allow-domains <domains> -- <command> [args...]");
         std::process::exit(1);

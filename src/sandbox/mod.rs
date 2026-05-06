@@ -1,3 +1,7 @@
+pub mod landlock;
+pub mod net_guard;
+pub mod seccomp;
+
 use anyhow::{Context, Result};
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -169,14 +173,10 @@ impl SandboxExecutor {
             info!("sandbox: network namespace fully isolated");
         } else {
             // Fallback: use rune-net-guard with empty allowlist (blocks all non-loopback)
-            let has_net_guard_fallback = probe_tool("rune-net-guard").await;
-            if has_net_guard_fallback {
+            {
                 use_net_guard_empty = true;
                 active_layers.push("net-guard(none)".to_string());
                 info!("sandbox: net-guard blocking all (empty allowlist, unshare unavailable)");
-            } else {
-                warn!("sandbox: no network isolation available (unshare and rune-net-guard both unavailable)");
-                degraded = true;
             }
         }
 
@@ -198,22 +198,31 @@ impl SandboxExecutor {
             debug!("sandbox: landlock active");
         }
 
-        // Network guard layer
+        // Network guard layer (skip if not running as rune binary)
         let mut net_guard_wrapper: Option<String> = None;
-        if use_net_guard_empty {
-            net_guard_wrapper = Some("rune-net-guard --allow-domains \"\" --".to_string());
+        if use_net_guard_empty && Self::is_rune_binary() {
+            let self_exe_ng = std::env::current_exe()
+                .ok()
+                .and_then(|p| p.to_str().map(|s| s.to_string()))
+                .unwrap_or_else(|| "rune".to_string());
+            net_guard_wrapper = Some(format!(
+                "'{}' _net-guard --allow-domains \"\" --",
+                self_exe_ng
+            ));
         }
         if !self.config.allowed_domains.is_empty()
             && !self.config.allowed_domains.iter().any(|d| d == "*")
+            && Self::is_rune_binary()
         {
-            let has_net_guard = probe_tool("rune-net-guard").await;
-
-            if has_net_guard {
-                let domains = self.config.allowed_domains.join(",");
-                net_guard_wrapper = Some(format!("rune-net-guard --allow-domains {} --", domains));
-            } else {
-                warn!("sandbox: rune-net-guard not found, network filtering unavailable");
-            }
+            let self_exe = std::env::current_exe()
+                .ok()
+                .and_then(|p| p.to_str().map(|s| s.to_string()))
+                .unwrap_or_else(|| "rune".to_string());
+            let domains = self.config.allowed_domains.join(",");
+            net_guard_wrapper = Some(format!(
+                "'{}' _net-guard --allow-domains {} --",
+                self_exe, domains
+            ));
         }
 
         // Build the final command
@@ -315,17 +324,28 @@ impl SandboxExecutor {
     /// For actual BPF filtering, we'd need a helper binary; for now we use
     /// no_new_privs as the baseline seccomp protection.
 
-    async fn build_seccomp_wrapper(&self, block_net: bool) -> Option<String> {
-        // Try rune-seccomp binary first (real BPF seccomp filter)
-        let rune_seccomp = Command::new("which")
-            .arg("rune-seccomp")
-            .output()
-            .await
-            .map(|o| o.status.success())
-            .unwrap_or(false);
+    /// Check if current_exe is the rune binary (not a test runner).
+    fn is_rune_binary() -> bool {
+        std::env::current_exe()
+            .ok()
+            .and_then(|p| p.file_name().map(|f| f.to_string_lossy().into_owned()))
+            .map(|name| name == "rune")
+            .unwrap_or(false)
+    }
 
-        if rune_seccomp {
-            let mut cmd = "rune-seccomp".to_string();
+    async fn build_seccomp_wrapper(&self, block_net: bool) -> Option<String> {
+        // Use self-exe _seccomp subcommand (always available — single binary)
+        if !Self::is_rune_binary() {
+            // Not running as rune (e.g. test binary) — skip sandbox wrappers
+            return None;
+        }
+        let self_exe = std::env::current_exe()
+            .ok()
+            .and_then(|p| p.to_str().map(|s| s.to_string()))
+            .unwrap_or_else(|| "rune".to_string());
+
+        {
+            let mut cmd = format!("'{}' _seccomp", self_exe);
             if !self.config.allowed_syscalls.is_empty() {
                 cmd.push_str(&format!(
                     " --allow-syscalls {}",
@@ -338,21 +358,6 @@ impl SandboxExecutor {
             info!(allowed = ?self.config.allowed_syscalls, "sandbox: seccomp via rune-seccomp");
             return Some(cmd);
         }
-
-        // Fallback: setpriv --no-new-privs (weaker but still useful)
-        let has_setpriv = Command::new("which")
-            .arg("setpriv")
-            .output()
-            .await
-            .map(|o| o.status.success())
-            .unwrap_or(false);
-
-        if has_setpriv {
-            debug!("sandbox: seccomp fallback to setpriv --no-new-privs");
-            Some("setpriv --no-new-privs --".to_string())
-        } else {
-            None
-        }
     }
 
     /// Build a landlock wrapper using a helper script.
@@ -360,21 +365,17 @@ impl SandboxExecutor {
     /// in the probe phase since raw landlock from a shell wrapper is impractical.
     /// The real protection comes from the user namespace UID remapping.
     async fn build_landlock_wrapper(&self) -> Option<String> {
-        // Check if rune-landlock helper is available
-        let has_landlock = Command::new("which")
-            .arg("rune-landlock")
-            .output()
-            .await
-            .map(|o| o.status.success())
-            .unwrap_or(false);
-
-        if !has_landlock {
-            debug!("sandbox: rune-landlock not found, skipping filesystem restriction");
+        // Use self-exe _landlock subcommand (always available — single binary)
+        if !Self::is_rune_binary() {
             return None;
         }
+        let self_exe = std::env::current_exe()
+            .ok()
+            .and_then(|p| p.to_str().map(|s| s.to_string()))
+            .unwrap_or_else(|| "rune".to_string());
 
-        // Build rune-landlock command with configured paths
-        let mut parts = vec!["rune-landlock".to_string()];
+        // Build _landlock subcommand with configured paths
+        let mut parts = vec![format!("'{}' _landlock", self_exe)];
         for p in &self.config.read_write_paths {
             parts.push("--rw".to_string());
             parts.push(p.display().to_string());

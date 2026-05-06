@@ -19,8 +19,37 @@ mod trace;
 
 use tracing_subscriber::EnvFilter;
 
-#[tokio::main]
-async fn main() {
+fn main() {
+    // Internal sandbox subcommands — synchronous, must run before tokio.
+    // These exec() into the child process and never return.
+    let args: Vec<String> = env::args().collect();
+    if args.len() > 1 {
+        match args[1].as_str() {
+            "_landlock" => {
+                sandbox::landlock::run();
+                unreachable!();
+            }
+            "_seccomp" => {
+                sandbox::seccomp::run();
+                unreachable!();
+            }
+            "_net-guard" => {
+                sandbox::net_guard::run();
+                unreachable!();
+            }
+            _ => {}
+        }
+    }
+
+    // Enter async runtime for everything else
+    tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .unwrap()
+        .block_on(async_main());
+}
+
+async fn async_main() {
     // Check for subcommands BEFORE clap parses args
     let args: Vec<String> = env::args().collect();
     if args.len() > 1 && args[1] == "init" {

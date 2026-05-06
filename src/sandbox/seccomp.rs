@@ -80,8 +80,10 @@ fn syscall_name_to_nr(name: &str) -> Option<u32> {
     }
 }
 
-fn main() {
-    let args: Vec<String> = env::args().collect();
+/// Entry point when invoked as `rune _landlock` / `_seccomp` / `_net-guard` subcommand.
+pub fn run() {
+    let all_args: Vec<String> = env::args().collect();
+    let args: Vec<String> = all_args[1..].to_vec(); // skip binary name, keep subcommand as args[0]
     if args.len() < 2 {
         eprintln!(
             "Usage: rune-seccomp [--block-network] [--allow-syscalls <list>] <command> [args...]"
