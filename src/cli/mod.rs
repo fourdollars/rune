@@ -1026,9 +1026,7 @@ pub async fn run() {
                 sys_prompt.push_str("\n\n[Project Context: AGENTS.md]\n");
                 sys_prompt.push_str(&agents_content);
                 sys_prompt.push_str("\n[End AGENTS.md]");
-                if stdin_is_terminal {
-                    eprintln!("  {} Loaded AGENTS.md", "✓".green());
-                }
+                eprintln!("  {} Loaded AGENTS.md", "✓".green());
             }
         }
     }
