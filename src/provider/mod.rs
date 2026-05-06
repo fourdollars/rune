@@ -461,31 +461,38 @@ impl Provider for OpenAiProvider {
                 .unwrap_or("")
                 .to_string();
 
-            // Extract from choices[0].message
-            let message = v
-                .get("choices")
-                .and_then(|c| c.get(0))
-                .and_then(|first| first.get("message"));
+            // Some providers split content and tool_calls across multiple choices
+            // (e.g. Claude with thinking via Copilot/OpenRouter). Scan all choices.
+            let choices = v.get("choices").and_then(|c| c.as_array());
 
-            let content = message.and_then(|m| m.get("content")).and_then(|c| {
-                if c.is_null() {
-                    None
-                } else {
-                    c.as_str().map(|s| s.to_string())
-                }
-            });
+            let mut content: Option<String> = None;
+            let mut tool_calls: Vec<LlmToolCall> = Vec::new();
 
-            // Parse tool_calls from response
-            let tool_calls: Vec<LlmToolCall> = message
-                .and_then(|m| m.get("tool_calls"))
-                .and_then(|tc| {
-                    if tc.is_array() {
-                        serde_json::from_value::<Vec<LlmToolCall>>(tc.clone()).ok()
-                    } else {
-                        None
+            if let Some(choices_arr) = choices {
+                for choice in choices_arr {
+                    let msg = choice.get("message");
+                    // Collect content from the first choice that has it
+                    if content.is_none() {
+                        if let Some(c) = msg.and_then(|m| m.get("content")) {
+                            if !c.is_null() {
+                                if let Some(s) = c.as_str() {
+                                    if !s.is_empty() {
+                                        content = Some(s.to_string());
+                                    }
+                                }
+                            }
+                        }
                     }
-                })
-                .unwrap_or_default();
+                    // Collect tool_calls from any choice that has them
+                    if let Some(tc) = msg.and_then(|m| m.get("tool_calls")) {
+                        if tc.is_array() {
+                            if let Some(calls) = serde_json::from_value::<Vec<LlmToolCall>>(tc.clone()).ok() {
+                                tool_calls.extend(calls);
+                            }
+                        }
+                    }
+                }
+            }
 
             // Parse usage
             let usage = v
@@ -699,23 +706,36 @@ impl Provider for CopilotProvider {
                 .and_then(|m| m.as_str())
                 .unwrap_or("")
                 .to_string();
-            let message = v
-                .get("choices")
-                .and_then(|c| c.get(0))
-                .and_then(|first| first.get("message"));
+            // Some providers (e.g. Copilot + Claude with thinking) split content and
+            // tool_calls across multiple choices. Scan all choices to collect both.
+            let choices = v.get("choices").and_then(|c| c.as_array());
 
-            let content = message.and_then(|m| m.get("content")).and_then(|c| {
-                if c.is_null() {
-                    None
-                } else {
-                    c.as_str().map(|s| s.to_string())
+            let mut content: Option<String> = None;
+            let mut tool_calls: Vec<LlmToolCall> = Vec::new();
+
+            if let Some(choices_arr) = choices {
+                for choice in choices_arr {
+                    let msg = choice.get("message");
+                    // Collect content from the first choice that has it
+                    if content.is_none() {
+                        if let Some(c) = msg.and_then(|m| m.get("content")) {
+                            if !c.is_null() {
+                                if let Some(s) = c.as_str() {
+                                    if !s.is_empty() {
+                                        content = Some(s.to_string());
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    // Collect tool_calls from any choice that has them
+                    if let Some(tc) = msg.and_then(|m| m.get("tool_calls")) {
+                        if let Some(calls) = serde_json::from_value::<Vec<LlmToolCall>>(tc.clone()).ok() {
+                            tool_calls.extend(calls);
+                        }
+                    }
                 }
-            });
-
-            let tool_calls: Vec<LlmToolCall> = message
-                .and_then(|m| m.get("tool_calls"))
-                .and_then(|tc| serde_json::from_value::<Vec<LlmToolCall>>(tc.clone()).ok())
-                .unwrap_or_default();
+            }
 
             let usage = v
                 .get("usage")
