@@ -457,7 +457,6 @@ GitHub Copilot tokens (`ghu_`/`ghp_`) are auto-detected and refreshed. Google Ge
 |------|---------|
 | `payload.json` | `{prompt, response, ref, model, timestamp}` |
 | `response.txt` | Raw LLM response text |
-```
 
 ## Architecture
 
