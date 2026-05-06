@@ -798,4 +798,55 @@ mod tests {
             "explicit confirm override should work"
         );
     }
+
+    #[test]
+    fn test_null_as_empty_vec_deserialize_null() {
+        #[derive(Deserialize)]
+        struct Test {
+            #[serde(default, deserialize_with = "super::null_as_empty_vec")]
+            items: Vec<String>,
+        }
+        let json = r#"{"items": null}"#;
+        let t: Test = serde_json::from_str(json).unwrap();
+        assert!(t.items.is_empty());
+    }
+
+    #[test]
+    fn test_null_as_empty_vec_deserialize_missing() {
+        #[derive(Deserialize)]
+        struct Test {
+            #[serde(default, deserialize_with = "super::null_as_empty_vec")]
+            items: Vec<String>,
+        }
+        let json = r#"{}"#;
+        let t: Test = serde_json::from_str(json).unwrap();
+        assert!(t.items.is_empty());
+    }
+
+    #[test]
+    fn test_null_as_empty_vec_deserialize_values() {
+        #[derive(Deserialize)]
+        struct Test {
+            #[serde(default, deserialize_with = "super::null_as_empty_vec")]
+            items: Vec<String>,
+        }
+        let json = r#"{"items": ["a", "b"]}"#;
+        let t: Test = serde_json::from_str(json).unwrap();
+        assert_eq!(t.items, vec!["a", "b"]);
+    }
+
+    #[test]
+    fn test_sandbox_spec_with_null_domains() {
+        // Simulate Concourse YAML where allowed_domains is null
+        let json = r#"{
+            "policy_mode": "unrestricted",
+            "network": {"allowed_domains": null},
+            "filesystem": {},
+            "syscalls": {},
+            "resources": {}
+        }"#;
+        let spec: super::SandboxSpec = serde_json::from_str(json).unwrap();
+        assert_eq!(spec.policy_mode, Some("unrestricted".to_string()));
+        assert!(spec.network.allowed_domains.is_empty());
+    }
 }

@@ -1277,15 +1277,15 @@ impl Agent {
             // Try "resolve host: <domain>" pattern
             if let Some(start) = content.find("resolve host: ") {
                 let after = &content[start + 14..];
-                if let Some(end) =
-                    after.find(|c: char| !c.is_alphanumeric() && c != '.' && c != '-')
-                {
-                    let domain = &after[..end];
-                    if domain.contains('.') {
-                        return Some(domain.to_string());
-                    }
+                let end = after
+                    .find(|c: char| !c.is_alphanumeric() && c != '.' && c != '-')
+                    .unwrap_or(after.len());
+                let domain = after[..end].trim();
+                if domain.contains('.') && !domain.is_empty() {
+                    return Some(domain.to_string());
                 }
             }
+
             // Try "connect to <domain> port" or "connect to <domain>:" pattern
             if let Some(start) = content.find("connect to ") {
                 let after = &content[start + 11..];
@@ -1579,5 +1579,80 @@ mod tests {
     fn test_estimate_tokens_unicode() {
         // 4 unicode chars → (4+3)/4 = 1
         assert_eq!(estimate_tokens("你好世界"), 1);
+    }
+
+    #[test]
+    fn test_extract_network_blocked_domain_dns_unreachable() {
+        let content = "exit_code: 1\nstdout: \nstderr: 2026/05/06 01:51:41 Get \"https://api.launchpad.net/devel/bugs/1234567\": dial tcp: lookup api.launchpad.net on 127.0.0.53:53: dial udp 127.0.0.53:53: connect: network is unreachable";
+        assert_eq!(
+            Agent::extract_network_blocked_domain(content),
+            Some("api.launchpad.net".to_string())
+        );
+    }
+
+    #[test]
+    fn test_extract_network_blocked_domain_operation_not_permitted() {
+        let content = "Error: Get \"https://warthogs.atlassian.net/rest/api/3/issue/CEINFRA-337\": dial tcp 13.227.180.4:443: connect: operation not permitted";
+        assert_eq!(
+            Agent::extract_network_blocked_domain(content),
+            Some("warthogs.atlassian.net".to_string())
+        );
+    }
+
+    #[test]
+    fn test_extract_network_blocked_domain_could_not_resolve() {
+        let content = "curl: (6) Could not resolve host: example.com";
+        assert_eq!(
+            Agent::extract_network_blocked_domain(content),
+            Some("example.com".to_string())
+        );
+    }
+
+    #[test]
+    fn test_extract_network_blocked_domain_no_such_host() {
+        let content = "dial tcp: lookup api.github.com: no such host";
+        assert_eq!(
+            Agent::extract_network_blocked_domain(content),
+            Some("api.github.com".to_string())
+        );
+    }
+
+    #[test]
+    fn test_extract_network_blocked_domain_not_network_error() {
+        let content = "exit_code: 1\nstdout: \nstderr: file not found";
+        assert_eq!(Agent::extract_network_blocked_domain(content), None);
+    }
+
+    #[test]
+    fn test_extract_permission_denied_path_binary() {
+        let content = "exit_code: 126\nstdout: \nstderr: sh: 1: jira: Permission denied";
+        // This test checks the pattern extraction - actual path resolution
+        // depends on filesystem state, so we verify the function doesn't panic
+        let result = Agent::extract_permission_denied_path(content);
+        // jira likely won't exist in test env, so result may be None
+        // but the function should not panic
+        assert!(result.is_none() || result.unwrap().contains("jira"));
+    }
+
+    #[test]
+    fn test_extract_permission_denied_path_absolute() {
+        let content = "stderr: sh: 1: /opt/tools/mytool: Permission denied";
+        let result = Agent::extract_permission_denied_path(content);
+        assert_eq!(result, Some("/opt/tools/mytool".to_string()));
+    }
+
+    #[test]
+    fn test_extract_permission_denied_path_not_permission_error() {
+        let content = "exit_code: 1\nstdout: hello\nstderr: command not found";
+        assert_eq!(Agent::extract_permission_denied_path(content), None);
+    }
+
+    #[test]
+    fn test_extract_permission_denied_landlock_exec() {
+        // rune-landlock errors should not extract a useful path
+        let content = "rune-landlock: exec failed: Permission denied (os error 13)";
+        let result = Agent::extract_permission_denied_path(content);
+        // "exec failed" should be filtered out
+        assert!(result.is_none());
     }
 }

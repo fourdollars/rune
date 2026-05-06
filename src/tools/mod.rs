@@ -1002,4 +1002,40 @@ mod tests {
             "/home/u/other/file.txt"
         );
     }
+
+    #[test]
+    fn test_is_file_in_list_exact_match() {
+        let registry = ToolRegistry::new(vec![]);
+        let list = vec!["/home/user/.netrc".to_string(), "/etc/hosts".to_string()];
+        assert!(registry.is_file_in_list("/home/user/.netrc", &list));
+        assert!(registry.is_file_in_list("/etc/hosts", &list));
+    }
+
+    #[test]
+    fn test_is_file_in_list_no_prefix_match() {
+        // File list should NOT do prefix matching like path list
+        let registry = ToolRegistry::new(vec![]);
+        let list = vec!["/home/user/.netrc".to_string()];
+        assert!(!registry.is_file_in_list("/home/user/.netrc.bak", &list));
+        assert!(!registry.is_file_in_list("/home/user/.netrcfoo", &list));
+    }
+
+    #[test]
+    fn test_is_file_in_list_empty() {
+        let registry = ToolRegistry::new(vec![]);
+        let list: Vec<String> = vec![];
+        assert!(!registry.is_file_in_list("/any/path", &list));
+    }
+
+    #[test]
+    fn test_is_file_in_list_relative_resolves() {
+        // Relative path should be resolved before matching
+        let registry = ToolRegistry::new(vec![]);
+        let cwd = std::env::current_dir()
+            .unwrap()
+            .to_string_lossy()
+            .to_string();
+        let list = vec![format!("{}/myfile.txt", cwd)];
+        assert!(registry.is_file_in_list("myfile.txt", &list));
+    }
 }
