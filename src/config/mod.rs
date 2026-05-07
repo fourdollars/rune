@@ -237,6 +237,10 @@ struct CliArgs {
     #[arg(long, env = "RUNE_LOG_LEVEL", help_heading = "Output")]
     log_level: Option<String>,
 
+    /// Thinking/reasoning effort level [off|low|medium|high|xhigh]
+    #[arg(long, env = "RUNE_THINKING", help_heading = "Advanced")]
+    thinking: Option<String>,
+
     /// Directory containing skill definitions
     #[arg(long, env = "RUNE_SKILLS_DIR", help_heading = "Advanced")]
     skills_dir: Option<String>,
@@ -460,6 +464,8 @@ pub fn load() -> anyhow::Result<RuneConfig> {
             .or_else(|| uc.and_then(|c| c.embedding.clone()))
             .unwrap_or_default(),
         thinking: pick_option(&[
+            &cli.thinking,
+            &env_partial.thinking,
             &cwdc.and_then(|c| c.thinking.clone()),
             &lc.and_then(|c| c.thinking.clone()),
             &uc.and_then(|c| c.thinking.clone()),
