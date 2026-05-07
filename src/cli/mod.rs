@@ -211,14 +211,20 @@ fn create_spinner(msg: &str) -> ProgressBar {
 
 /// Format and display the agent's stop reason.
 fn display_result(reason: &StopReason, streamed: bool) {
+    use std::io::Write;
     match reason {
         StopReason::FinalAnswer(ans) => {
+            // Use stderr for separators but flush stdout between them
+            let _ = std::io::stderr().flush();
             eprintln!();
             eprintln!("{}", "─".repeat(60).dimmed());
+            let _ = std::io::stderr().flush();
             if !streamed {
                 println!("{}", ans);
+                let _ = std::io::stdout().flush();
             }
             eprintln!("{}", "─".repeat(60).dimmed());
+            let _ = std::io::stderr().flush();
         }
         StopReason::MaxSteps => {
             eprintln!("\n{}", "⚠ Stopped: maximum steps reached".yellow());
@@ -742,6 +748,7 @@ async fn execute_prompt(agent: &mut Agent, input: &str) -> StopReason {
         s.finish_and_clear();
     }
     display_result(&result, agent.is_interactive());
+
     // Show tool calls summary (all tools, not just execute_cmd)
     let log = agent.tool_calls_log();
     if !log.is_empty() {
@@ -770,6 +777,7 @@ async fn execute_prompt(agent: &mut Agent, input: &str) -> StopReason {
             agent.tool_call_count()
         );
     }
+    let _ = std::io::Write::flush(&mut std::io::stderr());
     result
 }
 
