@@ -436,7 +436,13 @@ fn show_info(cfg: &config::RuneConfig, agent: &crate::agent::Agent) {
 
     // MCP
     println!("  {}", "MCP Servers:".bold());
-    println!("    {} (none configured)", "•".dimmed());
+    if cfg.mcp_servers.is_empty() {
+        println!("    {} (none configured)", "•".dimmed());
+    } else {
+        for server in &cfg.mcp_servers {
+            println!("    {} {} ({})", "•".dimmed(), server.name.cyan(), server.command.dimmed());
+        }
+    }
     println!();
 
     // Policy mode (brief)
