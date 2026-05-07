@@ -145,29 +145,33 @@ else
     FAIL=$((FAIL + 1))
 fi
 
-# ── Test: rune-net-guard binary exists ────────────────────
-echo "▸ rune-net-guard binary"
-if [ -f "./target/release/rune-net-guard" ]; then
-    green "  ✓ rune-net-guard binary built"
+# ── Test: rune _net-guard subcommand exists ────────────────────
+echo "▸ rune _net-guard subcommand"
+set +e
+OUT=$(./target/release/rune _net-guard 2>&1)
+EC=$?
+set -e
+if [ $EC -eq 1 ] && echo "$OUT" | grep -q "allow-domains"; then
+    green "  ✓ rune _net-guard subcommand works"
     PASS=$((PASS + 1))
 else
-    red "  ✗ rune-net-guard not found"
+    red "  ✗ rune _net-guard subcommand failed"
     FAIL=$((FAIL + 1))
 fi
 
-# ── Test: rune-net-guard --help ───────────────────────────
-echo "▸ rune-net-guard usage"
+# ── Test: rune _net-guard usage ───────────────────────────
+echo "▸ rune _net-guard usage"
 set +e
-OUT=$(./target/release/rune-net-guard 2>&1)
+OUT=$(./target/release/rune _net-guard 2>&1)
 EC=$?
 set -e
 assert_exit_code "$EC" 1 "net-guard exits 1 without args"
 assert_contains "$OUT" "allow-domains" "net-guard shows usage hint"
 
-# ── Test: rune-net-guard blocks non-allowed domain ────────
-echo "▸ rune-net-guard blocks"
+# ── Test: rune _net-guard blocks non-allowed domain ────────
+echo "▸ rune _net-guard blocks"
 set +e
-OUT=$(./target/release/rune-net-guard --allow-domains "only-this.test" -- curl -s -m 2 http://example.com/ 2>&1)
+OUT=$(./target/release/rune _net-guard --allow-domains "only-this.test" -- curl -s -m 2 http://example.com/ 2>&1)
 EC=$?
 set -e
 # curl should fail (exit 7 = connect refused, or 6 = DNS fail depending on timing)

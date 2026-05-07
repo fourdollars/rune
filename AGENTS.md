@@ -88,9 +88,9 @@ In Concourse pipelines, override via `source.sandbox.policy_mode`.
 Up to 5 isolation layers per tool invocation (best-effort; the executor applies available protections in a runtime-dependent order):
 
 1. **cgroups** (`systemd-run`) — memory/PID limits
-2. **Network isolation / net-guard** (`unshare --user --net` or `rune-net-guard`) — namespace-based or domain-allowlist network controls
-3. **Seccomp BPF** (`rune-seccomp`) — syscall filtering
-4. **Landlock** (`rune-landlock`) — filesystem restriction
+2. **Network isolation / net-guard** (`unshare --user --net` or internal net-guard subcommand) — namespace-based or domain-allowlist network controls
+3. **Seccomp BPF** (internal `_seccomp` subcommand) — syscall filtering
+4. **Landlock** (internal `_landlock` subcommand) — filesystem restriction
 5. **DNS/Domain allowlist** — selective network access (represented via net-guard/allowed_domains)
 ## Skills
 
@@ -146,9 +146,9 @@ src/
 ├── cli/             — interactive CLI, slash commands, persistent history
 ├── setup.rs         — `rune init` wizard
 └── bin/
-    ├── rune-landlock.rs
-    ├── rune-seccomp.rs
-    └── rune-net-guard.rs
+    ├── landlock.rs      — Landlock (internal _landlock subcommand)
+    ├── seccomp.rs       — Seccomp BPF (internal _seccomp subcommand)
+    └── net_guard.rs     — Net-guard (internal _net-guard subcommand)
 
 
 ## Container Deployment

@@ -183,9 +183,9 @@ TOOLS (built-in, all sandboxed):\n\
 \n\
 SANDBOX LAYERS:\n\
   1. cgroups v2 (memory + process limits)\n\
-  2. rune-net-guard (seccomp user notification — per-domain network filter)\n\
-  3. rune-seccomp (BPF syscall filter)\n\
-  4. rune-landlock (filesystem restriction)\n\
+  2. net-guard (seccomp user notification — per-domain network filter)\n\
+  3. seccomp BPF (syscall filter)\n\
+  4. landlock (filesystem restriction)\n\
   5. DNS allowlist (wildcard domain support)"
 )]
 struct CliArgs {

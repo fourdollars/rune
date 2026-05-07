@@ -154,7 +154,7 @@ impl ToolRegistry {
                 read_only.push(pb);
             }
         }
-        // Include the directory containing rune helper binaries (rune-seccomp, rune-landlock, etc.)
+        // Include the directory containing the rune binary
         // They may be in ~/.cargo/bin or /usr/local/bin — Landlock needs read+exec access.
         if let Ok(exe_path) = std::env::current_exe() {
             if let Some(exe_dir) = exe_path.parent() {
@@ -228,7 +228,7 @@ impl ToolRegistry {
 
         // Build a PATH that includes directories from allowed_paths_ro where allowed
         // commands may reside. The sandbox chains multiple wrappers (systemd-run,
-        // rune-net-guard, rune-landlock, rune-seccomp) before the inner `sh -c`,
+        // sandbox wrapper subcommands) before the inner `sh -c`,
         // and env vars set on the outer process don't propagate through all layers.
         // So we prepend `export PATH=...;` directly into the command string.
         let system_path =

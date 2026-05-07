@@ -1,7 +1,7 @@
 #![allow(dead_code, unused_imports, unused_variables)]
 #![allow(clippy::all)]
-//! rune-landlock: applies Landlock filesystem restrictions then exec's the remaining args.
-//! Usage: rune-landlock --rw /tmp --ro /bin --ro /usr --ro /lib -- <command> [args...]
+//! rune _landlock: applies Landlock filesystem restrictions then exec's the remaining args.
+//! Usage: rune _landlock --rw /tmp --ro /bin --ro /usr --ro /lib -- <command> [args...]
 //!
 //! Restricts filesystem access to only the specified paths.
 
@@ -115,7 +115,7 @@ pub fn run() {
     }
 
     if cmd_start == 0 || cmd_start >= args.len() {
-        eprintln!("Usage: rune-landlock [--rw <path>]... [--ro <path>]... -- <command> [args...]");
+        eprintln!("Usage: rune _landlock [--rw <path>]... [--ro <path>]... -- <command> [args...]");
         std::process::exit(1);
     }
 
@@ -130,14 +130,14 @@ pub fn run() {
     };
     if abi_version < 1 {
         eprintln!(
-            "rune-landlock: Landlock not supported (ABI version: {})",
+            "rune _landlock: Landlock not supported (ABI version: {})",
             abi_version
         );
         // Graceful degradation: just exec without restriction
         let err = Command::new(&args[cmd_start])
             .args(&args[cmd_start + 1..])
             .exec();
-        eprintln!("rune-landlock: exec failed: {}", err);
+        eprintln!("rune _landlock: exec failed: {}", err);
         std::process::exit(1);
     }
 
@@ -157,7 +157,7 @@ pub fn run() {
     };
     if ruleset_fd < 0 {
         eprintln!(
-            "rune-landlock: landlock_create_ruleset failed: {}",
+            "rune _landlock: landlock_create_ruleset failed: {}",
             std::io::Error::last_os_error()
         );
         std::process::exit(1);
@@ -167,7 +167,7 @@ pub fn run() {
     for path in &rw_paths {
         if let Err(e) = add_path_rule(ruleset_fd as i32, path, ACCESS_RW) {
             eprintln!(
-                "rune-landlock: warning: failed to add rw rule for {}: {}",
+                "rune _landlock: warning: failed to add rw rule for {}: {}",
                 path, e
             );
         }
@@ -177,7 +177,7 @@ pub fn run() {
     for path in &ro_paths {
         if let Err(e) = add_path_rule(ruleset_fd as i32, path, ACCESS_RO) {
             eprintln!(
-                "rune-landlock: warning: failed to add ro rule for {}: {}",
+                "rune _landlock: warning: failed to add ro rule for {}: {}",
                 path, e
             );
         }
@@ -187,7 +187,7 @@ pub fn run() {
     for path in &traverse_paths {
         if let Err(e) = add_path_rule(ruleset_fd as i32, path, LANDLOCK_ACCESS_FS_EXECUTE) {
             eprintln!(
-                "rune-landlock: warning: failed to add traverse rule for {}: {}",
+                "rune _landlock: warning: failed to add traverse rule for {}: {}",
                 path, e
             );
         }
@@ -197,7 +197,7 @@ pub fn run() {
     unsafe {
         if libc::prctl(libc::PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) != 0 {
             eprintln!(
-                "rune-landlock: prctl(NO_NEW_PRIVS) failed: {}",
+                "rune _landlock: prctl(NO_NEW_PRIVS) failed: {}",
                 std::io::Error::last_os_error()
             );
             std::process::exit(1);
@@ -208,7 +208,7 @@ pub fn run() {
     let ret = unsafe { libc::syscall(SYS_LANDLOCK_RESTRICT_SELF, ruleset_fd, 0u32) };
     if ret != 0 {
         eprintln!(
-            "rune-landlock: landlock_restrict_self failed: {}",
+            "rune _landlock: landlock_restrict_self failed: {}",
             std::io::Error::last_os_error()
         );
         std::process::exit(1);
@@ -223,7 +223,7 @@ pub fn run() {
     let err = Command::new(&args[cmd_start])
         .args(&args[cmd_start + 1..])
         .exec();
-    eprintln!("rune-landlock: exec failed: {}", err);
+    eprintln!("rune _landlock: exec failed: {}", err);
     std::process::exit(1);
 }
 

@@ -6,9 +6,9 @@ A high-performance, zero-trust AI agent built in Rust. Single binary, dual mode:
 
 - **Zero-Trust Sandbox** — ALL tool executions run through 5 isolation layers (best-effort; the runtime applies these protections when available):
   - cgroups v2 resource limits (`systemd-run --scope`) — memory/PID limits
-  - Network isolation (namespace or net-guard) (`unshare --user --net` or `rune-net-guard`) — namespace-based isolation or domain-allowlist filtering
-  - Seccomp BPF syscall filter (`rune-seccomp`) — syscall filtering
-  - Landlock filesystem restriction (`rune-landlock`) — file access limits
+  - Network isolation (namespace or net-guard) (`unshare --user --net` or internal net-guard) — namespace-based isolation or domain-allowlist filtering
+  - Seccomp BPF syscall filter (internal) — syscall filtering
+  - Landlock filesystem restriction (internal) — file access limits
   - DNS / Domain allowlist — selective outbound network access (configured via `allowed_domains`)
 - **Tool Calling** — 6 built-in tools: `read_file`, `write_file`, `list_dir`, `execute_cmd`, `fetch_url`, `inspect_process`
 - **Command Policy** — Two auto-detected modes: `confirm` (interactive), `allowlist` (whitelist only), `unrestricted`
@@ -29,7 +29,7 @@ A high-performance, zero-trust AI agent built in Rust. Single binary, dual mode:
 ## Quick Start
 
 ```bash
-# Build (produces 4 binaries: rune, rune-seccomp, rune-landlock, rune-net-guard)
+# Build (single binary)
 cargo build --release
 
 # Interactive setup
@@ -205,7 +205,7 @@ Every tool invocation passes through up to 5 isolation layers:
 ```
 ┌─────────────────────────────────────────────┐
 │  Layer 1: cgroups (memory + pids limits)    │
-│  Layer 2: rune-net-guard (seccomp notif)    │
+│  Layer 2: net-guard (seccomp user notif)    │
 │  Layer 3: Seccomp BPF (syscall filter)      │
 │  Layer 4: Landlock (filesystem restriction) │
 │  Layer 5: DNS allowlist (domain control)    │
@@ -477,15 +477,15 @@ src/
 ├── embedding/mod.rs     — Embedding engine + vector store
 ├── trace/mod.rs         — JSON trace + redaction
 └── bin/
-    ├── rune-seccomp.rs  — Seccomp BPF helper
-    ├── rune-landlock.rs — Landlock filesystem helper
-    └── rune-net-guard.rs — Seccomp user notification network filter
+    ├── landlock.rs     — Landlock filesystem (internal subcommand)
+    ├── seccomp.rs      — Seccomp BPF filter (internal subcommand)
+    └── net_guard.rs    — Seccomp user-notif network filter (internal subcommand)
 ```
 
 ## Development
 
 ```bash
-cargo build --release    # Build all 4 binaries
+cargo build --release    # Single binary
 cargo test               # Unit tests (124)
 ./tests/e2e.sh           # E2E tests (18)
 make check-all           # Both

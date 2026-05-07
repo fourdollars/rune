@@ -349,7 +349,7 @@ pub fn run() {
     let all_args: Vec<String> = env::args().collect();
     let args: Vec<String> = all_args[1..].to_vec(); // skip binary name, keep subcommand as args[0]
     if args.len() < 4 {
-        eprintln!("Usage: rune-net-guard --allow-domains <domains> -- <command> [args...]");
+        eprintln!("Usage: rune _net-guard --allow-domains <domains> -- <command> [args...]");
         std::process::exit(1);
     }
 

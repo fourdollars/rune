@@ -1308,7 +1308,7 @@ impl Agent {
                         }
                     }
                 }
-                // "rune-landlock: exec failed: Permission denied (os error 13)"
+                // "rune _landlock: exec failed: Permission denied (os error 13)"
                 // In this case, it's the sandboxed binary itself — less useful to extract
             }
         }
@@ -1613,8 +1613,8 @@ mod tests {
 
     #[test]
     fn test_extract_permission_denied_landlock_exec() {
-        // rune-landlock errors should not extract a useful path
-        let content = "rune-landlock: exec failed: Permission denied (os error 13)";
+        // _landlock errors should not extract a useful path
+        let content = "rune _landlock: exec failed: Permission denied (os error 13)";
         let result = Agent::extract_permission_denied_path(content);
         // "exec failed" should be filtered out
         assert!(result.is_none());

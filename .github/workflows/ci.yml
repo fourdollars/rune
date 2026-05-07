@@ -69,8 +69,6 @@ jobs:
         run: |
           echo '## 📦 Binary Sizes' >> $GITHUB_STEP_SUMMARY
           echo '```' >> $GITHUB_STEP_SUMMARY
-          ls -lh target/release/rune target/release/rune-seccomp target/release/rune-landlock >> $GITHUB_STEP_SUMMARY
+          ls -lh target/release/rune >> $GITHUB_STEP_SUMMARY
           echo '```' >> $GITHUB_STEP_SUMMARY
           ls -lh target/release/rune
-          ls -lh target/release/rune-seccomp
-          ls -lh target/release/rune-landlock

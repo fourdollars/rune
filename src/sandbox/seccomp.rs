@@ -1,6 +1,6 @@
 #![allow(dead_code, unused_imports, unused_variables)]
 #![allow(clippy::all)]
-//! rune-seccomp: applies a seccomp BPF filter then exec's the remaining args.
+//! rune _seccomp: applies a seccomp BPF filter then exec's the remaining args.
 //! Blocks: ptrace, mount, unshare, kexec_load, bpf, setns
 //! Optionally blocks network if --block-network is passed.
 
@@ -86,7 +86,7 @@ pub fn run() {
     let args: Vec<String> = all_args[1..].to_vec(); // skip binary name, keep subcommand as args[0]
     if args.len() < 2 {
         eprintln!(
-            "Usage: rune-seccomp [--block-network] [--allow-syscalls <list>] <command> [args...]"
+            "Usage: rune _seccomp [--block-network] [--allow-syscalls <list>] <command> [args...]"
         );
         std::process::exit(1);
     }
@@ -177,7 +177,7 @@ pub fn run() {
 
     unsafe {
         if libc::prctl(libc::PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) != 0 {
-            eprintln!("rune-seccomp: prctl(NO_NEW_PRIVS) failed");
+            eprintln!("rune _seccomp: prctl(NO_NEW_PRIVS) failed");
             std::process::exit(1);
         }
         let ret = libc::prctl(
@@ -188,7 +188,7 @@ pub fn run() {
             0,
         );
         if ret != 0 {
-            eprintln!("rune-seccomp: prctl(SET_SECCOMP) failed");
+            eprintln!("rune _seccomp: prctl(SET_SECCOMP) failed");
             std::process::exit(1);
         }
     }
@@ -196,6 +196,6 @@ pub fn run() {
     let err = Command::new(&args[cmd_idx])
         .args(&args[cmd_idx + 1..])
         .exec();
-    eprintln!("rune-seccomp: exec failed: {}", err);
+    eprintln!("rune _seccomp: exec failed: {}", err);
     std::process::exit(1);
 }

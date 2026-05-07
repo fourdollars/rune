@@ -151,7 +151,7 @@ impl SandboxExecutor {
 
         // Layer 2: Network isolation strategy
         //  - allowed_domains contains "*" → no restriction
-        //  - allowed_domains non-empty (specific domains) → rune-net-guard (seccomp user notification)
+        //  - allowed_domains non-empty (specific domains) → net-guard subcommand (seccomp user notification)
         //  - allowed_domains empty → full network isolation (unshare --net)
         if !self.config.allowed_domains.is_empty() {
             if self.config.allowed_domains.iter().any(|d| d == "*") {
@@ -159,7 +159,7 @@ impl SandboxExecutor {
                 active_layers.push("network(unrestricted)".to_string());
                 info!("sandbox: network unrestricted (wildcard domain)");
             } else {
-                // Domain allowlist via rune-net-guard (Seccomp USER_NOTIF)
+                // Domain allowlist via net-guard subcommand (Seccomp USER_NOTIF)
                 active_layers.push(format!(
                     "net-guard({})",
                     self.config.allowed_domains.join(",")
@@ -172,7 +172,7 @@ impl SandboxExecutor {
             active_layers.push("netns(isolated)".to_string());
             info!("sandbox: network namespace fully isolated");
         } else {
-            // Fallback: use rune-net-guard with empty allowlist (blocks all non-loopback)
+            // Fallback: use net-guard with empty allowlist (blocks all non-loopback)
             {
                 use_net_guard_empty = true;
                 active_layers.push("net-guard(none)".to_string());
@@ -180,7 +180,7 @@ impl SandboxExecutor {
             }
         }
 
-        // Layer 3: Seccomp filter via rune-seccomp
+        // Layer 3: Seccomp filter via _seccomp subcommand
         let seccomp_wrapper = self.build_seccomp_wrapper(false).await;
         if let Some(ref sw) = seccomp_wrapper {
             active_layers.push("seccomp(ptrace,mount,kexec,bpf)".to_string());
@@ -228,7 +228,7 @@ impl SandboxExecutor {
         // Build the final command
         // Chain wrappers: net-guard (outermost) -> landlock -> seccomp -> sh -c "cmd"
         // net-guard must be outermost because it forks and uses SECCOMP_USER_NOTIF
-        // which would be blocked by rune-seccomp inner filter
+        // which would be blocked by _seccomp inner filter
         let mut inner_cmd_parts = Vec::new();
 
         if let Some(ng) = net_guard_wrapper {
@@ -355,7 +355,7 @@ impl SandboxExecutor {
             if block_net {
                 cmd.push_str(" --block-network");
             }
-            info!(allowed = ?self.config.allowed_syscalls, "sandbox: seccomp via rune-seccomp");
+            info!(allowed = ?self.config.allowed_syscalls, "sandbox: seccomp via internal _seccomp subcommand");
             return Some(cmd);
         }
     }
