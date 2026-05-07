@@ -18,12 +18,8 @@ RUN useradd --uid 1000 --create-home --home-dir /home/rune --shell /usr/sbin/nol
     && ln -sf /usr/local/bin/rune /opt/resource/in \
     && ln -sf /usr/local/bin/rune /opt/resource/out
 
-# Install all rune binaries
 COPY --from=builder /app/target/release/rune /usr/local/bin/rune
-COPY --from=builder /app/target/release/rune-seccomp /usr/local/bin/rune-seccomp
-COPY --from=builder /app/target/release/rune-landlock /usr/local/bin/rune-landlock
-COPY --from=builder /app/target/release/rune-net-guard /usr/local/bin/rune-net-guard
-RUN chmod 0755 /usr/local/bin/rune /usr/local/bin/rune-seccomp /usr/local/bin/rune-landlock /usr/local/bin/rune-net-guard
+RUN chmod 0755 /usr/local/bin/rune
 
 USER rune
 WORKDIR /home/rune
