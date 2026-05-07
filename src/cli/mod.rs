@@ -6,6 +6,8 @@ use rustyline::DefaultEditor;
 use std::io::IsTerminal;
 use std::time::Duration;
 
+use std::sync::Arc;
+use tokio::sync::Mutex as TokioMutex;
 use crate::agent::{Agent, StopReason};
 use crate::config;
 use crate::provider::{CopilotProvider, GeminiProvider, OpenAiProvider, ProviderRegistry};
@@ -1018,6 +1020,11 @@ pub async fn run() {
     };
 
     let mut agent = Agent::new(cfg.clone(), provider, stdin_is_terminal, embedding_engine);
+
+    // Attach MCP manager if any servers connected
+    if mcp_manager.clients_count() > 0 {
+        agent.set_mcp_manager(Arc::new(TokioMutex::new(mcp_manager)));
+    }
 
     // Build system prompt: base + optional AGENTS.md from CWD
     let mut sys_prompt = "You are Rune, a high-performance AI agent running in a terminal. \

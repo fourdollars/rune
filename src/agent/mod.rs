@@ -5,6 +5,9 @@ use crate::provider::{
 };
 use crate::skills::SkillLoader;
 use crate::tools::ToolRegistry;
+use crate::mcp::McpManager;
+use std::sync::Arc;
+use tokio::sync::Mutex as TokioMutex;
 use crate::trace::{redact, StepKind, TraceWriter};
 use anyhow::Result;
 use colored::Colorize;
@@ -55,6 +58,7 @@ pub struct Agent {
     tokens_used: u32,
     provider: ProviderRegistry,
     tools: ToolRegistry,
+    mcp_manager: Option<Arc<TokioMutex<McpManager>>>,
     skill_loader: SkillLoader,
     auto_approve: bool,
     interactive: bool,
@@ -150,6 +154,7 @@ impl Agent {
         } else {
             None
         };
+        let mcp_manager = None;
         let auto_approve = config.auto_approve;
         Agent {
             config,
@@ -158,6 +163,7 @@ impl Agent {
             tokens_used: 0,
             provider,
             tools,
+            mcp_manager,
             skill_loader,
             auto_approve,
             interactive,
@@ -172,6 +178,11 @@ impl Agent {
     }
 
     /// Set the system prompt.
+
+    /// Attach an MCP manager for external tool dispatch.
+    pub fn set_mcp_manager(&mut self, mgr: Arc<TokioMutex<McpManager>>) {
+        self.mcp_manager = Some(mgr);
+    }
     pub fn set_system_prompt(&mut self, prompt: &str) {
         if self
             .messages
@@ -799,6 +810,25 @@ impl Agent {
 
     fn build_llm_request(&self) -> LlmRequest {
         let mut tool_defs = self.tools.tool_definitions();
+        // Append MCP tool definitions
+        if let Some(ref mcp) = self.mcp_manager {
+            if let Ok(mgr) = mcp.try_lock() {
+                for (_server, tool) in mgr.all_tools() {
+                    let mut params = tool.input_schema.clone().unwrap_or_else(|| serde_json::json!({"type": "object", "properties": {}}));
+                    if !params.is_object() {
+                        params = serde_json::json!({"type": "object", "properties": {}});
+                    }
+                    tool_defs.push(serde_json::json!({
+                        "type": "function",
+                        "function": {
+                            "name": tool.name,
+                            "description": tool.description.as_deref().unwrap_or("MCP tool"),
+                            "parameters": params
+                        }
+                    }));
+                }
+            }
+        }
         if let Some(ref allowed) = self.skill_tools_allow {
             tool_defs.retain(|def| {
                 def.get("function")
@@ -915,9 +945,19 @@ impl Agent {
             return s.to_string();
         }
         let keep = (max_len - 3) / 2;
-        let prefix = &s[..keep];
-        let suffix = &s[s.len() - keep..];
-        format!("{}...{}", prefix, suffix)
+        // Find valid char boundaries for UTF-8 safety
+        let prefix_end = s.char_indices()
+            .take_while(|(i, _)| *i < keep)
+            .last()
+            .map(|(i, c)| i + c.len_utf8())
+            .unwrap_or(0);
+        let suffix_start = s.char_indices()
+            .rev()
+            .take_while(|(i, _)| s.len() - *i <= keep)
+            .last()
+            .map(|(i, _)| i)
+            .unwrap_or(s.len());
+        format!("{}...{}", &s[..prefix_end], &s[suffix_start..])
     }
 
     /// Execute a single tool call.
@@ -1015,6 +1055,29 @@ impl Agent {
         }
 
         let mut output = self.tools.execute(&tc.function.name, args.clone()).await;
+
+        // If built-in tools don't know this tool, try MCP
+        if output.is_error && output.content.starts_with("unknown tool:") {
+            if let Some(ref mcp) = self.mcp_manager {
+                let mut mgr = mcp.lock().await;
+                match mgr.call_tool(&tc.function.name, args.clone()).await {
+                    Ok(result) => {
+                        let text = if let Some(s) = result.as_str() {
+                            s.to_string()
+                        } else {
+                            serde_json::to_string_pretty(&result).unwrap_or_default()
+                        };
+                        output = crate::tools::ToolOutput { content: text, is_error: false, active_layers: None, degraded: None };
+                    }
+                    Err(e) => {
+                        output = crate::tools::ToolOutput {
+                            content: format!("MCP tool error: {}", e),
+                            is_error: true, active_layers: None, degraded: None,
+                        };
+                    }
+                }
+            }
+        }
 
         loop {
             if !output.is_error {

@@ -362,6 +362,11 @@ impl McpManager {
         Ok(())
     }
 
+    /// Return the number of connected MCP clients.
+    pub fn clients_count(&self) -> usize {
+        self.clients.len()
+    }
+
     /// List all tools from all connected servers.
     pub fn all_tools(&self) -> Vec<(String, McpTool)> {
         let mut result = Vec::new();
