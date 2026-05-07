@@ -23,6 +23,14 @@ pub enum StopReason {
     UserInterrupt,
 }
 
+/// Recorded tool call for post-run summary display.
+#[derive(Debug, Clone)]
+pub struct ToolCallRecord {
+    pub name: String,
+    pub args_preview: String,
+    pub is_error: bool,
+}
+
 /// Result of user confirmation prompt.
 enum ConfirmResult {
     Yes,
@@ -53,6 +61,7 @@ pub struct Agent {
     trace: Option<TraceWriter>,
     executed_commands: Vec<String>,
     tool_call_names: Vec<String>,
+    tool_calls_log: Vec<ToolCallRecord>,
     /// Skill-scoped tool allow list (None = all tools available)
     skill_tools_allow: Option<Vec<String>>,
     /// Skill-scoped tool deny list (None = nothing denied)
@@ -155,6 +164,7 @@ impl Agent {
             trace,
             executed_commands: Vec::new(),
             tool_call_names: Vec::new(),
+            tool_calls_log: Vec::new(),
             skill_tools_allow: None,
             skill_tools_deny: None,
             embedding,
@@ -548,6 +558,7 @@ impl Agent {
         // Resolve and inject @skill references
         self.executed_commands.clear();
         self.tool_call_names.clear();
+        self.tool_calls_log.clear();
         self.inject_skills(user_input).await;
 
         // Add user message
@@ -649,7 +660,7 @@ impl Agent {
                         format!(
                             "{}({})",
                             tc.function.name,
-                            &tc.function.arguments[..tc.function.arguments.len().min(80)]
+                            Self::truncate_middle(&tc.function.arguments, 80)
                         )
                         .dimmed()
                     );
@@ -697,11 +708,15 @@ impl Agent {
                     let tc_name = &dispatch_list[i].1;
                     let content_preview = redact(&output.content[..output.content.len().min(200)]);
 
+                    // Only show errors inline for immediate feedback
                     if output.is_error {
                         eprintln!("  {} {}", "✗".red(), output.content.dimmed());
-                    } else {
-                        eprintln!("  {} {}", "✓".green(), format!("{}...ok", tc_name).dimmed());
                     }
+                    self.tool_calls_log.push(ToolCallRecord {
+                        name: tc_name.clone(),
+                        args_preview: dispatch_list[i].2.to_string(),
+                        is_error: output.is_error,
+                    });
 
                     if let Some(ref mut t) = self.trace {
                         t.record(StepKind::ToolResult {
@@ -737,13 +752,28 @@ impl Agent {
             } else {
                 // Sequential execution (single tool call or interactive confirm mode)
                 for tc in &response.tool_calls {
+                    let args_preview = tc.function.arguments.clone();
                     let result = match self.execute_tool_call(tc).await {
-                        Ok(result) => result,
+                        Ok(result) => {
+                            self.tool_calls_log.push(ToolCallRecord {
+                                name: tc.function.name.clone(),
+                                args_preview: args_preview.clone(),
+                                is_error: false,
+                            });
+                            result
+                        }
                         Err(stop) => {
+                            self.tool_calls_log.push(ToolCallRecord {
+                                name: tc.function.name.clone(),
+                                args_preview: args_preview.clone(),
+                                is_error: true,
+                            });
                             let err_msg = match &stop {
                                 StopReason::Error(e) => e.clone(),
                                 other => format!("{:?}", other),
                             };
+                            // Show errors inline for immediate feedback
+                            eprintln!("  {} {}", "✗".red(), err_msg.dimmed());
                             self.messages.push(LlmMessage {
                                 role: "tool".to_string(),
                                 content: Some(err_msg),
@@ -879,6 +909,17 @@ impl Agent {
         }
     }
 
+    /// Truncate a string keeping prefix and suffix, replacing middle with "..."
+    fn truncate_middle(s: &str, max_len: usize) -> String {
+        if s.len() <= max_len {
+            return s.to_string();
+        }
+        let keep = (max_len - 3) / 2;
+        let prefix = &s[..keep];
+        let suffix = &s[s.len() - keep..];
+        format!("{}...{}", prefix, suffix)
+    }
+
     /// Execute a single tool call.
     async fn execute_tool_call(&mut self, tc: &LlmToolCall) -> Result<String, StopReason> {
         let args: serde_json::Value = serde_json::from_str(&tc.function.arguments)
@@ -890,7 +931,7 @@ impl Agent {
             format!(
                 "{}({})",
                 tc.function.name,
-                &tc.function.arguments[..tc.function.arguments.len().min(80)]
+                Self::truncate_middle(&tc.function.arguments, 80)
             )
             .dimmed()
         );
@@ -1152,13 +1193,8 @@ impl Agent {
             if !self.interactive {
                 return Err(StopReason::Error(output.content));
             }
-        } else {
-            eprintln!(
-                "  {} {}",
-                "✓".green(),
-                format!("{}...ok", tc.function.name).dimmed()
-            );
         }
+        // Success output deferred to post-run summary
 
         // Show sandbox diagnostics to interactive users
         if self.interactive {
@@ -1509,6 +1545,10 @@ impl Agent {
     /// Get all tool call names executed during this session.
     pub fn tool_call_names(&self) -> &[String] {
         &self.tool_call_names
+    }
+
+    pub fn tool_calls_log(&self) -> &[ToolCallRecord] {
+        &self.tool_calls_log
     }
 
     /// Count all tool calls executed during this session.

@@ -742,12 +742,22 @@ async fn execute_prompt(agent: &mut Agent, input: &str) -> StopReason {
         s.finish_and_clear();
     }
     display_result(&result, agent.is_interactive());
-    // Show executed commands summary
-    let cmds = agent.executed_commands();
-    if !cmds.is_empty() {
-        eprintln!("  {} commands executed: {}", "📋".dimmed(), cmds.len());
-        for c in cmds {
-            eprintln!("    {} {}", "▸".dimmed(), c.dimmed());
+    // Show tool calls summary (all tools, not just execute_cmd)
+    let log = agent.tool_calls_log();
+    if !log.is_empty() {
+        eprintln!("  {} tool calls:", "📋".dimmed());
+        for record in log {
+            let status = if record.is_error {
+                "✗".red()
+            } else {
+                "✓".green()
+            };
+            eprintln!(
+                "    {} {} {}",
+                status,
+                record.name.dimmed(),
+                record.args_preview.dimmed()
+            );
         }
     }
     // Run summary
