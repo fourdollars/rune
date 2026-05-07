@@ -28,7 +28,7 @@ Use this skill when you need to:
 # From source
 git clone https://github.com/fourdollars/rune.git
 cd rune && cargo build --release
-cp target/release/rune target/release/rune-seccomp target/release/rune-landlock ~/.local/bin/
+cp target/release/rune ~/.local/bin/
 
 # First-time setup
 rune init
