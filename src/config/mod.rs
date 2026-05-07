@@ -476,95 +476,13 @@ pub fn load() -> anyhow::Result<RuneConfig> {
 /// Persist a new domain to the user's ~/.rune/rune.toml allowed_domains list.
 /// Best-effort: if the file can't be read/written, silently skip.
 pub fn persist_domain(domain: &str) {
-    let config_path = match env::var("HOME") {
-        Ok(h) => PathBuf::from(h).join(".rune").join("rune.toml"),
-        Err(_) => return,
-    };
-    let content = match fs::read_to_string(&config_path) {
-        Ok(c) => c,
-        Err(_) => return,
-    };
-
-    // Parse and update
-    let mut doc: toml::Table = match content.parse() {
-        Ok(d) => d,
-        Err(_) => return,
-    };
-
-    let policy = doc
-        .entry("policy")
-        .or_insert_with(|| toml::Value::Table(toml::Table::new()))
-        .as_table_mut();
-    let policy = match policy {
-        Some(p) => p,
-        None => return,
-    };
-
-    let domains = policy
-        .entry("allowed_domains")
-        .or_insert_with(|| toml::Value::Array(Vec::new()))
-        .as_array_mut();
-    let domains = match domains {
-        Some(d) => d,
-        None => return,
-    };
-
-    // Don't duplicate
-    if domains.iter().any(|v| v.as_str() == Some(domain)) {
-        return;
-    }
-
-    domains.push(toml::Value::String(domain.to_string()));
-
-    // Write back
-    let new_content = doc.to_string();
-    let _ = fs::write(&config_path, new_content);
+    persist_policy_array("allowed_domains", domain);
 }
 
 /// Persist a new command to the user's ~/.rune/rune.toml allowed_commands list.
 /// Best-effort: if the file can't be read/written, silently skip.
 pub fn persist_command(command: &str) {
-    let config_path = match env::var("HOME") {
-        Ok(h) => PathBuf::from(h).join(".rune").join("rune.toml"),
-        Err(_) => return,
-    };
-    let content = match fs::read_to_string(&config_path) {
-        Ok(c) => c,
-        Err(_) => return,
-    };
-
-    let mut doc: toml::Table = match content.parse() {
-        Ok(d) => d,
-        Err(_) => return,
-    };
-
-    let policy = doc
-        .entry("policy")
-        .or_insert_with(|| toml::Value::Table(toml::Table::new()))
-        .as_table_mut();
-    let policy = match policy {
-        Some(p) => p,
-        None => return,
-    };
-
-    let commands = policy
-        .entry("allowed_commands")
-        .or_insert_with(|| toml::Value::Array(Vec::new()))
-        .as_array_mut();
-    let commands = match commands {
-        Some(c) => c,
-        None => return,
-    };
-
-    // Don't duplicate
-    if commands.iter().any(|v| v.as_str() == Some(command)) {
-        return;
-    }
-
-    commands.push(toml::Value::String(command.to_string()));
-
-    let new_content = doc.to_string();
-    let _ = fs::write(&config_path, new_content);
+    persist_policy_array("allowed_commands", command);
 }
 
 /// Persist a path to allowed_paths_ro in ~/.rune/rune.toml.
@@ -583,7 +501,13 @@ pub fn persist_policy_array(field: &str, value: &str) {
         Ok(h) => PathBuf::from(h).join(".rune").join("rune.toml"),
         Err(_) => return,
     };
-    let content = match fs::read_to_string(&config_path) {
+    persist_policy_array_at(&config_path, field, value);
+}
+
+/// Inner helper: persist a value into a policy array field at an explicit config path.
+/// Used by tests to avoid mutating the global HOME env var (which is not thread-safe).
+pub fn persist_policy_array_at(config_path: &std::path::Path, field: &str, value: &str) {
+    let content = match fs::read_to_string(config_path) {
         Ok(c) => c,
         Err(_) => return,
     };
@@ -618,7 +542,7 @@ pub fn persist_policy_array(field: &str, value: &str) {
     arr.push(toml::Value::String(value.to_string()));
 
     let new_content = doc.to_string();
-    let _ = fs::write(&config_path, new_content);
+    let _ = fs::write(config_path, new_content);
 }
 
 // Unit tests for config module: pick, pick_option, parse_boolish, defaults
@@ -848,16 +772,7 @@ allowed_domains = ["existing.com"]
         )
         .unwrap();
 
-        // Set HOME to our test dir so persist_domain finds the right file
-        let old_home = env::var("HOME").ok();
-        env::set_var("HOME", &dir);
-
-        persist_domain("new-domain.com");
-
-        // Restore HOME
-        if let Some(h) = old_home {
-            env::set_var("HOME", h);
-        }
+        persist_policy_array_at(&config_path, "allowed_domains", "new-domain.com");
 
         let content = fs::read_to_string(&config_path).unwrap();
         assert!(content.contains("new-domain.com"));
@@ -881,14 +796,7 @@ allowed_domains = ["github.com"]
         )
         .unwrap();
 
-        let old_home = env::var("HOME").ok();
-        env::set_var("HOME", &dir);
-
-        persist_domain("github.com"); // already exists
-
-        if let Some(h) = old_home {
-            env::set_var("HOME", h);
-        }
+        persist_policy_array_at(&config_path, "allowed_domains", "github.com"); // already exists
 
         let content = fs::read_to_string(&config_path).unwrap();
         // Should only appear once
@@ -912,14 +820,7 @@ mode = "confirm"
         )
         .unwrap();
 
-        let old_home = env::var("HOME").ok();
-        env::set_var("HOME", &dir);
-
-        persist_command("cargo");
-
-        if let Some(h) = old_home {
-            env::set_var("HOME", h);
-        }
+        persist_policy_array_at(&config_path, "allowed_commands", "cargo");
 
         let content = fs::read_to_string(&config_path).unwrap();
         assert!(content.contains("cargo"));
@@ -942,14 +843,7 @@ mode = "confirm"
         )
         .unwrap();
 
-        let old_home = env::var("HOME").ok();
-        env::set_var("HOME", &dir);
-
-        persist_path_ro("/home/user/project");
-
-        if let Some(h) = old_home {
-            env::set_var("HOME", h);
-        }
+        persist_policy_array_at(&config_path, "allowed_paths_ro", "/home/user/project");
 
         let content = fs::read_to_string(&config_path).unwrap();
         assert!(content.contains("/home/user/project"));
