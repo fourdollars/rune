@@ -306,6 +306,30 @@ fn show_tools() {
     }
 }
 
+/// Recursively find all SKILL.md files under a directory (max depth 3).
+fn discover_skill_files(base: &std::path::Path, depth: usize) -> Vec<std::path::PathBuf> {
+    let mut results = Vec::new();
+    if depth > 3 || !base.is_dir() {
+        return results;
+    }
+    let entries = match std::fs::read_dir(base) {
+        Ok(e) => e,
+        Err(_) => return results,
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            let skill_md = path.join("SKILL.md");
+            if skill_md.exists() && skill_md.is_file() {
+                results.push(skill_md);
+            }
+            // Recurse into subdirectories
+            results.extend(discover_skill_files(&path, depth + 1));
+        }
+    }
+    results
+}
+
 /// Display loaded skills.
 fn show_skills(cfg: &config::RuneConfig) {
     let search_paths = vec![std::path::PathBuf::from(&cfg.skills_dir)];
@@ -318,18 +342,22 @@ fn show_skills(cfg: &config::RuneConfig) {
     );
     let skill_dir = std::path::Path::new(&cfg.skills_dir);
     if skill_dir.exists() {
-        if let Ok(entries) = std::fs::read_dir(skill_dir) {
-            let mut skills: Vec<String> = entries
-                .filter_map(|e| e.ok())
-                .filter(|e| e.file_type().map(|ft| ft.is_dir()).unwrap_or(false))
-                .filter_map(|e| e.file_name().into_string().ok())
+        let skill_files = discover_skill_files(skill_dir, 0);
+        if !skill_files.is_empty() {
+            let mut names: Vec<String> = skill_files
+                .iter()
+                .filter_map(|p| {
+                    p.parent()
+                        .and_then(|dir| dir.file_name())
+                        .and_then(|n| n.to_str())
+                        .map(|s| s.to_string())
+                })
                 .collect();
-            skills.sort();
-            if !skills.is_empty() {
-                println!("  {} {}", "found:".dimmed(), skills.join(", ").green());
-            } else {
-                println!("  {} (no skills found)", "found:".dimmed());
-            }
+            names.sort();
+            names.dedup();
+            println!("  {} {}", "found:".dimmed(), names.join(", ").green());
+        } else {
+            println!("  {} (no skills found)", "found:".dimmed());
         }
     } else {
         println!("  {} (directory does not exist)", "status:".dimmed());
@@ -475,33 +503,48 @@ fn show_skills_full(cfg: &config::RuneConfig) {
         return;
     }
 
-    let mut entries: Vec<_> = match std::fs::read_dir(skill_dir) {
-        Ok(rd) => rd
-            .filter_map(|e| e.ok())
-            .filter(|e| e.file_type().map(|ft| ft.is_dir()).unwrap_or(false))
-            .collect(),
-        Err(_) => {
-            println!("  {} (cannot read directory)", "•".dimmed());
-            return;
-        }
-    };
-    entries.sort_by_key(|e| e.file_name());
+    let mut skill_files = discover_skill_files(skill_dir, 0);
+    skill_files.sort();
 
-    if entries.is_empty() {
+    if skill_files.is_empty() {
         println!("  {} (no skills found)", "•".dimmed());
         return;
     }
 
-    for entry in entries {
-        let name = entry.file_name().to_string_lossy().to_string();
-        let skill_md = entry.path().join("SKILL.md");
-        println!("  {} @{}", "▸".cyan(), name.cyan().bold());
+    // Deduplicate by skill name (parent dir name), keep first occurrence
+    let mut seen_names: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let skill_files: Vec<_> = skill_files
+        .into_iter()
+        .filter(|p| {
+            let name = p
+                .parent()
+                .and_then(|d| d.file_name())
+                .and_then(|n| n.to_str())
+                .unwrap_or("")
+                .to_string();
+            seen_names.insert(name)
+        })
+        .collect();
 
-        if !skill_md.exists() {
-            println!("    {} (no SKILL.md)", "status:".dimmed());
-            println!();
-            continue;
-        }
+    for skill_md in &skill_files {
+        let name = skill_md
+            .parent()
+            .and_then(|d| d.file_name())
+            .and_then(|n| n.to_str())
+            .unwrap_or("?")
+            .to_string();
+        let rel_path = skill_md
+            .strip_prefix(skill_dir)
+            .unwrap_or(skill_md)
+            .parent()
+            .map(|p| p.display().to_string())
+            .unwrap_or_default();
+        println!(
+            "  {} @{} {}",
+            "▸".cyan(),
+            name.cyan().bold(),
+            format!("({})", rel_path).dimmed()
+        );
 
         // Parse frontmatter
         match std::fs::read_to_string(&skill_md) {
