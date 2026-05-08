@@ -43,7 +43,11 @@ impl Default for SandboxConfig {
     fn default() -> Self {
         Self {
             allowed_domains: Vec::new(),
-            read_write_paths: vec![PathBuf::from("/tmp")],
+            read_write_paths: vec![
+                PathBuf::from("/tmp"),
+                PathBuf::from("/dev/null"),
+                PathBuf::from("/dev/urandom"),
+            ],
             read_only_paths: vec![
                 PathBuf::from("/bin"),
                 PathBuf::from("/usr"),
@@ -52,7 +56,7 @@ impl Default for SandboxConfig {
                 PathBuf::from("/etc"),
             ],
             denied_paths: vec![PathBuf::from("/root"), PathBuf::from("/etc/shadow")],
-            traverse_paths: Vec::new(),
+            traverse_paths: vec![PathBuf::from("/dev")],
             timeout_secs: 30,
             uid: 0,
             gid: 0,

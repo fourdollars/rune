@@ -1388,6 +1388,22 @@ impl Agent {
         if !content.contains("Permission denied") {
             return None;
         }
+        // Pattern: "unable to access '/path/to/file': Permission denied" (git/landlock)
+        // Pattern: "could not open '/path/to/file' for reading...: Permission denied"
+        for line in content.lines() {
+            let trimmed = line.trim();
+            if trimmed.contains("Permission denied") {
+                // Try quoted path patterns first
+                if let Some(start) = trimmed.find('\'') {
+                    if let Some(end) = trimmed[start + 1..].find('\'') {
+                        let path = &trimmed[start + 1..start + 1 + end];
+                        if path.starts_with('/') && !path.contains(' ') {
+                            return Some(path.to_string());
+                        }
+                    }
+                }
+            }
+        }
         // Pattern: "sh: N: <binary>: Permission denied" (exit code 126 - binary found but can't exec)
         // Try to find the binary name and resolve its path
         for line in content.lines() {
@@ -1732,11 +1748,28 @@ mod tests {
     }
 
     #[test]
+    fn test_extract_permission_denied_git_unable_to_access() {
+        let content = "exit_code: 128
+stderr: warning: unable to access '/home/user/.gitconfig': Permission denied";
+        let result = Agent::extract_permission_denied_path(content);
+        assert_eq!(result, Some("/home/user/.gitconfig".to_string()));
+    }
+
+    #[test]
+    fn test_extract_permission_denied_could_not_open() {
+        let content =
+            "stderr: fatal: could not open '/dev/null' for reading and writing: Permission denied";
+        let result = Agent::extract_permission_denied_path(content);
+        assert_eq!(result, Some("/dev/null".to_string()));
+    }
+
+    #[test]
     fn test_extract_permission_denied_landlock_exec() {
         // _landlock errors should not extract a useful path
         let content = "rune _landlock: exec failed: Permission denied (os error 13)";
         let result = Agent::extract_permission_denied_path(content);
-        // "exec failed" should be filtered out
+        // "exec failed" should be filtered out — but now the quoted-path pattern
+        // won't match since there's no quoted absolute path
         assert!(result.is_none());
     }
 

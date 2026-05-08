@@ -177,8 +177,11 @@ impl ToolRegistry {
             .iter()
             .map(|p| std::fs::canonicalize(p).unwrap_or_else(|_| p.clone()))
             .collect();
+        // Essential device nodes that nearly all commands need
+        rw_paths.push(PathBuf::from("/dev/null"));
+        rw_paths.push(PathBuf::from("/dev/urandom"));
         // Add individual allowed files and their parent directories for traversal
-        let mut traverse_paths: Vec<PathBuf> = Vec::new();
+        let mut traverse_paths: Vec<PathBuf> = vec![PathBuf::from("/dev")];
         for f in &self.policy_allowed_files_rw {
             let pb = PathBuf::from(f);
             rw_paths.push(pb.clone());
@@ -209,6 +212,7 @@ impl ToolRegistry {
                 }
             }
         }
+
         let config = SandboxConfig {
             timeout_secs,
             read_write_paths: rw_paths,
