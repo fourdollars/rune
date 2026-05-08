@@ -1209,7 +1209,7 @@ impl Agent {
             }
 
             // Check if it's a file/binary permission error — use strace probing
-            if output.content.contains("Permission denied") || output.content.contains("EACCES") {
+            if contains_permission_denied(&output.content) {
                 if self.interactive {
                     // Extract the original command from args for strace re-run
                     let cmd_for_strace = args
@@ -1611,14 +1611,14 @@ impl Agent {
 
     /// Extract file/binary path from Permission denied errors.
     fn extract_permission_denied_path(content: &str) -> Option<String> {
-        if !content.contains("Permission denied") {
+        if !contains_permission_denied(content) {
             return None;
         }
         // Pattern: "unable to access '/path/to/file': Permission denied" (git/landlock)
         // Pattern: "could not open '/path/to/file' for reading...: Permission denied"
         for line in content.lines() {
             let trimmed = line.trim();
-            if trimmed.contains("Permission denied") {
+            if contains_permission_denied(trimmed) {
                 // Try quoted path patterns first
                 if let Some(start) = trimmed.find('\'') {
                     if let Some(end) = trimmed[start + 1..].find('\'') {
@@ -1630,11 +1630,32 @@ impl Agent {
                 }
             }
         }
+        // Pattern: "open /path/to/file: permission denied" (Go standard library)
+        // Pattern: "open /path/to/file: Permission denied"
+        for line in content.lines() {
+            let trimmed = line.trim();
+            if contains_permission_denied(trimmed) {
+                // Go errors: "open /path/to/file: permission denied"
+                // Split on ": " and check if the last part is permission denied
+                if let Some(colon_pos) = trimmed.rfind(": ") {
+                    let before_colon = &trimmed[..colon_pos];
+                    // Look for "open /path" or just "/path" pattern
+                    let path_candidate = if let Some(space_pos) = before_colon.rfind(' ') {
+                        before_colon[space_pos + 1..].trim()
+                    } else {
+                        before_colon.trim()
+                    };
+                    if path_candidate.starts_with('/') && !path_candidate.contains(' ') {
+                        return Some(path_candidate.to_string());
+                    }
+                }
+            }
+        }
         // Pattern: "sh: N: <binary>: Permission denied" (exit code 126 - binary found but can't exec)
         // Try to find the binary name and resolve its path
         for line in content.lines() {
             let trimmed = line.trim();
-            if trimmed.contains("Permission denied") {
+            if contains_permission_denied(trimmed) {
                 // "sh: 1: jira: Permission denied"
                 let parts: Vec<&str> = trimmed.split(':').collect();
                 if parts.len() >= 3 {
@@ -1880,6 +1901,12 @@ impl Agent {
 }
 
 /// Shell-escape a string for use in sh -c (wraps in single quotes).
+/// Case-insensitive check for permission denied / EACCES in output.
+fn contains_permission_denied(s: &str) -> bool {
+    let lower = s.to_lowercase();
+    lower.contains("permission denied") || lower.contains("eacces")
+}
+
 fn shell_escape(s: &str) -> String {
     format!("'{}'", s.replace('\'', "'\\''"))
 }
@@ -2322,5 +2349,46 @@ read(3, "root:x:0:0:...", 4096) = 1234"#;
         let line = "some random line without quotes";
         let path = Agent::extract_strace_quoted_path(line);
         assert_eq!(path, None);
+    }
+
+    #[test]
+    fn test_contains_permission_denied_case_insensitive() {
+        // Go-style lowercase
+        assert!(super::contains_permission_denied(
+            "open /home/u/.config/lp-api.toml: permission denied"
+        ));
+        // Standard case
+        assert!(super::contains_permission_denied("Permission denied"));
+        // EACCES
+        assert!(super::contains_permission_denied("EACCES"));
+        assert!(super::contains_permission_denied("eacces"));
+        // No match
+        assert!(!super::contains_permission_denied("everything is fine"));
+        assert!(!super::contains_permission_denied("access granted"));
+    }
+
+    #[test]
+    fn test_extract_permission_denied_go_style() {
+        // Go standard library format: "open /path/to/file: permission denied"
+        let content =
+            "stderr: 2026/05/08 17:38:39 open /home/u/.config/lp-api.toml: permission denied";
+        let result = Agent::extract_permission_denied_path(content);
+        assert_eq!(result, Some("/home/u/.config/lp-api.toml".to_string()));
+    }
+
+    #[test]
+    fn test_extract_permission_denied_go_style_title_case() {
+        // Go but with Title Case
+        let content = "open /etc/secret.conf: Permission denied";
+        let result = Agent::extract_permission_denied_path(content);
+        assert_eq!(result, Some("/etc/secret.conf".to_string()));
+    }
+
+    #[test]
+    fn test_extract_permission_denied_lowercase_git() {
+        // Hypothetical lowercase variant
+        let content = "fatal: unable to access '/home/user/.gitconfig': permission denied";
+        let result = Agent::extract_permission_denied_path(content);
+        assert_eq!(result, Some("/home/user/.gitconfig".to_string()));
     }
 }
