@@ -1798,4 +1798,82 @@ model: different
         assert_eq!(fm.description.as_deref(), Some("First section"));
         assert_eq!(fm.model.as_deref(), Some("gpt-4o"));
     }
+
+    #[test]
+    fn test_discover_skill_files_empty_dir() {
+        let dir =
+            std::env::temp_dir().join(format!("rune-skill-test-empty-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        let results = discover_skill_files(&dir, 0);
+        assert!(results.is_empty());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_discover_skill_files_flat() {
+        let dir = std::env::temp_dir().join(format!("rune-skill-test-flat-{}", std::process::id()));
+        let skill_a = dir.join("skill-a");
+        let _ = std::fs::create_dir_all(&skill_a);
+        std::fs::write(skill_a.join("SKILL.md"), "---\nname: skill-a\n---\n").unwrap();
+        let skill_b = dir.join("skill-b");
+        let _ = std::fs::create_dir_all(&skill_b);
+        std::fs::write(skill_b.join("SKILL.md"), "---\nname: skill-b\n---\n").unwrap();
+
+        let results = discover_skill_files(&dir, 0);
+        assert_eq!(results.len(), 2);
+        assert!(results.iter().any(|p| p.ends_with("skill-a/SKILL.md")));
+        assert!(results.iter().any(|p| p.ends_with("skill-b/SKILL.md")));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_discover_skill_files_nested() {
+        let dir =
+            std::env::temp_dir().join(format!("rune-skill-test-nested-{}", std::process::id()));
+        // Simulate: repo/subdir/SKILL.md (depth 2)
+        let nested = dir.join("my-repo").join("launchpad");
+        let _ = std::fs::create_dir_all(&nested);
+        std::fs::write(nested.join("SKILL.md"), "---\nname: launchpad\n---\n").unwrap();
+
+        let results = discover_skill_files(&dir, 0);
+        assert_eq!(results.len(), 1);
+        assert!(results[0].ends_with("launchpad/SKILL.md"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_discover_skill_files_max_depth() {
+        let dir =
+            std::env::temp_dir().join(format!("rune-skill-test-depth-{}", std::process::id()));
+        // depth 4 should NOT be found (max is 3)
+        let deep = dir.join("a").join("b").join("c").join("d").join("e");
+        let _ = std::fs::create_dir_all(&deep);
+        std::fs::write(deep.join("SKILL.md"), "---\nname: deep\n---\n").unwrap();
+
+        let results = discover_skill_files(&dir, 0);
+        assert!(results.is_empty(), "depth 4 should not be discovered");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_discover_skill_files_ignores_non_dir() {
+        let dir = std::env::temp_dir().join(format!("rune-skill-test-file-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        // A file named like a skill dir should be ignored
+        std::fs::write(dir.join("not-a-dir"), "hello").unwrap();
+        // A dir without SKILL.md should not appear
+        let empty_dir = dir.join("empty-skill");
+        let _ = std::fs::create_dir_all(&empty_dir);
+
+        let results = discover_skill_files(&dir, 0);
+        assert!(results.is_empty());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_discover_skill_files_nonexistent_dir() {
+        let dir = std::path::Path::new("/tmp/rune-nonexistent-dir-xyz-12345");
+        let results = discover_skill_files(dir, 0);
+        assert!(results.is_empty());
+    }
 }
