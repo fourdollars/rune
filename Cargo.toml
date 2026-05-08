@@ -16,12 +16,19 @@ colored = "3"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }
 anyhow = "1.0"
-tokio = { version = "1", features = ["full"] }
+tokio = { version = "1", features = ["rt-multi-thread", "time", "process", "sync", "io-util", "io-std", "net", "macros"] }
 indicatif = "0.18"
 rustyline = "18"
 libc = "0.2"
-reqwest = { version = "0.13.3", features = ["json", "stream"] }
+reqwest = { version = "0.13.3", default-features = false, features = ["json", "stream", "rustls", "charset", "http2"] }
 futures = "0.3"
 base64 = "0.22"
 sha2 = "0.11.0"
 hex = "0.4.3"
+
+[profile.release]
+opt-level = "z"       # Optimize for size
+lto = true            # Link-Time Optimization (thin → full)
+codegen-units = 1     # Single codegen unit for better optimization
+panic = "abort"       # No unwinding tables
+strip = true          # Strip symbols automatically
