@@ -139,6 +139,11 @@ fn print_help() {
     println!("    {:<24} {}", "/skills".green(), "List loaded skills");
     println!(
         "    {:<24} {}",
+        "--skills a,b".green(),
+        "Preload specific skills only"
+    );
+    println!(
+        "    {:<24} {}",
         "/skills full".green(),
         "Show skill details (frontmatter, tools)"
     );
@@ -340,6 +345,13 @@ fn show_skills(cfg: &config::RuneConfig) {
     } else {
         println!("  {} (directory does not exist)", "status:".dimmed());
     }
+    if !cfg.preload_skills.is_empty() {
+        println!(
+            "  {} {}",
+            "preload:".dimmed(),
+            cfg.preload_skills.join(", ").green()
+        );
+    }
     let _ = loader;
 }
 
@@ -521,11 +533,18 @@ fn show_skills_full(cfg: &config::RuneConfig) {
             .parent()
             .map(|p| p.display().to_string())
             .unwrap_or_default();
+        let preloaded = cfg.preload_skills.iter().any(|s| s == &name);
+        let tag = if preloaded {
+            " [preloaded]".green().to_string()
+        } else {
+            String::new()
+        };
         println!(
-            "  {} @{} {}",
+            "  {} @{} {}{}",
             "▸".cyan(),
             name.cyan().bold(),
-            format!("({})", rel_path).dimmed()
+            format!("({})", rel_path).dimmed(),
+            tag
         );
         println!("    {} {}", "base_dir:".dimmed(), abs_dir);
 
@@ -1334,6 +1353,13 @@ pub async fn run() {
         None
     };
 
+    if !cfg.preload_skills.is_empty() {
+        eprintln!(
+            "  {} Preloading skills: {}",
+            "📚".dimmed(),
+            cfg.preload_skills.join(", ")
+        );
+    }
     let mut agent = Agent::new(cfg.clone(), provider, stdin_is_terminal, embedding_engine);
 
     // Attach MCP manager if any servers connected

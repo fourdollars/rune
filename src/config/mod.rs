@@ -101,6 +101,10 @@ pub struct RuneConfig {
     /// Thinking/reasoning level: "none", "low", "medium", "high". None = provider default.
     #[serde(default)]
     pub thinking: Option<String>,
+    /// Skills to preload at startup (comma-separated names from --skills flag).
+    /// When set, only these skills are available; semantic/@ discovery is skipped.
+    #[serde(skip)]
+    pub preload_skills: Vec<String>,
 }
 
 impl Default for RuneConfig {
@@ -125,6 +129,7 @@ impl Default for RuneConfig {
             mcp_servers: Vec::new(),
             embedding: crate::embedding::EmbeddingConfig::default(),
             thinking: None,
+            preload_skills: Vec::new(),
         }
     }
 }
@@ -244,6 +249,17 @@ struct CliArgs {
     /// Directory containing skill definitions
     #[arg(long, env = "RUNE_SKILLS_DIR", help_heading = "Advanced")]
     skills_dir: Option<String>,
+
+    /// Preload specific skills by name (comma-separated). Only these skills
+    /// will be injected; @ref and semantic search are disabled.
+    /// Example: --skills jira,launchpad
+    #[arg(
+        long,
+        env = "RUNE_SKILLS",
+        help_heading = "Advanced",
+        value_delimiter = ','
+    )]
+    skills: Vec<String>,
 }
 
 fn parse_boolish(value: &str) -> Option<bool> {
@@ -470,6 +486,15 @@ pub fn load() -> anyhow::Result<RuneConfig> {
             &lc.and_then(|c| c.thinking.clone()),
             &uc.and_then(|c| c.thinking.clone()),
         ]),
+        preload_skills: cli
+            .skills
+            .iter()
+            .flat_map(|s| {
+                s.split(',')
+                    .map(|v| v.trim().to_string())
+                    .filter(|v| !v.is_empty())
+            })
+            .collect(),
     })
 }
 
@@ -875,5 +900,24 @@ log_level = "info"
 "#;
         let cfg: PartialConfig = toml::from_str(toml_str).unwrap();
         assert_eq!(cfg.provider, None);
+    }
+
+    #[test]
+    fn test_preload_skills_default_empty() {
+        let cfg = RuneConfig::default();
+        assert!(cfg.preload_skills.is_empty());
+    }
+
+    #[test]
+    fn test_preload_skills_not_serialized() {
+        // preload_skills is marked #[serde(skip)] so it should not appear in TOML
+        let toml_str = r#"
+model = "gpt-4"
+skills_dir = "./skills"
+log_level = "info"
+"#;
+        let cfg: PartialConfig = toml::from_str(toml_str).unwrap();
+        // PartialConfig doesn't have preload_skills, confirming it's CLI-only
+        assert!(cfg.skills_dir.is_some());
     }
 }

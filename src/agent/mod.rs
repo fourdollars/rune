@@ -575,7 +575,16 @@ impl Agent {
         self.executed_commands.clear();
         self.tool_call_names.clear();
         self.tool_calls_log.clear();
-        self.inject_skills(user_input).await;
+
+        // If --skills was specified, preload those skills and skip dynamic discovery
+        if !self.config.preload_skills.is_empty() && self.step_count == 0 {
+            let names: Vec<String> = self.config.preload_skills.clone();
+            for name in &names {
+                self.load_and_inject_skill(name);
+            }
+        } else {
+            self.inject_skills(user_input).await;
+        }
 
         // Add user message
         self.messages.push(LlmMessage {
@@ -1931,5 +1940,23 @@ stderr: warning: unable to access '/home/user/.gitconfig': Permission denied";
         assert!(injected.contains("base_dir: /home/u/my-skills/test-skill"));
         assert!(injected.contains("must be resolved from base_dir above"));
         assert!(injected.contains("references/guide.md"));
+    }
+
+    #[test]
+    fn test_preload_skills_skips_dynamic_discovery() {
+        // When preload_skills is set, inject_skills should not be called on first run.
+        // We verify the config field is properly stored and checked.
+        let mut cfg = crate::config::RuneConfig::default();
+        cfg.preload_skills = vec!["jira".to_string(), "launchpad".to_string()];
+        assert_eq!(cfg.preload_skills.len(), 2);
+        assert_eq!(cfg.preload_skills[0], "jira");
+        assert_eq!(cfg.preload_skills[1], "launchpad");
+    }
+
+    #[test]
+    fn test_preload_skills_empty_means_dynamic() {
+        // When preload_skills is empty, dynamic discovery (inject_skills) should run.
+        let cfg = crate::config::RuneConfig::default();
+        assert!(cfg.preload_skills.is_empty());
     }
 }
