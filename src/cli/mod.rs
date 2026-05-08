@@ -511,6 +511,10 @@ fn show_skills_full(cfg: &config::RuneConfig) {
             .and_then(|n| n.to_str())
             .unwrap_or("?")
             .to_string();
+        let abs_dir = skill_md
+            .parent()
+            .map(|p| p.display().to_string())
+            .unwrap_or_default();
         let rel_path = skill_md
             .strip_prefix(skill_dir)
             .unwrap_or(skill_md)
@@ -523,6 +527,7 @@ fn show_skills_full(cfg: &config::RuneConfig) {
             name.cyan().bold(),
             format!("({})", rel_path).dimmed()
         );
+        println!("    {} {}", "base_dir:".dimmed(), abs_dir);
 
         // Parse frontmatter
         match std::fs::read_to_string(&skill_md) {

@@ -554,7 +554,7 @@ impl Agent {
                 self.messages.push(LlmMessage {
                     role: "system".to_string(),
                     content: Some(format!(
-                        "[Skill: {} | path: {}]\n{}\n[End Skill: {}]",
+                        "[Skill: {} | base_dir: {}]\nIMPORTANT: All relative paths referenced in this skill (e.g. references/, scripts/) must be resolved from base_dir above. Use absolute paths when reading skill files.\n{}\n[End Skill: {}]",
                         skill.metadata.name, skill_dir, skill.content, skill.metadata.name
                     )),
                     tool_calls: None,
@@ -1894,19 +1894,42 @@ stderr: warning: unable to access '/home/user/.gitconfig': Permission denied";
     }
 
     #[test]
-    fn test_skill_injection_includes_path() {
-        // Verify the format string produces the expected header with path
+    fn test_skill_injection_includes_base_dir() {
+        // Verify the format string produces the expected header with base_dir
         let skill_name = "launchpad";
         let skill_dir = "/home/u/skills/lp-api/launchpad";
         let skill_body = "# Launchpad API\nSome content here.";
 
         let injected = format!(
-            "[Skill: {} | path: {}]\n{}\n[End Skill: {}]",
+            "[Skill: {} | base_dir: {}]\nIMPORTANT: All relative paths referenced in this skill (e.g. references/, scripts/) must be resolved from base_dir above. Use absolute paths when reading skill files.\n{}\n[End Skill: {}]",
             skill_name, skill_dir, skill_body, skill_name
         );
 
-        assert!(injected.starts_with("[Skill: launchpad | path: /home/u/skills/lp-api/launchpad]"));
+        assert!(
+            injected.starts_with("[Skill: launchpad | base_dir: /home/u/skills/lp-api/launchpad]")
+        );
+        assert!(injected.contains("IMPORTANT: All relative paths"));
+        assert!(injected.contains("base_dir above"));
         assert!(injected.contains("# Launchpad API"));
         assert!(injected.ends_with("[End Skill: launchpad]"));
+    }
+
+    #[test]
+    fn test_skill_injection_relative_path_hint() {
+        // Verify the injected message instructs the LLM to resolve relative paths
+        let skill_name = "test-skill";
+        let skill_dir = "/home/u/my-skills/test-skill";
+        let skill_body = "Refer to references/guide.md for details.";
+
+        let injected = format!(
+            "[Skill: {} | base_dir: {}]\nIMPORTANT: All relative paths referenced in this skill (e.g. references/, scripts/) must be resolved from base_dir above. Use absolute paths when reading skill files.\n{}\n[End Skill: {}]",
+            skill_name, skill_dir, skill_body, skill_name
+        );
+
+        // The LLM should know to resolve "references/guide.md" as
+        // "/home/u/my-skills/test-skill/references/guide.md"
+        assert!(injected.contains("base_dir: /home/u/my-skills/test-skill"));
+        assert!(injected.contains("must be resolved from base_dir above"));
+        assert!(injected.contains("references/guide.md"));
     }
 }
