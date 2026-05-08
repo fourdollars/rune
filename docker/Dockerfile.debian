@@ -9,7 +9,7 @@ FROM debian:bookworm-slim
 ENV DEBIAN_FRONTEND=noninteractive
 
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates curl \
+    && apt-get install -y --no-install-recommends ca-certificates curl strace \
     && rm -rf /var/lib/apt/lists/*
 
 RUN useradd --uid 1000 --create-home --home-dir /home/rune --shell /usr/sbin/nologin rune

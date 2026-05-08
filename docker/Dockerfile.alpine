@@ -9,7 +9,7 @@ COPY src ./src
 RUN cargo build --release --locked --target x86_64-unknown-linux-musl
 
 FROM alpine:latest
-RUN apk add --no-cache ca-certificates curl
+RUN apk add --no-cache ca-certificates curl strace
 
 RUN addgroup -g 1000 rune \
     && adduser -D -u 1000 -G rune -h /home/rune rune
