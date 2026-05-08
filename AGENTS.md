@@ -70,8 +70,11 @@ is_dangerous_tool(name)?
               ├─ write_file:  path in allowed_paths_rw → skip
               ├─ fetch_url:   domain in allowed_domains → skip
               ├─ execute_cmd: binary in allowed_commands → skip
-              └─ Otherwise → prompt [Y/n/A(lways)]
-                               └─ Always → persist to ~/.rune/rune.toml
+              └─ Otherwise → prompt Execute? [Y/n]
+                               └─ Yes (or auto) → proceed
+                               │   resource blocked → separate Add-to-allowlist prompt [Y/n]
+                               │                       └─ Yes → persist to ~/.rune/rune.toml
+                               └─ No → skip tool call
 ```
 
 **Policy modes:**
@@ -129,6 +132,11 @@ When `trace = true`, the agent records structured JSON traces to `.rune/traces/`
 | `/add-dir <path>` | Add path to allowed_paths_ro |
 | `/add-rw-dir <path>` | Add path to allowed_paths_rw |
 | `/compact` | Summarize older messages to reduce context |
+| `/thinking [level]` | Show/set thinking level |
+| `/version` | Show version info |
+| `/help` | Show help |
+| `/exit` | Exit |
+| `/quit` | Exit |
 
 ## File Map
 
@@ -200,8 +208,8 @@ resource_types:
 ## Testing
 
 ```bash
-cargo test                    # 124 unit tests
-./tests/e2e.sh               # 18 E2E integration tests
+cargo test                    # 226 unit tests
+./tests/e2e.sh               # 26 E2E integration tests
 cargo llvm-cov --summary-only # coverage report
 cargo build --release         # release build (~5MB)
 ```

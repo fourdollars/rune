@@ -102,7 +102,8 @@ Available tags: `latest` (Debian-based, built from main branch), `<sha>` (specif
   ✓ execute_cmd...ok
   ⚙ execute_cmd({"cmd": "df -h /"})
 
-  ⚠ Execute? [Y/n/A(lways)] A
+  ⚠ Execute? [Y/n] Y
+  ⚠ Add 'df' to allowed_commands? [Y/n] Y
 permanently allowed → saved to ~/.rune/rune.toml
     + command 'df' → allowed_commands
   ✓ execute_cmd...ok
@@ -195,6 +196,7 @@ max_pids = 64
 | `RUNE_TRACE` | Enable trace (true/false) |
 | `RUNE_CONTEXT_WINDOW` | Model context window in tokens (default: 128000) |
 | `RUNE_COMPACT_THRESHOLD` | Auto-compact trigger fraction (default: 0.85) |
+| `RUNE_COMPACT_KEEP_LAST` | Keep last N messages during auto-compact (default: 6) |
 | `RUNE_JSON_OUTPUT` | JSON output mode (`true` / `false`, also accepts `1` / `0`) |
 | `RUNE_YES` | Auto-approve dangerous tool execution (`true` / `false`, also accepts `1` / `0`) |
 
@@ -253,7 +255,7 @@ Every tool invocation passes through up to 5 isolation layers:
 
 | Mode | Behavior | Default for |
 |------|----------|-------------|
-| `confirm` | Ask user Y/n/A(lways) before dangerous tools | Interactive CLI |
+| `confirm` | Prompt Y/n before dangerous tool calls; blocked resources trigger Add-to-allowlist prompts | Interactive CLI |
 | `allowlist` | Auto-execute within allowlist, block everything else | Pipe mode, Concourse CI |
 | `unrestricted` | All policy checks skipped | Opt-in via `--unrestricted` flag |
 
@@ -486,8 +488,8 @@ src/
 
 ```bash
 cargo build --release    # Single binary
-cargo test               # Unit tests (124)
-./tests/e2e.sh           # E2E tests (18)
+cargo test               # Unit tests (226)
+./tests/e2e.sh           # E2E tests (26)
 make check-all           # Both
 ```
 
