@@ -414,3 +414,126 @@ impl McpManager {
             .collect()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_mcp_manager_new_empty() {
+        let mgr = McpManager::new();
+        assert_eq!(mgr.clients_count(), 0);
+        assert!(mgr.all_tools().is_empty());
+    }
+
+    #[test]
+    fn test_mcp_server_config_defaults() {
+        let json = r#"{"name": "test", "command": "/bin/test"}"#;
+        let cfg: McpServerConfig = serde_json::from_str(json).unwrap();
+        assert_eq!(cfg.name, "test");
+        assert_eq!(cfg.command, "/bin/test");
+        assert!(cfg.args.is_empty());
+        assert_eq!(cfg.timeout_secs, Some(30));
+        assert!(!cfg.required);
+        assert!(cfg.env.is_none());
+    }
+
+    #[test]
+    fn test_mcp_server_config_full() {
+        let json = r#"{
+            "name": "zhtw-mcp",
+            "command": "/usr/local/bin/zhtw-mcp",
+            "args": ["--verbose"],
+            "timeout_secs": 60,
+            "required": true,
+            "env": {"RUST_LOG": "info"}
+        }"#;
+        let cfg: McpServerConfig = serde_json::from_str(json).unwrap();
+        assert_eq!(cfg.name, "zhtw-mcp");
+        assert_eq!(cfg.command, "/usr/local/bin/zhtw-mcp");
+        assert_eq!(cfg.args, vec!["--verbose"]);
+        assert_eq!(cfg.timeout_secs, Some(60));
+        assert!(cfg.required);
+        assert_eq!(cfg.env.unwrap().get("RUST_LOG").unwrap(), "info");
+    }
+
+    #[test]
+    fn test_mcp_tool_deserialize() {
+        let json = r#"{
+            "name": "zhtw",
+            "description": "Lint zh-TW text",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "text": {"type": "string"},
+                    "profile": {"type": "string"}
+                },
+                "required": ["text"]
+            }
+        }"#;
+        let tool: McpTool = serde_json::from_str(json).unwrap();
+        assert_eq!(tool.name, "zhtw");
+        assert_eq!(tool.description.as_deref(), Some("Lint zh-TW text"));
+        let schema = tool.input_schema.unwrap();
+        let props = schema.get("properties").unwrap().as_object().unwrap();
+        assert!(props.contains_key("text"));
+        assert!(props.contains_key("profile"));
+        let required = schema.get("required").unwrap().as_array().unwrap();
+        assert_eq!(required.len(), 1);
+        assert_eq!(required[0].as_str().unwrap(), "text");
+    }
+
+    #[test]
+    fn test_mcp_tool_deserialize_minimal() {
+        let json = r#"{"name": "simple"}"#;
+        let tool: McpTool = serde_json::from_str(json).unwrap();
+        assert_eq!(tool.name, "simple");
+        assert!(tool.description.is_none());
+        assert!(tool.input_schema.is_none());
+    }
+
+    #[test]
+    fn test_mcp_server_config_in_toml() {
+        let toml_str = r#"
+[[mcp_servers]]
+name = "zhtw-mcp"
+command = "/home/u/zhtw-mcp/target/release/zhtw-mcp"
+args = []
+timeout_secs = 30
+required = false
+"#;
+        #[derive(serde::Deserialize)]
+        struct Wrapper {
+            mcp_servers: Vec<McpServerConfig>,
+        }
+        let w: Wrapper = toml::from_str(toml_str).unwrap();
+        assert_eq!(w.mcp_servers.len(), 1);
+        assert_eq!(w.mcp_servers[0].name, "zhtw-mcp");
+        assert!(!w.mcp_servers[0].required);
+    }
+
+    #[test]
+    fn test_mcp_multiple_servers_in_toml() {
+        let toml_str = r#"
+[[mcp_servers]]
+name = "server-a"
+command = "/bin/a"
+required = true
+
+[[mcp_servers]]
+name = "server-b"
+command = "/bin/b"
+args = ["--flag"]
+"#;
+        #[derive(serde::Deserialize)]
+        struct Wrapper {
+            mcp_servers: Vec<McpServerConfig>,
+        }
+        let w: Wrapper = toml::from_str(toml_str).unwrap();
+        assert_eq!(w.mcp_servers.len(), 2);
+        assert_eq!(w.mcp_servers[0].name, "server-a");
+        assert!(w.mcp_servers[0].required);
+        assert_eq!(w.mcp_servers[1].name, "server-b");
+        assert_eq!(w.mcp_servers[1].args, vec!["--flag"]);
+    }
+}

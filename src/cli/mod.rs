@@ -6,13 +6,13 @@ use rustyline::DefaultEditor;
 use std::io::IsTerminal;
 use std::time::Duration;
 
-use std::sync::Arc;
-use tokio::sync::Mutex as TokioMutex;
 use crate::agent::{Agent, StopReason};
 use crate::config;
 use crate::provider::{CopilotProvider, GeminiProvider, OpenAiProvider, ProviderRegistry};
 use crate::skills::SkillLoader;
 use crate::tools::ToolRegistry;
+use std::sync::Arc;
+use tokio::sync::Mutex as TokioMutex;
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
@@ -137,6 +137,17 @@ fn print_help() {
         "List available built-in tools"
     );
     println!("    {:<24} {}", "/skills".green(), "List loaded skills");
+    println!(
+        "    {:<24} {}",
+        "/skills full".green(),
+        "Show skill details (frontmatter, tools)"
+    );
+    println!("    {:<24} {}", "/mcps".green(), "MCP servers summary");
+    println!(
+        "    {:<24} {}",
+        "/mcps full".green(),
+        "MCP servers full details (tools, schema)"
+    );
     println!(
         "    {:<24} {}",
         "/trace".green(),
@@ -326,6 +337,268 @@ fn show_skills(cfg: &config::RuneConfig) {
     let _ = loader;
 }
 
+/// Display MCP servers summary.
+fn show_mcps_summary(cfg: &config::RuneConfig, agent: &crate::agent::Agent) {
+    println!("{}", "MCP Servers:".bold());
+    if cfg.mcp_servers.is_empty() {
+        println!("  {} (none configured)", "•".dimmed());
+        return;
+    }
+    for server_cfg in &cfg.mcp_servers {
+        let tool_count = if let Some(mcp_ref) = agent.mcp_manager_ref() {
+            if let Ok(mgr) = mcp_ref.try_lock() {
+                mgr.all_tools()
+                    .iter()
+                    .filter(|(s, _)| s == &server_cfg.name)
+                    .count()
+            } else {
+                0
+            }
+        } else {
+            0
+        };
+        let status = if tool_count > 0 {
+            "running".green().to_string()
+        } else {
+            "no tools".yellow().to_string()
+        };
+        println!(
+            "  {} {} — {} tool(s), {}",
+            "•".dimmed(),
+            server_cfg.name.cyan(),
+            tool_count,
+            status
+        );
+    }
+    println!();
+    println!(
+        "  {} Use {} for full details",
+        "ℹ".cyan(),
+        "/mcps full".bold()
+    );
+}
+
+/// Display MCP servers full details.
+fn show_mcps_full(cfg: &config::RuneConfig, agent: &crate::agent::Agent) {
+    println!("{}", "MCP Servers (full):".bold());
+    println!();
+    if cfg.mcp_servers.is_empty() {
+        println!("  {} (none configured)", "•".dimmed());
+        return;
+    }
+    for server_cfg in &cfg.mcp_servers {
+        println!("  {} {}", "▸".cyan(), server_cfg.name.cyan().bold());
+        println!("    {} {}", "command:".dimmed(), server_cfg.command);
+        if !server_cfg.args.is_empty() {
+            println!("    {} {:?}", "args:".dimmed(), server_cfg.args);
+        }
+        println!(
+            "    {} {}s",
+            "timeout:".dimmed(),
+            server_cfg.timeout_secs.unwrap_or(30)
+        );
+        println!(
+            "    {} {}",
+            "required:".dimmed(),
+            if server_cfg.required { "yes" } else { "no" }
+        );
+
+        // List tools from this server
+        if let Some(mcp_ref) = agent.mcp_manager_ref() {
+            if let Ok(mgr) = mcp_ref.try_lock() {
+                let server_tools: Vec<_> = mgr
+                    .all_tools()
+                    .into_iter()
+                    .filter(|(s, _)| s == &server_cfg.name)
+                    .collect();
+                if server_tools.is_empty() {
+                    println!("    {} (no tools registered)", "tools:".dimmed());
+                } else {
+                    println!(
+                        "    {} ({} available)",
+                        "tools:".dimmed(),
+                        server_tools.len()
+                    );
+                    for (_srv, tool) in &server_tools {
+                        println!("      {} {}", "▹".dimmed(), tool.name.green());
+                        if let Some(ref desc) = tool.description {
+                            println!("        {}", desc.dimmed());
+                        }
+                        if let Some(ref schema) = tool.input_schema {
+                            if let Some(props) = schema.get("properties") {
+                                if let Some(obj) = props.as_object() {
+                                    let param_names: Vec<&String> = obj.keys().collect();
+                                    if !param_names.is_empty() {
+                                        println!(
+                                            "        {} {}",
+                                            "params:".dimmed(),
+                                            param_names
+                                                .iter()
+                                                .map(|s| s.as_str())
+                                                .collect::<Vec<_>>()
+                                                .join(", ")
+                                        );
+                                    }
+                                }
+                            }
+                            if let Some(required) = schema.get("required") {
+                                if let Some(arr) = required.as_array() {
+                                    let req_names: Vec<&str> =
+                                        arr.iter().filter_map(|v| v.as_str()).collect();
+                                    if !req_names.is_empty() {
+                                        println!(
+                                            "        {} {}",
+                                            "required:".dimmed(),
+                                            req_names.join(", ")
+                                        );
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        println!();
+    }
+}
+
+/// Display skills with full details (frontmatter, tools restrictions).
+fn show_skills_full(cfg: &config::RuneConfig) {
+    let skill_dir = std::path::Path::new(&cfg.skills_dir);
+    println!("{}", "Skills (full):".bold());
+    println!("  {} {}", "search_dir:".dimmed(), cfg.skills_dir);
+    println!();
+
+    if !skill_dir.exists() {
+        println!("  {} (directory does not exist)", "•".dimmed());
+        return;
+    }
+
+    let mut entries: Vec<_> = match std::fs::read_dir(skill_dir) {
+        Ok(rd) => rd
+            .filter_map(|e| e.ok())
+            .filter(|e| e.file_type().map(|ft| ft.is_dir()).unwrap_or(false))
+            .collect(),
+        Err(_) => {
+            println!("  {} (cannot read directory)", "•".dimmed());
+            return;
+        }
+    };
+    entries.sort_by_key(|e| e.file_name());
+
+    if entries.is_empty() {
+        println!("  {} (no skills found)", "•".dimmed());
+        return;
+    }
+
+    for entry in entries {
+        let name = entry.file_name().to_string_lossy().to_string();
+        let skill_md = entry.path().join("SKILL.md");
+        println!("  {} @{}", "▸".cyan(), name.cyan().bold());
+
+        if !skill_md.exists() {
+            println!("    {} (no SKILL.md)", "status:".dimmed());
+            println!();
+            continue;
+        }
+
+        // Parse frontmatter
+        match std::fs::read_to_string(&skill_md) {
+            Ok(content) => {
+                let lines: Vec<&str> = content.lines().collect();
+                let mut in_frontmatter = false;
+                let mut description = None;
+                let mut tools_allow: Vec<String> = Vec::new();
+                let mut tools_deny: Vec<String> = Vec::new();
+                let mut model = None;
+
+                for line in &lines {
+                    let trimmed = line.trim();
+                    if trimmed == "---" {
+                        if in_frontmatter {
+                            break; // end of frontmatter
+                        }
+                        in_frontmatter = true;
+                        continue;
+                    }
+                    if in_frontmatter {
+                        if let Some(val) = trimmed.strip_prefix("description:") {
+                            description = Some(val.trim().trim_matches('"').to_string());
+                        } else if let Some(val) = trimmed.strip_prefix("tools_allow:") {
+                            tools_allow = val
+                                .trim()
+                                .split(',')
+                                .map(|s| s.trim().to_string())
+                                .filter(|s| !s.is_empty())
+                                .collect();
+                        } else if let Some(val) = trimmed.strip_prefix("tools_deny:") {
+                            tools_deny = val
+                                .trim()
+                                .split(',')
+                                .map(|s| s.trim().to_string())
+                                .filter(|s| !s.is_empty())
+                                .collect();
+                        } else if let Some(val) = trimmed.strip_prefix("model:") {
+                            model = Some(val.trim().trim_matches('"').to_string());
+                        }
+                    }
+                }
+
+                if let Some(desc) = description {
+                    println!("    {} {}", "desc:".dimmed(), desc);
+                }
+                if let Some(m) = model {
+                    println!("    {} {}", "model:".dimmed(), m);
+                }
+                if !tools_allow.is_empty() {
+                    println!(
+                        "    {} {}",
+                        "tools_allow:".dimmed(),
+                        tools_allow.join(", ").green()
+                    );
+                }
+                if !tools_deny.is_empty() {
+                    println!(
+                        "    {} {}",
+                        "tools_deny:".dimmed(),
+                        tools_deny.join(", ").red()
+                    );
+                }
+                // Show first few lines of content (after frontmatter)
+                let content_start = if lines.iter().filter(|l| l.trim() == "---").count() >= 2 {
+                    lines
+                        .iter()
+                        .enumerate()
+                        .filter(|(_, l)| l.trim() == "---")
+                        .nth(1)
+                        .map(|(i, _)| i + 1)
+                        .unwrap_or(0)
+                } else {
+                    0
+                };
+                let preview: Vec<&str> = lines[content_start..]
+                    .iter()
+                    .copied()
+                    .filter(|l| !l.trim().is_empty())
+                    .take(2)
+                    .collect();
+                if !preview.is_empty() {
+                    println!(
+                        "    {} {}",
+                        "preview:".dimmed(),
+                        preview.join(" | ").dimmed()
+                    );
+                }
+            }
+            Err(_) => {
+                println!("    {} (cannot read SKILL.md)", "status:".dimmed());
+            }
+        }
+        println!();
+    }
+}
+
 /// Display current session state: model, context usage, skills, MCP.
 fn show_info(cfg: &config::RuneConfig, agent: &crate::agent::Agent) {
     println!("{}", "Session Info:".bold());
@@ -440,7 +713,12 @@ fn show_info(cfg: &config::RuneConfig, agent: &crate::agent::Agent) {
         println!("    {} (none configured)", "•".dimmed());
     } else {
         for server in &cfg.mcp_servers {
-            println!("    {} {} ({})", "•".dimmed(), server.name.cyan(), server.command.dimmed());
+            println!(
+                "    {} {} ({})",
+                "•".dimmed(),
+                server.name.cyan(),
+                server.command.dimmed()
+            );
         }
     }
     println!();
@@ -1172,7 +1450,10 @@ pub async fn run() {
             }
             "/config" => show_config(&cfg),
             "/tools" => show_tools(),
+            "/skills full" => show_skills_full(&cfg),
             "/skills" => show_skills(&cfg),
+            "/mcps full" => show_mcps_full(&cfg, &agent),
+            "/mcps" => show_mcps_summary(&cfg, &agent),
             "/trace" => {
                 println!("{} {}", "Trace dir:".bold(), ".rune/traces/");
                 println!(
@@ -1316,5 +1597,162 @@ pub async fn run() {
             let _ = std::fs::create_dir_all(parent);
         }
         let _ = editor.save_history(path);
+    }
+}
+
+/// Parsed skill frontmatter for display and testing.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SkillFrontmatter {
+    pub description: Option<String>,
+    pub tools_allow: Vec<String>,
+    pub tools_deny: Vec<String>,
+    pub model: Option<String>,
+}
+
+/// Parse SKILL.md frontmatter from content string.
+pub fn parse_skill_frontmatter(content: &str) -> SkillFrontmatter {
+    let mut in_frontmatter = false;
+    let mut description = None;
+    let mut tools_allow = Vec::new();
+    let mut tools_deny = Vec::new();
+    let mut model = None;
+
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if trimmed == "---" {
+            if in_frontmatter {
+                break;
+            }
+            in_frontmatter = true;
+            continue;
+        }
+        if in_frontmatter {
+            if let Some(val) = trimmed.strip_prefix("description:") {
+                description = Some(val.trim().trim_matches('"').to_string());
+            } else if let Some(val) = trimmed.strip_prefix("tools_allow:") {
+                tools_allow = val
+                    .trim()
+                    .split(',')
+                    .map(|s| s.trim().to_string())
+                    .filter(|s| !s.is_empty())
+                    .collect();
+            } else if let Some(val) = trimmed.strip_prefix("tools_deny:") {
+                tools_deny = val
+                    .trim()
+                    .split(',')
+                    .map(|s| s.trim().to_string())
+                    .filter(|s| !s.is_empty())
+                    .collect();
+            } else if let Some(val) = trimmed.strip_prefix("model:") {
+                model = Some(val.trim().trim_matches('"').to_string());
+            }
+        }
+    }
+
+    SkillFrontmatter {
+        description,
+        tools_allow,
+        tools_deny,
+        model,
+    }
+}
+
+#[cfg(test)]
+mod cli_tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_skill_frontmatter_full() {
+        let content = r#"---
+description: "A test skill for linting"
+tools_allow: read_file, execute_cmd
+tools_deny: write_file
+model: gpt-4o
+---
+# My Skill
+Some content here.
+"#;
+        let fm = parse_skill_frontmatter(content);
+        assert_eq!(fm.description.as_deref(), Some("A test skill for linting"));
+        assert_eq!(fm.tools_allow, vec!["read_file", "execute_cmd"]);
+        assert_eq!(fm.tools_deny, vec!["write_file"]);
+        assert_eq!(fm.model.as_deref(), Some("gpt-4o"));
+    }
+
+    #[test]
+    fn test_parse_skill_frontmatter_minimal() {
+        let content = r#"---
+description: Basic skill
+---
+# Content
+"#;
+        let fm = parse_skill_frontmatter(content);
+        assert_eq!(fm.description.as_deref(), Some("Basic skill"));
+        assert!(fm.tools_allow.is_empty());
+        assert!(fm.tools_deny.is_empty());
+        assert!(fm.model.is_none());
+    }
+
+    #[test]
+    fn test_parse_skill_frontmatter_no_frontmatter() {
+        let content = "# Just a regular markdown file\nNo frontmatter here.";
+        let fm = parse_skill_frontmatter(content);
+        assert!(fm.description.is_none());
+        assert!(fm.tools_allow.is_empty());
+        assert!(fm.tools_deny.is_empty());
+        assert!(fm.model.is_none());
+    }
+
+    #[test]
+    fn test_parse_skill_frontmatter_empty_tools() {
+        let content = r#"---
+description: "Empty tools"
+tools_allow:
+tools_deny:
+---
+"#;
+        let fm = parse_skill_frontmatter(content);
+        assert_eq!(fm.description.as_deref(), Some("Empty tools"));
+        assert!(fm.tools_allow.is_empty());
+        assert!(fm.tools_deny.is_empty());
+    }
+
+    #[test]
+    fn test_parse_skill_frontmatter_quoted_description() {
+        let content = r#"---
+description: "Skill with \"quotes\" inside"
+---
+"#;
+        let fm = parse_skill_frontmatter(content);
+        assert!(fm.description.is_some());
+        // Outer quotes stripped
+        assert!(fm.description.unwrap().contains("quotes"));
+    }
+
+    #[test]
+    fn test_parse_skill_frontmatter_multiple_tools() {
+        let content = r#"---
+tools_allow: read_file, write_file, list_dir, execute_cmd, fetch_url
+---
+"#;
+        let fm = parse_skill_frontmatter(content);
+        assert_eq!(fm.tools_allow.len(), 5);
+        assert_eq!(fm.tools_allow[0], "read_file");
+        assert_eq!(fm.tools_allow[4], "fetch_url");
+    }
+
+    #[test]
+    fn test_parse_skill_frontmatter_stops_at_second_separator() {
+        let content = r#"---
+description: "First section"
+model: gpt-4o
+---
+# Content after frontmatter
+description: "This should NOT be parsed"
+model: different
+"#;
+        let fm = parse_skill_frontmatter(content);
+        assert_eq!(fm.description.as_deref(), Some("First section"));
+        assert_eq!(fm.model.as_deref(), Some("gpt-4o"));
     }
 }

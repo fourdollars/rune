@@ -1,18 +1,18 @@
 use crate::config::RuneConfig;
 use crate::embedding::EmbeddingEngine;
+use crate::mcp::McpManager;
 use crate::provider::{
     ContentPart, LlmMessage, LlmRequest, LlmResponse, LlmToolCall, ProviderRegistry,
 };
 use crate::skills::SkillLoader;
 use crate::tools::ToolRegistry;
-use crate::mcp::McpManager;
-use std::sync::Arc;
-use tokio::sync::Mutex as TokioMutex;
 use crate::trace::{redact, StepKind, TraceWriter};
 use anyhow::Result;
 use colored::Colorize;
 use std::io::Write;
 use std::path::PathBuf;
+use std::sync::Arc;
+use tokio::sync::Mutex as TokioMutex;
 
 use tracing::{debug, info, warn};
 
@@ -182,6 +182,11 @@ impl Agent {
     /// Attach an MCP manager for external tool dispatch.
     pub fn set_mcp_manager(&mut self, mgr: Arc<TokioMutex<McpManager>>) {
         self.mcp_manager = Some(mgr);
+    }
+
+    /// Get a reference to the MCP manager (for /mcps command).
+    pub fn mcp_manager_ref(&self) -> Option<&Arc<TokioMutex<McpManager>>> {
+        self.mcp_manager.as_ref()
     }
     pub fn set_system_prompt(&mut self, prompt: &str) {
         if self
@@ -814,7 +819,10 @@ impl Agent {
         if let Some(ref mcp) = self.mcp_manager {
             if let Ok(mgr) = mcp.try_lock() {
                 for (_server, tool) in mgr.all_tools() {
-                    let mut params = tool.input_schema.clone().unwrap_or_else(|| serde_json::json!({"type": "object", "properties": {}}));
+                    let mut params = tool
+                        .input_schema
+                        .clone()
+                        .unwrap_or_else(|| serde_json::json!({"type": "object", "properties": {}}));
                     if !params.is_object() {
                         params = serde_json::json!({"type": "object", "properties": {}});
                     }
@@ -946,12 +954,14 @@ impl Agent {
         }
         let keep = (max_len - 3) / 2;
         // Find valid char boundaries for UTF-8 safety
-        let prefix_end = s.char_indices()
+        let prefix_end = s
+            .char_indices()
             .take_while(|(i, _)| *i < keep)
             .last()
             .map(|(i, c)| i + c.len_utf8())
             .unwrap_or(0);
-        let suffix_start = s.char_indices()
+        let suffix_start = s
+            .char_indices()
             .rev()
             .take_while(|(i, _)| s.len() - *i <= keep)
             .last()
@@ -1067,12 +1077,19 @@ impl Agent {
                         } else {
                             serde_json::to_string_pretty(&result).unwrap_or_default()
                         };
-                        output = crate::tools::ToolOutput { content: text, is_error: false, active_layers: None, degraded: None };
+                        output = crate::tools::ToolOutput {
+                            content: text,
+                            is_error: false,
+                            active_layers: None,
+                            degraded: None,
+                        };
                     }
                     Err(e) => {
                         output = crate::tools::ToolOutput {
                             content: format!("MCP tool error: {}", e),
-                            is_error: true, active_layers: None, degraded: None,
+                            is_error: true,
+                            active_layers: None,
+                            degraded: None,
                         };
                     }
                 }
