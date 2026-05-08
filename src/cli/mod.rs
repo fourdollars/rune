@@ -727,18 +727,23 @@ fn show_info(cfg: &config::RuneConfig, agent: &crate::agent::Agent) {
     println!("  {}", "Skills:".bold());
     let skill_dir = std::path::Path::new(&cfg.skills_dir);
     if skill_dir.exists() {
-        if let Ok(entries) = std::fs::read_dir(skill_dir) {
-            let skills: Vec<String> = entries
-                .filter_map(|e| e.ok())
-                .filter(|e| e.file_type().map(|ft| ft.is_dir()).unwrap_or(false))
-                .filter_map(|e| e.file_name().into_string().ok())
+        let skill_files = discover_skill_files(skill_dir, 0);
+        if skill_files.is_empty() {
+            println!("    {} (none found in {})", "•".dimmed(), cfg.skills_dir);
+        } else {
+            let mut names: Vec<String> = skill_files
+                .iter()
+                .filter_map(|p| {
+                    p.parent()
+                        .and_then(|dir| dir.file_name())
+                        .and_then(|n| n.to_str())
+                        .map(|s| s.to_string())
+                })
                 .collect();
-            if skills.is_empty() {
-                println!("    {} (none found in {})", "•".dimmed(), cfg.skills_dir);
-            } else {
-                for s in &skills {
-                    println!("    {} @{}", "•".dimmed(), s.green());
-                }
+            names.sort();
+            names.dedup();
+            for s in &names {
+                println!("    {} @{}", "•".dimmed(), s.green());
             }
         }
     } else {
