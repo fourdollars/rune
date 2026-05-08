@@ -338,7 +338,25 @@ fn show_skills(cfg: &config::RuneConfig) {
                 .collect();
             names.sort();
             names.dedup();
-            println!("  {} {}", "found:".dimmed(), names.join(", ").green());
+            // When --skills is specified, only show the preloaded ones
+            if !cfg.preload_skills.is_empty() {
+                let filtered: Vec<&String> = names
+                    .iter()
+                    .filter(|n| cfg.preload_skills.iter().any(|s| s == *n))
+                    .collect();
+                println!(
+                    "  {} {} (filtered by --skills)",
+                    "active:".dimmed(),
+                    filtered
+                        .iter()
+                        .map(|s| s.as_str())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                        .green()
+                );
+            } else {
+                println!("  {} {}", "found:".dimmed(), names.join(", ").green());
+            }
         } else {
             println!("  {} (no skills found)", "found:".dimmed());
         }
@@ -523,6 +541,10 @@ fn show_skills_full(cfg: &config::RuneConfig) {
             .and_then(|n| n.to_str())
             .unwrap_or("?")
             .to_string();
+        // When --skills is specified, only show the preloaded ones
+        if !cfg.preload_skills.is_empty() && !cfg.preload_skills.iter().any(|s| s == &name) {
+            continue;
+        }
         let abs_dir = skill_md
             .parent()
             .map(|p| p.display().to_string())
@@ -744,8 +766,20 @@ fn show_info(cfg: &config::RuneConfig, agent: &crate::agent::Agent) {
                 .collect();
             names.sort();
             names.dedup();
-            for s in &names {
+            // When --skills is specified, only show the preloaded ones
+            let display_names: Vec<&String> = if !cfg.preload_skills.is_empty() {
+                names
+                    .iter()
+                    .filter(|n| cfg.preload_skills.iter().any(|s| s == *n))
+                    .collect()
+            } else {
+                names.iter().collect()
+            };
+            for s in &display_names {
                 println!("    {} @{}", "•".dimmed(), s.green());
+            }
+            if !cfg.preload_skills.is_empty() {
+                println!("    {} (filtered by --skills)", "ℹ".dimmed());
             }
         }
     } else {
