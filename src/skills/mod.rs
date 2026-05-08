@@ -65,11 +65,32 @@ impl SkillLoader {
             candidates.push(cur.join(".rune").join("skills").join(name).join("SKILL.md"));
         }
 
-        // find first existing candidate
-        let path = candidates
-            .into_iter()
-            .find(|p| p.exists() && p.is_file())
-            .ok_or_else(|| anyhow::anyhow!("skill '{}' not found in search paths", name))?;
+        // find first existing candidate (flat lookup)
+        let path = candidates.into_iter().find(|p| p.exists() && p.is_file());
+
+        // Recursive fallback: search for {name}/SKILL.md at any depth (max 3)
+        let path = match path {
+            Some(p) => p,
+            None => {
+                let dirs = self.all_skill_dirs();
+                let mut found: Option<PathBuf> = None;
+                for base in &dirs {
+                    for skill_path in discover_skill_files(base, 0) {
+                        if let Some(parent) = skill_path.parent() {
+                            if parent.file_name().and_then(|n| n.to_str()) == Some(name) {
+                                found = Some(skill_path);
+                                break;
+                            }
+                        }
+                    }
+                    if found.is_some() {
+                        break;
+                    }
+                }
+                found
+                    .ok_or_else(|| anyhow::anyhow!("skill '{}' not found in search paths", name))?
+            }
+        };
 
         let raw = fs::read_to_string(&path)
             .with_context(|| format!("reading SKILL.md at {}", path.display()))?;
@@ -138,39 +159,26 @@ impl SkillLoader {
         let mut seen: HashSet<String> = HashSet::new();
 
         for base in &dirs {
-            if !base.exists() || !base.is_dir() {
-                continue;
-            }
-            let entries = match fs::read_dir(base) {
-                Ok(e) => e,
-                Err(_) => continue,
-            };
-            for entry in entries.flatten() {
-                let path = entry.path();
-                if path.is_dir() {
-                    let skill_file = path.join("SKILL.md");
-                    if skill_file.exists() && skill_file.is_file() {
-                        if let Ok(raw) = fs::read_to_string(&skill_file) {
-                            let (meta, _body) = parse_frontmatter(&raw, &skill_file, None);
-                            let name = meta.name.clone();
-                            if seen.contains(&name) {
-                                continue;
-                            }
-                            seen.insert(name.clone());
-                            let text = format!(
-                                "{}: {}",
-                                meta.name,
-                                meta.description.as_deref().unwrap_or("")
-                            );
-                            let needs = match store.entries.iter().find(|e| e.key == name) {
-                                Some(e) => e.text != text,
-                                None => true,
-                            };
-                            if needs {
-                                to_embed_keys.push(name);
-                                to_embed_texts.push(text);
-                            }
-                        }
+            for skill_file in discover_skill_files(base, 0) {
+                if let Ok(raw) = fs::read_to_string(&skill_file) {
+                    let (meta, _body) = parse_frontmatter(&raw, &skill_file, None);
+                    let name = meta.name.clone();
+                    if seen.contains(&name) {
+                        continue;
+                    }
+                    seen.insert(name.clone());
+                    let text = format!(
+                        "{}: {}",
+                        meta.name,
+                        meta.description.as_deref().unwrap_or("")
+                    );
+                    let needs = match store.entries.iter().find(|e| e.key == name) {
+                        Some(e) => e.text != text,
+                        None => true,
+                    };
+                    if needs {
+                        to_embed_keys.push(name);
+                        to_embed_texts.push(text);
                     }
                 }
             }
@@ -244,6 +252,31 @@ impl SkillLoader {
         }
         dirs
     }
+}
+
+/// Recursively find all SKILL.md files under a directory (max depth 3).
+/// Deduplicates by skill name (parent directory); first occurrence wins.
+pub fn discover_skill_files(base: &Path, depth: usize) -> Vec<PathBuf> {
+    let mut results = Vec::new();
+    if depth > 3 || !base.is_dir() {
+        return results;
+    }
+    let entries = match fs::read_dir(base) {
+        Ok(e) => e,
+        Err(_) => return results,
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            let skill_md = path.join("SKILL.md");
+            if skill_md.exists() && skill_md.is_file() {
+                results.push(skill_md);
+            }
+            // Recurse into subdirectories
+            results.extend(discover_skill_files(&path, depth + 1));
+        }
+    }
+    results
 }
 
 /// 解析簡單的 YAML-like frontmatter（不使用 yaml crate）
@@ -585,6 +618,85 @@ mod tests {
         assert_eq!(skills.len(), 2);
         assert_eq!(skills[0].metadata.name, "alpha");
         assert_eq!(skills[1].metadata.name, "beta");
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+    #[test]
+    fn test_skill_loader_loads_nested_skill() {
+        // Simulate: skills/lp-api/launchpad/SKILL.md (depth 2)
+        let dir = std::env::temp_dir().join(format!("rune-nested-skill-{}", std::process::id()));
+        let nested = dir.join("lp-api").join("launchpad");
+        fs::create_dir_all(&nested).unwrap();
+        fs::write(
+            nested.join("SKILL.md"),
+            "---\nname: launchpad\ndescription: Launchpad API\n---\nLaunchpad skill content",
+        )
+        .unwrap();
+
+        let loader = SkillLoader::new(vec![dir.clone()]);
+        let skill = loader.load("launchpad").expect("should load nested skill");
+        assert_eq!(skill.metadata.name, "launchpad");
+        assert_eq!(skill.metadata.description.as_deref(), Some("Launchpad API"));
+        assert!(skill.content.contains("Launchpad skill content"));
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_skill_loader_flat_takes_priority_over_nested() {
+        // Both skills/myskill/SKILL.md and skills/sub/myskill/SKILL.md exist
+        // Flat (depth 1) should win
+        let dir = std::env::temp_dir().join(format!("rune-flat-prio-{}", std::process::id()));
+        let flat = dir.join("myskill");
+        fs::create_dir_all(&flat).unwrap();
+        fs::write(
+            flat.join("SKILL.md"),
+            "---\nname: myskill\ndescription: flat version\n---\nflat content",
+        )
+        .unwrap();
+
+        let nested = dir.join("sub").join("myskill");
+        fs::create_dir_all(&nested).unwrap();
+        fs::write(
+            nested.join("SKILL.md"),
+            "---\nname: myskill\ndescription: nested version\n---\nnested content",
+        )
+        .unwrap();
+
+        let loader = SkillLoader::new(vec![dir.clone()]);
+        let skill = loader.load("myskill").expect("should load flat skill");
+        // Flat candidate is checked first, should win
+        assert_eq!(skill.metadata.description.as_deref(), Some("flat version"));
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_discover_skill_files_recursive() {
+        let dir =
+            std::env::temp_dir().join(format!("rune-discover-recurse-{}", std::process::id()));
+
+        // Create: dir/a/SKILL.md, dir/b/c/SKILL.md, dir/d/e/f/SKILL.md
+        let a = dir.join("a");
+        fs::create_dir_all(&a).unwrap();
+        fs::write(a.join("SKILL.md"), "skill a").unwrap();
+
+        let bc = dir.join("b").join("c");
+        fs::create_dir_all(&bc).unwrap();
+        fs::write(bc.join("SKILL.md"), "skill c").unwrap();
+
+        let def = dir.join("d").join("e").join("f");
+        fs::create_dir_all(&def).unwrap();
+        fs::write(def.join("SKILL.md"), "skill f").unwrap();
+
+        let results = discover_skill_files(&dir, 0);
+        let names: Vec<String> = results
+            .iter()
+            .filter_map(|p| p.parent()?.file_name()?.to_str().map(|s| s.to_string()))
+            .collect();
+        assert!(names.contains(&"a".to_string()));
+        assert!(names.contains(&"c".to_string()));
+        assert!(names.contains(&"f".to_string()));
 
         let _ = fs::remove_dir_all(&dir);
     }

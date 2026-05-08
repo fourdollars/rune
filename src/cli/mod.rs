@@ -306,29 +306,7 @@ fn show_tools() {
     }
 }
 
-/// Recursively find all SKILL.md files under a directory (max depth 3).
-fn discover_skill_files(base: &std::path::Path, depth: usize) -> Vec<std::path::PathBuf> {
-    let mut results = Vec::new();
-    if depth > 3 || !base.is_dir() {
-        return results;
-    }
-    let entries = match std::fs::read_dir(base) {
-        Ok(e) => e,
-        Err(_) => return results,
-    };
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if path.is_dir() {
-            let skill_md = path.join("SKILL.md");
-            if skill_md.exists() && skill_md.is_file() {
-                results.push(skill_md);
-            }
-            // Recurse into subdirectories
-            results.extend(discover_skill_files(&path, depth + 1));
-        }
-    }
-    results
-}
+// discover_skill_files moved to skills::discover_skill_files
 
 /// Display loaded skills.
 fn show_skills(cfg: &config::RuneConfig) {
@@ -342,7 +320,7 @@ fn show_skills(cfg: &config::RuneConfig) {
     );
     let skill_dir = std::path::Path::new(&cfg.skills_dir);
     if skill_dir.exists() {
-        let skill_files = discover_skill_files(skill_dir, 0);
+        let skill_files = crate::skills::discover_skill_files(skill_dir, 0);
         if !skill_files.is_empty() {
             let mut names: Vec<String> = skill_files
                 .iter()
@@ -503,7 +481,7 @@ fn show_skills_full(cfg: &config::RuneConfig) {
         return;
     }
 
-    let mut skill_files = discover_skill_files(skill_dir, 0);
+    let mut skill_files = crate::skills::discover_skill_files(skill_dir, 0);
     skill_files.sort();
 
     if skill_files.is_empty() {
@@ -727,7 +705,7 @@ fn show_info(cfg: &config::RuneConfig, agent: &crate::agent::Agent) {
     println!("  {}", "Skills:".bold());
     let skill_dir = std::path::Path::new(&cfg.skills_dir);
     if skill_dir.exists() {
-        let skill_files = discover_skill_files(skill_dir, 0);
+        let skill_files = crate::skills::discover_skill_files(skill_dir, 0);
         if skill_files.is_empty() {
             println!("    {} (none found in {})", "•".dimmed(), cfg.skills_dir);
         } else {
@@ -1809,7 +1787,7 @@ model: different
         let dir =
             std::env::temp_dir().join(format!("rune-skill-test-empty-{}", std::process::id()));
         let _ = std::fs::create_dir_all(&dir);
-        let results = discover_skill_files(&dir, 0);
+        let results = crate::skills::discover_skill_files(&dir, 0);
         assert!(results.is_empty());
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -1824,7 +1802,7 @@ model: different
         let _ = std::fs::create_dir_all(&skill_b);
         std::fs::write(skill_b.join("SKILL.md"), "---\nname: skill-b\n---\n").unwrap();
 
-        let results = discover_skill_files(&dir, 0);
+        let results = crate::skills::discover_skill_files(&dir, 0);
         assert_eq!(results.len(), 2);
         assert!(results.iter().any(|p| p.ends_with("skill-a/SKILL.md")));
         assert!(results.iter().any(|p| p.ends_with("skill-b/SKILL.md")));
@@ -1840,7 +1818,7 @@ model: different
         let _ = std::fs::create_dir_all(&nested);
         std::fs::write(nested.join("SKILL.md"), "---\nname: launchpad\n---\n").unwrap();
 
-        let results = discover_skill_files(&dir, 0);
+        let results = crate::skills::discover_skill_files(&dir, 0);
         assert_eq!(results.len(), 1);
         assert!(results[0].ends_with("launchpad/SKILL.md"));
         let _ = std::fs::remove_dir_all(&dir);
@@ -1855,7 +1833,7 @@ model: different
         let _ = std::fs::create_dir_all(&deep);
         std::fs::write(deep.join("SKILL.md"), "---\nname: deep\n---\n").unwrap();
 
-        let results = discover_skill_files(&dir, 0);
+        let results = crate::skills::discover_skill_files(&dir, 0);
         assert!(results.is_empty(), "depth 4 should not be discovered");
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -1870,7 +1848,7 @@ model: different
         let empty_dir = dir.join("empty-skill");
         let _ = std::fs::create_dir_all(&empty_dir);
 
-        let results = discover_skill_files(&dir, 0);
+        let results = crate::skills::discover_skill_files(&dir, 0);
         assert!(results.is_empty());
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -1878,7 +1856,7 @@ model: different
     #[test]
     fn test_discover_skill_files_nonexistent_dir() {
         let dir = std::path::Path::new("/tmp/rune-nonexistent-dir-xyz-12345");
-        let results = discover_skill_files(dir, 0);
+        let results = crate::skills::discover_skill_files(dir, 0);
         assert!(results.is_empty());
     }
 }
