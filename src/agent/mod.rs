@@ -1208,60 +1208,148 @@ impl Agent {
                 }
             }
 
-            // Check if it's a file/binary permission error we can resolve
-            if let Some(file_path) = Self::extract_permission_denied_path(&output.content) {
-                // Don't prompt for the same file twice
-                if self
-                    .config
-                    .policy
-                    .allowed_files_ro
-                    .iter()
-                    .any(|f| f == &file_path)
-                    || self
-                        .config
-                        .policy
-                        .allowed_paths_ro
-                        .iter()
-                        .any(|p| file_path.starts_with(p))
-                {
-                    break; // Already allowed, can't fix further
-                }
+            // Check if it's a file/binary permission error — use strace probing
+            if output.content.contains("Permission denied") || output.content.contains("EACCES") {
                 if self.interactive {
-                    let is_exec = output.content.contains("exit_code: 126")
-                        || output.content.contains("exit_code=126");
-                    let label = if is_exec {
-                        "Binary not in allowed paths"
-                    } else {
-                        "File access blocked"
-                    };
-                    // For Landlock: add the parent directory (path_beneath needs a directory)
-                    let dir_to_add = std::path::Path::new(&file_path)
-                        .parent()
-                        .map(|p| p.to_string_lossy().to_string())
-                        .unwrap_or_else(|| file_path.clone());
-                    eprint!(
-                        "\n  {} {}: '{}'.\n      Add '{}' to allowed_paths_ro? [Y/n] ",
-                        "🔓".yellow(),
-                        label,
-                        file_path,
-                        dir_to_add
-                    );
-                    std::io::Write::flush(&mut std::io::stderr()).ok();
-                    let answer = Self::prompt_yn();
-                    if answer {
-                        self.config.policy.allowed_paths_ro.push(dir_to_add.clone());
-                        self.tools.add_allowed_path_ro(&dir_to_add);
-                        crate::config::persist_policy_array("allowed_paths_ro", &dir_to_add);
+                    // Extract the original command from args for strace re-run
+                    let cmd_for_strace = args
+                        .get("cmd")
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string());
+
+                    if let Some(cmd) = cmd_for_strace {
+                        let cwd = args
+                            .get("cwd")
+                            .and_then(|v| v.as_str())
+                            .map(|s| s.to_string());
                         eprintln!(
-                            "{}",
-                            format!(
-                                "  ✓ '{}' added to allowed_paths_ro (saved to config)",
-                                dir_to_add
-                            )
-                            .green()
+                            "  {} Permission denied — probing with strace...",
+                            "🔍".dimmed()
                         );
-                        output = self.tools.execute(&tc.function.name, args.clone()).await;
-                        continue;
+                        let blocked_files = Self::strace_probe_eacces(&cmd, cwd.as_deref()).await;
+
+                        if blocked_files.is_empty() {
+                            // Fallback to legacy pattern matching
+                            if let Some(file_path) =
+                                Self::extract_permission_denied_path(&output.content)
+                            {
+                                let already_allowed = self
+                                    .config
+                                    .policy
+                                    .allowed_files_ro
+                                    .iter()
+                                    .any(|f| f == &file_path)
+                                    || self
+                                        .config
+                                        .policy
+                                        .allowed_paths_ro
+                                        .iter()
+                                        .any(|p| file_path.starts_with(p));
+                                if !already_allowed {
+                                    eprint!(
+                                        "\n  {} File access blocked: '{}'.\n      Add to allowed_files_ro? [Y/n] ",
+                                        "🔓".yellow(),
+                                        file_path
+                                    );
+                                    std::io::Write::flush(&mut std::io::stderr()).ok();
+                                    if Self::prompt_yn() {
+                                        self.config.policy.allowed_files_ro.push(file_path.clone());
+                                        self.tools.add_allowed_file_ro(&file_path);
+                                        crate::config::persist_policy_array(
+                                            "allowed_files_ro",
+                                            &file_path,
+                                        );
+                                        eprintln!(
+                                            "{}",
+                                            format!(
+                                                "  ✓ '{}' added to allowed_files_ro (saved)",
+                                                file_path
+                                            )
+                                            .green()
+                                        );
+                                        output = self
+                                            .tools
+                                            .execute(&tc.function.name, args.clone())
+                                            .await;
+                                        continue;
+                                    }
+                                }
+                            }
+                        } else {
+                            // strace found blocked files — prompt for each
+                            let mut any_added = false;
+                            for (path, mode) in &blocked_files {
+                                let already_allowed = match mode.as_str() {
+                                    "rw" => {
+                                        self.config
+                                            .policy
+                                            .allowed_files_rw
+                                            .iter()
+                                            .any(|f| f == path)
+                                            || self
+                                                .config
+                                                .policy
+                                                .allowed_paths_rw
+                                                .iter()
+                                                .any(|p| path.starts_with(p))
+                                    }
+                                    _ => {
+                                        self.config
+                                            .policy
+                                            .allowed_files_ro
+                                            .iter()
+                                            .any(|f| f == path)
+                                            || self
+                                                .config
+                                                .policy
+                                                .allowed_paths_ro
+                                                .iter()
+                                                .any(|p| path.starts_with(p))
+                                    }
+                                };
+                                if already_allowed {
+                                    continue;
+                                }
+                                let field = if mode == "rw" {
+                                    "allowed_files_rw"
+                                } else {
+                                    "allowed_files_ro"
+                                };
+                                eprint!(
+                                    "\n  {} Access blocked: '{}' ({}).\n      Add to {}? [Y/n] ",
+                                    "🔓".yellow(),
+                                    path,
+                                    if mode == "rw" {
+                                        "read-write"
+                                    } else {
+                                        "read-only"
+                                    },
+                                    field
+                                );
+                                std::io::Write::flush(&mut std::io::stderr()).ok();
+                                if Self::prompt_yn() {
+                                    if mode == "rw" {
+                                        self.config.policy.allowed_files_rw.push(path.clone());
+                                        self.tools.add_allowed_file_rw(path);
+                                        crate::config::persist_policy_array(field, path);
+                                    } else {
+                                        self.config.policy.allowed_files_ro.push(path.clone());
+                                        self.tools.add_allowed_file_ro(path);
+                                        crate::config::persist_policy_array(field, path);
+                                    }
+                                    eprintln!(
+                                        "{}",
+                                        format!("  ✓ '{}' added to {} (saved)", path, field)
+                                            .green()
+                                    );
+                                    any_added = true;
+                                }
+                            }
+                            if any_added {
+                                output = self.tools.execute(&tc.function.name, args.clone()).await;
+                                continue;
+                            }
+                        }
                     }
                 }
             }
@@ -1387,6 +1475,135 @@ impl Agent {
                         return Some(domain.to_string());
                     }
                 }
+            }
+        }
+        None
+    }
+
+    /// Probe permission denied errors using strace.
+    /// Re-runs the failed command under strace to identify exactly which files
+    /// were blocked (EACCES) and whether they need read or write access.
+    /// Returns a list of (path, access_mode) where access_mode is "ro" or "rw".
+    async fn strace_probe_eacces(cmd: &str, cwd: Option<&str>) -> Vec<(String, String)> {
+        use std::process::Stdio;
+
+        let strace_cmd = format!(
+            "strace -f -e trace=openat,open,access,stat,execve -o /dev/stdout -- sh -c {} 2>/dev/null",
+            shell_escape(cmd)
+        );
+
+        let mut command = tokio::process::Command::new("sh");
+        command
+            .arg("-c")
+            .arg(&strace_cmd)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null());
+
+        if let Some(dir) = cwd {
+            command.current_dir(dir);
+        }
+
+        let output = match command.output().await {
+            Ok(o) => o,
+            Err(_) => return Vec::new(),
+        };
+
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        Self::parse_strace_eacces(&stdout)
+    }
+
+    /// Parse strace output for EACCES failures.
+    /// Recognizes patterns like:
+    ///   openat(AT_FDCWD, "/path/file", O_RDONLY|...) = -1 EACCES
+    ///   openat(AT_FDCWD, "/path/file", O_WRONLY|...) = -1 EACCES
+    ///   access("/path/file", R_OK) = -1 EACCES
+    ///   execve("/path/file", ...) = -1 EACCES
+    fn parse_strace_eacces(output: &str) -> Vec<(String, String)> {
+        let mut results: Vec<(String, String)> = Vec::new();
+        let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+
+        for line in output.lines() {
+            if !line.contains("EACCES") {
+                continue;
+            }
+
+            if line.contains("openat(") || line.contains("open(") {
+                if let Some(path) = Self::extract_strace_quoted_path(line) {
+                    if seen.contains(&path) {
+                        continue;
+                    }
+                    let mode = if line.contains("O_WRONLY")
+                        || line.contains("O_RDWR")
+                        || line.contains("O_CREAT")
+                        || line.contains("O_TRUNC")
+                    {
+                        "rw"
+                    } else {
+                        "ro"
+                    };
+                    seen.insert(path.clone());
+                    results.push((path, mode.to_string()));
+                }
+            } else if line.contains("access(") {
+                if let Some(path) = Self::extract_strace_quoted_path(line) {
+                    if seen.contains(&path) {
+                        continue;
+                    }
+                    let mode = if line.contains("W_OK") { "rw" } else { "ro" };
+                    seen.insert(path.clone());
+                    results.push((path, mode.to_string()));
+                }
+            } else if line.contains("execve(") {
+                if let Some(path) = Self::extract_strace_quoted_path(line) {
+                    if seen.contains(&path) {
+                        continue;
+                    }
+                    seen.insert(path.clone());
+                    results.push((path, "ro".to_string()));
+                }
+            } else if line.contains("stat(") || line.contains("statx(") {
+                if let Some(path) = Self::extract_strace_quoted_path(line) {
+                    if seen.contains(&path) {
+                        continue;
+                    }
+                    seen.insert(path.clone());
+                    results.push((path, "ro".to_string()));
+                }
+            }
+        }
+
+        // Filter out noise
+        results
+            .into_iter()
+            .filter(|(path, _)| {
+                path.starts_with('/')
+                    && !path.starts_with("/proc/")
+                    && !path.starts_with("/sys/")
+                    && !path.starts_with("/dev/")
+                    && !path.contains('\0')
+            })
+            .collect()
+    }
+
+    /// Extract a double-quoted path from a strace output line.
+    fn extract_strace_quoted_path(line: &str) -> Option<String> {
+        let mut in_quote = false;
+        let mut path = String::new();
+
+        for ch in line.chars() {
+            if ch == '"' {
+                if in_quote {
+                    if path.starts_with('/') {
+                        return Some(path);
+                    }
+                    path.clear();
+                    in_quote = false;
+                } else {
+                    in_quote = true;
+                    path.clear();
+                }
+            } else if in_quote {
+                path.push(ch);
             }
         }
         None
@@ -1660,6 +1877,11 @@ impl Agent {
     pub fn tool_call_count(&self) -> usize {
         self.tool_call_names.len()
     }
+}
+
+/// Shell-escape a string for use in sh -c (wraps in single quotes).
+fn shell_escape(s: &str) -> String {
+    format!("'{}'", s.replace('\'', "'\\''"))
 }
 
 #[cfg(test)]
@@ -1958,5 +2180,147 @@ stderr: warning: unable to access '/home/user/.gitconfig': Permission denied";
         // When preload_skills is empty, dynamic discovery (inject_skills) should run.
         let cfg = crate::config::RuneConfig::default();
         assert!(cfg.preload_skills.is_empty());
+    }
+
+    #[test]
+    fn test_shell_escape_basic() {
+        assert_eq!(super::shell_escape("hello"), "'hello'");
+    }
+
+    #[test]
+    fn test_shell_escape_with_single_quotes() {
+        assert_eq!(super::shell_escape("it's"), "'it'\\''s'");
+    }
+
+    #[test]
+    fn test_shell_escape_with_spaces() {
+        assert_eq!(super::shell_escape("hello world"), "'hello world'");
+    }
+
+    #[test]
+    fn test_parse_strace_eacces_openat_rdonly() {
+        let output = r#"openat(AT_FDCWD, "/home/user/.gitconfig", O_RDONLY|O_CLOEXEC) = -1 EACCES (Permission denied)"#;
+        let results = Agent::parse_strace_eacces(output);
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].0, "/home/user/.gitconfig");
+        assert_eq!(results[0].1, "ro");
+    }
+
+    #[test]
+    fn test_parse_strace_eacces_openat_wronly() {
+        let output = r#"openat(AT_FDCWD, "/tmp/output.log", O_WRONLY|O_CREAT|O_TRUNC, 0644) = -1 EACCES (Permission denied)"#;
+        let results = Agent::parse_strace_eacces(output);
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].0, "/tmp/output.log");
+        assert_eq!(results[0].1, "rw");
+    }
+
+    #[test]
+    fn test_parse_strace_eacces_rdwr() {
+        let output = r#"openat(AT_FDCWD, "/var/data/db.sqlite", O_RDWR|O_CLOEXEC) = -1 EACCES (Permission denied)"#;
+        let results = Agent::parse_strace_eacces(output);
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].0, "/var/data/db.sqlite");
+        assert_eq!(results[0].1, "rw");
+    }
+
+    #[test]
+    fn test_parse_strace_eacces_access() {
+        let output = r#"access("/home/user/.ssh/config", R_OK) = -1 EACCES (Permission denied)"#;
+        let results = Agent::parse_strace_eacces(output);
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].0, "/home/user/.ssh/config");
+        assert_eq!(results[0].1, "ro");
+    }
+
+    #[test]
+    fn test_parse_strace_eacces_access_write() {
+        let output = r#"access("/home/user/.cache/file", W_OK) = -1 EACCES (Permission denied)"#;
+        let results = Agent::parse_strace_eacces(output);
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].0, "/home/user/.cache/file");
+        assert_eq!(results[0].1, "rw");
+    }
+
+    #[test]
+    fn test_parse_strace_eacces_execve() {
+        let output = r#"execve("/usr/local/bin/jira", ["jira", "list"], ...) = -1 EACCES (Permission denied)"#;
+        let results = Agent::parse_strace_eacces(output);
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].0, "/usr/local/bin/jira");
+        assert_eq!(results[0].1, "ro");
+    }
+
+    #[test]
+    fn test_parse_strace_eacces_stat() {
+        let output = r#"stat("/home/user/.npmrc", 0x7ffd...) = -1 EACCES (Permission denied)"#;
+        let results = Agent::parse_strace_eacces(output);
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].0, "/home/user/.npmrc");
+        assert_eq!(results[0].1, "ro");
+    }
+
+    #[test]
+    fn test_parse_strace_eacces_filters_proc_sys_dev() {
+        let output = r#"openat(AT_FDCWD, "/proc/self/status", O_RDONLY) = -1 EACCES (Permission denied)
+openat(AT_FDCWD, "/sys/class/net", O_RDONLY) = -1 EACCES (Permission denied)
+openat(AT_FDCWD, "/dev/tty", O_RDWR) = -1 EACCES (Permission denied)
+openat(AT_FDCWD, "/home/user/.config/app", O_RDONLY) = -1 EACCES (Permission denied)"#;
+        let results = Agent::parse_strace_eacces(output);
+        // Only /home/user/.config/app should remain (others filtered)
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].0, "/home/user/.config/app");
+    }
+
+    #[test]
+    fn test_parse_strace_eacces_dedup() {
+        let output = r#"openat(AT_FDCWD, "/home/user/.gitconfig", O_RDONLY) = -1 EACCES (Permission denied)
+openat(AT_FDCWD, "/home/user/.gitconfig", O_RDONLY|O_CLOEXEC) = -1 EACCES (Permission denied)"#;
+        let results = Agent::parse_strace_eacces(output);
+        // Deduplication: same file should appear only once
+        assert_eq!(results.len(), 1);
+    }
+
+    #[test]
+    fn test_parse_strace_eacces_multiple_files() {
+        let output = r#"openat(AT_FDCWD, "/home/user/.gitconfig", O_RDONLY) = -1 EACCES (Permission denied)
+openat(AT_FDCWD, "/home/user/.config/git/config", O_RDONLY) = -1 EACCES (Permission denied)
+openat(AT_FDCWD, "/home/user/.local/share/data.db", O_RDWR) = -1 EACCES (Permission denied)"#;
+        let results = Agent::parse_strace_eacces(output);
+        assert_eq!(results.len(), 3);
+        assert_eq!(results[0].1, "ro");
+        assert_eq!(results[1].1, "ro");
+        assert_eq!(results[2].1, "rw");
+    }
+
+    #[test]
+    fn test_parse_strace_eacces_no_eacces() {
+        let output = r#"openat(AT_FDCWD, "/etc/passwd", O_RDONLY) = 3
+read(3, "root:x:0:0:...", 4096) = 1234"#;
+        let results = Agent::parse_strace_eacces(output);
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn test_extract_strace_quoted_path() {
+        let line = r#"openat(AT_FDCWD, "/home/user/.gitconfig", O_RDONLY) = -1 EACCES"#;
+        let path = Agent::extract_strace_quoted_path(line);
+        assert_eq!(path, Some("/home/user/.gitconfig".to_string()));
+    }
+
+    #[test]
+    fn test_extract_strace_quoted_path_non_absolute() {
+        // First quoted string is not a path
+        let line = r#"openat(AT_FDCWD, "relative/path", O_RDONLY) = -1 EACCES"#;
+        let path = Agent::extract_strace_quoted_path(line);
+        // "relative/path" doesn't start with '/', so skip it
+        assert_eq!(path, None);
+    }
+
+    #[test]
+    fn test_extract_strace_quoted_path_no_quotes() {
+        let line = "some random line without quotes";
+        let path = Agent::extract_strace_quoted_path(line);
+        assert_eq!(path, None);
     }
 }
