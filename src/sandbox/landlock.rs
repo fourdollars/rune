@@ -242,9 +242,11 @@ fn add_path_rule(ruleset_fd: i32, path: &str, access: u64) -> Result<(), String>
     }
 
     // Determine if this is a file or directory and adjust access rights accordingly.
-    // Files don't support READ_DIR, REMOVE_DIR, MAKE_* operations.
-    let is_file = std::path::Path::new(path).is_file();
-    let effective_access = if is_file {
+    // Files and special nodes (char/block devices like /dev/null) don't support
+    // directory-only operations (READ_DIR, REMOVE_DIR, MAKE_*).
+    let p = std::path::Path::new(path);
+    let is_non_dir = !p.is_dir();
+    let effective_access = if is_non_dir {
         // File-only access: EXECUTE, READ_FILE, WRITE_FILE, TRUNCATE
         access
             & (LANDLOCK_ACCESS_FS_EXECUTE
