@@ -156,8 +156,6 @@ api_key = "ghu_..."          # GitHub Copilot (auto-detected)
 skills_dir = "./skills"
 log_level = "warn"
 # system_prompt = "You are a helpful assistant."  # optional: override default system prompt (AGENTS.md still appended)
-# max_steps = 20          # optional (unlimited if not set)
-# token_budget = 16384    # optional (unlimited if not set)
 # max_steps = 50          # default 50, 0 = unlimited
 # timeout_secs = 30       # default 30, 0 = unlimited
 # token_budget = 262144   # default 256k, 0 = unlimited
@@ -170,7 +168,7 @@ context_window = 128000       # model context window in tokens
 mode = "confirm"             # confirm | allowlist | unrestricted
 allowed_commands = ["ls", "cat", "head", "ps", "echo"]
 allowed_domains = ["wttr.in", "api.github.com"]
-denied_syscalls = ["ptrace", "mount", "kexec_load", "bpf", "setns"]
+# allowed_syscalls = []    # dangerous syscalls to ALLOW through seccomp (empty = block all)
 allowed_paths_rw = ["/tmp"]
 allowed_paths_ro = ["/bin", "/usr", "/lib"]
 denied_paths = ["/root", "/etc/shadow"]
@@ -193,7 +191,7 @@ max_pids = 64
 | `RUNE_PROVIDER` | Provider name (github-copilot, gemini, openai, openrouter, ollama, anthropic) |
 | `RUNE_MODEL` | Model name |
 | `RUNE_BASE_URL` | Provider base URL |
-| `RUNE_POLICY_MODE` (legacy) | Policy mode override |
+| `RUNE_POLICY_MODE` | Policy mode override (legacy; prefer `[policy] mode` in config) |
 | `RUNE_LOG_LEVEL` | Log level |
 | `RUNE_TRACE` | Enable trace (true/false) |
 | `RUNE_CONTEXT_WINDOW` | Model context window in tokens (default: 128000) |
@@ -491,7 +489,7 @@ src/
 
 ```bash
 cargo build --release    # Single binary
-cargo test               # Unit tests (250)
+cargo test               # Unit tests (259)
 ./tests/e2e.sh           # E2E tests (26)
 make check-all           # Both
 ```

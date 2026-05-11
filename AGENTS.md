@@ -84,7 +84,7 @@ is_dangerous_tool(name)?
 |------|----------|-------------|
 | `confirm` | Interactive Y/n prompts | Interactive CLI (auto-detected) |
 | `allowlist` | Auto-execute within allowlist, block the rest | Pipe mode, Concourse CI (auto-detected) |
-| `unrestricted` | All policy checks bypassed | Opt-in only (`--unrestricted unrestricted`) |
+| `unrestricted` | All policy checks bypassed | Opt-in only (`--unrestricted`) |
 
 In Concourse pipelines, override via `source.policy.mode`.
 
@@ -210,10 +210,10 @@ resource_types:
 ## Testing
 
 ```bash
-cargo test                    # 250 unit tests
+cargo test                    # 259 unit tests
 ./tests/e2e.sh               # 26 E2E integration tests
 cargo llvm-cov --summary-only # coverage report
-cargo build --release         # release build (~5MB)
+cargo build --release         # release build (~6.2MB)
 ```
 
 CI runs: `fmt` → `clippy` → `test+coverage` → `build` → `e2e`.
