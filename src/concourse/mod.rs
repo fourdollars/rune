@@ -41,6 +41,9 @@ pub struct ResourceSource {
 /// Top-level policy spec for resource source.
 #[derive(Debug, Clone, Deserialize, Default)]
 pub struct SourcePolicySpec {
+    /// Policy mode: "allowlist" (default for Concourse), "confirm", or "unrestricted"
+    #[serde(default)]
+    pub mode: Option<String>,
     #[serde(default)]
     pub allowed_commands: Vec<String>,
     #[serde(default)]
@@ -154,8 +157,6 @@ struct SandboxResourcesSpec {
 
 #[derive(Debug, Clone, Deserialize, Default)]
 struct SandboxSpec {
-    /// Policy mode override: "allowlist" (default for Concourse), "confirm", or "unrestricted"
-    policy_mode: Option<String>,
     #[serde(default)]
     network: SandboxNetworkSpec,
     #[serde(default)]
@@ -217,8 +218,10 @@ fn build_policy_from_source(source: &ResourceSource) -> PolicyConfig {
 }
 
 fn build_sandbox_config(source: &ResourceSource) -> SandboxConfig {
-    let policy_mode = sandbox_spec(source)
-        .and_then(|s| s.policy_mode.clone())
+    let policy_mode = source
+        .policy
+        .as_ref()
+        .and_then(|p| p.mode.clone())
         .unwrap_or_default();
 
     // Unrestricted mode: no sandbox restrictions (timeout only)
@@ -268,8 +271,9 @@ fn build_runtime_config(source: &ResourceSource) -> RuneConfig {
     cfg.api_key = source.api_key.clone();
     cfg.base_url = source.base_url.clone();
     cfg.policy = build_policy_from_source(source);
-    // Concourse defaults to allowlist mode; can be overridden via source.sandbox.policy_mode
-    if let Some(mode) = sandbox_spec(source).and_then(|s| s.policy_mode) {
+    // Concourse defaults to allowlist mode
+    let policy_mode = source.policy.as_ref().and_then(|p| p.mode.clone());
+    if let Some(mode) = policy_mode {
         cfg.policy.mode = mode;
     } else if cfg.policy.mode == "confirm" {
         cfg.policy.mode = "allowlist".to_string();
@@ -762,42 +766,44 @@ mod tests {
     }
 
     #[test]
-    fn test_policy_mode_unrestricted_override() {
+    fn test_policy_mode_unrestricted_from_source_policy() {
         let source = ResourceSource {
             api_key: Some("x".into()),
             model: None,
             base_url: None,
             prompt: None,
             pre_commands: vec![],
-            policy: None,
-            sandbox: Some(json!({
-                "policy_mode": "unrestricted"
-            })),
+            policy: Some(SourcePolicySpec {
+                mode: Some("unrestricted".into()),
+                ..Default::default()
+            }),
+            sandbox: None,
         };
         let cfg = build_runtime_config(&source);
         assert_eq!(
             cfg.policy.mode, "unrestricted",
-            "policy_mode override should work"
+            "source.policy.mode should set unrestricted"
         );
     }
 
     #[test]
-    fn test_policy_mode_confirm_override() {
+    fn test_policy_mode_confirm_from_source_policy() {
         let source = ResourceSource {
             api_key: Some("x".into()),
             model: None,
             base_url: None,
             prompt: None,
             pre_commands: vec![],
-            policy: None,
-            sandbox: Some(json!({
-                "policy_mode": "confirm"
-            })),
+            policy: Some(SourcePolicySpec {
+                mode: Some("confirm".into()),
+                ..Default::default()
+            }),
+            sandbox: None,
         };
         let cfg = build_runtime_config(&source);
         assert_eq!(
             cfg.policy.mode, "confirm",
-            "explicit confirm override should work"
+            "source.policy.mode should set confirm"
         );
     }
 
@@ -838,17 +844,40 @@ mod tests {
     }
 
     #[test]
+    fn test_policy_mode_from_source_policy() {
+        let source = ResourceSource {
+            api_key: Some("x".into()),
+            model: None,
+            base_url: None,
+            prompt: None,
+            pre_commands: vec![],
+            policy: Some(SourcePolicySpec {
+                mode: Some("unrestricted".into()),
+                ..Default::default()
+            }),
+            sandbox: None,
+        };
+        let cfg = build_runtime_config(&source);
+        assert_eq!(
+            cfg.policy.mode, "unrestricted",
+            "source.policy.mode should set the policy mode"
+        );
+
+        let sb = build_sandbox_config(&source);
+        // Unrestricted mode should give wildcard domains
+        assert!(sb.allowed_domains.contains(&"*".to_string()));
+    }
+
+    #[test]
     fn test_sandbox_spec_with_null_domains() {
         // Simulate Concourse YAML where allowed_domains is null
         let json = r#"{
-            "policy_mode": "unrestricted",
             "network": {"allowed_domains": null},
             "filesystem": {},
             "syscalls": {},
             "resources": {}
         }"#;
         let spec: super::SandboxSpec = serde_json::from_str(json).unwrap();
-        assert_eq!(spec.policy_mode, Some("unrestricted".to_string()));
         assert!(spec.network.allowed_domains.is_empty());
     }
 }

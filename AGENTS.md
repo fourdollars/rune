@@ -86,7 +86,7 @@ is_dangerous_tool(name)?
 | `allowlist` | Auto-execute within allowlist, block the rest | Pipe mode, Concourse CI (auto-detected) |
 | `unrestricted` | All policy checks bypassed | Opt-in only (`--unrestricted unrestricted`) |
 
-In Concourse pipelines, override via `source.sandbox.policy_mode`.
+In Concourse pipelines, override via `source.policy.mode`.
 
 ## Sandbox Layers
 

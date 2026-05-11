@@ -274,7 +274,7 @@ Override with `--unrestricted` flag or `RUNE_POLICY_MODE=unrestricted` env var:
 mode = "unrestricted"
 ```
 
-In Concourse CI pipelines, set via `source.sandbox.policy_mode`:
+In Concourse CI pipelines, set via `source.policy.mode`:
 
 ```yaml
 resources:
@@ -282,8 +282,8 @@ resources:
     type: rune-agent
     source:
       api_key: ((key))
-      sandbox:
-        policy_mode: unrestricted
+      policy:
+        mode: unrestricted
 ```
 
 ## JSON Output Mode
