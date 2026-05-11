@@ -5,3 +5,4 @@ skills/
 *.swo
 *~
 .DS_Store
+*.bak

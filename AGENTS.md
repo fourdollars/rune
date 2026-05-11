@@ -10,6 +10,7 @@ Rune is a zero-trust AI agent runtime written in Rust. The **Agent** is the orch
 ```
 Agent.run(user_input)
   ├─ Resolve @skill references → inject as system message
+  ├─ Build system prompt (custom if configured, else default; AGENTS.md always appended)
   ├─ Append user message
   └─ Loop:
        ├─ Check limits (max_steps, token_budget) — skip if not configured
@@ -29,6 +30,7 @@ All limits are **optional** — if not set, the agent runs without artificial ca
 | `max_steps` | `Option<u32>` | None (unlimited) | Max agent loop iterations |
 | `token_budget` | `Option<u32>` | None (unlimited) | Cumulative token usage cap |
 | `timeout_secs` | `Option<u64>` | None (unlimited) | Global session timeout |
+| `system_prompt` | `Option<String>` | None (use default) | Custom system prompt (replaces default; AGENTS.md still appended) |
 
 Per-command sandbox timeout (default 30s) is separate and always enforced.
 
@@ -144,7 +146,11 @@ When `trace = true`, the agent records structured JSON traces to `.rune/traces/`
 src/
 ├── agent/mod.rs     — run loop, confirm flow, skill injection, trace
 ├── tools/mod.rs     — tool registry, policy enforcement, implementations
-├── sandbox/         — SandboxExecutor, layer implementations
+├── sandbox/
+│   ├── mod.rs           — SandboxExecutor, layer implementations
+│   ├── landlock.rs      — Landlock (internal _landlock subcommand)
+│   ├── seccomp.rs       — Seccomp BPF (internal _seccomp subcommand)
+│   └── net_guard.rs     — Net-guard (internal _net-guard subcommand)
 ├── provider/        — LLM backends (Copilot, Gemini, OpenRouter, generic)
 ├── skills/          — SkillLoader + tools_allow/tools_deny enforcement
 ├── config/          — PolicyConfig, persistence, TOML loading
@@ -153,10 +159,6 @@ src/
 ├── mcp/             — MCP client (stdio JSON-RPC)
 ├── cli/             — interactive CLI, slash commands, persistent history
 ├── setup.rs         — `rune init` wizard
-└── bin/
-    ├── landlock.rs      — Landlock (internal _landlock subcommand)
-    ├── seccomp.rs       — Seccomp BPF (internal _seccomp subcommand)
-    └── net_guard.rs     — Net-guard (internal _net-guard subcommand)
 
 
 ## Container Deployment
@@ -208,7 +210,7 @@ resource_types:
 ## Testing
 
 ```bash
-cargo test                    # 226 unit tests
+cargo test                    # 250 unit tests
 ./tests/e2e.sh               # 26 E2E integration tests
 cargo llvm-cov --summary-only # coverage report
 cargo build --release         # release build (~5MB)

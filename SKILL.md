@@ -81,6 +81,7 @@ rune --provider gemini
 | `--log-level <lvl>` | `RUNE_LOG_LEVEL` | Log level [trace, debug, info, warn, error] |
 | `--thinking <level>` | `RUNE_THINKING` | Thinking/reasoning effort level [off\|low\|medium\|high\|xhigh] |
 | `--skills-dir <path>` | `RUNE_SKILLS_DIR` | Directory containing skill definitions |
+| `--system-prompt <text>` | `RUNE_SYSTEM_PROMPT` | Custom system prompt (replaces default; AGENTS.md still appended) |
 | `--skills a,b` | `RUNE_SKILLS` | Preload specific skills (comma-separated names); disables @ref and semantic discovery |
 
 ## Configuration
@@ -92,6 +93,7 @@ model = "gpt-4o"
 provider = "github-copilot"
 api_key = "ghu_..."        # GitHub Copilot PAT (auto-detected)
 thinking = "high"          # off|low|medium|high|xhigh
+# system_prompt = "You are a helpful assistant."  # optional: override default system prompt (AGENTS.md still appended)
 
 [policy]
 mode = "confirm"           # confirm | allowlist | unrestricted

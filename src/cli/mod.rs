@@ -144,6 +144,11 @@ fn print_help() {
     );
     println!(
         "    {:<24} {}",
+        "--system-prompt <text>".green(),
+        "Custom system prompt (replaces default)"
+    );
+    println!(
+        "    {:<24} {}",
         "/skills full".green(),
         "Show skill details (frontmatter, tools)"
     );
@@ -1402,10 +1407,12 @@ pub async fn run() {
     }
 
     // Build system prompt: base + optional AGENTS.md from CWD
-    let mut sys_prompt = "You are Rune, a high-performance AI agent running in a terminal. \
+    let mut sys_prompt = cfg.system_prompt.clone().unwrap_or_else(|| {
+        "You are Rune, a high-performance AI agent running in a terminal. \
          You have access to tools: read_file, write_file, list_dir, execute_cmd, fetch_url. \
          Use them when needed. Be concise and accurate."
-        .to_string();
+            .to_string()
+    });
 
     // Auto-load AGENTS.md from current directory if present (with confirmation in interactive mode)
     if let Ok(agents_content) = std::fs::read_to_string("AGENTS.md") {

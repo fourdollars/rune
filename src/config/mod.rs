@@ -101,6 +101,10 @@ pub struct RuneConfig {
     /// Thinking/reasoning level: "none", "low", "medium", "high". None = provider default.
     #[serde(default)]
     pub thinking: Option<String>,
+    /// Custom system prompt. When set, replaces the default hardcoded prompt.
+    /// AGENTS.md is still appended if present.
+    #[serde(default)]
+    pub system_prompt: Option<String>,
     /// Skills to preload at startup (comma-separated names from --skills flag).
     /// When set, only these skills are available; semantic/@ discovery is skipped.
     #[serde(skip)]
@@ -129,6 +133,7 @@ impl Default for RuneConfig {
             mcp_servers: Vec::new(),
             embedding: crate::embedding::EmbeddingConfig::default(),
             thinking: None,
+            system_prompt: None,
             preload_skills: Vec::new(),
         }
     }
@@ -153,6 +158,7 @@ struct PartialConfig {
     policy: Option<PolicyConfig>,
     mcp_servers: Option<Vec<crate::mcp::McpServerConfig>>,
     embedding: Option<crate::embedding::EmbeddingConfig>,
+    system_prompt: Option<String>,
     thinking: Option<String>,
 }
 
@@ -260,6 +266,10 @@ struct CliArgs {
         value_delimiter = ','
     )]
     skills: Vec<String>,
+
+    /// Custom system prompt (replaces default, AGENTS.md still appended)
+    #[arg(long, env = "RUNE_SYSTEM_PROMPT", help_heading = "Advanced")]
+    system_prompt: Option<String>,
 }
 
 fn parse_boolish(value: &str) -> Option<bool> {
@@ -333,6 +343,7 @@ pub fn load() -> anyhow::Result<RuneConfig> {
         mcp_servers: None,
         embedding: None,
         thinking: env::var("RUNE_THINKING").ok(),
+        system_prompt: env::var("RUNE_SYSTEM_PROMPT").ok(),
     };
     let env_json_output = env::var("RUNE_JSON_OUTPUT")
         .ok()
@@ -485,6 +496,13 @@ pub fn load() -> anyhow::Result<RuneConfig> {
             &cwdc.and_then(|c| c.thinking.clone()),
             &lc.and_then(|c| c.thinking.clone()),
             &uc.and_then(|c| c.thinking.clone()),
+        ]),
+        system_prompt: pick_option(&[
+            &cli.system_prompt,
+            &env_partial.system_prompt,
+            &cwdc.and_then(|c| c.system_prompt.clone()),
+            &lc.and_then(|c| c.system_prompt.clone()),
+            &uc.and_then(|c| c.system_prompt.clone()),
         ]),
         preload_skills: cli
             .skills
@@ -919,5 +937,34 @@ log_level = "info"
         let cfg: PartialConfig = toml::from_str(toml_str).unwrap();
         // PartialConfig doesn't have preload_skills, confirming it's CLI-only
         assert!(cfg.skills_dir.is_some());
+    }
+
+    #[test]
+    fn test_system_prompt_from_toml() {
+        let toml_str = r#"
+model = "gpt-4"
+system_prompt = "You are a custom agent."
+"#;
+        let cfg: PartialConfig = toml::from_str(toml_str).unwrap();
+        assert_eq!(
+            cfg.system_prompt,
+            Some("You are a custom agent.".to_string())
+        );
+    }
+
+    #[test]
+    fn test_system_prompt_default_none() {
+        let cfg = RuneConfig::default();
+        assert!(cfg.system_prompt.is_none());
+    }
+
+    #[test]
+    fn test_system_prompt_missing_in_toml_is_none() {
+        let toml_str = r#"
+model = "gpt-4"
+log_level = "info"
+"#;
+        let cfg: PartialConfig = toml::from_str(toml_str).unwrap();
+        assert!(cfg.system_prompt.is_none());
     }
 }

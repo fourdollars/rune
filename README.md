@@ -24,6 +24,7 @@ A high-performance, zero-trust AI agent built in Rust. Single binary, dual mode:
 - **Concourse CI** — Same binary acts as a resource type (`check`, `in`, `out`) via symlink
 - **Trace Recording** — JSON trace files with sensitive info redaction
 - **JSON Output** — `--json` flag for machine-readable output
+- **Custom System Prompt** — Override the default system prompt via `--system-prompt`, env var, or config. AGENTS.md context is always appended.
 - **Non-Interactive Pipe Mode** — piped stdin runs once and exits; no interactive prompt loop
 
 ## Quick Start
@@ -154,6 +155,7 @@ api_key = "ghu_..."          # GitHub Copilot (auto-detected)
 
 skills_dir = "./skills"
 log_level = "warn"
+# system_prompt = "You are a helpful assistant."  # optional: override default system prompt (AGENTS.md still appended)
 # max_steps = 20          # optional (unlimited if not set)
 # token_budget = 16384    # optional (unlimited if not set)
 # max_steps = 50          # default 50, 0 = unlimited
@@ -198,6 +200,7 @@ max_pids = 64
 | `RUNE_COMPACT_THRESHOLD` | Auto-compact trigger fraction (default: 0.85) |
 | `RUNE_COMPACT_KEEP_LAST` | Keep last N messages during auto-compact (default: 6) |
 | `RUNE_JSON_OUTPUT` | JSON output mode (`true` / `false`, also accepts `1` / `0`) |
+| `RUNE_SYSTEM_PROMPT` | Custom system prompt (replaces default; AGENTS.md still appended) |
 | `RUNE_YES` | Auto-approve dangerous tool execution (`true` / `false`, also accepts `1` / `0`) |
 
 ## Zero-Trust Sandbox
@@ -472,23 +475,23 @@ src/
 ├── mcp/mod.rs           — MCP client (stdio JSON-RPC)
 ├── precommands.rs       — Pre-command execution
 ├── provider/mod.rs      — LLM providers + retry backoff
-├── sandbox/mod.rs       — 5-layer sandbox orchestration
+├── sandbox/
+│   ├── mod.rs          — 5-layer sandbox orchestration
+│   ├── landlock.rs     — Landlock filesystem restriction (internal subcommand)
+│   ├── seccomp.rs      — Seccomp BPF syscall filter (internal subcommand)
+│   └── net_guard.rs    — Seccomp user-notif network filter (internal subcommand)
 ├── setup.rs             — rune init wizard
 ├── skills/mod.rs        — SKILL.md loader
 ├── tools/mod.rs         — 6 built-in tools (all sandboxed)
 ├── embedding/mod.rs     — Embedding engine + vector store
-├── trace/mod.rs         — JSON trace + redaction
-└── bin/
-    ├── landlock.rs     — Landlock filesystem (internal subcommand)
-    ├── seccomp.rs      — Seccomp BPF filter (internal subcommand)
-    └── net_guard.rs    — Seccomp user-notif network filter (internal subcommand)
+└── trace/mod.rs         — JSON trace + redaction
 ```
 
 ## Development
 
 ```bash
 cargo build --release    # Single binary
-cargo test               # Unit tests (226)
+cargo test               # Unit tests (250)
 ./tests/e2e.sh           # E2E tests (26)
 make check-all           # Both
 ```
