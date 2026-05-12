@@ -137,16 +137,7 @@ fn print_help() {
         "List available built-in tools"
     );
     println!("    {:<24} {}", "/skills".green(), "List loaded skills");
-    println!(
-        "    {:<24} {}",
-        "--skills a,b".green(),
-        "Preload specific skills only"
-    );
-    println!(
-        "    {:<24} {}",
-        "--system-prompt <text>".green(),
-        "Custom system prompt (replaces default)"
-    );
+
     println!(
         "    {:<24} {}",
         "/skills full".green(),

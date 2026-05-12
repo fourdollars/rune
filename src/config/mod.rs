@@ -187,7 +187,7 @@ EXAMPLES:\n\
   echo \"...\" | rune     Pipe mode (one-shot, non-interactive)\n\
 \n\
 CONFIG PRECEDENCE:\n\
-  CLI flags > env vars (RUNE_*) > ./rune.toml > .rune/rune.toml > ~/.rune/rune.toml > defaults\n\
+  --config file > CLI flags > env vars (RUNE_*) > ./rune.toml > .rune/rune.toml > ~/.rune/rune.toml > defaults\n\
 \n\
 TOOLS (built-in, all sandboxed):\n\
   read_file, write_file, list_dir, execute_cmd, fetch_url, inspect_process\n\
@@ -200,6 +200,16 @@ SANDBOX LAYERS:\n\
   5. DNS allowlist (wildcard domain support)"
 )]
 struct CliArgs {
+    /// Path to rune.toml config file [highest priority, hard-fails if missing or invalid]
+    #[arg(
+        long,
+        short = 'c',
+        env = "RUNE_CONFIG",
+        value_name = "path/rune.toml",
+        help_heading = "Configuration"
+    )]
+    config: Option<String>,
+
     /// LLM provider [github-copilot, gemini, openai, openrouter, ollama, anthropic]
     #[arg(long, env = "RUNE_PROVIDER", help_heading = "Provider")]
     provider: Option<String>,
@@ -350,30 +360,64 @@ pub fn load() -> anyhow::Result<RuneConfig> {
         .and_then(|v| parse_boolish(&v));
     let env_auto_approve = env::var("RUNE_YES").ok().and_then(|v| parse_boolish(&v));
 
-    // Project-local config: rune.toml, then .rune/rune.toml
-    let cwd_cfg = env::current_dir()
-        .ok()
-        .map(|cwd| cwd.join("rune.toml"))
-        .and_then(|p| load_toml(&p));
-    let local_cfg = env::current_dir()
-        .ok()
-        .map(|cwd| cwd.join(".rune").join("rune.toml"))
-        .and_then(|p| load_toml(&p));
+    // Explicit config file (--config / -c / RUNE_CONFIG)
+    // Highest priority: hard-fails if the file is missing or has parse errors.
+    // When specified, skip the default search chain entirely.
+    let explicit_cfg: Option<PartialConfig> = cli.config.as_ref().map(|p| {
+        let path = PathBuf::from(p);
+        if !path.exists() {
+            eprintln!("error: config file not found: {}", path.display());
+            std::process::exit(1);
+        }
+        let content = fs::read_to_string(&path).unwrap_or_else(|e| {
+            eprintln!("error: cannot read config file {}: {}", path.display(), e);
+            std::process::exit(1);
+        });
+        toml::from_str::<PartialConfig>(&content).unwrap_or_else(|e| {
+            eprintln!("error: invalid config file {}: {}", path.display(), e);
+            std::process::exit(1);
+        })
+    });
 
-    // User-level config: ~/.rune/rune.toml
-    let user_cfg = env::var("HOME")
-        .ok()
-        .map(|h| PathBuf::from(h).join(".rune").join("rune.toml"))
-        .and_then(|p| load_toml(&p));
+    // Project-local config: rune.toml, then .rune/rune.toml (skipped when --config is set)
+    let cwd_cfg = if cli.config.is_some() {
+        None
+    } else {
+        env::current_dir()
+            .ok()
+            .map(|cwd| cwd.join("rune.toml"))
+            .and_then(|p| load_toml(&p))
+    };
+    let local_cfg = if cli.config.is_some() {
+        None
+    } else {
+        env::current_dir()
+            .ok()
+            .map(|cwd| cwd.join(".rune").join("rune.toml"))
+            .and_then(|p| load_toml(&p))
+    };
 
+    // User-level config: ~/.rune/rune.toml (skipped when --config is set)
+    let user_cfg = if cli.config.is_some() {
+        None
+    } else {
+        env::var("HOME")
+            .ok()
+            .map(|h| PathBuf::from(h).join(".rune").join("rune.toml"))
+            .and_then(|p| load_toml(&p))
+    };
+
+    let ec = explicit_cfg.as_ref();
     let cwdc = cwd_cfg.as_ref();
     let lc = local_cfg.as_ref();
     let uc = user_cfg.as_ref();
     let defaults = RuneConfig::default();
 
     // Merge policy: first non-None wins, otherwise default
-    let mut policy = lc
+    let mut policy = ec
         .and_then(|c| c.policy.clone())
+        .or_else(|| cwdc.and_then(|c| c.policy.clone()))
+        .or_else(|| lc.and_then(|c| c.policy.clone()))
         .or_else(|| uc.and_then(|c| c.policy.clone()))
         .unwrap_or_default();
 
@@ -389,19 +433,24 @@ pub fn load() -> anyhow::Result<RuneConfig> {
     Ok(RuneConfig {
         model: pick(
             &[
+                &ec.and_then(|c| c.model.clone()),
                 &cli.model,
                 &env_partial.model,
+                &cwdc.and_then(|c| c.model.clone()),
                 &lc.and_then(|c| c.model.clone()),
                 &uc.and_then(|c| c.model.clone()),
             ],
             defaults.model,
         ),
-        api_key: cli
-            .api_key
+        api_key: ec
+            .and_then(|c| c.api_key.clone())
+            .or(cli.api_key)
             .or(env_partial.api_key)
+            .or(cwdc.and_then(|c| c.api_key.clone()))
             .or(lc.and_then(|c| c.api_key.clone()))
             .or(uc.and_then(|c| c.api_key.clone())),
         provider: pick_option(&[
+            &ec.and_then(|c| c.provider.clone()),
             &cli.provider,
             &env_partial.provider,
             &cwdc.and_then(|c| c.provider.clone()),
@@ -410,8 +459,10 @@ pub fn load() -> anyhow::Result<RuneConfig> {
         ]),
         skills_dir: pick(
             &[
+                &ec.and_then(|c| c.skills_dir.clone()),
                 &cli.skills_dir,
                 &env_partial.skills_dir,
+                &cwdc.and_then(|c| c.skills_dir.clone()),
                 &lc.and_then(|c| c.skills_dir.clone()),
                 &uc.and_then(|c| c.skills_dir.clone()),
             ],
@@ -419,14 +470,17 @@ pub fn load() -> anyhow::Result<RuneConfig> {
         ),
         log_level: pick(
             &[
+                &ec.and_then(|c| c.log_level.clone()),
                 &cli.log_level,
                 &env_partial.log_level,
+                &cwdc.and_then(|c| c.log_level.clone()),
                 &lc.and_then(|c| c.log_level.clone()),
                 &uc.and_then(|c| c.log_level.clone()),
             ],
             defaults.log_level,
         ),
         max_steps: pick_option(&[
+            &ec.and_then(|c| c.max_steps),
             &cli.max_steps,
             &env_partial.max_steps,
             &cwdc.and_then(|c| c.max_steps),
@@ -434,6 +488,7 @@ pub fn load() -> anyhow::Result<RuneConfig> {
             &uc.and_then(|c| c.max_steps),
         ]),
         token_budget: pick_option(&[
+            &ec.and_then(|c| c.token_budget),
             &cli.token_budget,
             &env_partial.token_budget,
             &cwdc.and_then(|c| c.token_budget),
@@ -441,19 +496,23 @@ pub fn load() -> anyhow::Result<RuneConfig> {
             &uc.and_then(|c| c.token_budget),
         ]),
         timeout_secs: pick_option(&[
+            &ec.and_then(|c| c.timeout_secs),
             &cli.timeout_secs,
             &env_partial.timeout_secs,
             &cwdc.and_then(|c| c.timeout_secs),
             &lc.and_then(|c| c.timeout_secs),
             &uc.and_then(|c| c.timeout_secs),
         ]),
-        base_url: cli
-            .base_url
+        base_url: ec
+            .and_then(|c| c.base_url.clone())
+            .or(cli.base_url)
             .or(env_partial.base_url)
+            .or(cwdc.and_then(|c| c.base_url.clone()))
             .or(lc.and_then(|c| c.base_url.clone()))
             .or(uc.and_then(|c| c.base_url.clone())),
-        trace: cli
-            .trace
+        trace: ec
+            .and_then(|c| c.trace.clone())
+            .or(cli.trace)
             .or(env_partial.trace)
             .or(cwdc.and_then(|c| c.trace.clone()))
             .or(lc.and_then(|c| c.trace.clone()))
@@ -461,36 +520,42 @@ pub fn load() -> anyhow::Result<RuneConfig> {
             .or(defaults.trace),
         json_output: cli.json || env_json_output.unwrap_or(defaults.json_output),
         auto_approve: cli.yes || env_auto_approve.unwrap_or(defaults.auto_approve),
-        context_window: env_partial
-            .context_window
+        context_window: ec
+            .and_then(|c| c.context_window)
+            .or(env_partial.context_window)
             .or(cwdc.and_then(|c| c.context_window))
             .or(lc.and_then(|c| c.context_window))
             .or(uc.and_then(|c| c.context_window))
             .unwrap_or(defaults.context_window),
-        compact_threshold: env_partial
-            .compact_threshold
+        compact_threshold: ec
+            .and_then(|c| c.compact_threshold)
+            .or(env_partial.compact_threshold)
             .or(cwdc.and_then(|c| c.compact_threshold))
             .or(lc.and_then(|c| c.compact_threshold))
             .or(uc.and_then(|c| c.compact_threshold))
             .unwrap_or(defaults.compact_threshold),
-        compact_keep_last: env_partial
-            .compact_keep_last
+        compact_keep_last: ec
+            .and_then(|c| c.compact_keep_last)
+            .or(env_partial.compact_keep_last)
             .or(cwdc.and_then(|c| c.compact_keep_last))
             .or(lc.and_then(|c| c.compact_keep_last))
             .or(uc.and_then(|c| c.compact_keep_last))
             .unwrap_or(defaults.compact_keep_last),
         policy,
-        mcp_servers: cwdc
+        mcp_servers: ec
             .and_then(|c| c.mcp_servers.clone())
+            .or_else(|| cwdc.and_then(|c| c.mcp_servers.clone()))
             .or_else(|| lc.and_then(|c| c.mcp_servers.clone()))
             .or_else(|| uc.and_then(|c| c.mcp_servers.clone()))
             .unwrap_or_default(),
-        embedding: cwdc
+        embedding: ec
             .and_then(|c| c.embedding.clone())
+            .or_else(|| cwdc.and_then(|c| c.embedding.clone()))
             .or_else(|| lc.and_then(|c| c.embedding.clone()))
             .or_else(|| uc.and_then(|c| c.embedding.clone()))
             .unwrap_or_default(),
         thinking: pick_option(&[
+            &ec.and_then(|c| c.thinking.clone()),
             &cli.thinking,
             &env_partial.thinking,
             &cwdc.and_then(|c| c.thinking.clone()),
@@ -498,6 +563,7 @@ pub fn load() -> anyhow::Result<RuneConfig> {
             &uc.and_then(|c| c.thinking.clone()),
         ]),
         system_prompt: pick_option(&[
+            &ec.and_then(|c| c.system_prompt.clone()),
             &cli.system_prompt,
             &env_partial.system_prompt,
             &cwdc.and_then(|c| c.system_prompt.clone()),
