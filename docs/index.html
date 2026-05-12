@@ -23,7 +23,7 @@
         <p class="sub">High-performance. Single binary. Sandboxed by default.</p>
         <div class="cta">
             <a href="https://github.com/fourdollars/rune" class="btn btn-primary">⚡ View on GitHub</a>
-            <a href="#install" class="btn btn-secondary">Get Started</a>
+            <a href="#docker" class="btn btn-secondary">Get Started</a>
         </div>
         <div class="rune-border">ᛟ ᚺ ᛊ ᛏ ᛒ ᛖ ᚹ ᛗ ᛚ ᛝ ᛟ</div>
     </section>
@@ -353,8 +353,60 @@
         </div>
     </section>
 
+    <!-- Docker -->
+    <section class="install" id="docker">
+        <h2 class="section-title">🐳 Docker — No Install Required</h2>
+        <p class="section-desc">Run Rune instantly via Docker. Three image variants available:</p>
+        <div class="install-steps">
+            <div class="code-block">
+                <div class="code-header">Available Images</div>
+                <pre><code># Alpine — smallest image (~15 MB), musl-based
+docker pull ghcr.io/fourdollars/rune:alpine
+
+# Debian (Bookworm) — glibc-based, broad compatibility
+docker pull ghcr.io/fourdollars/rune:debian
+
+# Ubuntu (24.04) — familiar environment
+docker pull ghcr.io/fourdollars/rune:ubuntu
+
+# Latest tag (defaults to Alpine)
+docker pull ghcr.io/fourdollars/rune:latest</code></pre>
+            </div>
+            <div class="code-block">
+                <div class="code-header">First-time setup (rune init via Docker)</div>
+                <pre><code># Initialize config — mounts ~/.config/rune for persistence
+docker run -it --rm \
+  -v ~/.config/rune:/home/rune/.config/rune \
+  ghcr.io/fourdollars/rune:alpine init</code></pre>
+            </div>
+            <div class="code-block">
+                <div class="code-header">Interactive mode</div>
+                <pre><code># Start an interactive session
+docker run -it --rm \
+  -v ~/.config/rune:/home/rune/.config/rune \
+  -v "$PWD":/workspace -w /workspace \
+  ghcr.io/fourdollars/rune:alpine</code></pre>
+            </div>
+            <div class="code-block">
+                <div class="code-header">Pipe mode (scripting)</div>
+                <pre><code># One-shot query without local installation
+echo "Explain what Landlock is" | docker run -i --rm \
+  -v ~/.config/rune:/home/rune/.config/rune \
+  ghcr.io/fourdollars/rune:alpine --json --yes</code></pre>
+            </div>
+            <div class="code-block">
+                <div class="code-header">Shell alias for convenience</div>
+                <pre><code># Add to ~/.bashrc or ~/.zshrc
+alias rune='docker run -it --rm \
+  -v ~/.config/rune:/home/rune/.config/rune \
+  -v "$PWD":/workspace -w /workspace \
+  ghcr.io/fourdollars/rune:alpine'</code></pre>
+            </div>
+        </div>
+    </section>
+
     <section class="install" id="install">
-        <h2 class="section-title">📦 Installation</h2>
+        <h2 class="section-title">📦 Build from Source</h2>
         <div class="install-steps">
             <div class="code-block">
                 <div class="code-header">Build from source</div>
