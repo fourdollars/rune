@@ -47,8 +47,7 @@ pub fn extract_toml_section(content: &str, header: &str) -> Option<String> {
     }
 }
 
-fn load_existing_config() -> ExistingConfig {
-    let path = dirs_home().join(".rune").join("rune.toml");
+fn load_existing_config(path: &std::path::Path) -> ExistingConfig {
     if !path.exists() {
         return ExistingConfig {
             provider: None,
@@ -103,9 +102,150 @@ fn load_existing_config() -> ExistingConfig {
     }
 }
 
+const GITHUB_CLIENT_ID: &str = "Iv1.b507a08c87ecfe98";
+
+/// GitHub Device Flow OAuth — interactive token acquisition.
+/// Returns the access token on success, or None on failure/cancellation.
+async fn github_device_flow() -> Option<String> {
+    println!();
+    println!("  {} Starting GitHub Device Flow...", "⚙".cyan());
+    println!();
+
+    // Step 1: Request device code
+    let client = reqwest::Client::new();
+    let resp = client
+        .post("https://github.com/login/device/code")
+        .header("Accept", "application/json")
+        .header("Content-Type", "application/x-www-form-urlencoded")
+        .body(format!("client_id={}&scope=read:user", GITHUB_CLIENT_ID))
+        .send()
+        .await;
+
+    let resp = match resp {
+        Ok(r) => r,
+        Err(e) => {
+            eprintln!("  {} Failed to contact GitHub: {}", "✗".red(), e);
+            return None;
+        }
+    };
+
+    let body: serde_json::Value = match resp.json().await {
+        Ok(v) => v,
+        Err(e) => {
+            eprintln!("  {} Invalid response from GitHub: {}", "✗".red(), e);
+            return None;
+        }
+    };
+
+    let device_code = body["device_code"].as_str()?;
+    let user_code = body["user_code"].as_str()?;
+    let verification_uri = body["verification_uri"]
+        .as_str()
+        .unwrap_or("https://github.com/login/device");
+    let expires_in = body["expires_in"].as_u64().unwrap_or(900);
+    let interval = body["interval"].as_u64().unwrap_or(5);
+
+    // Step 2: Show the code to the user
+    println!("  ┌─────────────────────────────────────────┐");
+    println!(
+        "  │  Your code: {:<28}│",
+        format!("{}", user_code).cyan().bold()
+    );
+    println!("  └─────────────────────────────────────────┘");
+    println!();
+    println!(
+        "  {} Open {} in your browser",
+        "→".yellow(),
+        verification_uri.cyan()
+    );
+    println!("  {} Enter the code shown above", "→".yellow());
+    println!();
+    println!(
+        "  {} Waiting for authorization (expires in {}s)...",
+        "⏳".dimmed(),
+        expires_in
+    );
+    println!("  {} Press Ctrl+C to cancel", "ℹ".dimmed());
+
+    // Step 3: Poll for the access token
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(expires_in);
+    let poll_interval = std::time::Duration::from_secs(interval);
+
+    loop {
+        tokio::time::sleep(poll_interval).await;
+
+        if std::time::Instant::now() > deadline {
+            eprintln!("  {} Device code expired. Please try again.", "✗".red());
+            return None;
+        }
+
+        let poll_resp = client
+            .post("https://github.com/login/oauth/access_token")
+            .header("Accept", "application/json")
+            .header("Content-Type", "application/x-www-form-urlencoded")
+            .body(format!(
+                "client_id={}&device_code={}&grant_type=urn:ietf:params:oauth:grant-type:device_code",
+                GITHUB_CLIENT_ID, device_code
+            ))
+            .send()
+            .await;
+
+        let poll_resp = match poll_resp {
+            Ok(r) => r,
+            Err(_) => continue,
+        };
+
+        let poll_body: serde_json::Value = match poll_resp.json().await {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+
+        if let Some(token) = poll_body["access_token"].as_str() {
+            println!();
+            println!("  {} Authorization successful!", "✓".green().bold());
+            return Some(token.to_string());
+        }
+
+        match poll_body["error"].as_str() {
+            Some("authorization_pending") => {
+                // Still waiting — continue polling
+                eprint!(".");
+                let _ = io::stderr().flush();
+            }
+            Some("slow_down") => {
+                // Back off
+                tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+            }
+            Some("expired_token") => {
+                eprintln!();
+                eprintln!("  {} Device code expired. Please try again.", "✗".red());
+                return None;
+            }
+            Some("access_denied") => {
+                eprintln!();
+                eprintln!("  {} Authorization was denied.", "✗".red());
+                return None;
+            }
+            Some(other) => {
+                eprintln!();
+                eprintln!("  {} Unexpected error: {}", "✗".red(), other);
+                return None;
+            }
+            None => continue,
+        }
+    }
+}
+
 /// Interactive setup wizard for Rune configuration.
-pub async fn run_setup() {
-    let existing = load_existing_config();
+pub async fn run_setup(config_path_override: Option<String>) {
+    // Determine target config file path
+    let target_config_path = match config_path_override {
+        Some(ref p) => PathBuf::from(p),
+        None => dirs_home().join(".rune").join("rune.toml"),
+    };
+    let target_display = target_config_path.display().to_string();
+
+    let existing = load_existing_config(&target_config_path);
     let has_existing = existing.api_key.is_some() || existing.model.is_some();
 
     println!();
@@ -121,7 +261,7 @@ pub async fn run_setup() {
     }
     println!(
         "  This will create a configuration file at {}",
-        "~/.rune/rune.toml".green()
+        target_display.green()
     );
     println!();
 
@@ -222,26 +362,114 @@ pub async fn run_setup() {
     println!();
 
     // 2. API Key
-    println!("{}", "2. Enter your API key:".bold());
-    println!("   {}", format!("Hint: {}", key_hint).dimmed());
-    if let Some(ref k) = existing.api_key {
-        let masked = format!(
-            "{}...{}",
-            &k[..k.len().min(4)],
-            &k[k.len().saturating_sub(4)..]
+    let api_key = if provider_id == "github-copilot" {
+        // GitHub Copilot: offer two auth methods
+        println!("{}", "2. GitHub Copilot authentication:".bold());
+        if let Some(ref k) = existing.api_key {
+            let masked = format!(
+                "{}...{}",
+                &k[..k.len().min(4)],
+                &k[k.len().saturating_sub(4)..]
+            );
+            println!("   {}", format!("(current: {})", masked).dimmed());
+        }
+        println!(
+            "   {} Paste a GitHub token directly (ghu_ or ghp_)",
+            "[1]".cyan()
         );
-        println!("   {}", format!("(current: {})", masked).dimmed());
-    }
-    let key_prompt = if existing.api_key.is_some() {
-        "  API key (Enter=keep current): "
+        println!(
+            "   {} Login via GitHub Device Flow (opens browser)",
+            "[2]".cyan()
+        );
+        if existing.api_key.is_some() {
+            println!("   {} Keep current token", "[Enter]".cyan());
+        }
+        println!();
+
+        let auth_prompt = if existing.api_key.is_some() {
+            "  Select [1-2] (Enter=keep current): "
+        } else {
+            "  Select [1-2]: "
+        };
+        let auth_choice = prompt(auth_prompt).unwrap_or_default();
+        match auth_choice.trim() {
+            "1" => {
+                // Direct token input
+                let key_prompt = "  GitHub token: ";
+                let key_input = prompt(key_prompt).unwrap_or_default().trim().to_string();
+                if key_input.is_empty() {
+                    existing.api_key.clone().unwrap_or_default()
+                } else {
+                    key_input
+                }
+            }
+            "2" => {
+                // GitHub Device Flow
+                match github_device_flow().await {
+                    Some(token) => token,
+                    None => {
+                        println!("  {} Falling back to manual token entry.", "ℹ".dimmed());
+                        let key_input = prompt("  GitHub token: ")
+                            .unwrap_or_default()
+                            .trim()
+                            .to_string();
+                        if key_input.is_empty() {
+                            existing.api_key.clone().unwrap_or_default()
+                        } else {
+                            key_input
+                        }
+                    }
+                }
+            }
+            "" if existing.api_key.is_some() => {
+                // Keep current
+                existing.api_key.clone().unwrap_or_default()
+            }
+            _ => {
+                // Treat as direct token input (user pasted a token instead of choosing)
+                let input = auth_choice.trim().to_string();
+                if input.starts_with("ghu_") || input.starts_with("ghp_") {
+                    input
+                } else {
+                    println!(
+                        "  {} Unrecognized choice, defaulting to manual entry.",
+                        "⚠".yellow()
+                    );
+                    let key_input = prompt("  GitHub token: ")
+                        .unwrap_or_default()
+                        .trim()
+                        .to_string();
+                    if key_input.is_empty() {
+                        existing.api_key.clone().unwrap_or_default()
+                    } else {
+                        key_input
+                    }
+                }
+            }
+        }
     } else {
-        "  API key: "
-    };
-    let key_input = prompt(key_prompt).unwrap_or_default().trim().to_string();
-    let api_key = if key_input.is_empty() {
-        existing.api_key.clone().unwrap_or_default()
-    } else {
-        key_input
+        // Non-Copilot providers: direct key input
+        println!("{}", "2. Enter your API key:".bold());
+        println!("   {}", format!("Hint: {}", key_hint).dimmed());
+        if let Some(ref k) = existing.api_key {
+            let masked = format!(
+                "{}...{}",
+                &k[..k.len().min(4)],
+                &k[k.len().saturating_sub(4)..]
+            );
+            println!("   {}", format!("(current: {})", masked).dimmed());
+        }
+        let key_prompt = if existing.api_key.is_some() {
+            "  API key (Enter=keep current): "
+        } else {
+            "  API key: "
+        };
+        let key_input = prompt(key_prompt).unwrap_or_default().trim().to_string();
+        if key_input.is_empty() {
+            existing.api_key.clone().unwrap_or_default()
+        } else {
+            key_input
+        }
     };
     if api_key.is_empty() {
         println!(
@@ -439,8 +667,11 @@ pub async fn run_setup() {
     println!();
 
     // 7. Build config — preserve existing [policy] and [embedding] sections
-    let config_dir = dirs_home().join(".rune");
-    let config_path = config_dir.join("rune.toml");
+    let config_path = target_config_path.clone();
+    let config_dir = config_path
+        .parent()
+        .map(|p| p.to_path_buf())
+        .unwrap_or_else(|| PathBuf::from("."));
 
     let mut toml_content = String::new();
     toml_content.push_str(&format!("model = \"{}\"\n", model));
@@ -499,7 +730,7 @@ pub async fn run_setup() {
     println!("{}", "─".repeat(50).dimmed());
     println!();
 
-    let confirm = prompt("  Write to ~/.rune/rune.toml? [Y/n]: ").unwrap_or_default();
+    let confirm = prompt(&format!("  Write to {}? [Y/n]: ", target_display)).unwrap_or_default();
     if confirm.trim().to_lowercase() == "n" {
         println!("  {} Setup cancelled.", "✗".red());
         return;

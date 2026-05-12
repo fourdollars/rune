@@ -53,7 +53,21 @@ async fn async_main() {
     // Check for subcommands BEFORE clap parses args
     let args: Vec<String> = env::args().collect();
     if args.len() > 1 && args[1] == "init" {
-        setup::run_setup().await;
+        // Extract --config / -c from remaining args for init
+        let config_override = args
+            .iter()
+            .enumerate()
+            .find_map(|(i, a)| {
+                if (a == "--config" || a == "-c") && i + 1 < args.len() {
+                    Some(args[i + 1].clone())
+                } else if let Some(val) = a.strip_prefix("--config=") {
+                    Some(val.to_string())
+                } else {
+                    None
+                }
+            })
+            .or_else(|| env::var("RUNE_CONFIG").ok());
+        setup::run_setup(config_override).await;
         return;
     }
 
