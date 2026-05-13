@@ -369,7 +369,7 @@ docker pull ghcr.io/fourdollars/rune:debian
 # Ubuntu (24.04) — familiar environment
 docker pull ghcr.io/fourdollars/rune:ubuntu
 
-# Latest tag (defaults to Alpine)
+# Latest tag (defaults to Debian)
 docker pull ghcr.io/fourdollars/rune:latest</code></pre>
             </div>
             <div class="code-block">
@@ -377,7 +377,7 @@ docker pull ghcr.io/fourdollars/rune:latest</code></pre>
                 <pre><code># Initialize config — mounts ~/.config/rune for persistence
 docker run -it --rm \
   -v ~/.config/rune:/home/rune/.config/rune \
-  ghcr.io/fourdollars/rune:alpine init</code></pre>
+  ghcr.io/fourdollars/rune init</code></pre>
             </div>
             <div class="code-block">
                 <div class="code-header">Interactive mode</div>
@@ -385,14 +385,14 @@ docker run -it --rm \
 docker run -it --rm \
   -v ~/.config/rune:/home/rune/.config/rune \
   -v "$PWD":/workspace -w /workspace \
-  ghcr.io/fourdollars/rune:alpine</code></pre>
+  ghcr.io/fourdollars/rune</code></pre>
             </div>
             <div class="code-block">
                 <div class="code-header">Pipe mode (scripting)</div>
                 <pre><code># One-shot query without local installation
 echo "Explain what Landlock is" | docker run -i --rm \
   -v ~/.config/rune:/home/rune/.config/rune \
-  ghcr.io/fourdollars/rune:alpine --json --yes</code></pre>
+  ghcr.io/fourdollars/rune --json --yes</code></pre>
             </div>
             <div class="code-block">
                 <div class="code-header">Shell alias for convenience</div>
@@ -400,7 +400,7 @@ echo "Explain what Landlock is" | docker run -i --rm \
 alias rune='docker run -it --rm \
   -v ~/.config/rune:/home/rune/.config/rune \
   -v "$PWD":/workspace -w /workspace \
-  ghcr.io/fourdollars/rune:alpine'</code></pre>
+  ghcr.io/fourdollars/rune'</code></pre>
             </div>
         </div>
     </section>
