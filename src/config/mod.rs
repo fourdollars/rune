@@ -3,6 +3,30 @@ use std::env;
 use std::fs;
 use std::path::PathBuf;
 
+/// Expand a leading `~` or `~/` in a path string to the value of `$HOME`.
+/// Returns the original string unchanged if `HOME` is not set or the path
+/// does not start with `~`.
+pub fn expand_tilde(path: &str) -> String {
+    if path == "~" {
+        env::var("HOME").unwrap_or_else(|_| path.to_string())
+    } else if let Some(rest) = path.strip_prefix("~/") {
+        if let Ok(home) = env::var("HOME") {
+            format!("{}/{}", home, rest)
+        } else {
+            path.to_string()
+        }
+    } else {
+        path.to_string()
+    }
+}
+
+/// Apply tilde expansion to every element of a `Vec<String>`.
+fn expand_tilde_vec(v: &mut Vec<String>) {
+    for item in v.iter_mut() {
+        *item = expand_tilde(item);
+    }
+}
+
 /// Unified sandbox/security policy.
 #[derive(Debug, Clone, Deserialize)]
 pub struct PolicyConfig {
@@ -430,7 +454,7 @@ pub fn load() -> anyhow::Result<RuneConfig> {
         policy.mode = mode;
     }
 
-    Ok(RuneConfig {
+    let mut cfg = RuneConfig {
         model: pick(
             &[
                 &ec.and_then(|c| c.model.clone()),
@@ -579,7 +603,20 @@ pub fn load() -> anyhow::Result<RuneConfig> {
                     .filter(|v| !v.is_empty())
             })
             .collect(),
-    })
+    };
+
+    // Post-processing: expand ~ in all path-like config fields
+    cfg.skills_dir = expand_tilde(&cfg.skills_dir);
+    if let Some(ref mut t) = cfg.trace {
+        *t = expand_tilde(t);
+    }
+    expand_tilde_vec(&mut cfg.policy.allowed_paths_rw);
+    expand_tilde_vec(&mut cfg.policy.allowed_paths_ro);
+    expand_tilde_vec(&mut cfg.policy.allowed_files_ro);
+    expand_tilde_vec(&mut cfg.policy.allowed_files_rw);
+    expand_tilde_vec(&mut cfg.policy.denied_paths);
+
+    Ok(cfg)
 }
 
 /// Persist a new domain to the user's ~/.rune/rune.toml allowed_domains list.
@@ -1032,5 +1069,56 @@ log_level = "info"
 "#;
         let cfg: PartialConfig = toml::from_str(toml_str).unwrap();
         assert!(cfg.system_prompt.is_none());
+    }
+
+    // --- expand_tilde tests ---
+
+    #[test]
+    fn test_expand_tilde_home_prefix() {
+        std::env::set_var("HOME", "/home/testuser");
+        assert_eq!(expand_tilde("~/skills"), "/home/testuser/skills");
+        assert_eq!(expand_tilde("~/a/b/c"), "/home/testuser/a/b/c");
+    }
+
+    #[test]
+    fn test_expand_tilde_bare_tilde() {
+        std::env::set_var("HOME", "/home/testuser");
+        assert_eq!(expand_tilde("~"), "/home/testuser");
+    }
+
+    #[test]
+    fn test_expand_tilde_no_tilde() {
+        assert_eq!(expand_tilde("/absolute/path"), "/absolute/path");
+        assert_eq!(expand_tilde("relative/path"), "relative/path");
+        assert_eq!(expand_tilde("./local"), "./local");
+        assert_eq!(expand_tilde(""), "");
+    }
+
+    #[test]
+    fn test_expand_tilde_not_at_start() {
+        // ~ not at start should not be expanded
+        assert_eq!(expand_tilde("/home/~/weird"), "/home/~/weird");
+        assert_eq!(expand_tilde("foo~/bar"), "foo~/bar");
+    }
+
+    #[test]
+    fn test_expand_tilde_vec_mixed() {
+        std::env::set_var("HOME", "/home/u");
+        let mut v = vec![
+            "~/skills".to_string(),
+            "/absolute".to_string(),
+            "relative".to_string(),
+            "~/other/dir".to_string(),
+        ];
+        expand_tilde_vec(&mut v);
+        assert_eq!(
+            v,
+            vec![
+                "/home/u/skills",
+                "/absolute",
+                "relative",
+                "/home/u/other/dir",
+            ]
+        );
     }
 }

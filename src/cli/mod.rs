@@ -1229,17 +1229,7 @@ fn load_image_as_base64(path: &str) -> Result<(String, String), String> {
 
 /// Resolve a path argument: expand ~ and make absolute.
 fn resolve_path(path: &str) -> String {
-    let expanded = if path.starts_with("~/") {
-        if let Ok(home) = std::env::var("HOME") {
-            format!("{}/{}", home, &path[2..])
-        } else {
-            path.to_string()
-        }
-    } else if path == "~" {
-        std::env::var("HOME").unwrap_or_else(|_| path.to_string())
-    } else {
-        path.to_string()
-    };
+    let expanded = crate::config::expand_tilde(path);
 
     // Make absolute if relative
     let abs = if expanded.starts_with('/') {
