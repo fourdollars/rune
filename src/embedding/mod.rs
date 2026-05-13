@@ -13,6 +13,9 @@ pub struct EmbeddingConfig {
     pub api_key: Option<String>,
     #[serde(default = "default_threshold")]
     pub threshold: f32,
+    /// Maximum number of skills to inject via semantic search (default: 3).
+    #[serde(default = "default_max_skills")]
+    pub max_skills: usize,
 }
 
 fn default_true() -> bool {
@@ -23,6 +26,10 @@ fn default_threshold() -> f32 {
     0.3
 }
 
+fn default_max_skills() -> usize {
+    3
+}
+
 impl Default for EmbeddingConfig {
     fn default() -> Self {
         Self {
@@ -31,6 +38,7 @@ impl Default for EmbeddingConfig {
             base_url: None,
             api_key: None,
             threshold: 0.3,
+            max_skills: 3,
         }
     }
 }
@@ -460,5 +468,28 @@ mod tests {
         assert!(!cfg.enabled);
         assert!(cfg.model.is_none());
         assert!((cfg.threshold - 0.3).abs() < 1e-6);
+        assert_eq!(cfg.max_skills, 3);
+    }
+
+    #[test]
+    fn test_embedding_config_custom_max_skills() {
+        let toml_str = r#"
+enabled = true
+threshold = 0.5
+max_skills = 5
+"#;
+        let cfg: EmbeddingConfig = toml::from_str(toml_str).unwrap();
+        assert!(cfg.enabled);
+        assert!((cfg.threshold - 0.5).abs() < 1e-6);
+        assert_eq!(cfg.max_skills, 5);
+    }
+
+    #[test]
+    fn test_embedding_config_max_skills_default_when_omitted() {
+        let toml_str = r#"
+enabled = true
+"#;
+        let cfg: EmbeddingConfig = toml::from_str(toml_str).unwrap();
+        assert_eq!(cfg.max_skills, 3);
     }
 }

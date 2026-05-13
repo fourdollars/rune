@@ -512,16 +512,18 @@ impl Agent {
         if let Some(ref engine) = self.embedding {
             if self.config.embedding.enabled {
                 let threshold = self.config.embedding.threshold;
+                let max_skills = self.config.embedding.max_skills.max(1);
                 match self
                     .skill_loader
-                    .semantic_search(engine, user_input, threshold, 1)
+                    .semantic_search(engine, user_input, threshold, max_skills)
                     .await
                 {
                     Ok(results) if !results.is_empty() => {
-                        let (_score, name) = &results[0];
-                        info!(skill = %name, score = _score, "semantic matched skill");
-                        eprintln!("  {} Semantic skill match: {}", "🔎".dimmed(), name.green());
-                        self.load_and_inject_skill(name);
+                        for (_score, name) in &results {
+                            info!(skill = %name, score = _score, "semantic matched skill");
+                            eprintln!("  {} Semantic skill match: {}", "🔎".dimmed(), name.green());
+                            self.load_and_inject_skill(name);
+                        }
                     }
                     Err(e) => {
                         warn!(error = %e, "semantic skill search failed");
