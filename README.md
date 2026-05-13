@@ -171,6 +171,8 @@ allowed_domains = ["wttr.in", "api.github.com"]
 # allowed_syscalls = []    # dangerous syscalls to ALLOW through seccomp (empty = block all)
 allowed_paths_rw = ["/tmp"]
 allowed_paths_ro = ["/bin", "/usr", "/lib"]
+# allowed_files_rw = []   # individual files with read-write access
+# allowed_files_ro = []   # individual files with read-only access (e.g. ~/.netrc)
 denied_paths = ["/root", "/etc/shadow"]
 max_memory_mb = 512
 max_pids = 64

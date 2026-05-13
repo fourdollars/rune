@@ -890,6 +890,24 @@ fn show_policy_summary(cfg: &config::RuneConfig) {
         p.allowed_paths_ro.join(", ")
     );
     println!(
+        "  {} files rw: {}",
+        "•".dimmed(),
+        if p.allowed_files_rw.is_empty() {
+            "(none)".to_string()
+        } else {
+            p.allowed_files_rw.join(", ")
+        }
+    );
+    println!(
+        "  {} files ro: {}",
+        "•".dimmed(),
+        if p.allowed_files_ro.is_empty() {
+            "(none)".to_string()
+        } else {
+            p.allowed_files_ro.join(", ")
+        }
+    );
+    println!(
         "  {} denied paths: {}",
         "•".dimmed(),
         p.denied_paths.join(", ")
@@ -952,6 +970,20 @@ fn show_policy_full(cfg: &config::RuneConfig) {
     );
     println!("    {} Can read: general user-readable files", "•".dimmed());
     println!("    {} Can write: /tmp, project directories", "•".dimmed());
+    if !cfg.policy.allowed_files_ro.is_empty() {
+        println!(
+            "    {} files ro: {}",
+            "•".dimmed(),
+            cfg.policy.allowed_files_ro.join(", ")
+        );
+    }
+    if !cfg.policy.allowed_files_rw.is_empty() {
+        println!(
+            "    {} files rw: {}",
+            "•".dimmed(),
+            cfg.policy.allowed_files_rw.join(", ")
+        );
+    }
     println!();
 
     println!("  {}", "Tool Restrictions:".bold());
