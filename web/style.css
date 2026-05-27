@@ -65,6 +65,13 @@ body {
     flex-shrink: 0;
 }
 
+/* When center is hidden, chat fills all remaining space */
+#panel-center.hidden ~ #panel-right {
+    flex: 1 1 auto !important;
+    max-width: none !important;
+    width: auto !important;
+}
+
 .panel.collapsed {
     width: 20px !important;
     min-width: 20px !important;
