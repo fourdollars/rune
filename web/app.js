@@ -519,6 +519,28 @@ function applyPanelLayout() {
         center.classList.remove('hidden');
     }
 
+    // When center is hidden, force chat panel open
+    const panelRight = document.getElementById('panel-right');
+    if (!showEdit && !showPreview) {
+        if (panelRight && panelRight.classList.contains('collapsed')) {
+            panelRight.classList.remove('collapsed');
+            updateToggleIcon(panelRight, 'right');
+            try {
+                const saved = localStorage.getItem('rune_panel_right');
+                panelRight.style.width = saved ? saved + 'px' : '';
+            } catch {}
+        }
+        // Hide the right panel resize handle arrow (no collapse allowed)
+        const rh = document.getElementById('resize-right');
+        if (rh) rh.style.pointerEvents = 'none';
+        if (rh) rh.querySelector('.toggle-icon') && (rh.querySelector('.toggle-icon').style.display = 'none');
+    } else {
+        const rh = document.getElementById('resize-right');
+        if (rh) rh.style.pointerEvents = '';
+        const icon = rh && rh.querySelector('.toggle-icon');
+        if (icon) icon.style.display = '';
+    }
+
     // Persist
     try {
         localStorage.setItem('rune_show_edit',    showEdit    ? '1' : '0');
@@ -623,6 +645,11 @@ function setStatus(state) {
 // --- Panel Toggle ---
 function togglePanel(side) {
     const panel = document.getElementById('panel-' + side);
+    // When center is hidden (both Edit+Preview off), chat panel cannot collapse
+    if (side === 'right') {
+        const center = document.getElementById('panel-center');
+        if (center && center.classList.contains('hidden')) return;
+    }
     const wasCollapsed = panel.classList.contains('collapsed');
     panel.classList.toggle('collapsed');
     updateToggleIcon(panel, side);
