@@ -72,8 +72,18 @@
         </aside>
     </div>
 
-    <script src="/assets-bin/mermaid.min.js"></script>
-    <script>mermaid.initialize({ startOnLoad: false, theme: "dark" });</script>
+    <script src="/assets-bin/mermaid.min.js" defer></script>
+    <script>
+      // Initialize mermaid once the script loads
+      document.addEventListener("DOMContentLoaded", function() {
+        var t = setInterval(function() {
+          if (window.mermaid) {
+            clearInterval(t);
+            mermaid.initialize({ startOnLoad: false, theme: "dark" });
+          }
+        }, 50);
+      });
+    </script>
     <script src="/assets/marked.min.js"></script>
     <script src="/assets/highlight.min.js"></script>
     <script src="/assets/app.js"></script>
