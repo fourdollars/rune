@@ -122,6 +122,9 @@ function initEditor() {
         syncHighlight();
         clearTimeout(debounceTimer);
         debounceTimer = setTimeout(() => {
+            // Live preview update
+            if (showPreview) renderPreview();
+            // Sync to server
             if (editorDirty && isConnected) {
                 ws.send(JSON.stringify({ type: 'spec_update', content: specContent }));
                 editorDirty = false;
@@ -574,9 +577,10 @@ function renderPreview() {
             if (!src) return;
             const doRender = (retries) => {
                 if (window.mermaid && typeof window.mermaid.render === 'function') {
-                    const id = el.id || ('mermaid-' + Math.random().toString(36).slice(2));
-                    el.id = id;
-                    window.mermaid.render(id + '-svg', src)
+                    // Use unique ID each render to prevent mermaid cache stale results
+                    const uid = 'mermaid-' + Date.now() + '-' + Math.random().toString(36).slice(2);
+                    el.id = uid;
+                    window.mermaid.render(uid + '-svg', src)
                         .then(({ svg }) => { el.innerHTML = svg; })
                         .catch(err => {
                             el.innerHTML = '<pre style="color:var(--error)">Mermaid error: ' + escapeHtml(err.message) + '</pre>';
