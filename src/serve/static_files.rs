@@ -103,9 +103,10 @@ mod tests {
     #[test]
     fn test_index_html_has_toggle_buttons() {
         let html = get("index.html").unwrap();
-        assert!(html.contains("toggleEdit()"),    "index.html missing toggleEdit()");
-        assert!(html.contains("togglePreview()"), "index.html missing togglePreview()");
-        assert!(html.contains("center-body"),     "index.html missing center-body div");
+        assert!(html.contains("toggleEdit()"),     "index.html missing toggleEdit()");
+        assert!(html.contains("togglePreview()"),  "index.html missing togglePreview()");
+        assert!(html.contains("center-body"),      "index.html missing center-body div");
+        assert!(html.contains("chat-header-right"),"index.html missing chat-header-right");
     }
 
     #[test]

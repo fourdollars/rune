@@ -39,10 +39,6 @@
                 <div class="toolbar-left">
                     <span class="doc-title">spec.md</span>
                 </div>
-                <div class="toolbar-right">
-                    <button id="btn-edit" class="toolbar-btn active" onclick="toggleEdit()" title="Toggle editor (E)">✏️ Edit</button>
-                    <button id="btn-preview" class="toolbar-btn" onclick="togglePreview()" title="Toggle preview (P)">👁 Preview</button>
-                </div>
             </div>
             <div id="center-body">
                 <div id="editor-container">
@@ -63,7 +59,11 @@
             <div class="panel-content">
                 <div class="chat-header">
                     <h3>ᚱᚢᚾᛖ</h3>
-                    <span id="status-indicator" class="status idle">● idle</span>
+                    <div class="chat-header-right">
+                        <button id="btn-edit" class="toolbar-btn active" onclick="toggleEdit()" title="Toggle editor (E)">✏️</button>
+                        <button id="btn-preview" class="toolbar-btn" onclick="togglePreview()" title="Toggle preview (P)">👁</button>
+                        <span id="status-indicator" class="status idle">● idle</span>
+                    </div>
                 </div>
                 <div id="chat-messages" class="chat-messages"></div>
                 <div class="chat-input-area">

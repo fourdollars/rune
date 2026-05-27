@@ -809,8 +809,14 @@ pre.hljs-pre:hover .copy-btn {
 }
 
 /* When both panels off: shrink center to nothing */
+/* Both Edit+Preview off: shrink center to zero; chat fills remaining space */
 #panel-center.hidden {
-    display: none !important;
+    flex: 0 0 0 !important;
+    min-width: 0 !important;
+    overflow: hidden !important;
+    width: 0 !important;
+    padding: 0 !important;
+    border: none !important;
 }
 
 /* --- center-body: flex container below toolbar --- */
@@ -831,4 +837,20 @@ pre.hljs-pre:hover .copy-btn {
 #center-body.split-view #preview-container {
     flex: 1;
     overflow-y: auto;
+}
+
+/* --- Chat header with toggle buttons --- */
+.chat-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+}
+.chat-header-right {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+.chat-header-right .toolbar-btn {
+    padding: 2px 6px;
+    font-size: 13px;
 }
