@@ -132,7 +132,10 @@ function initEditor() {
         }, 300);
     });
 
-    textarea.addEventListener('scroll', syncScroll);
+    textarea.addEventListener('scroll', () => {
+        syncScroll(); // sync highlight overlay
+        syncEditorToPreview(textarea);
+    });
 
     // Tab key
     textarea.addEventListener('keydown', e => {
@@ -568,6 +571,45 @@ function setMode(mode) {
     applyPanelLayout();
 }
 
+// --- Edit ↔ Preview scroll sync ---
+let _scrollSyncLock = false;
+
+function syncEditorToPreview(textarea) {
+    if (!showPreview || !showEdit) return; // only sync in split view
+    if (_scrollSyncLock) return;
+    const maxScroll = textarea.scrollHeight - textarea.clientHeight;
+    if (maxScroll <= 0) return;
+    const pct = textarea.scrollTop / maxScroll;
+    const pc = previewContainer;
+    const pcMax = pc.scrollHeight - pc.clientHeight;
+    if (pcMax <= 0) return;
+    _scrollSyncLock = true;
+    pc.scrollTop = pct * pcMax;
+    requestAnimationFrame(() => { _scrollSyncLock = false; });
+}
+
+function syncPreviewToEditor(textarea) {
+    if (!showPreview || !showEdit) return;
+    if (_scrollSyncLock) return;
+    const pc = previewContainer;
+    const pcMax = pc.scrollHeight - pc.clientHeight;
+    if (pcMax <= 0) return;
+    const pct = pc.scrollTop / pcMax;
+    const maxScroll = textarea.scrollHeight - textarea.clientHeight;
+    if (maxScroll <= 0) return;
+    _scrollSyncLock = true;
+    textarea.scrollTop = pct * maxScroll;
+    requestAnimationFrame(() => { _scrollSyncLock = false; });
+}
+
+function initPreviewScrollSync() {
+    const textarea = document.getElementById('editor');
+    if (!textarea) return;
+    previewContainer.addEventListener('scroll', () => {
+        syncPreviewToEditor(textarea);
+    });
+}
+
 function renderPreview() {
     if (typeof marked !== 'undefined') {
         preview.innerHTML = marked.parse(specContent);
@@ -796,6 +838,7 @@ function setupResizeHandle(handleId, panelId, side) {
 
 // --- Init ---
 initEditor();
+initPreviewScrollSync();
 initPanelResize();
 // Restore edit/preview state
 try {
