@@ -163,6 +163,11 @@ if (typeof marked !== 'undefined') {
     // Custom renderer: syntax-highlight code blocks with highlight.js
     const renderer = new marked.Renderer();
     renderer.code = function({ text, lang }) {
+        // Mermaid: output a special div, rendered later
+        if (lang && lang.toLowerCase() === 'mermaid') {
+            const id = 'mermaid-' + Math.random().toString(36).slice(2);
+            return `<div class="mermaid-block" id="${id}" data-src="${text.replace(/"/g,'&quot;')}"></div>`;
+        }
         const raw = text.replace(/"/g, '&quot;'); // for data attribute
         if (typeof hljs !== 'undefined') {
             const language = lang && hljs.getLanguage(lang) ? lang : null;
@@ -484,6 +489,19 @@ function setMode(mode) {
 function renderPreview() {
     if (typeof marked !== 'undefined') {
         preview.innerHTML = marked.parse(specContent);
+        // Render mermaid blocks
+        preview.querySelectorAll('.mermaid-block').forEach(el => {
+            const src = el.dataset.src ? el.dataset.src.replace(/&quot;/g, '"') : '';
+            if (src && window.mermaid) {
+                window.mermaid.render(el.id || ('mermaid-' + Math.random().toString(36).slice(2)), src)
+                    .then(({ svg }) => { el.innerHTML = svg; })
+                    .catch(err => {
+                        el.textContent = 'Mermaid error: ' + err.message;
+                        el.style.color = 'var(--error)';
+                    });
+            }
+        });
+
         preview.querySelectorAll('pre.hljs-pre').forEach(pre => {
             const btn = document.createElement('button');
             btn.className = 'copy-btn';

@@ -766,3 +766,18 @@ pre.hljs-pre:hover .copy-btn {
 #editor-highlight .hljs-meta {
     color: #6272a4;   /* fence ticks + language label */
 }
+
+/* --- Mermaid diagrams --- */
+.mermaid-block {
+    margin: 16px 0;
+    padding: 12px;
+    background: var(--bg-surface);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    overflow-x: auto;
+    text-align: center;
+}
+.mermaid-block svg {
+    max-width: 100%;
+    height: auto;
+}

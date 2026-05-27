@@ -6,6 +6,7 @@ use std::sync::LazyLock;
 static ASSETS: LazyLock<HashMap<&'static str, &'static str>> = LazyLock::new(|| {
     let mut m = HashMap::new();
     m.insert("index.html",           include_str!("../../web/index.html"));
+    m.insert("favicon.svg",          include_str!("../../web/favicon.svg"));
     m.insert("app.js",               include_str!("../../web/app.js"));
     m.insert("style.css",            include_str!("../../web/style.css"));
     m.insert("marked.min.js",        include_str!("../../web/marked.min.js"));
