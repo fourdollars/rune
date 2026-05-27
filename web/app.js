@@ -703,6 +703,32 @@ function flashSpecIndicator() {
 }
 
 // --- Status ---
+// --- Logout ---
+function showLogoutDialog() {
+    document.getElementById('logout-modal').classList.remove('hidden');
+}
+
+function hideLogoutDialog() {
+    document.getElementById('logout-modal').classList.add('hidden');
+}
+
+function confirmLogout() {
+    // Close WS
+    if (ws) { try { ws.close(); } catch(e) {} ws = null; }
+    // Clear all stored credentials
+    localStorage.removeItem('rune_nickname');
+    localStorage.removeItem('rune_token');
+    // Reset in-memory state
+    myNickname = '';
+    myToken    = '';
+    // Hide dialog + app, show login modal
+    hideLogoutDialog();
+    document.getElementById('nickname-input').value = '';
+    const tokenInput = document.getElementById('token-input');
+    if (tokenInput) tokenInput.value = '';
+    document.getElementById('nickname-modal').classList.remove('hidden');
+}
+
 // --- File management ---
 function updateDocTitle(name) {
     const el = document.getElementById('doc-title');

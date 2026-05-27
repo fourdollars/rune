@@ -143,6 +143,25 @@ mod tests {
     }
 
     #[test]
+    fn test_app_js_has_logout_functions() {
+        let js = get("app.js").unwrap();
+        assert!(js.contains("showLogoutDialog"),  "app.js missing showLogoutDialog");
+        assert!(js.contains("hideLogoutDialog"),  "app.js missing hideLogoutDialog");
+        assert!(js.contains("confirmLogout"),     "app.js missing confirmLogout");
+        assert!(js.contains("rune_nickname"),     "app.js missing rune_nickname localStorage key");
+        assert!(js.contains("rune_token"),        "app.js missing rune_token localStorage key");
+    }
+
+    #[test]
+    fn test_index_html_has_logout_ui() {
+        let html = get("index.html").unwrap();
+        assert!(html.contains("logout-modal"),    "index.html missing logout-modal");
+        assert!(html.contains("btn-logout"),      "index.html missing btn-logout");
+        assert!(html.contains("confirmLogout"),   "index.html missing confirmLogout call");
+        assert!(html.contains("modal-actions"),   "index.html missing modal-actions");
+    }
+
+    #[test]
     fn test_index_html_has_doc_title_area() {
         let html = get("index.html").unwrap();
         assert!(html.contains("doc-title-area"), "index.html missing doc-title-area");

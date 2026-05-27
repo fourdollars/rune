@@ -20,6 +20,18 @@
       </div>
     </div>
 
+    <!-- Logout confirm dialog -->
+    <div id="logout-modal" class="modal-overlay hidden">
+        <div class="modal">
+            <h2>登出</h2>
+            <p>確定要登出嗎？<br>儲存的帳號與 token 將會清除。</p>
+            <div class="modal-actions">
+                <button class="btn-secondary" onclick="hideLogoutDialog()">取消</button>
+                <button class="btn-primary" onclick="confirmLogout()">確定登出</button>
+            </div>
+        </div>
+    </div>
+
     <div id="app">
         <!-- Left Panel: Sessions -->
         <aside id="panel-left" class="panel panel-left collapsed">
@@ -67,6 +79,7 @@
                         <button id="btn-edit" class="toolbar-btn active" onclick="toggleEdit()" title="Toggle editor">✏️</button>
                         <button id="btn-preview" class="toolbar-btn" onclick="togglePreview()" title="Toggle preview">👁</button>
                         <span id="status-indicator" class="status idle">● idle</span>
+                        <button id="btn-logout" class="toolbar-btn logout-btn" onclick="showLogoutDialog()" title="Logout">⏏</button>
                     </div>
                 </div>
                 <div id="chat-messages" class="chat-messages"></div>
