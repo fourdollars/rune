@@ -400,6 +400,35 @@ stderr: {}",
                     }
                 }
             }),
+            serde_json::json!({
+                "type": "function",
+                "function": {
+                    "name": "read_spec",
+                    "description": "Read the current spec.md document (shared design document in serve mode).",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {},
+                        "required": []
+                    }
+                }
+            }),
+            serde_json::json!({
+                "type": "function",
+                "function": {
+                    "name": "edit_spec",
+                    "description": "Edit the shared spec.md document. Use 'content' for full replacement, or 'search'+'replace' for targeted edits.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "content": { "type": "string", "description": "Full new content (replaces entire document)" },
+                            "search": { "type": "string", "description": "Text to search for (used with replace)" },
+                            "replace": { "type": "string", "description": "Replacement text (used with search)" }
+                        },
+                        "required": []
+                    }
+                }
+            }),
+
         ]
     }
 

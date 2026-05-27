@@ -12,7 +12,7 @@ use colored::Colorize;
 use std::io::Write;
 use std::path::PathBuf;
 use std::sync::Arc;
-use tokio::sync::Mutex as TokioMutex;
+use tokio::sync::{Mutex as TokioMutex, RwLock};
 
 use tracing::{debug, info, warn};
 
@@ -72,6 +72,10 @@ pub struct Agent {
     skill_tools_deny: Option<Vec<String>>,
     /// Optional embedding engine for RAG-based compaction and skill search
     pub embedding: Option<EmbeddingEngine>,
+    /// Optional streaming token callback (for WebUI serve mode).
+    pub token_callback: Option<Arc<dyn Fn(&str) + Send + Sync>>,
+    /// Shared spec.md content (for serve mode — read_spec/edit_spec tools).
+    pub spec_content: Option<Arc<RwLock<String>>>,
 }
 
 impl Agent {
@@ -174,6 +178,8 @@ impl Agent {
             skill_tools_allow: None,
             skill_tools_deny: None,
             embedding,
+            token_callback: None,
+            spec_content: None,
         }
     }
 
@@ -911,11 +917,16 @@ impl Agent {
         self.record_llm_request_trace();
 
         let (tx, mut rx) = tokio::sync::mpsc::channel::<String>(32);
+        let cb = self.token_callback.clone();
         let printer = tokio::spawn(async move {
             let mut stderr = std::io::stderr();
             while let Some(token) = rx.recv().await {
-                let _ = write!(stderr, "{}", token);
-                let _ = stderr.flush();
+                if let Some(ref callback) = cb {
+                    callback(&token);
+                } else {
+                    let _ = write!(stderr, "{}", token);
+                    let _ = stderr.flush();
+                }
             }
         });
 
@@ -957,6 +968,45 @@ impl Agent {
             }
         }
     }
+
+    /// Handle spec tools (read_spec / edit_spec) for serve mode.
+    /// Returns Some(output) if handled, None if not a spec tool.
+    async fn handle_spec_tool(&self, name: &str, args: &serde_json::Value) -> Option<String> {
+        let spec = self.spec_content.as_ref()?;
+        
+        match name {
+            "read_spec" => {
+                let content = spec.read().await;
+                Some(content.clone())
+            }
+            "edit_spec" => {
+                let new_content = args.get("content").and_then(|v| v.as_str());
+                let search = args.get("search").and_then(|v| v.as_str());
+                let replace = args.get("replace").and_then(|v| v.as_str());
+                
+                if let Some(full_content) = new_content {
+                    // Full replacement
+                    let mut spec_w = spec.write().await;
+                    *spec_w = full_content.to_string();
+                    Some("spec.md updated (full replace)".to_string())
+                } else if let (Some(search_str), Some(replace_str)) = (search, replace) {
+                    // Search and replace
+                    let mut spec_w = spec.write().await;
+                    if spec_w.contains(search_str) {
+                        *spec_w = spec_w.replacen(search_str, replace_str, 1);
+                        Some(format!("spec.md updated: replaced '{}...'", &search_str[..search_str.len().min(40)]))
+                    } else {
+                        Some(format!("Error: search text not found in spec.md"))
+                    }
+                } else {
+                    Some("Error: edit_spec requires either 'content' (full replace) or 'search'+'replace' (targeted edit)".to_string())
+                }
+            }
+            _ => None,
+        }
+    }
+
+
 
     /// Truncate a string keeping prefix and suffix, replacing middle with "..."
     fn truncate_middle(s: &str, max_len: usize) -> String {
@@ -1073,6 +1123,11 @@ impl Agent {
                 eprintln!("  {} {}", "✗".red(), msg.dimmed());
                 return Ok(msg);
             }
+        }
+
+        // Intercept spec tools (read_spec / edit_spec) for serve mode
+        if let Some(spec_output) = self.handle_spec_tool(&tc.function.name, &args).await {
+            return Ok(spec_output);
         }
 
         let mut output = self.tools.execute(&tc.function.name, args.clone()).await;
