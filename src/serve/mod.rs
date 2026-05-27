@@ -6,22 +6,23 @@
 //!   - WebSocket endpoint for chat streaming + spec.md sync
 //!   - Token auth required for non-localhost connections
 
+mod db;
 mod static_files;
 mod ws;
+pub use db::ChatDb;
 
 use crate::config::RuneConfig;
 use axum::{
-    extract::{ConnectInfo, Query, State, WebSocketUpgrade},
+    extract::{ConnectInfo, State, WebSocketUpgrade},
     http::{header, StatusCode},
     response::{Html, IntoResponse, Response},
     routing::get,
     Router,
 };
-use std::collections::HashMap;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::path::PathBuf;
 use std::sync::Arc;
-use tokio::sync::RwLock;
+use tokio::sync::{broadcast, RwLock};
 use tracing::{info, warn};
 
 /// Get the Rune data directory (~/.rune).
@@ -35,7 +36,14 @@ fn data_dir() -> PathBuf {
 pub struct ServerState {
     pub config: RuneConfig,
     pub token: Option<String>,
+    /// Admin token — clients presenting this token get admin role.
+    pub admin_token: Option<String>,
     pub spec_content: Arc<RwLock<String>>,
+    /// Broadcast to ALL connected clients.
+    pub broadcast_tx: broadcast::Sender<String>,
+    /// Broadcast to ADMIN clients only (approval requests).
+    pub admin_broadcast_tx: broadcast::Sender<String>,
+    pub chat_db: ChatDb,
 }
 
 /// Options for `rune serve`.
@@ -43,6 +51,7 @@ pub struct ServeOptions {
     pub port: u16,
     pub bind: IpAddr,
     pub token: Option<String>,
+    pub admin_token: Option<String>,
 }
 
 impl Default for ServeOptions {
@@ -51,6 +60,7 @@ impl Default for ServeOptions {
             port: 9527,
             bind: IpAddr::V4(Ipv4Addr::LOCALHOST),
             token: None,
+            admin_token: None,
         }
     }
 }
@@ -62,10 +72,23 @@ pub async fn run(config: RuneConfig, opts: ServeOptions) {
         .await
         .unwrap_or_else(|_| "# Spec\n\nStart writing your spec here.\n".to_string());
 
+    let (broadcast_tx, _) = broadcast::channel(256);
+    let (admin_broadcast_tx, _) = broadcast::channel(64);
+
+    let db_path = data_dir().join("chat.db");
+    let chat_db = ChatDb::open(&db_path).unwrap_or_else(|e| {
+        eprintln!("warning: failed to open chat db: {}", e);
+        ChatDb::open(std::path::Path::new(":memory:")).expect("in-memory db failed")
+    });
+
     let state = ServerState {
         config: config.clone(),
         token: opts.token.clone(),
+        admin_token: opts.admin_token.clone(),
         spec_content: Arc::new(RwLock::new(initial_spec)),
+        broadcast_tx,
+        admin_broadcast_tx,
+        chat_db,
     };
 
     let app = Router::new()
@@ -80,6 +103,9 @@ pub async fn run(config: RuneConfig, opts: ServeOptions) {
     println!("  ᚱ Rune WebUI → http://{}", addr);
     if opts.token.is_some() {
         println!("  🔒 Token auth enabled for non-localhost");
+    }
+    if opts.admin_token.is_some() {
+        println!("  👑 Admin token configured");
     }
 
     // Ignore SIGHUP so server stays up when SSH session ends
@@ -137,24 +163,17 @@ async fn static_handler(
     }
 }
 
-/// WebSocket upgrade handler with auth check.
+/// WebSocket upgrade handler — token auth deferred to handshake message.
+/// Clients send token inside set_nickname; URL query token no longer required.
 async fn ws_handler(
     ws: WebSocketUpgrade,
     State(state): State<ServerState>,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
-    Query(params): Query<HashMap<String, String>>,
 ) -> impl IntoResponse {
-    // Auth check: localhost is free, remote needs token
-    if !is_localhost(addr.ip()) {
-        if let Some(ref expected_token) = state.token {
-            let provided = params.get("token").map(|s| s.as_str()).unwrap_or("");
-            if provided != expected_token {
-                return StatusCode::UNAUTHORIZED.into_response();
-            }
-        } else {
-            // No token configured but remote connection — reject
-            return StatusCode::FORBIDDEN.into_response();
-        }
+    // Localhost always allowed.
+    // Remote only allowed when token is configured (verified in ws::handle_connection).
+    if !is_localhost(addr.ip()) && state.token.is_none() {
+        return StatusCode::FORBIDDEN.into_response();
     }
 
     ws.on_upgrade(move |socket| ws::handle_connection(socket, state))

@@ -51,36 +51,83 @@ body {
 
 .panel-left {
     width: var(--panel-width);
+    min-width: 160px;
+    max-width: 520px;
     border-right: 1px solid var(--border);
+    flex-shrink: 0;
 }
 
 .panel-right {
     width: var(--panel-width);
+    min-width: 160px;
+    max-width: 600px;
     border-left: 1px solid var(--border);
+    flex-shrink: 0;
 }
 
 .panel.collapsed {
-    width: 32px;
+    width: 20px !important;
+    min-width: 20px !important;
 }
 
 .panel.collapsed .panel-content {
     display: none;
 }
 
-.panel-toggle {
-    width: 32px;
+/* Resize + collapse combo handle */
+.resize-handle {
+    position: absolute;
+    top: 0;
+    width: 12px;
+    height: 100%;
+    cursor: col-resize;
+    z-index: 10;
+    background: transparent;
     display: flex;
     align-items: center;
     justify-content: center;
-    cursor: pointer;
-    color: var(--text-muted);
+    transition: background 0.15s;
     flex-shrink: 0;
 }
-
-.panel-toggle:hover {
-    color: var(--accent);
-    background: var(--accent-dim);
+.resize-handle:hover {
+    background: rgba(137,180,250,0.08);
 }
+.resize-handle.dragging {
+    background: rgba(137,180,250,0.15);
+}
+.panel-left  .resize-handle { right: 0; }
+.panel-right .resize-handle { left: 0; }
+
+/* Arrow icon inside the handle */
+.resize-handle .toggle-icon {
+    font-size: 10px;
+    color: var(--text-muted);
+    pointer-events: none;
+    transition: color 0.15s, opacity 0.15s;
+    opacity: 0;
+    line-height: 1;
+    user-select: none;
+}
+.resize-handle:hover .toggle-icon {
+    opacity: 1;
+    color: var(--accent);
+}
+/* Keep arrow visible when collapsed */
+.panel.collapsed .resize-handle .toggle-icon {
+    opacity: 1;
+    color: var(--text-muted);
+}
+.panel.collapsed .resize-handle:hover .toggle-icon {
+    color: var(--accent);
+}
+/* Collapsed: widen the hit area to be the full 20px strip */
+.panel.collapsed .resize-handle {
+    width: 20px;
+    cursor: pointer;
+}
+
+/* Collapse toggle — smaller, pill shape */
+
 
 .panel-content {
     flex: 1;
@@ -186,25 +233,79 @@ body {
     background: var(--accent-dim);
 }
 
-/* Editor */
+/* Editor — textarea + highlight.js overlay */
 #editor-container {
     flex: 1;
+    min-height: 0;        /* allow flex child to shrink; critical for absolute children */
     overflow: hidden;
+    position: relative;
 }
 
+/* ── Editor overlay: pixel-perfect alignment ── */
+
+/* Reset both layers to identical box model */
+#editor-highlight,
 #editor {
-    width: 100%;
-    height: 100%;
-    background: var(--bg-primary);
-    color: var(--text-primary);
+    position: absolute;
+    top: 0; left: 0; right: 0; bottom: 0;
+    margin: 0;
+    border: 0;
+    padding: 20px 24px;
+    box-sizing: border-box;
+
     font-family: var(--font-mono);
     font-size: 14px;
     line-height: 1.6;
-    padding: 20px 24px;
-    border: none;
+    letter-spacing: normal;
+    word-spacing: normal;
+
+    tab-size: 4;
+    -moz-tab-size: 4;
+    white-space: pre-wrap;
+    word-wrap: break-word;
+    overflow-wrap: break-word;
+}
+
+/* Highlight layer (bottom) */
+#editor-highlight {
+    overflow: hidden;           /* JS-driven scroll sync */
+    background: var(--bg-primary);
+    color: var(--text-primary);
+    pointer-events: none;
+    z-index: 0;
+    /* Remove <pre> browser default styles */
+    border-radius: 0;
+}
+#editor-highlight code {
+    /* inherit everything from pre; add no extra spacing */
+    display: block;
+    font: inherit;
+    letter-spacing: inherit;
+    line-height: inherit;
+    tab-size: inherit;
+    white-space: inherit;
+    word-wrap: inherit;
+    overflow-wrap: inherit;
+    background: transparent;
+    padding: 0;
+    margin: 0;
+    border: 0;
+    color: inherit;
+}
+
+/* Input layer (top) */
+#editor {
+    overflow: auto;
+    background: transparent;
+    color: transparent;
+    caret-color: var(--text-primary);
     outline: none;
     resize: none;
-    tab-size: 4;
+    z-index: 1;
+    -webkit-text-fill-color: transparent;
+    /* Prevent textarea from adding its own border/outline on focus */
+    appearance: none;
+    -webkit-appearance: none;
 }
 
 /* Preview */
@@ -395,15 +496,18 @@ body {
     padding: 2px 6px;
     opacity: 0;
     transition: opacity 0.2s;
+    z-index: 2;
 }
 
-pre:hover .copy-btn {
+pre:hover .copy-btn,
+pre.hljs-pre:hover .copy-btn {
     opacity: 1;
 }
 
 .copy-btn:hover {
     color: var(--accent);
     border-color: var(--accent);
+    opacity: 1 !important;
 }
 
 /* Approval buttons */
@@ -532,4 +636,133 @@ pre:hover .copy-btn {
     border: none;
     border-top: 1px solid var(--border);
     margin: 1.5em 0;
+}
+
+/* --- Nickname Modal --- */
+.modal-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.75);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+}
+.modal-overlay.hidden { display: none; }
+.modal-box {
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 36px 32px;
+    width: 300px;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    text-align: center;
+}
+.modal-title {
+    font-size: 32px;
+    color: var(--accent);
+    letter-spacing: 3px;
+}
+.modal-subtitle {
+    font-size: 13px;
+    color: var(--text-muted);
+}
+.modal-box input {
+    background: var(--bg-surface);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--text-primary);
+    font-size: 14px;
+    padding: 10px 14px;
+    text-align: center;
+    outline: none;
+    transition: border-color 0.15s;
+}
+.modal-box input:focus { border-color: var(--accent); }
+.modal-box button {
+    background: var(--accent);
+    border: none;
+    border-radius: 6px;
+    color: var(--bg-primary);
+    font-size: 14px;
+    font-weight: 700;
+    padding: 10px;
+    cursor: pointer;
+    transition: opacity 0.15s;
+}
+.modal-box button:hover { opacity: 0.85; }
+
+/* Other user's chat bubble */
+.chat-msg.other {
+    background: var(--bg-surface);
+    border: 1px solid var(--border);
+    align-self: flex-start;
+}
+
+
+
+/* --- highlight.js in Preview --- */
+/* Override generic #preview pre with hljs-specific styles */
+#preview pre.hljs-pre {
+    background: #0d1117;   /* github-dark background */
+    border-radius: 6px;
+    padding: 0;
+    margin: 1em 0;
+    overflow: hidden;
+}
+#preview pre.hljs-pre code.hljs {
+    display: block;
+    padding: 16px;
+    font-family: var(--font-mono);
+    font-size: 13px;
+    line-height: 1.6;
+    overflow-x: auto;
+    background: transparent; /* let pre background show */
+    border-radius: 0;
+}
+/* chat bubble code blocks */
+.chat-msg .body pre.hljs-pre {
+    background: #0d1117;
+    border-radius: 4px;
+    margin: 0.5em 0;
+    overflow: hidden;
+}
+.chat-msg .body pre.hljs-pre code.hljs {
+    display: block;
+    padding: 10px 14px;
+    font-size: 12px;
+    overflow-x: auto;
+    background: transparent;
+}
+
+
+/* Fence opening/closing markers ```lang */
+.cm-s-dracula .cm-formatting-code-block {
+    color: #6272a4;
+}
+
+/* --- highlight.js Markdown token colors in editor --- */
+/* These map to hljs class names emitted by highlight.js markdown grammar */
+#editor-highlight .hljs-section,
+#editor-highlight .hljs-title        { color: #ff79c6; font-weight: bold; } /* # headers */
+#editor-highlight .hljs-bullet       { color: #ff79c6; }                    /* - * list */
+#editor-highlight .hljs-strong       { color: #f8f8f2; font-weight: bold; } /* **bold** */
+#editor-highlight .hljs-emphasis     { color: #f1fa8c; font-style: italic; }/* *italic* */
+#editor-highlight .hljs-code         { color: #50fa7b; }                    /* `inline` */
+#editor-highlight .hljs-link         { color: #8be9fd; }                    /* [text](url) */
+#editor-highlight .hljs-string       { color: #f1fa8c; }                    /* "strings" */
+#editor-highlight .hljs-quote        { color: #6272a4; font-style: italic; }/* > blockquote */
+#editor-highlight .hljs-comment      { color: #6272a4; }
+#editor-highlight .hljs-attr         { color: #50fa7b; }
+#editor-highlight .hljs-keyword      { color: #ff79c6; }
+#editor-highlight .hljs-number       { color: #bd93f9; }
+#editor-highlight .hljs-literal      { color: #bd93f9; }
+#editor-highlight .hljs-deletion     { color: #f38ba8; }                    /* diff - */
+#editor-highlight .hljs-addition     { color: #a6e3a1; }                    /* diff + */
+
+/* --- Editor: fenced code block background --- */
+#editor-highlight .hljs-meta {
+    color: #6272a4;   /* fence ticks + language label */
 }

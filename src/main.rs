@@ -89,7 +89,20 @@ async fn async_main() {
             .init();
 
         // Parse serve-specific args
-        let mut opts = serve::ServeOptions::default();
+        // Priority: CLI flags > env vars > [serve] section in rune.toml
+        let serve_cfg = &cfg.serve;
+        let mut opts = serve::ServeOptions {
+            port: serve_cfg.port.unwrap_or(9527),
+            bind: serve_cfg
+                .bind
+                .as_deref()
+                .and_then(|b| b.parse().ok())
+                .unwrap_or(IpAddr::V4(Ipv4Addr::LOCALHOST)),
+            token: serve_cfg.token.clone(),
+            admin_token: serve_cfg.admin_token.clone(),
+        };
+
+        // CLI flags override config file
         let mut i = 2;
         while i < args.len() {
             match args[i].as_str() {
@@ -113,16 +126,29 @@ async fn async_main() {
                         i += 1;
                     }
                 }
+                "--admin-token" | "-a" => {
+                    if i + 1 < args.len() {
+                        opts.admin_token = Some(args[i + 1].clone());
+                        i += 1;
+                    }
+                }
                 _ => {}
             }
             i += 1;
         }
 
-        // Fallback: RUNE_SERVE_TOKEN env var
+        // Env var override (higher than config, lower than CLI flags)
         if opts.token.is_none() {
             if let Ok(t) = env::var("RUNE_SERVE_TOKEN") {
                 if !t.is_empty() {
                     opts.token = Some(t);
+                }
+            }
+        }
+        if opts.admin_token.is_none() {
+            if let Ok(t) = env::var("RUNE_SERVE_ADMIN_TOKEN") {
+                if !t.is_empty() {
+                    opts.admin_token = Some(t);
                 }
             }
         }

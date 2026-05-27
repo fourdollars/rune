@@ -73,6 +73,20 @@ fn default_policy_mode() -> String {
     "confirm".to_string()
 }
 
+/// Configuration for `rune serve` mode.
+#[derive(Debug, Clone, Deserialize, Default)]
+pub struct ServeConfig {
+    /// Port to listen on (default: 9527).
+    pub port: Option<u16>,
+    /// Bind address (default: 127.0.0.1).
+    pub bind: Option<String>,
+    /// Access token required from clients. None = no token required.
+    pub token: Option<String>,
+    /// Admin token: clients with this token get admin role (can approve tool requests).
+    pub admin_token: Option<String>,
+}
+
+
 impl Default for PolicyConfig {
     fn default() -> Self {
         Self {
@@ -133,6 +147,9 @@ pub struct RuneConfig {
     /// When set, only these skills are available; semantic/@ discovery is skipped.
     #[serde(skip)]
     pub preload_skills: Vec<String>,
+    /// Serve mode configuration ([serve] section in rune.toml).
+    #[serde(default)]
+    pub serve: ServeConfig,
 }
 
 impl Default for RuneConfig {
@@ -159,6 +176,7 @@ impl Default for RuneConfig {
             thinking: None,
             system_prompt: None,
             preload_skills: Vec::new(),
+            serve: ServeConfig::default(),
         }
     }
 }
@@ -184,6 +202,7 @@ struct PartialConfig {
     embedding: Option<crate::embedding::EmbeddingConfig>,
     system_prompt: Option<String>,
     thinking: Option<String>,
+    serve: Option<ServeConfig>,
 }
 
 /// CLI argument overrides.
@@ -378,6 +397,7 @@ pub fn load() -> anyhow::Result<RuneConfig> {
         embedding: None,
         thinking: env::var("RUNE_THINKING").ok(),
         system_prompt: env::var("RUNE_SYSTEM_PROMPT").ok(),
+        serve: None,
     };
     let env_json_output = env::var("RUNE_JSON_OUTPUT")
         .ok()
@@ -603,6 +623,12 @@ pub fn load() -> anyhow::Result<RuneConfig> {
                     .filter(|v| !v.is_empty())
             })
             .collect(),
+        serve: ec
+            .and_then(|c| c.serve.clone())
+            .or_else(|| cwdc.and_then(|c| c.serve.clone()))
+            .or_else(|| lc.and_then(|c| c.serve.clone()))
+            .or_else(|| uc.and_then(|c| c.serve.clone()))
+            .unwrap_or_default(),
     };
 
     // Post-processing: expand ~ in all path-like config fields
@@ -654,6 +680,7 @@ pub fn load_without_clap() -> anyhow::Result<RuneConfig> {
         embedding: None,
         thinking: env::var("RUNE_THINKING").ok(),
         system_prompt: env::var("RUNE_SYSTEM_PROMPT").ok(),
+        serve: None,
     };
 
     // Load TOML files
@@ -789,6 +816,11 @@ pub fn load_without_clap() -> anyhow::Result<RuneConfig> {
             .or_else(|| lc.and_then(|c| c.system_prompt.clone()))
             .or_else(|| uc.and_then(|c| c.system_prompt.clone())),
         preload_skills: Vec::new(),
+        serve: cwdc
+            .and_then(|c| c.serve.clone())
+            .or_else(|| lc.and_then(|c| c.serve.clone()))
+            .or_else(|| uc.and_then(|c| c.serve.clone()))
+            .unwrap_or_default(),
     };
 
     Ok(cfg)

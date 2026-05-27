@@ -3,23 +3,31 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>ᚱ Rune</title>
+    <title>ᚱᚢᚾᛖ</title>
     <link rel="stylesheet" href="/assets/style.css">
+    <link rel="stylesheet" href="/assets/highlight-dark.min.css">
 </head>
 <body>
+    <!-- Nickname Modal -->
+    <div id="nickname-modal" class="modal-overlay">
+      <div class="modal-box">
+        <div class="modal-title">ᚱᚢᚾᛖ</div>
+        <div class="modal-subtitle">Enter your nickname to join</div>
+        <input id="nickname-input" type="text" placeholder="your name..." maxlength="20" autofocus />
+        <input id="token-input" type="password" placeholder="access token (if required)" />
+        <button id="nickname-submit" onclick="submitNickname()">Join →</button>
+      </div>
+    </div>
+
     <div id="app">
         <!-- Left Panel: Sessions -->
         <aside id="panel-left" class="panel panel-left collapsed">
-            <div class="panel-toggle" onclick="togglePanel('left')">
-                <span class="toggle-icon">▶</span>
+            <div class="resize-handle" id="resize-left">
+                <span class="toggle-icon">›</span>
             </div>
             <div class="panel-content">
-                <h3>Sessions</h3>
-                <div class="session-list">
-                    <div class="session-item active">
-                        <span class="session-dot">●</span>
-                        <span>Current Session</span>
-                    </div>
+                <h3>Online <span id="online-count" style="color:var(--success)">0</span></h3>
+                <div class="session-list" id="session-list">
                 </div>
             </div>
         </aside>
@@ -36,7 +44,8 @@
                 </div>
             </div>
             <div id="editor-container">
-                <textarea id="editor" spellcheck="false"></textarea>
+                <pre id="editor-highlight" aria-hidden="true"><code id="editor-highlight-code" class="language-markdown"></code></pre>
+                <textarea id="editor" spellcheck="false" autocomplete="off" autocorrect="off" autocapitalize="off"></textarea>
             </div>
             <div id="preview-container" class="hidden">
                 <div id="preview"></div>
@@ -45,25 +54,25 @@
 
         <!-- Right Panel: Chat -->
         <aside id="panel-right" class="panel panel-right">
-            <div class="panel-toggle" onclick="togglePanel('right')">
-                <span class="toggle-icon">◀</span>
+            <div class="resize-handle" id="resize-right">
+                <span class="toggle-icon">‹</span>
             </div>
             <div class="panel-content">
                 <div class="chat-header">
-                    <h3>Chat</h3>
+                    <h3>ᚱᚢᚾᛖ</h3>
                     <span id="status-indicator" class="status idle">● idle</span>
                 </div>
                 <div id="chat-messages" class="chat-messages"></div>
                 <div class="chat-input-area">
-                    <textarea id="chat-input" placeholder="Message Rune..." rows="2"></textarea>
+                    <textarea id="chat-input" placeholder="Message ᚱᚢᚾᛖ..." rows="2"></textarea>
                     <button id="chat-send" onclick="sendMessage()">⏎</button>
                 </div>
             </div>
         </aside>
     </div>
 
-    <!-- Markdown renderer (marked.js embedded) -->
     <script src="/assets/marked.min.js"></script>
+    <script src="/assets/highlight.min.js"></script>
     <script src="/assets/app.js"></script>
 </body>
 </html>

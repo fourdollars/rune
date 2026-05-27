@@ -74,6 +74,10 @@ pub struct Agent {
     pub embedding: Option<EmbeddingEngine>,
     /// Optional streaming token callback (for WebUI serve mode).
     pub token_callback: Option<Arc<dyn Fn(&str) + Send + Sync>>,
+    /// Optional approval callback (for WebUI serve mode).
+    /// Called with (id, detail) when a tool needs user approval.
+    /// Returns true = approved, false = denied.
+    pub approval_callback: Option<Arc<dyn Fn(String, String) -> std::pin::Pin<Box<dyn std::future::Future<Output = bool> + Send>> + Send + Sync>>,
     /// Shared spec.md content (for serve mode — read_spec/edit_spec tools).
     pub spec_content: Option<Arc<RwLock<String>>>,
 }
@@ -179,6 +183,7 @@ impl Agent {
             skill_tools_deny: None,
             embedding,
             token_callback: None,
+            approval_callback: None,
             spec_content: None,
         }
     }
@@ -702,7 +707,7 @@ impl Agent {
                         t.record(StepKind::ToolCall {
                             name: tc.function.name.clone(),
                             arguments_preview: redact(
-                                &tc.function.arguments[..tc.function.arguments.len().min(100)],
+                                char_preview(&tc.function.arguments, 100).as_str(),
                             ),
                         });
                     }
@@ -739,7 +744,7 @@ impl Agent {
                 for (i, output) in results.into_iter().enumerate() {
                     let tc_id = &dispatch_list[i].0;
                     let tc_name = &dispatch_list[i].1;
-                    let content_preview = redact(&output.content[..output.content.len().min(200)]);
+                    let content_preview = redact(&char_preview(&output.content, 200));
 
                     // Only show errors inline for immediate feedback
                     if output.is_error {
@@ -994,7 +999,7 @@ impl Agent {
                     let mut spec_w = spec.write().await;
                     if spec_w.contains(search_str) {
                         *spec_w = spec_w.replacen(search_str, replace_str, 1);
-                        Some(format!("spec.md updated: replaced '{}...'", &search_str[..search_str.len().min(40)]))
+                        Some(format!("spec.md updated: replaced '{}...'", char_preview(&search_str, 40)))
                     } else {
                         Some(format!("Error: search text not found in spec.md"))
                     }
@@ -1053,7 +1058,7 @@ impl Agent {
             t.record(StepKind::ToolCall {
                 name: tc.function.name.clone(),
                 arguments_preview: redact(
-                    &tc.function.arguments[..tc.function.arguments.len().min(100)],
+                    char_preview(&tc.function.arguments, 100).as_str(),
                 ),
             });
         }
@@ -1079,26 +1084,34 @@ impl Agent {
             && !self.auto_approve
             && !already_allowed
         {
-            if !self.interactive {
+            // WebUI serve mode: use approval_callback
+            if let Some(ref cb) = self.approval_callback {
+                let id = format!("{}-{}", tc.function.name, uuid_approval());
+                let detail = format!("{} {}", tc.function.name, serde_json::to_string(&args).unwrap_or_default());
+                let approved = cb(id.clone(), detail).await;
+                if !approved {
+                    return Ok("DENIED: user rejected tool execution".to_string());
+                }
+            } else if !self.interactive {
                 let msg = format!(
                     "non-interactive mode requires --yes (or a non-confirm policy) before executing {}",
                     tc.function.name
                 );
                 eprintln!("  {} {}", "✗".red(), msg.dimmed());
                 return Err(StopReason::Error(msg));
-            }
-
-            eprint!(
-                "
+            } else {
+                eprint!(
+                    "
   {} Execute? [Y/n] ",
-                "⚠".yellow().bold()
-            );
-            std::io::Write::flush(&mut std::io::stderr()).ok();
-            match Self::prompt_confirm() {
-                ConfirmResult::Yes => eprintln!("{}", "approved".green()),
-                ConfirmResult::No => {
-                    eprintln!("{}", "denied".red());
-                    return Ok("DENIED: user rejected tool execution".to_string());
+                    "⚠".yellow().bold()
+                );
+                std::io::Write::flush(&mut std::io::stderr()).ok();
+                match Self::prompt_confirm() {
+                    ConfirmResult::Yes => eprintln!("{}", "approved".green()),
+                    ConfirmResult::No => {
+                        eprintln!("{}", "denied".red());
+                        return Ok("DENIED: user rejected tool execution".to_string());
+                    }
                 }
             }
         }
@@ -1197,7 +1210,7 @@ impl Agent {
                 eprintln!(
                     "  {} {}",
                     "✗".red(),
-                    output.content[..output.content.len().min(200)].dimmed()
+                    char_preview(&output.content, 200).dimmed()
                 );
                 return Err(StopReason::Error(output.content));
             }
@@ -1232,7 +1245,7 @@ impl Agent {
                 eprintln!(
                     "  {} {}",
                     "✗".red(),
-                    output.content[..output.content.len().min(200)].dimmed()
+                    char_preview(&output.content, 200).dimmed()
                 );
                 return Err(StopReason::Error(output.content));
             }
@@ -1418,7 +1431,7 @@ impl Agent {
             eprintln!(
                 "  {} {}",
                 "✗".red(),
-                output.content[..output.content.len().min(200)].dimmed()
+                char_preview(&output.content, 200).dimmed()
             );
             if Self::is_policy_blocked(&output.content) {
                 return Err(StopReason::Error(output.content));
@@ -1966,6 +1979,21 @@ fn contains_permission_denied(s: &str) -> bool {
 
 fn shell_escape(s: &str) -> String {
     format!("'{}'", s.replace('\'', "'\\''"))
+}
+
+/// Generate a short unique ID for approval requests.
+
+/// Safely truncate a string to at most `n` Unicode characters (avoids byte-boundary panics).
+fn char_preview(s: &str, n: usize) -> String {
+    s.chars().take(n).collect()
+}
+
+fn uuid_approval() -> String {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let t = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default();
+    format!("{:x}{:04x}", t.as_secs() & 0xffff, t.subsec_nanos() & 0xffff)
 }
 
 #[cfg(test)]
