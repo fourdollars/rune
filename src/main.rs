@@ -118,6 +118,15 @@ async fn async_main() {
             i += 1;
         }
 
+        // Fallback: RUNE_SERVE_TOKEN env var
+        if opts.token.is_none() {
+            if let Ok(t) = env::var("RUNE_SERVE_TOKEN") {
+                if !t.is_empty() {
+                    opts.token = Some(t);
+                }
+            }
+        }
+
         serve::run(cfg, opts).await;
         return;
     }
