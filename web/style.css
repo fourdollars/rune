@@ -368,3 +368,168 @@ body {
     border-radius: 3px;
 }
 ::-webkit-scrollbar-thumb:hover { background: var(--text-muted); }
+/* Phase 3 additions — append to style.css */
+
+/* Spec updated flash */
+.toolbar.spec-updated {
+    animation: spec-flash 1.2s ease;
+}
+
+@keyframes spec-flash {
+    0% { background: var(--bg-surface); }
+    20% { background: rgba(137, 180, 250, 0.15); }
+    100% { background: var(--bg-surface); }
+}
+
+/* Code block copy button */
+.copy-btn {
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    background: var(--bg-primary);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    color: var(--text-muted);
+    cursor: pointer;
+    font-size: 12px;
+    padding: 2px 6px;
+    opacity: 0;
+    transition: opacity 0.2s;
+}
+
+pre:hover .copy-btn {
+    opacity: 1;
+}
+
+.copy-btn:hover {
+    color: var(--accent);
+    border-color: var(--accent);
+}
+
+/* Approval buttons */
+.btn-approve {
+    background: var(--success);
+    color: #000;
+    border: none;
+    padding: 4px 12px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 12px;
+    font-weight: 600;
+}
+
+.btn-deny {
+    background: var(--error);
+    color: #000;
+    border: none;
+    padding: 4px 12px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 12px;
+    font-weight: 600;
+}
+
+.btn-approve:hover { opacity: 0.8; }
+.btn-deny:hover { opacity: 0.8; }
+
+/* Chat markdown rendering */
+.chat-msg .body p {
+    margin: 0.3em 0;
+}
+
+.chat-msg .body code {
+    background: var(--bg-primary);
+    padding: 1px 4px;
+    border-radius: 3px;
+    font-family: var(--font-mono);
+    font-size: 0.85em;
+}
+
+.chat-msg .body pre {
+    background: var(--bg-primary);
+    padding: 8px 12px;
+    border-radius: 4px;
+    overflow-x: auto;
+    margin: 0.5em 0;
+    font-size: 0.85em;
+}
+
+.chat-msg .body pre code {
+    background: none;
+    padding: 0;
+}
+
+.chat-msg .body ul, .chat-msg .body ol {
+    padding-left: 1.2em;
+    margin: 0.3em 0;
+}
+
+.chat-msg .body blockquote {
+    border-left: 2px solid var(--accent-dim);
+    padding-left: 8px;
+    color: var(--text-secondary);
+    margin: 0.3em 0;
+}
+
+.chat-msg .body a {
+    color: var(--accent);
+}
+
+.chat-msg .body table {
+    border-collapse: collapse;
+    margin: 0.5em 0;
+    font-size: 0.9em;
+}
+
+.chat-msg .body th, .chat-msg .body td {
+    border: 1px solid var(--border);
+    padding: 4px 8px;
+}
+
+.chat-msg .body th {
+    background: var(--bg-surface);
+}
+
+/* Disconnected status */
+.status.disconnected {
+    color: var(--error);
+}
+
+/* Preview table styling */
+#preview table {
+    border-collapse: collapse;
+    margin: 1em 0;
+    width: 100%;
+}
+
+#preview th, #preview td {
+    border: 1px solid var(--border);
+    padding: 8px 12px;
+    text-align: left;
+}
+
+#preview th {
+    background: var(--bg-surface);
+    font-weight: 600;
+}
+
+#preview tr:hover {
+    background: rgba(137, 180, 250, 0.05);
+}
+
+/* Preview list styling */
+#preview ul, #preview ol {
+    padding-left: 1.5em;
+    margin: 0.6em 0;
+}
+
+#preview li {
+    margin: 0.3em 0;
+}
+
+/* Preview horizontal rule */
+#preview hr {
+    border: none;
+    border-top: 1px solid var(--border);
+    margin: 1.5em 0;
+}

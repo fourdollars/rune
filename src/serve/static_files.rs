@@ -11,6 +11,7 @@ static ASSETS: LazyLock<HashMap<&'static str, &'static str>> = LazyLock::new(|| 
     m.insert("index.html", include_str!("../../web/index.html"));
     m.insert("app.js", include_str!("../../web/app.js"));
     m.insert("style.css", include_str!("../../web/style.css"));
+    m.insert("marked.min.js", include_str!("../../web/marked.min.js"));
     m
 });
 

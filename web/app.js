@@ -10,6 +10,7 @@ let specContent = '';
 let isConnected = false;
 let editorDirty = false;
 let debounceTimer = null;
+let specVersion = 0; // track spec updates for flash indicator
 
 // --- DOM refs ---
 const editor = document.getElementById('editor');
@@ -22,10 +23,20 @@ const statusIndicator = document.getElementById('status-indicator');
 const btnEdit = document.getElementById('btn-edit');
 const btnPreview = document.getElementById('btn-preview');
 
+// --- marked.js configuration ---
+if (typeof marked !== 'undefined') {
+    marked.setOptions({
+        breaks: true,
+        gfm: true,
+    });
+}
+
 // --- WebSocket ---
 function connect() {
     const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const url = `${proto}//${location.host}/ws`;
+    const params = new URLSearchParams(location.search);
+    const tokenParam = params.get('token') ? `?token=${params.get('token')}` : '';
+    const url = `${proto}//${location.host}/ws${tokenParam}`;
     ws = new WebSocket(url);
 
     ws.onopen = () => {
@@ -58,15 +69,19 @@ function connect() {
 function handleServerMessage(msg) {
     switch (msg.type) {
         case 'spec_full':
+            const isAgentUpdate = specVersion > 0 && msg.content !== specContent;
             specContent = msg.content;
             editor.value = specContent;
             if (currentMode === 'preview') renderPreview();
+            if (isAgentUpdate) flashSpecIndicator();
+            specVersion++;
             break;
 
         case 'spec_patch':
             specContent = msg.content;
             editor.value = specContent;
             if (currentMode === 'preview') renderPreview();
+            flashSpecIndicator();
             break;
 
         case 'chat_token':
@@ -132,6 +147,7 @@ function addSystemMessage(content) {
 }
 
 let currentAssistantEl = null;
+let currentAssistantText = '';
 
 function appendToLastAssistant(token) {
     if (!currentAssistantEl) {
@@ -149,24 +165,36 @@ function appendToLastAssistant(token) {
         div.appendChild(body);
         chatMessages.appendChild(div);
         currentAssistantEl = body;
+        currentAssistantText = '';
     }
-    currentAssistantEl.textContent += token;
+    currentAssistantText += token;
+    // Render as markdown for rich formatting
+    if (typeof marked !== 'undefined') {
+        currentAssistantEl.innerHTML = marked.parse(currentAssistantText);
+    } else {
+        currentAssistantEl.textContent = currentAssistantText;
+    }
     chatMessages.scrollTop = chatMessages.scrollHeight;
 }
 
 function finalizeAssistantMessage() {
+    // Final render with markdown
+    if (currentAssistantEl && typeof marked !== 'undefined') {
+        currentAssistantEl.innerHTML = marked.parse(currentAssistantText);
+    }
     currentAssistantEl = null;
+    currentAssistantText = '';
 }
 
 function showApprovalRequest(id, detail) {
     const div = document.createElement('div');
-    div.className = 'chat-msg assistant';
+    div.className = 'chat-msg assistant approval';
     div.innerHTML = `
         <div class="sender">🔒 Approval Required</div>
-        <div class="body">${detail}</div>
+        <div class="body"><code>${escapeHtml(detail)}</code></div>
         <div style="margin-top:8px;display:flex;gap:8px">
-            <button onclick="respondApproval('${id}',true)" style="background:var(--success);color:#000;border:none;padding:4px 12px;border-radius:4px;cursor:pointer">✓ Allow</button>
-            <button onclick="respondApproval('${id}',false)" style="background:var(--error);color:#000;border:none;padding:4px 12px;border-radius:4px;cursor:pointer">✗ Deny</button>
+            <button onclick="respondApproval('${id}',true)" class="btn-approve">✓ Allow</button>
+            <button onclick="respondApproval('${id}',false)" class="btn-deny">✗ Deny</button>
         </div>
     `;
     chatMessages.appendChild(div);
@@ -198,9 +226,30 @@ function setMode(mode) {
 function renderPreview() {
     if (typeof marked !== 'undefined') {
         preview.innerHTML = marked.parse(specContent);
+        // Add copy buttons to code blocks
+        preview.querySelectorAll('pre code').forEach(block => {
+            const btn = document.createElement('button');
+            btn.className = 'copy-btn';
+            btn.textContent = '📋';
+            btn.title = 'Copy';
+            btn.onclick = () => {
+                navigator.clipboard.writeText(block.textContent);
+                btn.textContent = '✓';
+                setTimeout(() => btn.textContent = '📋', 1500);
+            };
+            block.parentElement.style.position = 'relative';
+            block.parentElement.appendChild(btn);
+        });
     } else {
         preview.textContent = specContent;
     }
+}
+
+// Flash indicator when spec is updated by the agent
+function flashSpecIndicator() {
+    const toolbar = document.querySelector('.toolbar');
+    toolbar.classList.add('spec-updated');
+    setTimeout(() => toolbar.classList.remove('spec-updated'), 1200);
 }
 
 // Editor change handling with debounce
@@ -215,6 +264,18 @@ editor.addEventListener('input', () => {
             editorDirty = false;
         }
     }, 300);
+});
+
+// Tab key support in editor
+editor.addEventListener('keydown', (e) => {
+    if (e.key === 'Tab') {
+        e.preventDefault();
+        const start = editor.selectionStart;
+        const end = editor.selectionEnd;
+        editor.value = editor.value.substring(0, start) + '    ' + editor.value.substring(end);
+        editor.selectionStart = editor.selectionEnd = start + 4;
+        specContent = editor.value;
+    }
 });
 
 // --- Status ---
@@ -236,6 +297,13 @@ function togglePanel(side) {
     }
 }
 
+// --- Utilities ---
+function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
+
 // --- Keyboard shortcuts ---
 chatInput.addEventListener('keydown', (e) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -249,6 +317,15 @@ document.addEventListener('keydown', (e) => {
     if (e.ctrlKey && e.shiftKey && e.key === 'E') {
         e.preventDefault();
         setMode(currentMode === 'edit' ? 'preview' : 'edit');
+    }
+});
+
+// Ctrl+Enter → send message (from anywhere)
+document.addEventListener('keydown', (e) => {
+    if (e.ctrlKey && e.key === 'Enter') {
+        e.preventDefault();
+        chatInput.focus();
+        sendMessage();
     }
 });
 
