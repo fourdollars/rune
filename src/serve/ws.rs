@@ -470,9 +470,24 @@ async fn handle_chat_message(
     };
     agent.load_history(history_slice);
 
-    // Send typing status (broadcast)
-    let typing = ServerMsg::Status { state: "typing".to_string() };
-    if let Ok(json) = serde_json::to_string(&typing) { let _ = broadcast_tx.send(json); }
+    // Status: thinking → typing (first token) → idle
+    // "thinking" was already broadcast by the caller before spawning this task.
+    // Switch to "typing" on first token so the user sees the distinction.
+    let first_token_sent = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let first_token_bcast = broadcast_tx.clone();
+    let first_token_flag = first_token_sent.clone();
+    let prev_callback = agent.token_callback.take();
+    let bcast_for_token = first_token_bcast.clone();
+    agent.token_callback = Some(Arc::new(move |token: &str| {
+        // Switch status to typing on first token
+        if !first_token_flag.swap(true, std::sync::atomic::Ordering::SeqCst) {
+            let typing = ServerMsg::Status { state: "typing".to_string() };
+            if let Ok(json) = serde_json::to_string(&typing) {
+                let _ = bcast_for_token.send(json);
+            }
+        }
+        if let Some(ref cb) = prev_callback { cb(token); }
+    }));
 
     // Run the agent
     let result = agent.run(&user_msg).await;
