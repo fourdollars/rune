@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ᚱ Rune</title>
+    <link rel="stylesheet" href="/assets/style.css">
+</head>
+<body>
+    <div id="app">
+        <!-- Left Panel: Sessions -->
+        <aside id="panel-left" class="panel panel-left collapsed">
+            <div class="panel-toggle" onclick="togglePanel('left')">
+                <span class="toggle-icon">▶</span>
+            </div>
+            <div class="panel-content">
+                <h3>Sessions</h3>
+                <div class="session-list">
+                    <div class="session-item active">
+                        <span class="session-dot">●</span>
+                        <span>Current Session</span>
+                    </div>
+                </div>
+            </div>
+        </aside>
+
+        <!-- Center: Spec Editor -->
+        <main id="panel-center">
+            <div class="toolbar">
+                <div class="toolbar-left">
+                    <span class="doc-title">spec.md</span>
+                </div>
+                <div class="toolbar-right">
+                    <button id="btn-edit" class="toolbar-btn active" onclick="setMode('edit')">✏️ Edit</button>
+                    <button id="btn-preview" class="toolbar-btn" onclick="setMode('preview')">👁 Preview</button>
+                </div>
+            </div>
+            <div id="editor-container">
+                <textarea id="editor" spellcheck="false"></textarea>
+            </div>
+            <div id="preview-container" class="hidden">
+                <div id="preview"></div>
+            </div>
+        </main>
+
+        <!-- Right Panel: Chat -->
+        <aside id="panel-right" class="panel panel-right">
+            <div class="panel-toggle" onclick="togglePanel('right')">
+                <span class="toggle-icon">◀</span>
+            </div>
+            <div class="panel-content">
+                <div class="chat-header">
+                    <h3>Chat</h3>
+                    <span id="status-indicator" class="status idle">● idle</span>
+                </div>
+                <div id="chat-messages" class="chat-messages"></div>
+                <div class="chat-input-area">
+                    <textarea id="chat-input" placeholder="Message Rune..." rows="2"></textarea>
+                    <button id="chat-send" onclick="sendMessage()">⏎</button>
+                </div>
+            </div>
+        </aside>
+    </div>
+
+    <!-- Markdown renderer (marked.js via CDN for MVP, will embed later) -->
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <script src="/assets/app.js"></script>
+</body>
+</html>

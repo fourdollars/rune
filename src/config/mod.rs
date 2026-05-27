@@ -621,6 +621,178 @@ pub fn load() -> anyhow::Result<RuneConfig> {
 
 /// Persist a new domain to the user's ~/.rune/rune.toml allowed_domains list.
 /// Best-effort: if the file can't be read/written, silently skip.
+/// Load configuration without clap CLI arg parsing.
+/// Used by `rune serve` to avoid clap choking on unknown subcommands.
+/// Reads: env vars > ./rune.toml > .rune/rune.toml > ~/.rune/rune.toml > defaults
+pub fn load_without_clap() -> anyhow::Result<RuneConfig> {
+    let env_partial = PartialConfig {
+        model: env::var("RUNE_MODEL").ok(),
+        api_key: env::var("RUNE_API_KEY").ok(),
+        skills_dir: env::var("RUNE_SKILLS_DIR").ok(),
+        log_level: env::var("RUNE_LOG_LEVEL").ok(),
+        max_steps: env::var("RUNE_MAX_STEPS").ok().and_then(|v| v.parse().ok()),
+        token_budget: env::var("RUNE_TOKEN_BUDGET")
+            .ok()
+            .and_then(|v| v.parse().ok()),
+        timeout_secs: env::var("RUNE_TIMEOUT_SECS")
+            .ok()
+            .and_then(|v| v.parse().ok()),
+        base_url: env::var("RUNE_BASE_URL").ok(),
+        provider: env::var("RUNE_PROVIDER").ok(),
+        trace: env::var("RUNE_TRACE").ok().and_then(|v| v.parse().ok()),
+        context_window: env::var("RUNE_CONTEXT_WINDOW")
+            .ok()
+            .and_then(|v| v.parse().ok()),
+        compact_threshold: env::var("RUNE_COMPACT_THRESHOLD")
+            .ok()
+            .and_then(|v| v.parse().ok()),
+        compact_keep_last: env::var("RUNE_COMPACT_KEEP_LAST")
+            .ok()
+            .and_then(|v| v.parse().ok()),
+        policy: None,
+        mcp_servers: None,
+        embedding: None,
+        thinking: env::var("RUNE_THINKING").ok(),
+        system_prompt: env::var("RUNE_SYSTEM_PROMPT").ok(),
+    };
+
+    // Load TOML files
+    let cwd_cfg = env::current_dir()
+        .ok()
+        .map(|cwd| cwd.join("rune.toml"))
+        .and_then(|p| load_toml(&p));
+    let local_cfg = env::current_dir()
+        .ok()
+        .map(|cwd| cwd.join(".rune").join("rune.toml"))
+        .and_then(|p| load_toml(&p));
+    let user_cfg = env::var("HOME")
+        .ok()
+        .map(|h| PathBuf::from(h).join(".rune").join("rune.toml"))
+        .and_then(|p| load_toml(&p));
+
+    let cwdc = cwd_cfg.as_ref();
+    let lc = local_cfg.as_ref();
+    let uc = user_cfg.as_ref();
+    let defaults = RuneConfig::default();
+
+    let policy = cwdc
+        .and_then(|c| c.policy.clone())
+        .or_else(|| lc.and_then(|c| c.policy.clone()))
+        .or_else(|| uc.and_then(|c| c.policy.clone()))
+        .unwrap_or_default();
+
+    let cfg = RuneConfig {
+        model: pick(
+            &[
+                &env_partial.model,
+                &cwdc.and_then(|c| c.model.clone()),
+                &lc.and_then(|c| c.model.clone()),
+                &uc.and_then(|c| c.model.clone()),
+            ],
+            defaults.model,
+        ),
+        api_key: env_partial
+            .api_key
+            .or_else(|| cwdc.and_then(|c| c.api_key.clone()))
+            .or_else(|| lc.and_then(|c| c.api_key.clone()))
+            .or_else(|| uc.and_then(|c| c.api_key.clone())),
+        provider: env_partial
+            .provider
+            .or_else(|| cwdc.and_then(|c| c.provider.clone()))
+            .or_else(|| lc.and_then(|c| c.provider.clone()))
+            .or_else(|| uc.and_then(|c| c.provider.clone())),
+        skills_dir: pick(
+            &[
+                &env_partial.skills_dir,
+                &cwdc.and_then(|c| c.skills_dir.clone()),
+                &lc.and_then(|c| c.skills_dir.clone()),
+                &uc.and_then(|c| c.skills_dir.clone()),
+            ],
+            defaults.skills_dir,
+        ),
+        log_level: pick(
+            &[
+                &env_partial.log_level,
+                &cwdc.and_then(|c| c.log_level.clone()),
+                &lc.and_then(|c| c.log_level.clone()),
+                &uc.and_then(|c| c.log_level.clone()),
+            ],
+            defaults.log_level,
+        ),
+        max_steps: env_partial
+            .max_steps
+            .or_else(|| cwdc.and_then(|c| c.max_steps))
+            .or_else(|| lc.and_then(|c| c.max_steps))
+            .or_else(|| uc.and_then(|c| c.max_steps))
+            .or(defaults.max_steps),
+        token_budget: env_partial
+            .token_budget
+            .or_else(|| cwdc.and_then(|c| c.token_budget))
+            .or_else(|| lc.and_then(|c| c.token_budget))
+            .or_else(|| uc.and_then(|c| c.token_budget))
+            .or(defaults.token_budget),
+        timeout_secs: env_partial
+            .timeout_secs
+            .or_else(|| cwdc.and_then(|c| c.timeout_secs))
+            .or_else(|| lc.and_then(|c| c.timeout_secs))
+            .or_else(|| uc.and_then(|c| c.timeout_secs))
+            .or(defaults.timeout_secs),
+        base_url: env_partial
+            .base_url
+            .or_else(|| cwdc.and_then(|c| c.base_url.clone()))
+            .or_else(|| lc.and_then(|c| c.base_url.clone()))
+            .or_else(|| uc.and_then(|c| c.base_url.clone())),
+        trace: env_partial
+            .trace
+            .or_else(|| cwdc.and_then(|c| c.trace.clone()))
+            .or_else(|| lc.and_then(|c| c.trace.clone()))
+            .or_else(|| uc.and_then(|c| c.trace.clone())),
+        json_output: false,
+        auto_approve: false,
+        context_window: env_partial
+            .context_window
+            .or_else(|| cwdc.and_then(|c| c.context_window))
+            .or_else(|| lc.and_then(|c| c.context_window))
+            .or_else(|| uc.and_then(|c| c.context_window))
+            .unwrap_or(defaults.context_window),
+        compact_threshold: env_partial
+            .compact_threshold
+            .or_else(|| cwdc.and_then(|c| c.compact_threshold))
+            .or_else(|| lc.and_then(|c| c.compact_threshold))
+            .or_else(|| uc.and_then(|c| c.compact_threshold))
+            .unwrap_or(defaults.compact_threshold),
+        compact_keep_last: env_partial
+            .compact_keep_last
+            .or_else(|| cwdc.and_then(|c| c.compact_keep_last))
+            .or_else(|| lc.and_then(|c| c.compact_keep_last))
+            .or_else(|| uc.and_then(|c| c.compact_keep_last))
+            .unwrap_or(defaults.compact_keep_last),
+        policy,
+        mcp_servers: cwdc
+            .and_then(|c| c.mcp_servers.clone())
+            .or_else(|| lc.and_then(|c| c.mcp_servers.clone()))
+            .or_else(|| uc.and_then(|c| c.mcp_servers.clone()))
+            .unwrap_or_default(),
+        embedding: cwdc
+            .and_then(|c| c.embedding.clone())
+            .or_else(|| lc.and_then(|c| c.embedding.clone()))
+            .or_else(|| uc.and_then(|c| c.embedding.clone()))
+            .unwrap_or_default(),
+        thinking: env_partial
+            .thinking
+            .or_else(|| cwdc.and_then(|c| c.thinking.clone()))
+            .or_else(|| lc.and_then(|c| c.thinking.clone()))
+            .or_else(|| uc.and_then(|c| c.thinking.clone())),
+        system_prompt: env_partial
+            .system_prompt
+            .or_else(|| cwdc.and_then(|c| c.system_prompt.clone()))
+            .or_else(|| lc.and_then(|c| c.system_prompt.clone()))
+            .or_else(|| uc.and_then(|c| c.system_prompt.clone())),
+        preload_skills: Vec::new(),
+    };
+
+    Ok(cfg)
+}
 pub fn persist_domain(domain: &str) {
     persist_policy_array("allowed_domains", domain);
 }
