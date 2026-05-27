@@ -40,16 +40,18 @@
                     <span class="doc-title">spec.md</span>
                 </div>
                 <div class="toolbar-right">
-                    <button id="btn-edit" class="toolbar-btn active" onclick="setMode('edit')">✏️ Edit</button>
-                    <button id="btn-preview" class="toolbar-btn" onclick="setMode('preview')">👁 Preview</button>
+                    <button id="btn-edit" class="toolbar-btn active" onclick="toggleEdit()" title="Toggle editor (E)">✏️ Edit</button>
+                    <button id="btn-preview" class="toolbar-btn" onclick="togglePreview()" title="Toggle preview (P)">👁 Preview</button>
                 </div>
             </div>
-            <div id="editor-container">
-                <pre id="editor-highlight" aria-hidden="true"><code id="editor-highlight-code" class="language-markdown"></code></pre>
-                <textarea id="editor" spellcheck="false" autocomplete="off" autocorrect="off" autocapitalize="off"></textarea>
-            </div>
-            <div id="preview-container" class="hidden">
-                <div id="preview"></div>
+            <div id="center-body">
+                <div id="editor-container">
+                    <pre id="editor-highlight" aria-hidden="true"><code id="editor-highlight-code" class="language-markdown"></code></pre>
+                    <textarea id="editor" spellcheck="false" autocomplete="off" autocorrect="off" autocapitalize="off"></textarea>
+                </div>
+                <div id="preview-container" class="hidden">
+                    <div id="preview"></div>
+                </div>
             </div>
         </main>
 

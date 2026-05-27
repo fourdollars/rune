@@ -5,7 +5,8 @@
 
 // --- State ---
 let ws = null;
-let currentMode = 'edit';
+let showEdit    = true;
+let showPreview = false;
 let specContent = '';
 let isConnected = false;
 let editorDirty = false;
@@ -180,7 +181,14 @@ if (typeof marked !== 'undefined') {
         const safe = text.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
         return `<pre class="hljs-pre" data-raw="${raw}"><code>${safe}</code></pre>`;
     };
-    marked.use({ renderer, breaks: true, gfm: true });
+    // hooks: unwrap <svg> mistakenly wrapped in <p>
+    const hooks = {
+        postprocess(html) {
+            // <p><svg ...>...</svg></p>  →  <svg ...>...</svg>
+            return html.replace(/<p>(\s*<svg[\s\S]*?<\/svg>\s*)<\/p>/gi, '$1');
+        }
+    };
+    marked.use({ renderer, hooks, breaks: true, gfm: true });
 }
 
 // --- Nickname Modal ---
@@ -273,7 +281,7 @@ function handleServerMessage(msg) {
             if (msg.content !== specContent) {
                 specContent = msg.content;
                 setEditorValue(specContent);
-                if (currentMode === 'preview') renderPreview();
+                if (showPreview) renderPreview();
             }
             if (isAgentUpdate) flashSpecIndicator();
             specVersion++;
@@ -283,7 +291,7 @@ function handleServerMessage(msg) {
             if (msg.content !== specContent) {
                 specContent = msg.content;
                 setEditorValue(specContent);
-                if (currentMode === 'preview') renderPreview();
+                if (showPreview) renderPreview();
                 flashSpecIndicator();
             }
             break;
@@ -470,20 +478,69 @@ function respondApproval(id, approved) {
 }
 
 // --- Spec Editor ---
-function setMode(mode) {
-    currentMode = mode;
-    if (mode === 'edit') {
+function applyPanelLayout() {
+    const center     = document.getElementById('panel-center');
+    const centerBody = document.getElementById('center-body');
+
+    // Editor visibility
+    if (showEdit) {
         editorContainer.classList.remove('hidden');
-        previewContainer.classList.add('hidden');
         btnEdit.classList.add('active');
-        btnPreview.classList.remove('active');
     } else {
         editorContainer.classList.add('hidden');
-        previewContainer.classList.remove('hidden');
         btnEdit.classList.remove('active');
+    }
+
+    // Preview visibility
+    if (showPreview) {
+        previewContainer.classList.remove('hidden');
         btnPreview.classList.add('active');
         renderPreview();
+    } else {
+        previewContainer.classList.add('hidden');
+        btnPreview.classList.remove('active');
     }
+
+    // Split layout: side-by-side when both on
+    if (showEdit && showPreview) {
+        centerBody.classList.add('split-view');
+        editorContainer.style.width  = '';
+        previewContainer.style.width = '';
+    } else {
+        centerBody.classList.remove('split-view');
+        editorContainer.style.width  = '';
+        previewContainer.style.width = '';
+    }
+
+    // Both off → hide center so chat expands to fill
+    if (!showEdit && !showPreview) {
+        center.classList.add('hidden');
+    } else {
+        center.classList.remove('hidden');
+    }
+
+    // Persist
+    try {
+        localStorage.setItem('rune_show_edit',    showEdit    ? '1' : '0');
+        localStorage.setItem('rune_show_preview', showPreview ? '1' : '0');
+    } catch {}
+}
+
+function toggleEdit() {
+    showEdit = !showEdit;
+    applyPanelLayout();
+}
+
+function togglePreview() {
+    showPreview = !showPreview;
+    applyPanelLayout();
+}
+
+// Legacy alias (used internally for keyboard shortcut etc.)
+function setMode(mode) {
+    if (mode === 'edit')    { showEdit = true;  showPreview = false; }
+    else                    { showEdit = false; showPreview = true;  }
+    applyPanelLayout();
 }
 
 function renderPreview() {
@@ -628,7 +685,7 @@ chatInput.addEventListener('keydown', (e) => {
 document.addEventListener('keydown', (e) => {
     if (e.ctrlKey && e.shiftKey && e.key === 'E') {
         e.preventDefault();
-        setMode(currentMode === 'edit' ? 'preview' : 'edit');
+        if (showEdit || showPreview) { showEdit = !showEdit; showPreview = !showPreview; } else { showEdit = true; } applyPanelLayout();
     }
 });
 
@@ -709,4 +766,12 @@ function setupResizeHandle(handleId, panelId, side) {
 // --- Init ---
 initEditor();
 initPanelResize();
+// Restore edit/preview state
+try {
+    const se = localStorage.getItem('rune_show_edit');
+    const sp = localStorage.getItem('rune_show_preview');
+    if (se !== null) showEdit    = se === '1';
+    if (sp !== null) showPreview = sp === '1';
+} catch {}
+applyPanelLayout();
 loadStoredCredentials();

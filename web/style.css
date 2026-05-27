@@ -781,3 +781,54 @@ pre.hljs-pre:hover .copy-btn {
     max-width: 100%;
     height: auto;
 }
+
+/* --- Inline SVG in preview --- */
+#preview svg {
+    max-width: 100%;
+    height: auto;
+    display: block;
+    margin: 8px 0;
+}
+
+/* --- Edit/Preview toggle layout --- */
+
+/* Split view: editor + preview side by side */
+#panel-center.split-view #editor-container,
+#panel-center.split-view #preview-container {
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+/* Make center main a flex row when split */
+#panel-center.split-view {
+    flex-direction: row !important;
+}
+#panel-center.split-view #editor-container {
+    border-right: 1px solid var(--border);
+}
+
+/* When both panels off: shrink center to nothing */
+#panel-center.hidden {
+    display: none !important;
+}
+
+/* --- center-body: flex container below toolbar --- */
+#center-body {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    overflow: hidden;
+}
+#center-body.split-view {
+    flex-direction: row;
+}
+#center-body.split-view #editor-container {
+    border-right: 1px solid var(--border);
+    flex: 1;
+}
+#center-body.split-view #preview-container {
+    flex: 1;
+    overflow-y: auto;
+}
