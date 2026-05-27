@@ -82,16 +82,31 @@ pub async fn run(config: RuneConfig, opts: ServeOptions) {
         println!("  🔒 Token auth enabled for non-localhost");
     }
 
+    // Ignore SIGHUP so server stays up when SSH session ends
+    #[cfg(unix)]
+    {
+        use tokio::signal::unix::{signal, SignalKind};
+        let mut hup = signal(SignalKind::hangup()).expect("failed to register SIGHUP handler");
+        tokio::spawn(async move {
+            loop {
+                hup.recv().await;
+                info!("Received SIGHUP, ignoring (server continues)");
+            }
+        });
+    }
+
     let listener = tokio::net::TcpListener::bind(addr)
         .await
         .expect("Failed to bind address");
 
-    axum::serve(
+    if let Err(e) = axum::serve(
         listener,
         app.into_make_service_with_connect_info::<SocketAddr>(),
     )
     .await
-    .expect("Server error");
+    {
+        eprintln!("Server error: {}", e);
+    }
 }
 
 /// Serve the main index.html.

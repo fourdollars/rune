@@ -16,7 +16,7 @@ colored = "3"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }
 anyhow = "1.0"
-tokio = { version = "1", features = ["rt-multi-thread", "time", "process", "sync", "io-util", "io-std", "net", "macros"] }
+tokio = { version = "1", features = ["rt-multi-thread", "time", "process", "sync", "io-util", "io-std", "net", "macros", "signal"] }
 indicatif = "0.18"
 rustyline = "18"
 libc = "0.2"

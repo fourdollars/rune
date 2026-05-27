@@ -116,9 +116,14 @@ pub async fn handle_connection(socket: WebSocket, state: ServerState) {
                             state: "thinking".to_string(),
                         });
 
-                        // Spawn agent task
+                        // Spawn agent task (with panic protection)
                         tokio::spawn(async move {
-                            handle_chat_message(content, config_clone, spec_clone, tx_clone).await;
+                            let result = tokio::task::spawn(async move {
+                                handle_chat_message(content, config_clone, spec_clone, tx_clone).await;
+                            }).await;
+                            if let Err(e) = result {
+                                eprintln!("Agent task panicked: {:?}", e);
+                            }
                         });
                     }
                     Ok(ClientMsg::SpecUpdate { content }) => {
