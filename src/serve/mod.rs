@@ -97,6 +97,7 @@ pub async fn run(config: RuneConfig, opts: ServeOptions) {
         .route("/favicon.ico", get(favicon_handler))
         .route("/favicon.svg", get(favicon_handler))
         .route("/assets/{*path}", get(static_handler))
+        .route("/assets-bin/{*path}", get(binary_asset_handler))
         .with_state(state);
 
     let addr = SocketAddr::new(opts.bind, opts.port);
@@ -146,6 +147,14 @@ async fn index_handler() -> impl IntoResponse {
 }
 
 /// Static asset handler.
+fn mime_for(path: &str) -> &'static str {
+    if path.ends_with(".js")   { "application/javascript" }
+    else if path.ends_with(".css")  { "text/css" }
+    else if path.ends_with(".html") { "text/html" }
+    else if path.ends_with(".svg")  { "image/svg+xml" }
+    else { "application/octet-stream" }
+}
+
 async fn favicon_handler() -> impl IntoResponse {
     match static_files::get("favicon.svg") {
         Some(content) => (
@@ -153,6 +162,18 @@ async fn favicon_handler() -> impl IntoResponse {
             [(axum::http::header::CONTENT_TYPE, "image/svg+xml")],
             content,
         ).into_response(),
+        None => StatusCode::NOT_FOUND.into_response(),
+    }
+}
+
+async fn binary_asset_handler(
+    axum::extract::Path(path): axum::extract::Path<String>,
+) -> impl IntoResponse {
+    match static_files::get_bytes(&path) {
+        Some(bytes) => {
+            let mime = mime_for(&path);
+            (StatusCode::OK, [(axum::http::header::CONTENT_TYPE, mime)], bytes).into_response()
+        }
         None => StatusCode::NOT_FOUND.into_response(),
     }
 }
