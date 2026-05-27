@@ -123,4 +123,31 @@ mod tests {
         assert!(js.contains("thinking"),     "app.js STATUS_EMOJI missing thinking");
         assert!(js.contains("typing"),       "app.js STATUS_EMOJI missing typing");
     }
+
+    #[test]
+    fn test_app_js_has_file_functions() {
+        let js = get("app.js").unwrap();
+        assert!(js.contains("createFile"),   "app.js missing createFile");
+        assert!(js.contains("deleteCurrentFile"), "app.js missing deleteCurrentFile");
+        assert!(js.contains("switchFile"),   "app.js missing switchFile");
+        assert!(js.contains("renameCurrentFile"), "app.js missing renameCurrentFile");
+        assert!(js.contains("currentFilename"), "app.js missing currentFilename state");
+        assert!(js.contains("fileList"),     "app.js missing fileList state");
+    }
+
+    #[test]
+    fn test_app_js_has_file_list_handler() {
+        let js = get("app.js").unwrap();
+        assert!(js.contains("file_list"),   "app.js missing file_list handler");
+        assert!(js.contains("file_content"), "app.js missing file_content handler");
+    }
+
+    #[test]
+    fn test_index_html_has_doc_title_area() {
+        let html = get("index.html").unwrap();
+        assert!(html.contains("doc-title-area"), "index.html missing doc-title-area");
+        assert!(html.contains("file-add-btn"),   "index.html missing file-add-btn");
+        assert!(html.contains("doc-title"),      "index.html missing doc-title");
+        assert!(html.contains("file-del-btn"),   "index.html missing file-del-btn");
+    }
 }

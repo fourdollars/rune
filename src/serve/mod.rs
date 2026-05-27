@@ -38,7 +38,10 @@ pub struct ServerState {
     pub token: Option<String>,
     /// Admin token — clients presenting this token get admin role.
     pub admin_token: Option<String>,
-    pub spec_content: Arc<RwLock<String>>,
+    /// All markdown files: filename → content.
+    pub files: Arc<RwLock<std::collections::HashMap<String, String>>>,
+    /// Currently active filename shown in the editor.
+    pub active_file: Arc<RwLock<String>>,
     /// Broadcast to ALL connected clients.
     pub broadcast_tx: broadcast::Sender<String>,
     /// Broadcast to ADMIN clients only (approval requests).
@@ -67,10 +70,15 @@ impl Default for ServeOptions {
 
 /// Start the serve mode.
 pub async fn run(config: RuneConfig, opts: ServeOptions) {
-    let spec_path = data_dir().join("spec.md");
+    // Load all .md files from data_dir into the HashMap
+    let data = data_dir();
+    tokio::fs::create_dir_all(&data).await.ok();
+    let spec_path = data.join("spec.md");
     let initial_spec = tokio::fs::read_to_string(&spec_path)
         .await
         .unwrap_or_else(|_| "# Spec\n\nStart writing your spec here.\n".to_string());
+    let mut initial_files = std::collections::HashMap::new();
+    initial_files.insert("spec.md".to_string(), initial_spec);
 
     let (broadcast_tx, _) = broadcast::channel(256);
     let (admin_broadcast_tx, _) = broadcast::channel(64);
@@ -85,7 +93,8 @@ pub async fn run(config: RuneConfig, opts: ServeOptions) {
         config: config.clone(),
         token: opts.token.clone(),
         admin_token: opts.admin_token.clone(),
-        spec_content: Arc::new(RwLock::new(initial_spec)),
+        files: Arc::new(RwLock::new(initial_files)),
+        active_file: Arc::new(RwLock::new("spec.md".to_string())),
         broadcast_tx,
         admin_broadcast_tx,
         chat_db,

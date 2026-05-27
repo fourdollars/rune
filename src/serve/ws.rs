@@ -24,13 +24,29 @@ enum ClientMsg {
     #[serde(rename = "chat_send")]
     ChatSend { content: String },
 
-    /// User edits the spec document.
+    /// User edits the active (or named) markdown file.
     #[serde(rename = "spec_update")]
-    SpecUpdate { content: String },
+    SpecUpdate { content: String, filename: Option<String> },
 
     /// User responds to an approval request.
     #[serde(rename = "approval_response")]
     ApprovalResponse { id: String, approved: bool },
+
+    /// Create a new markdown file.
+    #[serde(rename = "file_create")]
+    FileCreate { name: String },
+
+    /// Delete a markdown file.
+    #[serde(rename = "file_delete")]
+    FileDelete { name: String },
+
+    /// Switch active file.
+    #[serde(rename = "file_switch")]
+    FileSwitch { name: String },
+
+    /// Rename a markdown file.
+    #[serde(rename = "file_rename")]
+    FileRename { old_name: String, new_name: String },
 }
 
 /// Outgoing WebSocket message types to the client.
@@ -80,6 +96,18 @@ enum ServerMsg {
     /// Auth result: tells the client their role after set_nickname.
     #[serde(rename = "auth_result")]
     AuthResult { is_admin: bool },
+
+    /// List of all markdown files + active filename.
+    #[serde(rename = "file_list")]
+    FileList { files: Vec<String>, active: String },
+
+    /// Full content of a specific file.
+    #[serde(rename = "file_content")]
+    FileContent { filename: String, content: String },
+
+    /// A file was deleted.
+    #[serde(rename = "file_deleted")]
+    FileDeleted { filename: String },
 }
 
 /// Handle a single WebSocket connection.
@@ -145,11 +173,21 @@ pub async fn handle_connection(mut socket: WebSocket, state: ServerState) {
     // Now split the socket after auth passed
     let (mut ws_tx, mut ws_rx) = socket.split();
 
-    // Send initial spec content
-    let spec = state.spec_content.read().await.clone();
-    let init_msg = ServerMsg::SpecFull { content: spec };
-    if let Ok(json) = serde_json::to_string(&init_msg) {
-        let _ = ws_tx.send(Message::Text(json.into())).await;
+    // Send file list + active file content on connect
+    {
+        let files = state.files.read().await;
+        let active = state.active_file.read().await.clone();
+        let mut file_names: Vec<String> = files.keys().cloned().collect();
+        file_names.sort();
+        let list_msg = ServerMsg::FileList { files: file_names, active: active.clone() };
+        if let Ok(json) = serde_json::to_string(&list_msg) {
+            let _ = ws_tx.send(Message::Text(json.into())).await;
+        }
+        let content = files.get(&active).cloned().unwrap_or_default();
+        let content_msg = ServerMsg::FileContent { filename: active, content };
+        if let Ok(json) = serde_json::to_string(&content_msg) {
+            let _ = ws_tx.send(Message::Text(json.into())).await;
+        }
     }
 
     // Send chat history (last 200 messages) to the newly connected client
@@ -265,7 +303,8 @@ pub async fn handle_connection(mut socket: WebSocket, state: ServerState) {
     }
 
     // Process incoming messages
-    let spec_content = state.spec_content.clone();
+    let files_ref   = state.files.clone();
+    let active_ref  = state.active_file.clone();
     let config = state.config.clone();
     let broadcast_tx = state.broadcast_tx.clone();
     let nickname_clone = nickname.clone();
@@ -298,7 +337,8 @@ pub async fn handle_connection(mut socket: WebSocket, state: ServerState) {
                         let tx_clone = tx.clone();
                         let bcast_clone = broadcast_tx.clone();
                         let config_clone = config.clone();
-                        let spec_clone = spec_content.clone();
+                        let files_clone = state.files.clone();
+                        let active_clone = state.active_file.clone();
 
                         // Send thinking status (broadcast)
                         let thinking = ServerMsg::Status { state: "thinking".to_string() };
@@ -311,26 +351,169 @@ pub async fn handle_connection(mut socket: WebSocket, state: ServerState) {
                         let admin_bcast_clone = state.admin_broadcast_tx.clone();
                         tokio::spawn(async move {
                             let result = tokio::task::spawn(async move {
-                                handle_chat_message(content, config_clone, spec_clone, tx_clone, bcast_clone, admin_bcast_clone, pending_clone, db_clone).await;
+                                handle_chat_message(content, config_clone, files_clone, active_clone, tx_clone, bcast_clone, admin_bcast_clone, pending_clone, db_clone).await;
                             }).await;
                             if let Err(e) = result {
                                 eprintln!("Agent task panicked: {:?}", e);
                             }
                         });
                     }
-                    Ok(ClientMsg::SpecUpdate { content }) => {
-                        debug!("Spec update from client '{}'", nickname_clone);
-                        let mut spec = spec_content.write().await;
-                        *spec = content.clone();
-                        // Persist to disk
-                        let spec_path = super::data_dir().join("spec.md");
-                        if let Err(e) = tokio::fs::write(&spec_path, &content).await {
-                            warn!("Failed to persist spec.md: {}", e);
+                    Ok(ClientMsg::SpecUpdate { content, filename }) => {
+                        let fname = {
+                            if let Some(f) = filename {
+                                f
+                            } else {
+                                active_ref.read().await.clone()
+                            }
+                        };
+                        if !is_valid_filename(&fname) {
+                            warn!("Invalid filename in spec_update: {}", fname);
+                        } else {
+                            debug!("Spec update for '{}' from '{}'", fname, nickname_clone);
+                            {
+                                let mut files = files_ref.write().await;
+                                files.insert(fname.clone(), content.clone());
+                            }
+                            // Persist to disk
+                            let file_path = super::data_dir().join(&fname);
+                            if let Err(e) = tokio::fs::write(&file_path, &content).await {
+                                warn!("Failed to persist {}: {}", fname, e);
+                            }
+                            // Broadcast updated file content to all clients
+                            let msg = ServerMsg::FileContent { filename: fname, content };
+                            if let Ok(json) = serde_json::to_string(&msg) {
+                                let _ = broadcast_tx.send(json);
+                            }
                         }
-                        // Broadcast updated spec to all clients
-                        let spec_msg = ServerMsg::SpecFull { content };
-                        if let Ok(json) = serde_json::to_string(&spec_msg) {
-                            let _ = broadcast_tx.send(json);
+                    }
+                    Ok(ClientMsg::FileCreate { name }) => {
+                        if !is_valid_filename(&name) {
+                            let _ = tx.send(ServerMsg::Error {
+                                message: format!("Invalid filename: {}", name),
+                            });
+                        } else {
+                            let mut files = files_ref.write().await;
+                            if files.contains_key(&name) {
+                                let _ = tx.send(ServerMsg::Error {
+                                    message: format!("File already exists: {}", name),
+                                });
+                            } else {
+                                let empty = format!("# {}
+
+", name.trim_end_matches(".md"));
+                                files.insert(name.clone(), empty.clone());
+                                drop(files);
+                                let file_path = super::data_dir().join(&name);
+                                tokio::fs::write(&file_path, &empty).await.ok();
+                                // Switch active to new file
+                                *active_ref.write().await = name.clone();
+                                let files = files_ref.read().await;
+                                let mut file_names: Vec<String> = files.keys().cloned().collect();
+                                file_names.sort();
+                                let list = ServerMsg::FileList { files: file_names, active: name.clone() };
+                                if let Ok(json) = serde_json::to_string(&list) {
+                                    let _ = broadcast_tx.send(json);
+                                }
+                                let fc = ServerMsg::FileContent { filename: name, content: empty };
+                                if let Ok(json) = serde_json::to_string(&fc) {
+                                    let _ = broadcast_tx.send(json);
+                                }
+                            }
+                        }
+                    }
+                    Ok(ClientMsg::FileDelete { name }) => {
+                        if name == "spec.md" && files_ref.read().await.len() == 1 {
+                            let _ = tx.send(ServerMsg::Error {
+                                message: "Cannot delete the last file".to_string(),
+                            });
+                        } else {
+                            let new_active = {
+                                let mut files = files_ref.write().await;
+                                files.remove(&name);
+                                let cur_active = active_ref.read().await.clone();
+                                let new_active = if cur_active == name {
+                                    files.keys().next().cloned().unwrap_or_else(|| "spec.md".to_string())
+                                } else {
+                                    cur_active
+                                };
+                                new_active
+                            };
+                            *active_ref.write().await = new_active.clone();
+                            let file_path = super::data_dir().join(&name);
+                            tokio::fs::remove_file(&file_path).await.ok();
+                            let del = ServerMsg::FileDeleted { filename: name };
+                            if let Ok(json) = serde_json::to_string(&del) {
+                                let _ = broadcast_tx.send(json);
+                            }
+                            let files = files_ref.read().await;
+                            let mut file_names: Vec<String> = files.keys().cloned().collect();
+                            file_names.sort();
+                            let list = ServerMsg::FileList { files: file_names, active: new_active.clone() };
+                            if let Ok(json) = serde_json::to_string(&list) {
+                                let _ = broadcast_tx.send(json);
+                            }
+                            let content = files.get(&new_active).cloned().unwrap_or_default();
+                            let fc = ServerMsg::FileContent { filename: new_active, content };
+                            if let Ok(json) = serde_json::to_string(&fc) {
+                                let _ = broadcast_tx.send(json);
+                            }
+                        }
+                    }
+                    Ok(ClientMsg::FileSwitch { name }) => {
+                        let content = {
+                            let files = files_ref.read().await;
+                            files.get(&name).cloned()
+                        };
+                        if let Some(content) = content {
+                            *active_ref.write().await = name.clone();
+                            let files = files_ref.read().await;
+                            let mut file_names: Vec<String> = files.keys().cloned().collect();
+                            file_names.sort();
+                            let list = ServerMsg::FileList { files: file_names, active: name.clone() };
+                            if let Ok(json) = serde_json::to_string(&list) {
+                                let _ = broadcast_tx.send(json);
+                            }
+                            let fc = ServerMsg::FileContent { filename: name, content };
+                            if let Ok(json) = serde_json::to_string(&fc) {
+                                let _ = broadcast_tx.send(json);
+                            }
+                        } else {
+                            let _ = tx.send(ServerMsg::Error {
+                                message: format!("File not found: {}", name),
+                            });
+                        }
+                    }
+                    Ok(ClientMsg::FileRename { old_name, new_name }) => {
+                        if !is_valid_filename(&new_name) {
+                            let _ = tx.send(ServerMsg::Error {
+                                message: format!("Invalid filename: {}", new_name),
+                            });
+                        } else {
+                            let content = {
+                                let mut files = files_ref.write().await;
+                                let c = files.remove(&old_name);
+                                if let Some(ref text) = c {
+                                    files.insert(new_name.clone(), text.clone());
+                                }
+                                c
+                            };
+                            if content.is_some() {
+                                let old_path = super::data_dir().join(&old_name);
+                                let new_path = super::data_dir().join(&new_name);
+                                tokio::fs::rename(&old_path, &new_path).await.ok();
+                                let cur = active_ref.read().await.clone();
+                                if cur == old_name {
+                                    *active_ref.write().await = new_name.clone();
+                                }
+                                let files = files_ref.read().await;
+                                let active = active_ref.read().await.clone();
+                                let mut file_names: Vec<String> = files.keys().cloned().collect();
+                                file_names.sort();
+                                let list = ServerMsg::FileList { files: file_names, active };
+                                if let Ok(json) = serde_json::to_string(&list) {
+                                    let _ = broadcast_tx.send(json);
+                                }
+                            }
                         }
                     }
                     Ok(ClientMsg::ApprovalResponse { id, approved }) => {
@@ -384,10 +567,19 @@ fn uuid_short() -> String {
 type PendingApprovals = Arc<tokio::sync::Mutex<std::collections::HashMap<String, oneshot::Sender<bool>>>>;
 
 /// Handle a chat message — create an Agent, run it with streaming, and broadcast tokens.
+fn is_valid_filename(name: &str) -> bool {
+    !name.is_empty()
+        && name.ends_with(".md")
+        && name.len() <= 64
+        && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-' || c == '.')
+        && !name.contains("..")
+}
+
 async fn handle_chat_message(
     user_msg: String,
     config: RuneConfig,
-    spec_content: Arc<RwLock<String>>,
+    files: Arc<RwLock<std::collections::HashMap<String, String>>>,
+    active_file: Arc<RwLock<String>>,
     tx: mpsc::UnboundedSender<ServerMsg>,
     broadcast_tx: tokio::sync::broadcast::Sender<String>,
     admin_broadcast_tx: tokio::sync::broadcast::Sender<String>,
@@ -447,7 +639,8 @@ async fn handle_chat_message(
     let mut agent = Agent::new(config.clone(), provider, true, embedding);
     agent.token_callback = Some(token_callback);
     agent.approval_callback = Some(approval_callback);
-    agent.spec_content = Some(spec_content.clone());
+    agent.files = Some(files.clone());
+    agent.active_file = Some(active_file.clone());
 
     // Set system prompt
     let system_prompt = build_system_prompt(&config).await;
@@ -523,15 +716,15 @@ async fn handle_chat_message(
     let done = ServerMsg::ChatDone {};
     if let Ok(json) = serde_json::to_string(&done) { let _ = broadcast_tx.send(json); }
 
-    // Push updated spec to all
-    let new_spec = spec_content.read().await.clone();
-    let spec_msg = ServerMsg::SpecFull { content: new_spec.clone() };
-    if let Ok(json) = serde_json::to_string(&spec_msg) { let _ = broadcast_tx.send(json); }
-
-    // Persist spec
-    let spec_path = super::data_dir().join("spec.md");
-    if let Err(e) = tokio::fs::write(&spec_path, &new_spec).await {
-        warn!("Failed to persist spec.md after agent edit: {}", e);
+    // Push updated active file to all clients after agent edits
+    let active = active_file.read().await.clone();
+    let active_content = files.read().await.get(&active).cloned().unwrap_or_default();
+    let fc_msg = ServerMsg::FileContent { filename: active.clone(), content: active_content.clone() };
+    if let Ok(json) = serde_json::to_string(&fc_msg) { let _ = broadcast_tx.send(json); }
+    // Persist to disk
+    let file_path = super::data_dir().join(&active);
+    if let Err(e) = tokio::fs::write(&file_path, &active_content).await {
+        warn!("Failed to persist {} after agent edit: {}", active, e);
     }
 
     let idle = ServerMsg::Status { state: "idle".to_string() };
@@ -619,72 +812,61 @@ async fn build_embedding(config: &RuneConfig) -> Option<EmbeddingEngine> {
 async fn build_system_prompt(config: &RuneConfig) -> String {
     config.system_prompt.as_deref().unwrap_or(
         "You are Rune, a high-performance zero-trust AI agent. \
-         You are currently in WebUI serve mode, collaborating with the user on a shared spec document (spec.md). \
-         You can read and edit the spec using the read_spec and edit_spec tools. \
-         The spec.md is displayed in real-time in the center panel. \
-         When editing the spec, prefer targeted search+replace edits over full replacement. \
-         Be concise in chat; put detailed content into the spec document.",
+         You are currently in WebUI serve mode, collaborating with the user on shared markdown documents. \
+         Use list_markdown to see all available files, read_markdown to read a file (optional filename arg), \
+         and edit_markdown to edit a file (optional filename arg; prefer search+replace over full replacement). \
+         The active file is displayed in real-time in the center panel. \
+         Be concise in chat; put detailed content into the markdown files.",
     ).to_string()
 }
 
 #[cfg(test)]
 mod tests {
-    /// Test the admin token detection logic (extracted as pure function for testability).
+    use super::is_valid_filename;
+
     fn is_admin_for(admin_token: Option<&str>, provided: Option<&str>) -> bool {
         admin_token
             .map(|at| !at.is_empty() && provided == Some(at))
             .unwrap_or(false)
     }
 
-    /// Test regular token acceptance (admin token also satisfies regular token).
     fn token_ok(expected: &str, provided: Option<&str>, is_admin: bool) -> bool {
         provided == Some(expected) || is_admin
     }
 
     #[test]
-    fn test_admin_token_match() {
-        assert!(is_admin_for(Some("secret"), Some("secret")));
-    }
-
+    fn test_admin_token_match() { assert!(is_admin_for(Some("secret"), Some("secret"))); }
     #[test]
-    fn test_admin_token_mismatch() {
-        assert!(!is_admin_for(Some("secret"), Some("wrong")));
-    }
-
+    fn test_admin_token_mismatch() { assert!(!is_admin_for(Some("secret"), Some("wrong"))); }
     #[test]
-    fn test_admin_token_none_provided() {
-        assert!(!is_admin_for(Some("secret"), None));
-    }
-
+    fn test_admin_token_none_provided() { assert!(!is_admin_for(Some("secret"), None)); }
     #[test]
-    fn test_no_admin_token_configured() {
-        assert!(!is_admin_for(None, Some("anything")));
-    }
-
+    fn test_no_admin_token_configured() { assert!(!is_admin_for(None, Some("anything"))); }
     #[test]
     fn test_empty_admin_token_never_matches() {
         assert!(!is_admin_for(Some(""), Some("")));
         assert!(!is_admin_for(Some(""), Some("anything")));
     }
-
     #[test]
     fn test_admin_token_satisfies_regular_token() {
-        // If user is admin, regular token check should pass even without matching regular token
         assert!(token_ok("regular", Some("admin-secret"), true));
     }
+    #[test]
+    fn test_regular_token_accepted() { assert!(token_ok("regular", Some("regular"), false)); }
+    #[test]
+    fn test_wrong_token_rejected() { assert!(!token_ok("regular", Some("wrong"), false)); }
+    #[test]
+    fn test_no_token_provided_rejected() { assert!(!token_ok("regular", None, false)); }
 
     #[test]
-    fn test_regular_token_accepted() {
-        assert!(token_ok("regular", Some("regular"), false));
-    }
-
-    #[test]
-    fn test_wrong_token_rejected() {
-        assert!(!token_ok("regular", Some("wrong"), false));
-    }
-
-    #[test]
-    fn test_no_token_provided_rejected() {
-        assert!(!token_ok("regular", None, false));
+    fn test_filename_validation() {
+        assert!(is_valid_filename("spec.md"));
+        assert!(is_valid_filename("my-doc.md"));
+        assert!(is_valid_filename("arch_v2.md"));
+        assert!(!is_valid_filename(""));
+        assert!(!is_valid_filename("file.txt"));
+        assert!(!is_valid_filename("../etc/passwd.md"));
+        assert!(!is_valid_filename("file name.md"));
+        assert!(!is_valid_filename("file;rm.md"));
     }
 }

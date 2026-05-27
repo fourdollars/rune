@@ -7,6 +7,8 @@
 let ws = null;
 let showEdit    = true;
 let showPreview = false;
+let currentFilename = 'spec.md';
+let fileList = [];
 let specContent = '';
 let isConnected = false;
 let editorDirty = false;
@@ -126,7 +128,7 @@ function initEditor() {
             if (showPreview) renderPreview();
             // Sync to server
             if (editorDirty && isConnected) {
-                ws.send(JSON.stringify({ type: 'spec_update', content: specContent }));
+                ws.send(JSON.stringify({ type: 'spec_update', content: specContent, filename: currentFilename }));
                 editorDirty = false;
             }
         }, 300);
@@ -318,6 +320,24 @@ function handleServerMessage(msg) {
 
         case 'status':
             setStatus(msg.state);
+            break;
+
+        case 'file_list':
+            fileList = msg.files || [];
+            currentFilename = msg.active || 'spec.md';
+            updateDocTitle(currentFilename);
+            break;
+
+        case 'file_content':
+            currentFilename = msg.filename;
+            specContent = msg.content;
+            setEditorValue(msg.content);
+            if (showPreview) renderPreview();
+            updateDocTitle(msg.filename);
+            break;
+
+        case 'file_deleted':
+            // file_list will follow, handled there
             break;
 
         case 'auth_result':
@@ -683,6 +703,65 @@ function flashSpecIndicator() {
 }
 
 // --- Status ---
+// --- File management ---
+function updateDocTitle(name) {
+    const el = document.getElementById('doc-title');
+    if (el && !el.isContentEditable) el.textContent = name;
+}
+
+function createFile() {
+    const name = prompt('New filename (must end in .md):');
+    if (!name) return;
+    const clean = name.trim();
+    if (!clean.endsWith('.md')) { alert('Filename must end in .md'); return; }
+    if (!/^[a-zA-Z0-9_\-\.]+\.md$/.test(clean)) { alert('Invalid filename. Use only letters, numbers, _ - .'); return; }
+    if (isConnected) ws.send(JSON.stringify({ type: 'file_create', name: clean }));
+}
+
+function deleteCurrentFile() {
+    if (!confirm('Delete ' + currentFilename + '?')) return;
+    if (isConnected) ws.send(JSON.stringify({ type: 'file_delete', name: currentFilename }));
+}
+
+function switchFile(name) {
+    if (isConnected) ws.send(JSON.stringify({ type: 'file_switch', name }));
+}
+
+function renameCurrentFile(newName) {
+    const clean = newName.trim();
+    if (!clean || clean === currentFilename) return;
+    if (!clean.endsWith('.md')) { alert('Filename must end in .md'); return; }
+    if (!/^[a-zA-Z0-9_\-\.]+\.md$/.test(clean)) { alert('Invalid filename'); return; }
+    if (isConnected) ws.send(JSON.stringify({ type: 'file_rename', old_name: currentFilename, new_name: clean }));
+}
+
+function initDocTitle() {
+    const el = document.getElementById('doc-title');
+    if (!el) return;
+    el.addEventListener('dblclick', () => {
+        el.contentEditable = 'true';
+        el.focus();
+        // Select all
+        const range = document.createRange();
+        range.selectNodeContents(el);
+        window.getSelection().removeAllRanges();
+        window.getSelection().addRange(range);
+    });
+    el.addEventListener('keydown', e => {
+        if (e.key === 'Enter') { e.preventDefault(); el.blur(); }
+        if (e.key === 'Escape') { el.textContent = currentFilename; el.blur(); }
+    });
+    el.addEventListener('blur', () => {
+        el.contentEditable = 'false';
+        const newName = el.textContent.trim();
+        if (newName && newName !== currentFilename) {
+            renameCurrentFile(newName);
+        } else {
+            el.textContent = currentFilename; // revert if unchanged
+        }
+    });
+}
+
 const STATUS_EMOJI = {
     idle:         '🟢',
     typing:       '⌨️',
@@ -846,6 +925,7 @@ function setupResizeHandle(handleId, panelId, side) {
 // --- Init ---
 initEditor();
 initPreviewScrollSync();
+initDocTitle();
 initPanelResize();
 // Restore edit/preview state
 try {

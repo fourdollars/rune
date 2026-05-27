@@ -78,8 +78,10 @@ pub struct Agent {
     /// Called with (id, detail) when a tool needs user approval.
     /// Returns true = approved, false = denied.
     pub approval_callback: Option<Arc<dyn Fn(String, String) -> std::pin::Pin<Box<dyn std::future::Future<Output = bool> + Send>> + Send + Sync>>,
-    /// Shared spec.md content (for serve mode — read_spec/edit_spec tools).
-    pub spec_content: Option<Arc<RwLock<String>>>,
+    /// Shared markdown files (for serve mode — list_markdown/read_markdown/edit_markdown tools).
+    pub files: Option<Arc<RwLock<std::collections::HashMap<String, String>>>>,
+    /// Currently active filename.
+    pub active_file: Option<Arc<RwLock<String>>>,
 }
 
 impl Agent {
@@ -184,7 +186,8 @@ impl Agent {
             embedding,
             token_callback: None,
             approval_callback: None,
-            spec_content: None,
+            files: None,
+            active_file: None,
         }
     }
 
@@ -1001,37 +1004,74 @@ impl Agent {
         }
     }
 
-    /// Handle spec tools (read_spec / edit_spec) for serve mode.
-    /// Returns Some(output) if handled, None if not a spec tool.
-    async fn handle_spec_tool(&self, name: &str, args: &serde_json::Value) -> Option<String> {
-        let spec = self.spec_content.as_ref()?;
-        
+    /// Handle markdown tools (list_markdown / read_markdown / edit_markdown) for serve mode.
+    /// Returns Some(output) if handled, None if not a markdown tool.
+    async fn handle_markdown_tool(&self, name: &str, args: &serde_json::Value) -> Option<String> {
+        let files = self.files.as_ref()?;
+
         match name {
-            "read_spec" => {
-                let content = spec.read().await;
-                Some(content.clone())
+            "list_markdown" => {
+                let files_r = files.read().await;
+                let mut names: Vec<String> = files_r.keys().cloned().collect();
+                names.sort();
+                let active = if let Some(af) = &self.active_file {
+                    af.read().await.clone()
+                } else {
+                    "spec.md".to_string()
+                };
+                Some(format!("Files: {}
+Active: {}", names.join(", "), active))
             }
-            "edit_spec" => {
+            "read_markdown" => {
+                let fname = args.get("filename")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string())
+                    .unwrap_or_else(|| {
+                        if let Some(af) = &self.active_file {
+                            futures::executor::block_on(async { af.read().await.clone() })
+                        } else {
+                            "spec.md".to_string()
+                        }
+                    });
+                let files_r = files.read().await;
+                match files_r.get(&fname) {
+                    Some(c) => Some(c.clone()),
+                    None => Some(format!("Error: file not found: {}", fname)),
+                }
+            }
+            "edit_markdown" => {
+                let fname = args.get("filename")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string())
+                    .unwrap_or_else(|| {
+                        if let Some(af) = &self.active_file {
+                            futures::executor::block_on(async { af.read().await.clone() })
+                        } else {
+                            "spec.md".to_string()
+                        }
+                    });
                 let new_content = args.get("content").and_then(|v| v.as_str());
                 let search = args.get("search").and_then(|v| v.as_str());
                 let replace = args.get("replace").and_then(|v| v.as_str());
-                
+
                 if let Some(full_content) = new_content {
-                    // Full replacement
-                    let mut spec_w = spec.write().await;
-                    *spec_w = full_content.to_string();
-                    Some("spec.md updated (full replace)".to_string())
+                    let mut files_w = files.write().await;
+                    files_w.insert(fname.clone(), full_content.to_string());
+                    Some(format!("{} updated (full replace)", fname))
                 } else if let (Some(search_str), Some(replace_str)) = (search, replace) {
-                    // Search and replace
-                    let mut spec_w = spec.write().await;
-                    if spec_w.contains(search_str) {
-                        *spec_w = spec_w.replacen(search_str, replace_str, 1);
-                        Some(format!("spec.md updated: replaced '{}...'", char_preview(&search_str, 40)))
+                    let mut files_w = files.write().await;
+                    if let Some(current) = files_w.get_mut(&fname) {
+                        if current.contains(search_str) {
+                            *current = current.replacen(search_str, replace_str, 1);
+                            Some(format!("{} updated: replaced '{}...'", fname, char_preview(search_str, 40)))
+                        } else {
+                            Some(format!("Error: search text not found in {}", fname))
+                        }
                     } else {
-                        Some(format!("Error: search text not found in spec.md"))
+                        Some(format!("Error: file not found: {}", fname))
                     }
                 } else {
-                    Some("Error: edit_spec requires either 'content' (full replace) or 'search'+'replace' (targeted edit)".to_string())
+                    Some("Error: edit_markdown requires either 'content' (full replace) or 'search'+'replace' (targeted edit)".to_string())
                 }
             }
             _ => None,
@@ -1165,8 +1205,8 @@ impl Agent {
             }
         }
 
-        // Intercept spec tools (read_spec / edit_spec) for serve mode
-        if let Some(spec_output) = self.handle_spec_tool(&tc.function.name, &args).await {
+        // Intercept markdown tools (list_markdown / read_markdown / edit_markdown) for serve mode
+        if let Some(spec_output) = self.handle_markdown_tool(&tc.function.name, &args).await {
             return Ok(spec_output);
         }
 

@@ -37,7 +37,11 @@
         <main id="panel-center">
             <div class="toolbar">
                 <div class="toolbar-left">
-                    <span class="doc-title">spec.md</span>
+                    <div class="doc-title-area">
+                        <button class="file-add-btn" onclick="createFile()" title="New markdown file">+</button>
+                        <span id="doc-title" class="doc-title" title="Double-click to rename">spec.md</span>
+                        <button class="file-del-btn" id="doc-title-delete" onclick="deleteCurrentFile()" title="Delete this file">−</button>
+                    </div>
                 </div>
             </div>
             <div id="center-body">
