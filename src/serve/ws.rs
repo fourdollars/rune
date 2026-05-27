@@ -453,6 +453,23 @@ async fn handle_chat_message(
     let system_prompt = build_system_prompt(&config).await;
     agent.set_system_prompt(&system_prompt);
 
+    // Load chat history (last 50 turns) into agent context, excluding the
+    // current user message (already being passed to agent.run())
+    let history = chat_db.load_recent_async("default".to_string(), 51).await;
+    // Drop the last record if it's the user message we're about to send
+    let history_without_current: Vec<_> = history
+        .into_iter()
+        .filter(|r| !(r.role == "user" && r.content == user_msg))
+        .collect();
+    // Keep at most last 50 turns (user+assistant pairs = 100 messages)
+    let max_history = 100usize;
+    let history_slice = if history_without_current.len() > max_history {
+        &history_without_current[history_without_current.len() - max_history..]
+    } else {
+        &history_without_current[..]
+    };
+    agent.load_history(history_slice);
+
     // Send typing status (broadcast)
     let typing = ServerMsg::Status { state: "typing".to_string() };
     if let Ok(json) = serde_json::to_string(&typing) { let _ = broadcast_tx.send(json); }

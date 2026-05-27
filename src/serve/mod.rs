@@ -6,7 +6,7 @@
 //!   - WebSocket endpoint for chat streaming + spec.md sync
 //!   - Token auth required for non-localhost connections
 
-mod db;
+pub mod db;
 mod static_files;
 mod ws;
 pub use db::ChatDb;

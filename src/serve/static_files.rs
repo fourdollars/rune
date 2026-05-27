@@ -115,4 +115,12 @@ mod tests {
         assert!(css.contains("split-view"),  "style.css missing split-view styles");
         assert!(css.contains("center-body"), "style.css missing center-body styles");
     }
+
+    #[test]
+    fn test_app_js_has_status_emoji() {
+        let js = get("app.js").unwrap();
+        assert!(js.contains("STATUS_EMOJI"), "app.js missing STATUS_EMOJI map");
+        assert!(js.contains("thinking"),     "app.js STATUS_EMOJI missing thinking");
+        assert!(js.contains("typing"),       "app.js STATUS_EMOJI missing typing");
+    }
 }
