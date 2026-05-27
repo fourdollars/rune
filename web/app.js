@@ -683,9 +683,16 @@ function flashSpecIndicator() {
 }
 
 // --- Status ---
+const STATUS_EMOJI = {
+    idle:         '🟢',
+    typing:       '⌨️',
+    thinking:     '🤔',
+    disconnected: '🔴',
+};
 function setStatus(state) {
     statusIndicator.className = `status ${state}`;
-    statusIndicator.textContent = `● ${state}`;
+    statusIndicator.textContent = STATUS_EMOJI[state] || '⚪';
+    statusIndicator.title = state;
 }
 
 // --- Panel Toggle ---

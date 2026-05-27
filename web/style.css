@@ -382,9 +382,9 @@ body {
     font-family: var(--font-mono);
 }
 
-.status.idle { color: var(--success); }
-.status.thinking { color: var(--warning); animation: pulse 1s infinite; }
-.status.typing { color: var(--accent); }
+.status.idle { }
+.status.thinking { animation: pulse 0.8s infinite; }
+.status.typing { animation: pulse 0.5s infinite; }
 
 @keyframes pulse {
     0%, 100% { opacity: 1; }
