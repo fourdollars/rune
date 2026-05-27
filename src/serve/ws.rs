@@ -375,7 +375,7 @@ pub async fn handle_connection(mut socket: WebSocket, state: ServerState) {
                                 files.insert(fname.clone(), content.clone());
                             }
                             // Persist to disk
-                            let file_path = super::data_dir().join(&fname);
+                            let file_path = super::session_markdown_dir("main").join(&fname);
                             if let Err(e) = tokio::fs::write(&file_path, &content).await {
                                 warn!("Failed to persist {}: {}", fname, e);
                             }
@@ -403,7 +403,7 @@ pub async fn handle_connection(mut socket: WebSocket, state: ServerState) {
 ", name.trim_end_matches(".md"));
                                 files.insert(name.clone(), empty.clone());
                                 drop(files);
-                                let file_path = super::data_dir().join(&name);
+                                let file_path = super::session_markdown_dir("main").join(&name);
                                 tokio::fs::write(&file_path, &empty).await.ok();
                                 // Switch active to new file
                                 *active_ref.write().await = name.clone();
@@ -439,7 +439,7 @@ pub async fn handle_connection(mut socket: WebSocket, state: ServerState) {
                                 new_active
                             };
                             *active_ref.write().await = new_active.clone();
-                            let file_path = super::data_dir().join(&name);
+                            let file_path = super::session_markdown_dir("main").join(&name);
                             tokio::fs::remove_file(&file_path).await.ok();
                             let del = ServerMsg::FileDeleted { filename: name };
                             if let Ok(json) = serde_json::to_string(&del) {
@@ -498,8 +498,8 @@ pub async fn handle_connection(mut socket: WebSocket, state: ServerState) {
                                 c
                             };
                             if content.is_some() {
-                                let old_path = super::data_dir().join(&old_name);
-                                let new_path = super::data_dir().join(&new_name);
+                                let old_path = super::session_markdown_dir("main").join(&old_name);
+                                let new_path = super::session_markdown_dir("main").join(&new_name);
                                 tokio::fs::rename(&old_path, &new_path).await.ok();
                                 let cur = active_ref.read().await.clone();
                                 if cur == old_name {
@@ -722,7 +722,7 @@ async fn handle_chat_message(
     let fc_msg = ServerMsg::FileContent { filename: active.clone(), content: active_content.clone() };
     if let Ok(json) = serde_json::to_string(&fc_msg) { let _ = broadcast_tx.send(json); }
     // Persist to disk
-    let file_path = super::data_dir().join(&active);
+    let file_path = super::session_markdown_dir("main").join(&active);
     if let Err(e) = tokio::fs::write(&file_path, &active_content).await {
         warn!("Failed to persist {} after agent edit: {}", active, e);
     }
