@@ -1004,10 +1004,20 @@ impl Agent {
         }
     }
 
-    /// Handle markdown tools (list_markdown / read_markdown / edit_markdown) for serve mode.
+/// Handle markdown tools (list_markdown / read_markdown / edit_markdown) for serve mode.
     /// Returns Some(output) if handled, None if not a markdown tool.
     async fn handle_markdown_tool(&self, name: &str, args: &serde_json::Value) -> Option<String> {
         let files = self.files.as_ref()?;
+
+        // Resolve filename: use arg if provided, else fall back to active_file (async-safe).
+        let fname_arg = args.get("filename").and_then(|v| v.as_str()).map(|s| s.to_string());
+        let fname = if let Some(f) = fname_arg {
+            f
+        } else if let Some(af) = &self.active_file {
+            af.read().await.clone()
+        } else {
+            "spec.md".to_string()
+        };
 
         match name {
             "list_markdown" => {
@@ -1019,20 +1029,9 @@ impl Agent {
                 } else {
                     "spec.md".to_string()
                 };
-                Some(format!("Files: {}
-Active: {}", names.join(", "), active))
+                Some(format!("Files: {}\nActive: {}", names.join(", "), active))
             }
             "read_markdown" => {
-                let fname = args.get("filename")
-                    .and_then(|v| v.as_str())
-                    .map(|s| s.to_string())
-                    .unwrap_or_else(|| {
-                        if let Some(af) = &self.active_file {
-                            futures::executor::block_on(async { af.read().await.clone() })
-                        } else {
-                            "spec.md".to_string()
-                        }
-                    });
                 let files_r = files.read().await;
                 match files_r.get(&fname) {
                     Some(c) => Some(c.clone()),
@@ -1040,16 +1039,6 @@ Active: {}", names.join(", "), active))
                 }
             }
             "edit_markdown" => {
-                let fname = args.get("filename")
-                    .and_then(|v| v.as_str())
-                    .map(|s| s.to_string())
-                    .unwrap_or_else(|| {
-                        if let Some(af) = &self.active_file {
-                            futures::executor::block_on(async { af.read().await.clone() })
-                        } else {
-                            "spec.md".to_string()
-                        }
-                    });
                 let new_content = args.get("content").and_then(|v| v.as_str());
                 let search = args.get("search").and_then(|v| v.as_str());
                 let replace = args.get("replace").and_then(|v| v.as_str());
