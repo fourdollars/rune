@@ -59,6 +59,68 @@
         </div>
     </div>
 
+    <!-- New Session dialog -->
+    <div id="new-session-modal" class="modal-overlay hidden">
+        <div class="modal">
+            <h2>New Session</h2>
+            <div class="form-group">
+                <label>Session Name</label>
+                <input type="text" id="new-session-name" placeholder="My Project" maxlength="50" />
+            </div>
+            <div class="form-group">
+                <label>Workspace Folder</label>
+                <div class="path-input-row">
+                    <input type="text" id="new-session-workspace" placeholder="/home/u/project" readonly />
+                    <button class="btn-secondary" onclick="openDirBrowser('new-session-workspace')">📁</button>
+                </div>
+            </div>
+            <div class="modal-actions">
+                <button class="btn-secondary" onclick="hideNewSessionDialog()">Cancel</button>
+                <button class="btn-primary" onclick="createSession()">Create</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Directory Browser dialog -->
+    <div id="dir-browser-modal" class="modal-overlay hidden">
+        <div class="modal modal-wide">
+            <h2>📁 Select Folder</h2>
+            <div class="dir-browser-path-row">
+                <input type="text" id="dir-browser-path" placeholder="/" onkeydown="if(event.key==='Enter')navigateDir(this.value)" />
+                <button class="btn-secondary" onclick="navigateDir(document.getElementById('dir-browser-path').value)">Go</button>
+            </div>
+            <div id="dir-browser-list" class="dir-browser-list"></div>
+            <div class="modal-actions">
+                <button class="btn-secondary" onclick="hideDirBrowser()">Cancel</button>
+                <button class="btn-primary" onclick="selectDir()">Select</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Session Settings dialog -->
+    <div id="session-settings-modal" class="modal-overlay hidden">
+        <div class="modal">
+            <h2 id="session-settings-title">Session Settings</h2>
+            <div class="form-group">
+                <label>Name</label>
+                <input type="text" id="session-settings-name" maxlength="50" />
+            </div>
+            <div class="form-group">
+                <label>Workspace</label>
+                <div class="path-input-row">
+                    <input type="text" id="session-settings-workspace" readonly />
+                    <button class="btn-secondary" onclick="openDirBrowser('session-settings-workspace')">📁</button>
+                </div>
+            </div>
+            <div class="modal-actions">
+                <button class="btn-danger" id="btn-delete-session" onclick="deleteCurrentSession()">Delete</button>
+                <span style="flex:1"></span>
+                <button class="btn-secondary" onclick="hideSessionSettings()">Cancel</button>
+                <button class="btn-primary" onclick="saveSessionSettings()">Save</button>
+            </div>
+        </div>
+    </div>
+
     <div id="model-modal" class="modal-overlay hidden">
         <div class="modal">
             <h2>Switch Model</h2>
@@ -76,9 +138,11 @@
                 <span class="toggle-icon">›</span>
             </div>
             <div class="panel-content">
-                <h3>Online <span id="online-count" style="color:var(--success)">0</span></h3>
-                <div class="session-list" id="session-list">
+                <div class="sessions-header">
+                    <h3>Sessions <span id="online-count" style="color:var(--success)">0</span></h3>
+                    <button id="btn-new-session" class="toolbar-btn hidden" onclick="showNewSessionDialog()" title="New session">+</button>
                 </div>
+                <div class="session-tree" id="session-tree"></div>
             </div>
         </aside>
 

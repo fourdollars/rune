@@ -31,6 +31,17 @@ pub struct ChatRecord {
     pub tokens_out: Option<i32>,
 }
 
+/// A stored session entry.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SessionRecord {
+    pub id: String,
+    pub name: String,
+    pub workspace: String,
+    pub created_at: i64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub created_by: Option<String>,
+}
+
 /// Thread-safe SQLite connection wrapper.
 #[derive(Clone)]
 pub struct ChatDb {
@@ -57,6 +68,13 @@ impl ChatDb {
             );
             CREATE INDEX IF NOT EXISTS idx_messages_session
                 ON messages(session_id, id);
+            CREATE TABLE IF NOT EXISTS sessions (
+                id          TEXT PRIMARY KEY,
+                name        TEXT NOT NULL,
+                workspace   TEXT NOT NULL,
+                created_at  INTEGER NOT NULL,
+                created_by  TEXT
+            );
         ")?;
         // Migrate existing DBs that lack the new columns (idempotent)
         let _ = conn.execute_batch("
@@ -150,6 +168,104 @@ impl ChatDb {
             db.load_recent(&session_id, limit).unwrap_or_default()
         }).await.unwrap_or_default()
     }
+
+    // ── Session CRUD ──────────────────────────────────────────────────────
+
+    /// Create a new session. Returns Ok(()) or error if id already exists.
+    pub fn create_session(&self, id: &str, name: &str, workspace: &str, created_by: Option<&str>) -> anyhow::Result<()> {
+        let conn = self.conn.lock().unwrap();
+        let ts = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs() as i64;
+        conn.execute(
+            "INSERT INTO sessions (id, name, workspace, created_at, created_by) VALUES (?1,?2,?3,?4,?5)",
+            params![id, name, workspace, ts, created_by],
+        )?;
+        Ok(())
+    }
+
+    /// List all sessions ordered by created_at.
+    pub fn list_sessions(&self) -> anyhow::Result<Vec<SessionRecord>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT id, name, workspace, created_at, created_by FROM sessions ORDER BY created_at ASC"
+        )?;
+        let rows = stmt.query_map([], |row| {
+            Ok(SessionRecord {
+                id:         row.get(0)?,
+                name:       row.get(1)?,
+                workspace:  row.get(2)?,
+                created_at: row.get(3)?,
+                created_by: row.get(4)?,
+            })
+        })?.filter_map(|r| r.ok()).collect();
+        Ok(rows)
+    }
+
+    /// Rename a session. Returns true if session exists.
+    pub fn rename_session(&self, id: &str, new_name: &str) -> anyhow::Result<bool> {
+        let conn = self.conn.lock().unwrap();
+        let changed = conn.execute(
+            "UPDATE sessions SET name = ?1 WHERE id = ?2",
+            params![new_name, id],
+        )?;
+        Ok(changed > 0)
+    }
+
+    /// Update session workspace path. Returns true if session exists.
+    pub fn update_session_workspace(&self, id: &str, workspace: &str) -> anyhow::Result<bool> {
+        let conn = self.conn.lock().unwrap();
+        let changed = conn.execute(
+            "UPDATE sessions SET workspace = ?1 WHERE id = ?2",
+            params![workspace, id],
+        )?;
+        Ok(changed > 0)
+    }
+
+    /// Delete a session (metadata only; does NOT delete chat messages).
+    pub fn delete_session(&self, id: &str) -> anyhow::Result<bool> {
+        let conn = self.conn.lock().unwrap();
+        let changed = conn.execute(
+            "DELETE FROM sessions WHERE id = ?1",
+            params![id],
+        )?;
+        Ok(changed > 0)
+    }
+
+    /// Get a single session by id.
+    pub fn get_session(&self, id: &str) -> anyhow::Result<Option<SessionRecord>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT id, name, workspace, created_at, created_by FROM sessions WHERE id = ?1"
+        )?;
+        let mut rows = stmt.query_map(params![id], |row| {
+            Ok(SessionRecord {
+                id:         row.get(0)?,
+                name:       row.get(1)?,
+                workspace:  row.get(2)?,
+                created_at: row.get(3)?,
+                created_by: row.get(4)?,
+            })
+        })?;
+        Ok(rows.next().and_then(|r| r.ok()))
+    }
+
+    /// Ensure the default session exists (idempotent).
+    pub fn ensure_default_session(&self, workspace: &str) -> anyhow::Result<()> {
+        let conn = self.conn.lock().unwrap();
+        let ts = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs() as i64;
+        conn.execute(
+            "INSERT OR IGNORE INTO sessions (id, name, workspace, created_at) VALUES ('default', 'General', ?1, ?2)",
+            params![workspace, ts],
+        )?;
+        Ok(())
+    }
+
+    // ── End Session CRUD ─────────────────────────────────────────────────
 
     /// Dump all messages for a session to JSONL, then delete them from the DB.
     /// Returns the number of messages archived.
@@ -474,5 +590,85 @@ mod tests {
         assert_eq!(rec.model.as_deref(), Some("gpt-4o"));
         assert_eq!(rec.tokens_in,  Some(50));
         assert_eq!(rec.tokens_out, Some(25));
+    }
+
+    // ── Session CRUD tests ───────────────────────────────────────────────
+
+    #[test]
+    fn test_create_and_list_sessions() {
+        let db = in_memory_db();
+        db.create_session("proj-a", "Project A", "/home/u/proj-a", Some("admin")).unwrap();
+        db.create_session("proj-b", "Project B", "/home/u/proj-b", None).unwrap();
+        let sessions = db.list_sessions().unwrap();
+        assert_eq!(sessions.len(), 2);
+        assert_eq!(sessions[0].id, "proj-a");
+        assert_eq!(sessions[0].name, "Project A");
+        assert_eq!(sessions[0].workspace, "/home/u/proj-a");
+        assert_eq!(sessions[0].created_by.as_deref(), Some("admin"));
+        assert_eq!(sessions[1].id, "proj-b");
+        assert!(sessions[1].created_by.is_none());
+    }
+
+    #[test]
+    fn test_rename_session() {
+        let db = in_memory_db();
+        db.create_session("s1", "Old Name", "/tmp", None).unwrap();
+        assert!(db.rename_session("s1", "New Name").unwrap());
+        let s = db.get_session("s1").unwrap().unwrap();
+        assert_eq!(s.name, "New Name");
+    }
+
+    #[test]
+    fn test_rename_nonexistent_returns_false() {
+        let db = in_memory_db();
+        assert!(!db.rename_session("nope", "X").unwrap());
+    }
+
+    #[test]
+    fn test_update_session_workspace() {
+        let db = in_memory_db();
+        db.create_session("s1", "Test", "/old/path", None).unwrap();
+        assert!(db.update_session_workspace("s1", "/new/path").unwrap());
+        let s = db.get_session("s1").unwrap().unwrap();
+        assert_eq!(s.workspace, "/new/path");
+    }
+
+    #[test]
+    fn test_delete_session() {
+        let db = in_memory_db();
+        db.create_session("s1", "Test", "/tmp", None).unwrap();
+        assert!(db.delete_session("s1").unwrap());
+        assert!(db.get_session("s1").unwrap().is_none());
+        assert!(db.list_sessions().unwrap().is_empty());
+    }
+
+    #[test]
+    fn test_delete_nonexistent_returns_false() {
+        let db = in_memory_db();
+        assert!(!db.delete_session("nope").unwrap());
+    }
+
+    #[test]
+    fn test_ensure_default_session_idempotent() {
+        let db = in_memory_db();
+        db.ensure_default_session("/home/u").unwrap();
+        db.ensure_default_session("/home/u").unwrap(); // should not fail
+        let sessions = db.list_sessions().unwrap();
+        assert_eq!(sessions.len(), 1);
+        assert_eq!(sessions[0].id, "default");
+        assert_eq!(sessions[0].name, "General");
+    }
+
+    #[test]
+    fn test_duplicate_session_id_fails() {
+        let db = in_memory_db();
+        db.create_session("dup", "First", "/tmp", None).unwrap();
+        assert!(db.create_session("dup", "Second", "/tmp", None).is_err());
+    }
+
+    #[test]
+    fn test_get_session_nonexistent_returns_none() {
+        let db = in_memory_db();
+        assert!(db.get_session("nope").unwrap().is_none());
     }
 }

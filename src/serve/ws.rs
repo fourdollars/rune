@@ -59,6 +59,30 @@ enum ClientMsg {
     /// Switch the active AI model (admin only).
     #[serde(rename = "switch_model")]
     SwitchModel { model: String },
+
+    /// Switch the active session (any user).
+    #[serde(rename = "session_switch")]
+    SessionSwitch { session_id: String },
+
+    /// Create a new session (admin only).
+    #[serde(rename = "session_create")]
+    SessionCreate { name: String, workspace: Option<String> },
+
+    /// Rename a session (admin only).
+    #[serde(rename = "session_rename")]
+    SessionRename { session_id: String, name: String },
+
+    /// Delete a session (admin only).
+    #[serde(rename = "session_delete")]
+    SessionDelete { session_id: String },
+
+    /// Update session workspace (admin only).
+    #[serde(rename = "session_set_workspace")]
+    SessionSetWorkspace { session_id: String, workspace: String },
+
+    /// Browse directories on the server (admin only).
+    #[serde(rename = "dir_browse")]
+    DirBrowse { path: String },
 }
 
 /// Outgoing WebSocket message types to the client.
@@ -140,6 +164,98 @@ enum ServerMsg {
     /// Broadcast when active model changes.
     #[serde(rename = "model_changed")]
     ModelChanged { model: String },
+
+    /// Session list (sent on connect and after changes).
+    #[serde(rename = "session_list")]
+    SessionList { sessions: Vec<SessionListEntry>, active: String },
+
+    /// Directory browse result (admin only).
+    #[serde(rename = "dir_browse_result")]
+    DirBrowseResult { path: String, parent: Option<String>, entries: Vec<DirEntry> },
+
+    /// Session switched confirmation (includes history + files).
+    #[serde(rename = "session_switched")]
+    SessionSwitched { session_id: String },
+}
+
+/// Session list entry for the UI.
+#[derive(Debug, Serialize, Clone)]
+pub struct SessionListEntry {
+    pub id: String,
+    pub name: String,
+    pub workspace: String,
+    pub files: Vec<String>,
+}
+
+/// Directory entry for folder browser.
+#[derive(Debug, Serialize, Clone)]
+pub struct DirEntry {
+    pub name: String,
+    pub is_dir: bool,
+}
+
+/// Generate a simple timestamp-based ID (seconds since epoch).
+fn chrono_ts() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs()
+}
+
+/// Build the session list with their markdown files and broadcast to all clients.
+async fn broadcast_session_list(state: &ServerState) {
+    let sessions = state.chat_db.list_sessions().unwrap_or_default();
+    let mut entries = Vec::new();
+    for s in sessions {
+        let md_dir = super::session_markdown_dir(&s.id);
+        let mut files = Vec::new();
+        if let Ok(mut rd) = tokio::fs::read_dir(&md_dir).await {
+            while let Ok(Some(entry)) = rd.next_entry().await {
+                let name = entry.file_name().to_string_lossy().to_string();
+                if name.ends_with(".md") {
+                    files.push(name);
+                }
+            }
+        }
+        files.sort();
+        entries.push(SessionListEntry {
+            id: s.id,
+            name: s.name,
+            workspace: s.workspace,
+            files,
+        });
+    }
+    let msg = ServerMsg::SessionList { sessions: entries, active: "default".to_string() };
+    if let Ok(json) = serde_json::to_string(&msg) {
+        let _ = state.broadcast_tx.send(json);
+    }
+}
+
+/// Build session list for a single client (returns serialized JSON).
+async fn build_session_list_msg(state: &ServerState) -> Option<String> {
+    let sessions = state.chat_db.list_sessions().unwrap_or_default();
+    let mut entries = Vec::new();
+    for s in sessions {
+        let md_dir = super::session_markdown_dir(&s.id);
+        let mut files = Vec::new();
+        if let Ok(mut rd) = tokio::fs::read_dir(&md_dir).await {
+            while let Ok(Some(entry)) = rd.next_entry().await {
+                let name = entry.file_name().to_string_lossy().to_string();
+                if name.ends_with(".md") {
+                    files.push(name);
+                }
+            }
+        }
+        files.sort();
+        entries.push(SessionListEntry {
+            id: s.id,
+            name: s.name,
+            workspace: s.workspace,
+            files,
+        });
+    }
+    let msg = ServerMsg::SessionList { sessions: entries, active: "default".to_string() };
+    serde_json::to_string(&msg).ok()
 }
 
 /// Handle a single WebSocket connection.
@@ -247,6 +363,11 @@ pub async fn handle_connection(mut socket: WebSocket, state: ServerState) {
         if let Ok(json) = serde_json::to_string(&ml_msg) {
             let _ = ws_tx.send(Message::Text(json.into())).await;
         }
+    }
+
+    // Send session list
+    if let Some(json) = build_session_list_msg(&state).await {
+        let _ = ws_tx.send(Message::Text(json.into())).await;
     }
 
     // Send ready status
@@ -631,6 +752,203 @@ pub async fn handle_connection(mut socket: WebSocket, state: ServerState) {
                             let _ = tx.send(ServerMsg::Error {
                                 message: "Permission denied: only admins can approve requests".to_string(),
                             });
+                        }
+                    }
+                    Ok(ClientMsg::SessionSwitch { session_id }) => {
+                        // Any user can switch their view to another session
+                        // Reload chat history and file list for that session
+                        let history = state.chat_db.load_recent_async(session_id.clone(), 100).await;
+                        let hist_msg = ServerMsg::History { messages: history };
+                        if let Ok(json) = serde_json::to_string(&hist_msg) {
+                            let _ = tx.send(ServerMsg::SessionSwitched { session_id: session_id.clone() });
+                            let _ = ws_forward_tx.send(json);
+                        }
+                        // Send file list for this session
+                        let md_dir = super::session_markdown_dir(&session_id);
+                        let _ = tokio::fs::create_dir_all(&md_dir).await;
+                        let mut files = Vec::new();
+                        if let Ok(mut rd) = tokio::fs::read_dir(&md_dir).await {
+                            while let Ok(Some(entry)) = rd.next_entry().await {
+                                let name = entry.file_name().to_string_lossy().to_string();
+                                if name.ends_with(".md") {
+                                    files.push(name);
+                                }
+                            }
+                        }
+                        files.sort();
+                        let active = files.first().cloned().unwrap_or_else(|| "spec.md".to_string());
+                        let fl_msg = ServerMsg::FileList { files, active: active.clone() };
+                        if let Ok(json) = serde_json::to_string(&fl_msg) {
+                            let _ = ws_forward_tx.send(json);
+                        }
+                        // Send content of active file
+                        let file_path = md_dir.join(&active);
+                        if let Ok(content_str) = tokio::fs::read_to_string(&file_path).await {
+                            let fc_msg = ServerMsg::FileContent { filename: active, content: content_str };
+                            if let Ok(json) = serde_json::to_string(&fc_msg) {
+                                let _ = ws_forward_tx.send(json);
+                            }
+                        }
+                    }
+                    Ok(ClientMsg::SessionCreate { name, workspace }) => {
+                        if !is_admin {
+                            let _ = tx.send(ServerMsg::Error {
+                                message: "Permission denied: only admins can create sessions".to_string(),
+                            });
+                        } else {
+                            let ws = workspace.unwrap_or_else(|| {
+                                std::env::current_dir()
+                                    .map(|p| p.to_string_lossy().to_string())
+                                    .unwrap_or_else(|_| "/tmp".to_string())
+                            });
+                            // Generate an id from name (lowercase, hyphens)
+                            let id: String = name.to_lowercase()
+                                .chars()
+                                .map(|c| if c.is_alphanumeric() { c } else { '-' })
+                                .collect::<String>()
+                                .trim_matches('-')
+                                .to_string();
+                            let id = if id.is_empty() { format!("session-{}", chrono_ts()) } else { id };
+                            match state.chat_db.create_session(&id, &name, &ws, Some(&nickname_clone)) {
+                                Ok(_) => {
+                                    info!("Session '{}' created by '{}'", id, nickname_clone);
+                                    // Create markdown dir
+                                    let md_dir = super::session_markdown_dir(&id);
+                                    let _ = tokio::fs::create_dir_all(&md_dir).await;
+                                    // Broadcast updated session list
+                                    broadcast_session_list(&state).await;
+                                }
+                                Err(e) => {
+                                    let _ = tx.send(ServerMsg::Error {
+                                        message: format!("Failed to create session: {}", e),
+                                    });
+                                }
+                            }
+                        }
+                    }
+                    Ok(ClientMsg::SessionRename { session_id, name }) => {
+                        if !is_admin {
+                            let _ = tx.send(ServerMsg::Error {
+                                message: "Permission denied: only admins can rename sessions".to_string(),
+                            });
+                        } else {
+                            match state.chat_db.rename_session(&session_id, &name) {
+                                Ok(true) => {
+                                    info!("Session '{}' renamed to '{}' by '{}'", session_id, name, nickname_clone);
+                                    broadcast_session_list(&state).await;
+                                }
+                                Ok(false) => {
+                                    let _ = tx.send(ServerMsg::Error {
+                                        message: "Session not found".to_string(),
+                                    });
+                                }
+                                Err(e) => {
+                                    let _ = tx.send(ServerMsg::Error {
+                                        message: format!("Failed to rename session: {}", e),
+                                    });
+                                }
+                            }
+                        }
+                    }
+                    Ok(ClientMsg::SessionDelete { session_id }) => {
+                        if !is_admin {
+                            let _ = tx.send(ServerMsg::Error {
+                                message: "Permission denied: only admins can delete sessions".to_string(),
+                            });
+                        } else if session_id == "default" {
+                            let _ = tx.send(ServerMsg::Error {
+                                message: "Cannot delete the default session".to_string(),
+                            });
+                        } else {
+                            match state.chat_db.delete_session(&session_id) {
+                                Ok(true) => {
+                                    info!("Session '{}' deleted by '{}'", session_id, nickname_clone);
+                                    broadcast_session_list(&state).await;
+                                }
+                                Ok(false) => {
+                                    let _ = tx.send(ServerMsg::Error {
+                                        message: "Session not found".to_string(),
+                                    });
+                                }
+                                Err(e) => {
+                                    let _ = tx.send(ServerMsg::Error {
+                                        message: format!("Failed to delete session: {}", e),
+                                    });
+                                }
+                            }
+                        }
+                    }
+                    Ok(ClientMsg::SessionSetWorkspace { session_id, workspace }) => {
+                        if !is_admin {
+                            let _ = tx.send(ServerMsg::Error {
+                                message: "Permission denied: only admins can change workspace".to_string(),
+                            });
+                        } else {
+                            // Validate path exists and is a directory
+                            match tokio::fs::metadata(&workspace).await {
+                                Ok(m) if m.is_dir() => {
+                                    match state.chat_db.update_session_workspace(&session_id, &workspace) {
+                                        Ok(true) => {
+                                            info!("Session '{}' workspace set to '{}' by '{}'", session_id, workspace, nickname_clone);
+                                            broadcast_session_list(&state).await;
+                                        }
+                                        Ok(false) => {
+                                            let _ = tx.send(ServerMsg::Error {
+                                                message: "Session not found".to_string(),
+                                            });
+                                        }
+                                        Err(e) => {
+                                            let _ = tx.send(ServerMsg::Error {
+                                                message: format!("Failed to update workspace: {}", e),
+                                            });
+                                        }
+                                    }
+                                }
+                                Ok(_) => {
+                                    let _ = tx.send(ServerMsg::Error {
+                                        message: "Path is not a directory".to_string(),
+                                    });
+                                }
+                                Err(_) => {
+                                    let _ = tx.send(ServerMsg::Error {
+                                        message: "Path does not exist".to_string(),
+                                    });
+                                }
+                            }
+                        }
+                    }
+                    Ok(ClientMsg::DirBrowse { path }) => {
+                        if !is_admin {
+                            let _ = tx.send(ServerMsg::Error {
+                                message: "Permission denied: only admins can browse directories".to_string(),
+                            });
+                        } else {
+                            let browse_path = std::path::Path::new(&path);
+                            let canonical = tokio::fs::canonicalize(browse_path).await
+                                .unwrap_or_else(|_| browse_path.to_path_buf());
+                            let parent = canonical.parent().map(|p| p.to_string_lossy().to_string());
+                            let mut entries = Vec::new();
+                            if let Ok(mut rd) = tokio::fs::read_dir(&canonical).await {
+                                while let Ok(Some(entry)) = rd.next_entry().await {
+                                    let name = entry.file_name().to_string_lossy().to_string();
+                                    // Skip hidden dirs that are not useful
+                                    if name.starts_with('.') { continue; }
+                                    if let Ok(meta) = entry.metadata().await {
+                                        if meta.is_dir() {
+                                            entries.push(DirEntry { name, is_dir: true });
+                                        }
+                                    }
+                                }
+                            }
+                            entries.sort_by(|a, b| a.name.cmp(&b.name));
+                            let result = ServerMsg::DirBrowseResult {
+                                path: canonical.to_string_lossy().to_string(),
+                                parent,
+                                entries,
+                            };
+                            if let Ok(json) = serde_json::to_string(&result) {
+                                let _ = ws_forward_tx.send(json);
+                            }
                         }
                     }
                     Ok(ClientMsg::SetNickname { .. }) => {

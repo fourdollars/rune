@@ -118,6 +118,15 @@ pub async fn run(config: RuneConfig, opts: ServeOptions) {
         ChatDb::open(std::path::Path::new(":memory:")).expect("in-memory db failed")
     });
 
+    // Ensure default session exists
+    {
+        let default_workspace = std::env::current_dir()
+            .map(|p| p.to_string_lossy().to_string())
+            .unwrap_or_else(|_| "/tmp".to_string());
+        chat_db.ensure_default_session(&default_workspace)
+            .unwrap_or_else(|e| warn!("Failed to ensure default session: {}", e));
+    }
+
     // Parse comma-separated model list from config
     let models: Vec<String> = config.model
         .split(',')

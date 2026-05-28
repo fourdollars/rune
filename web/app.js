@@ -19,6 +19,13 @@ let myNickname = '';
 let myToken = '';
 let isAdmin = false;
 let availableModels = [];
+
+// --- Session state ---
+let sessions = [];
+let currentSessionId = 'default';
+let dirBrowserTargetInput = null;
+let settingsSessionId = null;
+
 let activeModel = '';
 
 // --- DOM refs ---
@@ -384,6 +391,24 @@ function handleServerMessage(msg) {
             activeModel = msg.model || '';
             updateModelIndicator();
             addSystemMessage('🔄 Model switched to: ' + activeModel);
+            break;
+
+        case 'session_list':
+            sessions = msg.sessions || [];
+            renderSessionTree();
+            // Show + button for admin
+            const newBtn = document.getElementById('btn-new-session');
+            if (newBtn && isAdmin) newBtn.classList.remove('hidden');
+            break;
+
+        case 'session_switched':
+            currentSessionId = msg.session_id;
+            document.getElementById('chat-messages').innerHTML = '';
+            renderSessionTree();
+            break;
+
+        case 'dir_browse_result':
+            renderDirBrowser(msg.path, msg.parent, msg.entries || []);
             break;
 
         case 'system':
@@ -1181,6 +1206,201 @@ function setupResizeHandle(handleId, panelId, side) {
         document.addEventListener('mousemove', onMove);
         document.addEventListener('mouseup', onUp);
     });
+}
+
+// --- Session Management ---
+
+function renderSessionTree() {
+    const tree = document.getElementById('session-tree');
+    if (!tree) return;
+    tree.innerHTML = '';
+    sessions.forEach(s => {
+        const item = document.createElement('div');
+        item.className = 'session-item';
+        item.dataset.sessionId = s.id;
+
+        const header = document.createElement('div');
+        header.className = 'session-header' + (s.id === currentSessionId ? ' active' : '');
+
+        const toggle = document.createElement('span');
+        toggle.className = 'session-toggle';
+        toggle.textContent = s.id === currentSessionId ? '▼' : '▶';
+        toggle.onclick = (e) => { e.stopPropagation(); toggleSessionFiles(s.id); };
+
+        const name = document.createElement('span');
+        name.className = 'session-name';
+        name.textContent = s.name;
+        name.title = s.workspace;
+        name.onclick = () => switchSession(s.id);
+
+        header.appendChild(toggle);
+        header.appendChild(name);
+
+        if (isAdmin) {
+            const gear = document.createElement('span');
+            gear.className = 'session-gear';
+            gear.textContent = '⚙';
+            gear.onclick = (e) => { e.stopPropagation(); showSessionSettings(s.id); };
+            header.appendChild(gear);
+        }
+
+        item.appendChild(header);
+
+        // File list
+        const filesDiv = document.createElement('div');
+        filesDiv.className = 'session-files' + (s.id !== currentSessionId ? ' collapsed' : '');
+        filesDiv.id = 'session-files-' + s.id;
+        (s.files || []).forEach(fname => {
+            const fileEl = document.createElement('div');
+            fileEl.className = 'session-file';
+            fileEl.textContent = fname;
+            fileEl.title = fname;
+            fileEl.onclick = () => {
+                if (s.id !== currentSessionId) switchSession(s.id);
+                // Switch file
+                ws.send(JSON.stringify({ type: 'file_switch', name: fname }));
+                // Highlight
+                tree.querySelectorAll('.session-file').forEach(f => f.classList.remove('active'));
+                fileEl.classList.add('active');
+            };
+            filesDiv.appendChild(fileEl);
+        });
+        item.appendChild(filesDiv);
+        tree.appendChild(item);
+    });
+}
+
+function toggleSessionFiles(sessionId) {
+    const filesDiv = document.getElementById('session-files-' + sessionId);
+    if (!filesDiv) return;
+    filesDiv.classList.toggle('collapsed');
+    // Update toggle icon
+    const item = filesDiv.parentElement;
+    const toggle = item.querySelector('.session-toggle');
+    if (toggle) toggle.textContent = filesDiv.classList.contains('collapsed') ? '▶' : '▼';
+}
+
+function switchSession(sessionId) {
+    if (sessionId === currentSessionId) return;
+    currentSessionId = sessionId;
+    ws.send(JSON.stringify({ type: 'session_switch', session_id: sessionId }));
+    renderSessionTree();
+}
+
+// --- New Session Dialog ---
+
+function showNewSessionDialog() {
+    document.getElementById('new-session-modal').classList.remove('hidden');
+    document.getElementById('new-session-name').value = '';
+    const wsInput = document.getElementById('new-session-workspace');
+    // Default to first session's workspace or empty
+    const defaultWs = sessions.length > 0 ? sessions[0].workspace : '';
+    wsInput.value = defaultWs;
+    document.getElementById('new-session-name').focus();
+}
+
+function hideNewSessionDialog() {
+    document.getElementById('new-session-modal').classList.add('hidden');
+}
+
+function createSession() {
+    const name = document.getElementById('new-session-name').value.trim();
+    const workspace = document.getElementById('new-session-workspace').value.trim();
+    if (!name) return;
+    ws.send(JSON.stringify({ type: 'session_create', name, workspace: workspace || undefined }));
+    hideNewSessionDialog();
+}
+
+// --- Session Settings Dialog ---
+
+function showSessionSettings(sessionId) {
+    const s = sessions.find(x => x.id === sessionId);
+    if (!s) return;
+    settingsSessionId = sessionId;
+    document.getElementById('session-settings-title').textContent = 'Session: ' + s.name;
+    document.getElementById('session-settings-name').value = s.name;
+    document.getElementById('session-settings-workspace').value = s.workspace;
+    // Hide delete button for default session
+    const delBtn = document.getElementById('btn-delete-session');
+    if (delBtn) delBtn.style.display = sessionId === 'default' ? 'none' : '';
+    document.getElementById('session-settings-modal').classList.remove('hidden');
+}
+
+function hideSessionSettings() {
+    document.getElementById('session-settings-modal').classList.add('hidden');
+    settingsSessionId = null;
+}
+
+function saveSessionSettings() {
+    if (!settingsSessionId) return;
+    const name = document.getElementById('session-settings-name').value.trim();
+    const workspace = document.getElementById('session-settings-workspace').value.trim();
+    const s = sessions.find(x => x.id === settingsSessionId);
+    if (s && name && name !== s.name) {
+        ws.send(JSON.stringify({ type: 'session_rename', session_id: settingsSessionId, name }));
+    }
+    if (s && workspace && workspace !== s.workspace) {
+        ws.send(JSON.stringify({ type: 'session_set_workspace', session_id: settingsSessionId, workspace }));
+    }
+    hideSessionSettings();
+}
+
+function deleteCurrentSession() {
+    if (!settingsSessionId || settingsSessionId === 'default') return;
+    if (!confirm('Delete this session? Chat history will be preserved but session metadata will be removed.')) return;
+    ws.send(JSON.stringify({ type: 'session_delete', session_id: settingsSessionId }));
+    hideSessionSettings();
+    if (currentSessionId === settingsSessionId) {
+        switchSession('default');
+    }
+}
+
+// --- Directory Browser ---
+
+function openDirBrowser(targetInputId) {
+    dirBrowserTargetInput = document.getElementById(targetInputId);
+    const startPath = dirBrowserTargetInput ? (dirBrowserTargetInput.value || '/') : '/';
+    document.getElementById('dir-browser-modal').classList.remove('hidden');
+    navigateDir(startPath || '/');
+}
+
+function hideDirBrowser() {
+    document.getElementById('dir-browser-modal').classList.add('hidden');
+    dirBrowserTargetInput = null;
+}
+
+function navigateDir(path) {
+    document.getElementById('dir-browser-path').value = path;
+    ws.send(JSON.stringify({ type: 'dir_browse', path }));
+}
+
+function renderDirBrowser(path, parent, entries) {
+    document.getElementById('dir-browser-path').value = path;
+    const list = document.getElementById('dir-browser-list');
+    list.innerHTML = '';
+    // Parent directory entry
+    if (parent) {
+        const el = document.createElement('div');
+        el.className = 'dir-entry';
+        el.innerHTML = '<span class="dir-entry-icon">⬆</span><span class="dir-entry-name">..</span>';
+        el.onclick = () => navigateDir(parent);
+        list.appendChild(el);
+    }
+    entries.forEach(e => {
+        const el = document.createElement('div');
+        el.className = 'dir-entry';
+        el.innerHTML = `<span class="dir-entry-icon">📁</span><span class="dir-entry-name">${escapeHtml(e.name)}</span>`;
+        el.onclick = () => navigateDir(path + (path.endsWith('/') ? '' : '/') + e.name);
+        list.appendChild(el);
+    });
+}
+
+function selectDir() {
+    const path = document.getElementById('dir-browser-path').value;
+    if (dirBrowserTargetInput) {
+        dirBrowserTargetInput.value = path;
+    }
+    hideDirBrowser();
 }
 
 // --- Init ---

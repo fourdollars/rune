@@ -1137,6 +1137,212 @@ pre.hljs-pre:hover .copy-btn {
     align-items: baseline;
     gap: 6px;
 }
+/* Session tree */
+.sessions-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 8px;
+}
+
+.sessions-header h3 {
+    margin-bottom: 0;
+}
+
+.session-tree {
+    flex: 1;
+    overflow-y: auto;
+    font-size: 12px;
+}
+
+.session-item {
+    margin-bottom: 2px;
+}
+
+.session-header {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 5px 8px;
+    border-radius: 5px;
+    cursor: pointer;
+    transition: background 0.1s;
+}
+
+.session-header:hover {
+    background: var(--bg-hover, rgba(255,255,255,0.05));
+}
+
+.session-header.active {
+    background: var(--accent-dim, rgba(99,102,241,0.15));
+    border-left: 2px solid var(--accent, #6366f1);
+    padding-left: 6px;
+}
+
+.session-toggle {
+    width: 14px;
+    font-size: 10px;
+    color: var(--text-muted);
+    flex-shrink: 0;
+    user-select: none;
+}
+
+.session-name {
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-weight: 500;
+}
+
+.session-gear {
+    opacity: 0;
+    font-size: 11px;
+    cursor: pointer;
+    transition: opacity 0.15s;
+    padding: 2px 4px;
+    border-radius: 3px;
+}
+
+.session-header:hover .session-gear {
+    opacity: 0.6;
+}
+
+.session-gear:hover {
+    opacity: 1 !important;
+    background: rgba(255,255,255,0.1);
+}
+
+.session-files {
+    padding-left: 22px;
+    overflow: hidden;
+    transition: max-height 0.2s ease;
+}
+
+.session-files.collapsed {
+    max-height: 0;
+}
+
+.session-file {
+    padding: 3px 8px;
+    border-radius: 4px;
+    cursor: pointer;
+    color: var(--text-secondary);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    transition: background 0.1s;
+}
+
+.session-file:hover {
+    background: var(--bg-hover, rgba(255,255,255,0.05));
+    color: var(--text-primary);
+}
+
+.session-file.active {
+    color: var(--accent);
+    font-weight: 500;
+}
+
+/* Dir browser */
+.dir-browser-path-row {
+    display: flex;
+    gap: 6px;
+    margin-bottom: 10px;
+}
+
+.dir-browser-path-row input {
+    flex: 1;
+    background: var(--bg-surface);
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    color: var(--text-primary);
+    font-family: var(--font-mono, monospace);
+    font-size: 12px;
+    padding: 6px 10px;
+}
+
+.dir-browser-list {
+    max-height: 300px;
+    overflow-y: auto;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--bg-deep, #111);
+}
+
+.dir-entry {
+    padding: 6px 12px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 13px;
+    transition: background 0.1s;
+}
+
+.dir-entry:hover {
+    background: var(--bg-hover, rgba(255,255,255,0.05));
+}
+
+.dir-entry-icon {
+    flex-shrink: 0;
+}
+
+.dir-entry-name {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* Form groups for modals */
+.form-group {
+    margin-bottom: 12px;
+}
+
+.form-group label {
+    display: block;
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--text-secondary);
+    margin-bottom: 4px;
+    text-transform: uppercase;
+    letter-spacing: 0.3px;
+}
+
+.form-group input[type="text"] {
+    width: 100%;
+    background: var(--bg-surface);
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    color: var(--text-primary);
+    font-size: 13px;
+    padding: 8px 10px;
+    box-sizing: border-box;
+}
+
+.path-input-row {
+    display: flex;
+    gap: 6px;
+}
+
+.path-input-row input {
+    flex: 1;
+}
+
+.btn-danger {
+    background: #dc3545;
+    color: white;
+    border: none;
+    padding: 8px 14px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 13px;
+}
+
+.btn-danger:hover {
+    background: #c82333;
+}
+
 .chat-body {
     position: relative;
     flex: 1;
