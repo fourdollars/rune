@@ -23,11 +23,11 @@
     <!-- Archive confirm dialog -->
     <div id="archive-modal" class="modal-overlay hidden">
         <div class="modal">
-            <h2>📦 封存對話</h2>
-            <p>將目前的對話歷史封存，聊天視窗將會清空。<br>封存後仍可透過搜尋找回。</p>
+            <h2>📦 Archive Chat</h2>
+            <p>Archive the current conversation. The chat window will be cleared.<br>Archived messages remain searchable.</p>
             <div class="modal-actions">
-                <button class="btn-secondary" onclick="hideArchiveDialog()">取消</button>
-                <button class="btn-primary" onclick="confirmArchive()">確定封存</button>
+                <button class="btn-secondary" onclick="hideArchiveDialog()">Cancel</button>
+                <button class="btn-primary" onclick="confirmArchive()">Archive</button>
             </div>
         </div>
     </div>
@@ -35,14 +35,14 @@
     <!-- Search dialog -->
     <div id="search-modal" class="modal-overlay hidden">
         <div class="modal modal-wide">
-            <h2>🔍 搜尋對話記錄</h2>
+            <h2>🔍 Search Chat History</h2>
             <div class="search-input-row">
-                <input type="text" id="search-input" placeholder="輸入關鍵字…" onkeydown="if(event.key==='Enter')doSearch()">
-                <button class="btn-primary" onclick="doSearch()">搜尋</button>
+                <input type="text" id="search-input" placeholder="Search keyword…" onkeydown="if(event.key==='Enter')doSearch()">
+                <button class="btn-primary" onclick="doSearch()">Search</button>
             </div>
             <div id="search-results" class="search-results"></div>
             <div class="modal-actions">
-                <button class="btn-secondary" onclick="hideSearchDialog()">關閉</button>
+                <button class="btn-secondary" onclick="hideSearchDialog()">Close</button>
             </div>
         </div>
     </div>
@@ -50,11 +50,11 @@
     <!-- Logout confirm dialog -->
     <div id="logout-modal" class="modal-overlay hidden">
         <div class="modal">
-            <h2>登出</h2>
-            <p>確定要登出嗎？<br>儲存的帳號與 token 將會清除。</p>
+            <h2>Logout</h2>
+            <p>Are you sure you want to log out?<br>Your saved nickname and token will be cleared.</p>
             <div class="modal-actions">
-                <button class="btn-secondary" onclick="hideLogoutDialog()">取消</button>
-                <button class="btn-primary" onclick="confirmLogout()">確定登出</button>
+                <button class="btn-secondary" onclick="hideLogoutDialog()">Cancel</button>
+                <button class="btn-primary" onclick="confirmLogout()">Logout</button>
             </div>
         </div>
     </div>

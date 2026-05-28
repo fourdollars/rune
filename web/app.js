@@ -344,7 +344,7 @@ function handleServerMessage(msg) {
             hideArchiveDialog();
             // Clear chat UI
             document.getElementById('chat-messages').innerHTML = '';
-            addSystemMessage(`📦 對話已封存（${msg.count} 則），檔案：${msg.filename}`);
+            addSystemMessage(`📦 Archived ${msg.count} message(s) → ${msg.filename}`);
             break;
 
         case 'search_results':
@@ -421,7 +421,7 @@ function addSystemMessage(content) {
 
 function replayHistory(messages) {
     if (!messages || messages.length === 0) return;
-    addSystemMessage('── 對話記錄 ──');
+    addSystemMessage('── archived ──');
     for (const m of messages) {
         if (m.role === 'user') {
             addChatMessage(m.nickname, m.content);
@@ -446,7 +446,7 @@ function replayHistory(messages) {
             addSystemMessage(m.content);
         }
     }
-    addSystemMessage('── 目前對話 ──');
+    addSystemMessage('── current ──');
     chatMessages.scrollTop = chatMessages.scrollHeight;
 }
 
@@ -736,13 +736,13 @@ function hideSearchDialog() {
 function doSearch() {
     const q = document.getElementById('search-input').value.trim();
     if (!q) return;
-    document.getElementById('search-results').innerHTML = '<div class="search-loading">搜尋中…</div>';
+    document.getElementById('search-results').innerHTML = '<div class="search-loading">Searching…</div>';
     if (isConnected) ws.send(JSON.stringify({ type: 'search_chat', query: q }));
 }
 function renderSearchResults(query, results) {
     const el = document.getElementById('search-results');
     if (!results.length) {
-        el.innerHTML = `<div class="search-empty">找不到「${escapeHtml(query)}」的相關記錄</div>`;
+        el.innerHTML = `<div class="search-empty">No results for "${escapeHtml(query)}"</div>`;
         return;
     }
     const html = results.map(r => {
@@ -757,7 +757,7 @@ function renderSearchResults(query, results) {
             <div class="search-content">${highlighted}</div>
         </div>`;
     }).join('');
-    el.innerHTML = `<div class="search-count">${results.length} 則結果</div>` + html;
+    el.innerHTML = `<div class="search-count">${results.length} result(s)</div>` + html;
 }
 function escapeHtml(str) {
     return str.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
