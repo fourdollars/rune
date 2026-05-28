@@ -1325,4 +1325,349 @@ log_level = "info"
             ]
         );
     }
+
+    // =========================================================
+    // Additional tests for increased coverage
+    // =========================================================
+
+    #[test]
+    fn test_serve_config_default() {
+        let s = ServeConfig::default();
+        assert!(s.port.is_none());
+        assert!(s.bind.is_none());
+        assert!(s.token.is_none());
+        assert!(s.admin_token.is_none());
+    }
+
+    #[test]
+    fn test_serve_config_toml_parsing() {
+        let toml_str = r#"
+model = "gpt-4"
+skills_dir = "./skills"
+log_level = "info"
+
+[serve]
+port = 9527
+bind = "0.0.0.0"
+token = "secret"
+admin_token = "admin_secret"
+"#;
+        let cfg: PartialConfig = toml::from_str(toml_str).unwrap();
+        let serve = cfg.serve.unwrap();
+        assert_eq!(serve.port, Some(9527));
+        assert_eq!(serve.bind.as_deref(), Some("0.0.0.0"));
+        assert_eq!(serve.token.as_deref(), Some("secret"));
+        assert_eq!(serve.admin_token.as_deref(), Some("admin_secret"));
+    }
+
+    #[test]
+    fn test_partial_config_all_fields() {
+        let toml_str = r#"
+model = "claude-opus-4"
+api_key = "sk-ant-xxx"
+provider = "anthropic"
+skills_dir = "~/.rune/skills"
+log_level = "debug"
+max_steps = 100
+token_budget = 500000
+timeout_secs = 60
+base_url = "https://api.anthropic.com/v1"
+trace = "/tmp/rune-trace"
+context_window = 200000
+compact_threshold = 0.9
+compact_keep_last = 10
+thinking = "high"
+system_prompt = "You are an expert."
+"#;
+        let cfg: PartialConfig = toml::from_str(toml_str).unwrap();
+        assert_eq!(cfg.model.as_deref(), Some("claude-opus-4"));
+        assert_eq!(cfg.api_key.as_deref(), Some("sk-ant-xxx"));
+        assert_eq!(cfg.provider.as_deref(), Some("anthropic"));
+        assert_eq!(cfg.skills_dir.as_deref(), Some("~/.rune/skills"));
+        assert_eq!(cfg.log_level.as_deref(), Some("debug"));
+        assert_eq!(cfg.max_steps, Some(100));
+        assert_eq!(cfg.token_budget, Some(500000));
+        assert_eq!(cfg.timeout_secs, Some(60));
+        assert_eq!(cfg.base_url.as_deref(), Some("https://api.anthropic.com/v1"));
+        assert_eq!(cfg.trace.as_deref(), Some("/tmp/rune-trace"));
+        assert_eq!(cfg.context_window, Some(200000));
+        assert_eq!(cfg.compact_threshold, Some(0.9));
+        assert_eq!(cfg.compact_keep_last, Some(10));
+        assert_eq!(cfg.thinking.as_deref(), Some("high"));
+        assert_eq!(cfg.system_prompt.as_deref(), Some("You are an expert."));
+    }
+
+    #[test]
+    fn test_rune_config_default_compact_fields() {
+        let c = RuneConfig::default();
+        assert_eq!(c.context_window, 128000);
+        assert!((c.compact_threshold - 0.85).abs() < 1e-9);
+        assert_eq!(c.compact_keep_last, 6);
+    }
+
+    #[test]
+    fn test_rune_config_default_thinking_none() {
+        let c = RuneConfig::default();
+        assert!(c.thinking.is_none());
+    }
+
+    #[test]
+    fn test_rune_config_default_provider_none() {
+        let c = RuneConfig::default();
+        assert!(c.provider.is_none());
+    }
+
+    #[test]
+    fn test_policy_config_deserialization_minimal() {
+        let toml_str = r#"
+mode = "allowlist"
+"#;
+        let policy: PolicyConfig = toml::from_str(toml_str).unwrap();
+        assert_eq!(policy.mode, "allowlist");
+        assert!(policy.allowed_commands.is_empty());
+        assert_eq!(policy.max_memory_mb, 0);
+        assert_eq!(policy.max_pids, 0);
+    }
+
+    #[test]
+    fn test_policy_config_deserialization_full() {
+        let toml_str = r#"
+mode = "unrestricted"
+allowed_commands = ["git", "cargo"]
+allowed_domains = ["github.com"]
+allowed_syscalls = ["ptrace"]
+allowed_paths_rw = ["/workspace", "/tmp"]
+allowed_paths_ro = ["/usr", "/bin"]
+allowed_files_ro = ["/etc/hostname"]
+allowed_files_rw = ["/tmp/out.txt"]
+denied_paths = ["/etc/shadow", "/root"]
+max_memory_mb = 1024
+max_pids = 128
+"#;
+        let policy: PolicyConfig = toml::from_str(toml_str).unwrap();
+        assert_eq!(policy.mode, "unrestricted");
+        assert_eq!(policy.allowed_commands, vec!["git", "cargo"]);
+        assert_eq!(policy.allowed_domains, vec!["github.com"]);
+        assert_eq!(policy.allowed_syscalls, vec!["ptrace"]);
+        assert_eq!(policy.max_memory_mb, 1024);
+        assert_eq!(policy.max_pids, 128);
+    }
+
+    #[test]
+    fn test_load_toml_with_serve_section() {
+        let dir = std::env::temp_dir().join(format!("rune-cfg-srv-{}", std::process::id()));
+        let _ = fs::create_dir_all(&dir);
+        let path = dir.join("rune.toml");
+        fs::write(&path, r#"
+model = "gpt-4"
+[serve]
+port = 8080
+bind = "127.0.0.1"
+"#).unwrap();
+        let partial = load_toml(&path).expect("should parse");
+        let serve = partial.serve.unwrap();
+        assert_eq!(serve.port, Some(8080));
+        assert_eq!(serve.bind.as_deref(), Some("127.0.0.1"));
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_persist_policy_array_file_not_found() {
+        // Should silently skip, not panic
+        let path = std::path::Path::new("/nonexistent/path/rune.toml");
+        persist_policy_array_at(path, "allowed_domains", "test.com");
+        // No panic = success
+    }
+
+    #[test]
+    fn test_persist_policy_array_invalid_toml() {
+        let dir = std::env::temp_dir().join(format!("rune-persist-inv-{}", std::process::id()));
+        let rune_dir = dir.join(".rune");
+        let _ = fs::create_dir_all(&rune_dir);
+        let config_path = rune_dir.join("rune.toml");
+        fs::write(&config_path, "not valid toml {{{{").unwrap();
+        // Should silently skip
+        persist_policy_array_at(&config_path, "allowed_domains", "test.com");
+        // Content unchanged (parse failed, skip)
+        let content = fs::read_to_string(&config_path).unwrap();
+        assert!(content.contains("not valid toml"));
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_persist_policy_array_creates_policy_section() {
+        let dir = std::env::temp_dir().join(format!("rune-persist-cre-{}", std::process::id()));
+        let rune_dir = dir.join(".rune");
+        let _ = fs::create_dir_all(&rune_dir);
+        let config_path = rune_dir.join("rune.toml");
+        // File without any policy section
+        fs::write(&config_path, r#"model = "gpt-4""#).unwrap();
+        persist_policy_array_at(&config_path, "allowed_commands", "rustfmt");
+        let content = fs::read_to_string(&config_path).unwrap();
+        assert!(content.contains("rustfmt"));
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_persist_multiple_fields() {
+        let dir = std::env::temp_dir().join(format!("rune-persist-mf-{}", std::process::id()));
+        let rune_dir = dir.join(".rune");
+        let _ = fs::create_dir_all(&rune_dir);
+        let config_path = rune_dir.join("rune.toml");
+        fs::write(&config_path, r#"
+[policy]
+mode = "confirm"
+"#).unwrap();
+        persist_policy_array_at(&config_path, "allowed_commands", "git");
+        persist_policy_array_at(&config_path, "allowed_commands", "cargo");
+        persist_policy_array_at(&config_path, "allowed_domains", "github.com");
+        let content = fs::read_to_string(&config_path).unwrap();
+        assert!(content.contains("\"git\"") || content.contains("'git'") || content.contains("git"));
+        assert!(content.contains("github.com"));
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_expand_tilde_home_not_set() {
+        // Temporarily unset HOME — if HOME is absent, return original
+        let original = std::env::var("HOME").ok();
+        std::env::remove_var("HOME");
+        let result = expand_tilde("~/skills");
+        assert_eq!(result, "~/skills"); // unchanged since HOME absent
+        // Restore
+        if let Some(h) = original {
+            std::env::set_var("HOME", h);
+        }
+    }
+
+    #[test]
+    fn test_expand_tilde_bare_home_not_set() {
+        let original = std::env::var("HOME").ok();
+        std::env::remove_var("HOME");
+        let result = expand_tilde("~");
+        assert_eq!(result, "~");
+        if let Some(h) = original {
+            std::env::set_var("HOME", h);
+        }
+    }
+
+    #[test]
+    fn test_rune_config_clone() {
+        let c = RuneConfig::default();
+        let c2 = c.clone();
+        assert_eq!(c2.model, c.model);
+        assert_eq!(c2.log_level, c.log_level);
+    }
+
+    #[test]
+    fn test_policy_config_clone() {
+        let p = PolicyConfig::default();
+        let p2 = p.clone();
+        assert_eq!(p2.mode, p.mode);
+        assert_eq!(p2.allowed_paths_rw, p.allowed_paths_rw);
+    }
+
+    #[test]
+    fn test_load_toml_with_context_window() {
+        let dir = std::env::temp_dir().join(format!("rune-cfg-cw-{}", std::process::id()));
+        let _ = fs::create_dir_all(&dir);
+        let path = dir.join("rune.toml");
+        fs::write(&path, r#"
+model = "gpt-4o"
+context_window = 32000
+compact_threshold = 0.75
+compact_keep_last = 4
+"#).unwrap();
+        let partial = load_toml(&path).unwrap();
+        assert_eq!(partial.context_window, Some(32000));
+        assert_eq!(partial.compact_threshold, Some(0.75));
+        assert_eq!(partial.compact_keep_last, Some(4));
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_load_without_clap_returns_ok() {
+        // Should not panic/fail even without any config files
+        // We just test that it returns Ok
+        let result = load_without_clap();
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_load_without_clap_env_model_override() {
+        std::env::set_var("RUNE_MODEL", "env-model-test-xyz");
+        let cfg = load_without_clap().unwrap();
+        assert_eq!(cfg.model, "env-model-test-xyz");
+        std::env::remove_var("RUNE_MODEL");
+    }
+
+    #[test]
+    fn test_load_without_clap_env_api_key() {
+        std::env::set_var("RUNE_API_KEY", "sk-test-env-key");
+        let cfg = load_without_clap().unwrap();
+        assert_eq!(cfg.api_key.as_deref(), Some("sk-test-env-key"));
+        std::env::remove_var("RUNE_API_KEY");
+    }
+
+    #[test]
+    fn test_load_without_clap_env_provider() {
+        std::env::set_var("RUNE_PROVIDER", "ollama");
+        let cfg = load_without_clap().unwrap();
+        assert_eq!(cfg.provider.as_deref(), Some("ollama"));
+        std::env::remove_var("RUNE_PROVIDER");
+    }
+
+    #[test]
+    fn test_load_without_clap_env_log_level() {
+        std::env::set_var("RUNE_LOG_LEVEL", "trace");
+        let cfg = load_without_clap().unwrap();
+        assert_eq!(cfg.log_level, "trace");
+        std::env::remove_var("RUNE_LOG_LEVEL");
+    }
+
+    #[test]
+    fn test_load_without_clap_env_max_steps() {
+        std::env::set_var("RUNE_MAX_STEPS", "99");
+        let cfg = load_without_clap().unwrap();
+        assert_eq!(cfg.max_steps, Some(99));
+        std::env::remove_var("RUNE_MAX_STEPS");
+    }
+
+    #[test]
+    fn test_load_without_clap_env_context_window() {
+        std::env::set_var("RUNE_CONTEXT_WINDOW", "64000");
+        let cfg = load_without_clap().unwrap();
+        assert_eq!(cfg.context_window, 64000);
+        std::env::remove_var("RUNE_CONTEXT_WINDOW");
+    }
+
+    #[test]
+    fn test_load_without_clap_env_thinking() {
+        std::env::set_var("RUNE_THINKING", "medium");
+        let cfg = load_without_clap().unwrap();
+        assert_eq!(cfg.thinking.as_deref(), Some("medium"));
+        std::env::remove_var("RUNE_THINKING");
+    }
+
+    #[test]
+    fn test_load_without_clap_json_auto_approve_false() {
+        let cfg = load_without_clap().unwrap();
+        assert!(!cfg.json_output);
+        assert!(!cfg.auto_approve);
+    }
+
+    #[test]
+    fn test_load_toml_with_thinking() {
+        let dir = std::env::temp_dir().join(format!("rune-cfg-th-{}", std::process::id()));
+        let _ = fs::create_dir_all(&dir);
+        let path = dir.join("rune.toml");
+        fs::write(&path, r#"
+model = "claude-opus-4"
+thinking = "high"
+"#).unwrap();
+        let partial = load_toml(&path).unwrap();
+        assert_eq!(partial.thinking.as_deref(), Some("high"));
+        let _ = fs::remove_dir_all(&dir);
+    }
+
 }

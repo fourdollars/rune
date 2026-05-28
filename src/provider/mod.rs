@@ -2265,4 +2265,578 @@ mod tests {
         assert!(content.is_none());
         assert!(tool_calls.is_empty());
     }
+
+    // =========================================================
+    // Additional tests for increased coverage
+    // =========================================================
+
+    #[test]
+    fn test_estimate_tokens_empty() {
+        assert_eq!(estimate_tokens(""), 0);
+    }
+
+    #[test]
+    fn test_estimate_tokens_short() {
+        // "ab" => 2 chars => (2+3)/4 = 1
+        assert_eq!(estimate_tokens("ab"), 1);
+    }
+
+    #[test]
+    fn test_estimate_tokens_exact_four() {
+        // "abcd" => 4 chars => (4+3)/4 = 1
+        assert_eq!(estimate_tokens("abcd"), 1);
+    }
+
+    #[test]
+    fn test_estimate_tokens_five_chars() {
+        // 5 chars => (5+3)/4 = 2
+        assert_eq!(estimate_tokens("abcde"), 2);
+    }
+
+    #[test]
+    fn test_estimate_tokens_long_string() {
+        let s = "a".repeat(100);
+        let expected = (100u32 + 3) / 4;
+        assert_eq!(estimate_tokens(&s), expected);
+    }
+
+    #[test]
+    fn test_estimate_usage_content_only() {
+        let usage = estimate_usage(Some("hello world"), &[]);
+        assert_eq!(usage.prompt_tokens, 0);
+        assert!(usage.completion_tokens > 0);
+        assert_eq!(usage.total_tokens, usage.completion_tokens);
+    }
+
+    #[test]
+    fn test_estimate_usage_tool_calls_only() {
+        let calls = vec![LlmToolCall {
+            id: "c1".to_string(),
+            call_type: "function".to_string(),
+            function: LlmFunction {
+                name: "read_file".to_string(),
+                arguments: r#"{"path":"/tmp/f"}"#.to_string(),
+            },
+        }];
+        let usage = estimate_usage(None, &calls);
+        assert_eq!(usage.prompt_tokens, 0);
+        assert!(usage.completion_tokens > 0);
+    }
+
+    #[test]
+    fn test_estimate_usage_both() {
+        let calls = vec![LlmToolCall {
+            id: "c1".to_string(),
+            call_type: "function".to_string(),
+            function: LlmFunction {
+                name: "execute_cmd".to_string(),
+                arguments: r#"{"cmd":"ls -la"}"#.to_string(),
+            },
+        }];
+        let usage = estimate_usage(Some("let me check"), &calls);
+        assert!(usage.total_tokens > 0);
+    }
+
+    #[test]
+    fn test_estimate_usage_empty() {
+        let usage = estimate_usage(None, &[]);
+        assert_eq!(usage.completion_tokens, 0);
+        assert_eq!(usage.total_tokens, 0);
+    }
+
+    #[test]
+    fn test_finalize_tool_calls_single() {
+        let mut states = BTreeMap::new();
+        states.insert(0, StreamingToolCallState {
+            id: Some("call_1".to_string()),
+            call_type: "function".to_string(),
+            name: "read_file".to_string(),
+            arguments: r#"{"path":"/tmp"}"#.to_string(),
+        });
+        let calls = finalize_tool_calls(states);
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].id, "call_1");
+        assert_eq!(calls[0].function.name, "read_file");
+        assert_eq!(calls[0].call_type, "function");
+    }
+
+    #[test]
+    fn test_finalize_tool_calls_no_id_uses_index() {
+        let mut states = BTreeMap::new();
+        states.insert(3, StreamingToolCallState {
+            id: None,
+            call_type: String::new(),
+            name: "execute_cmd".to_string(),
+            arguments: "{}".to_string(),
+        });
+        let calls = finalize_tool_calls(states);
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].id, "stream-3");
+        assert_eq!(calls[0].call_type, "function"); // default_tool_type fallback
+    }
+
+    #[test]
+    fn test_finalize_tool_calls_ordered_by_index() {
+        let mut states = BTreeMap::new();
+        states.insert(1, StreamingToolCallState {
+            id: Some("c1".to_string()),
+            call_type: "function".to_string(),
+            name: "b_tool".to_string(),
+            arguments: "{}".to_string(),
+        });
+        states.insert(0, StreamingToolCallState {
+            id: Some("c0".to_string()),
+            call_type: "function".to_string(),
+            name: "a_tool".to_string(),
+            arguments: "{}".to_string(),
+        });
+        let calls = finalize_tool_calls(states);
+        // BTreeMap orders by key ascending
+        assert_eq!(calls[0].function.name, "a_tool");
+        assert_eq!(calls[1].function.name, "b_tool");
+    }
+
+    #[test]
+    fn test_is_transient_error_timeout() {
+        let e = anyhow::anyhow!("connection timeout");
+        assert!(is_transient_error(&e));
+    }
+
+    #[test]
+    fn test_is_transient_error_429() {
+        let e = anyhow::anyhow!("rate limit 429 too many requests");
+        assert!(is_transient_error(&e));
+    }
+
+    #[test]
+    fn test_is_transient_error_500() {
+        let e = anyhow::anyhow!("API request failed (500): internal server error");
+        assert!(is_transient_error(&e));
+    }
+
+    #[test]
+    fn test_is_transient_error_502() {
+        let e = anyhow::anyhow!("bad gateway 502");
+        assert!(is_transient_error(&e));
+    }
+
+    #[test]
+    fn test_is_transient_error_503() {
+        let e = anyhow::anyhow!("service unavailable 503");
+        assert!(is_transient_error(&e));
+    }
+
+    #[test]
+    fn test_is_transient_error_permanent() {
+        let e = anyhow::anyhow!("failed to parse response JSON: unexpected character");
+        assert!(!is_transient_error(&e));
+    }
+
+    #[test]
+    fn test_is_transient_error_auth_failure() {
+        let e = anyhow::anyhow!("API request failed (401): Unauthorized");
+        assert!(!is_transient_error(&e));
+    }
+
+    #[test]
+    fn test_default_tool_type_value() {
+        assert_eq!(default_tool_type(), "function");
+    }
+
+    #[test]
+    fn test_token_usage_default() {
+        let u = TokenUsage::default();
+        assert_eq!(u.prompt_tokens, 0);
+        assert_eq!(u.completion_tokens, 0);
+        assert_eq!(u.total_tokens, 0);
+    }
+
+    #[test]
+    fn test_token_usage_deserialization() {
+        let json = r#"{"prompt_tokens": 10, "completion_tokens": 20, "total_tokens": 30}"#;
+        let u: TokenUsage = serde_json::from_str(json).unwrap();
+        assert_eq!(u.prompt_tokens, 10);
+        assert_eq!(u.completion_tokens, 20);
+        assert_eq!(u.total_tokens, 30);
+    }
+
+    #[test]
+    fn test_openai_provider_new_default_base_url() {
+        let p = OpenAiProvider::new("openai".to_string(), "sk-test".to_string(), None);
+        assert_eq!(p.base_url, "https://api.openai.com/v1");
+        assert_eq!(p.provider_name, "openai");
+        assert_eq!(p.api_key, "sk-test");
+    }
+
+    #[test]
+    fn test_openai_provider_new_custom_base_url() {
+        let p = OpenAiProvider::new(
+            "ollama".to_string(),
+            "".to_string(),
+            Some("http://localhost:11434/v1".to_string()),
+        );
+        assert_eq!(p.base_url, "http://localhost:11434/v1");
+        assert_eq!(p.name(), "ollama");
+    }
+
+    #[test]
+    fn test_gemini_provider_new_defaults() {
+        let p = GeminiProvider::new("AIzaTest".to_string(), None, None);
+        assert_eq!(p.model, "gemini-2.0-flash");
+        assert_eq!(p.base_url, "https://generativelanguage.googleapis.com/v1beta");
+        assert_eq!(p.api_key, "AIzaTest");
+    }
+
+    #[test]
+    fn test_gemini_provider_new_custom() {
+        let p = GeminiProvider::new(
+            "key".to_string(),
+            Some("gemini-1.5-pro".to_string()),
+            Some("https://custom.endpoint.com/v1beta".to_string()),
+        );
+        assert_eq!(p.model, "gemini-1.5-pro");
+        assert_eq!(p.base_url, "https://custom.endpoint.com/v1beta");
+    }
+
+    #[test]
+    fn test_provider_registry_empty_returns_error() {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            let reg = ProviderRegistry::new();
+            let req = LlmRequest {
+                model: "m".into(),
+                messages: vec![],
+                tools: None,
+                max_tokens: None,
+                thinking: None,
+            };
+            let result = reg.chat(req).await;
+            assert!(result.is_err());
+            assert!(result.unwrap_err().to_string().contains("no providers"));
+        });
+    }
+
+    #[test]
+    fn test_provider_registry_is_empty() {
+        let mut reg = ProviderRegistry::new();
+        assert!(reg.is_empty());
+        let resp = LlmResponse {
+            content: Some("x".into()),
+            tool_calls: vec![],
+            usage: TokenUsage::default(),
+            model: "m".into(),
+        };
+        reg.register(Box::new(SucceedProvider::new("p", resp)));
+        assert!(!reg.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_provider_registry_named_provider_not_found() {
+        let mut reg = ProviderRegistry::new();
+        let resp = LlmResponse {
+            content: Some("ok".into()),
+            tool_calls: vec![],
+            usage: TokenUsage::default(),
+            model: "m".into(),
+        };
+        reg.register(Box::new(SucceedProvider::new("p1", resp)));
+        let req = LlmRequest {
+            model: "m".into(),
+            messages: vec![],
+            tools: None,
+            max_tokens: None,
+            thinking: None,
+        };
+        let err = reg.chat_with("nonexistent", req).await.unwrap_err();
+        assert!(err.to_string().contains("provider not found"));
+    }
+
+    #[tokio::test]
+    async fn test_provider_registry_streaming_empty_returns_error() {
+        let reg = ProviderRegistry::new();
+        let (tx, _rx) = tokio::sync::mpsc::channel::<String>(4);
+        let req = LlmRequest {
+            model: "m".into(),
+            messages: vec![],
+            tools: None,
+            max_tokens: None,
+            thinking: None,
+        };
+        let result = reg.chat_streaming(req, tx).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_provider_registry_streaming_chat_with_not_found() {
+        let mut reg = ProviderRegistry::new();
+        let resp = LlmResponse {
+            content: Some("ok".into()),
+            tool_calls: vec![],
+            usage: TokenUsage::default(),
+            model: "m".into(),
+        };
+        reg.register(Box::new(SucceedProvider::new("p1", resp)));
+        let (tx, _rx) = tokio::sync::mpsc::channel::<String>(4);
+        let req = LlmRequest {
+            model: "m".into(),
+            messages: vec![],
+            tools: None,
+            max_tokens: None,
+            thinking: None,
+        };
+        let err = reg.chat_with_streaming("missing", req, tx).await.unwrap_err();
+        assert!(err.to_string().contains("provider not found"));
+    }
+
+    #[test]
+    fn test_llm_request_serialization() {
+        let req = LlmRequest {
+            model: "gpt-4o".to_string(),
+            messages: vec![LlmMessage {
+                role: "user".to_string(),
+                content: Some("Hello".to_string()),
+                content_parts: None,
+                tool_calls: None,
+                tool_call_id: None,
+            }],
+            tools: None,
+            max_tokens: Some(512),
+            thinking: None, // #[serde(skip)] so not in output
+        };
+        let json = serde_json::to_string(&req).unwrap();
+        assert!(json.contains("gpt-4o"));
+        assert!(json.contains("Hello"));
+        assert!(json.contains("512"));
+        // thinking is skipped
+        assert!(!json.contains("thinking"));
+    }
+
+    #[test]
+    fn test_llm_message_tool_call_serialization() {
+        let msg = LlmMessage {
+            role: "assistant".to_string(),
+            content: None,
+            content_parts: None,
+            tool_calls: Some(vec![LlmToolCall {
+                id: "call_abc".to_string(),
+                call_type: "function".to_string(),
+                function: LlmFunction {
+                    name: "read_file".to_string(),
+                    arguments: r#"{"path":"/tmp/x"}"#.to_string(),
+                },
+            }]),
+            tool_call_id: None,
+        };
+        let json = serde_json::to_string(&msg).unwrap();
+        assert!(json.contains("call_abc"));
+        assert!(json.contains("read_file"));
+        assert!(!json.contains("content_parts"));
+    }
+
+    #[test]
+    fn test_llm_tool_call_deserialization() {
+        let json = r#"{"id":"call_123","type":"function","function":{"name":"execute_cmd","arguments":"{\"cmd\":\"ls\"}"}}"#;
+        let tc: LlmToolCall = serde_json::from_str(json).unwrap();
+        assert_eq!(tc.id, "call_123");
+        assert_eq!(tc.call_type, "function");
+        assert_eq!(tc.function.name, "execute_cmd");
+        assert!(tc.function.arguments.contains("ls"));
+    }
+
+    #[test]
+    fn test_llm_tool_call_default_type_when_missing() {
+        // type field missing → uses default_tool_type()
+        let json = r#"{"id":"c1","function":{"name":"foo","arguments":"{}"}}"#;
+        let tc: LlmToolCall = serde_json::from_str(json).unwrap();
+        assert_eq!(tc.call_type, "function");
+    }
+
+    #[test]
+    fn test_streaming_chunk_deserialization() {
+        let json = r#"{
+            "choices": [{
+                "delta": {
+                    "content": "Hello"
+                }
+            }],
+            "model": "gpt-4o",
+            "usage": null
+        }"#;
+        let chunk: StreamingChunk = serde_json::from_str(json).unwrap();
+        assert_eq!(chunk.choices.len(), 1);
+        assert_eq!(chunk.choices[0].delta.content.as_deref(), Some("Hello"));
+        assert_eq!(chunk.model.as_deref(), Some("gpt-4o"));
+    }
+
+    #[test]
+    fn test_streaming_chunk_tool_call_delta() {
+        let json = r#"{
+            "choices": [{
+                "delta": {
+                    "tool_calls": [{
+                        "index": 0,
+                        "id": "call_1",
+                        "type": "function",
+                        "function": {
+                            "name": "read_file",
+                            "arguments": "{\"path\":"
+                        }
+                    }]
+                }
+            }]
+        }"#;
+        let chunk: StreamingChunk = serde_json::from_str(json).unwrap();
+        let delta = &chunk.choices[0].delta;
+        let tool_deltas = delta.tool_calls.as_ref().unwrap();
+        assert_eq!(tool_deltas.len(), 1);
+        assert_eq!(tool_deltas[0].index, 0);
+        assert_eq!(tool_deltas[0].id.as_deref(), Some("call_1"));
+        assert_eq!(tool_deltas[0].function.as_ref().unwrap().name.as_deref(), Some("read_file"));
+    }
+
+    #[test]
+    fn test_copilot_provider_new() {
+        let p = CopilotProvider::new("ghu_test_token".to_string());
+        assert_eq!(p.pat, "ghu_test_token");
+        assert_eq!(p.name(), "github-copilot");
+    }
+
+    #[test]
+    fn test_llm_response_clone() {
+        let r = LlmResponse {
+            content: Some("test".to_string()),
+            tool_calls: vec![],
+            usage: TokenUsage {
+                prompt_tokens: 5,
+                completion_tokens: 10,
+                total_tokens: 15,
+            },
+            model: "test-model".to_string(),
+        };
+        let r2 = r.clone();
+        assert_eq!(r2.content, r.content);
+        assert_eq!(r2.model, r.model);
+        assert_eq!(r2.usage.total_tokens, 15);
+    }
+
+    #[test]
+    fn test_gemini_convert_messages_tool_with_non_object_json() {
+        // Non-object JSON array should be wrapped in {"result": ...}
+        let messages = vec![LlmMessage {
+            role: "tool".to_string(),
+            content: Some(r#"[1, 2, 3]"#.to_string()),
+            content_parts: None,
+            tool_calls: None,
+            tool_call_id: Some("list_items|fc_id_1|".to_string()),
+        }];
+        let (_, contents) = GeminiProvider::convert_messages(&messages);
+        let resp = &contents[0]["parts"][0]["functionResponse"]["response"];
+        assert_eq!(resp["result"], "[1, 2, 3]");
+    }
+
+    #[test]
+    fn test_gemini_convert_messages_user_message() {
+        let messages = vec![LlmMessage {
+            role: "user".to_string(),
+            content: Some("What is the weather?".to_string()),
+            content_parts: None,
+            tool_calls: None,
+            tool_call_id: None,
+        }];
+        let (sys, contents) = GeminiProvider::convert_messages(&messages);
+        assert!(sys.is_none());
+        assert_eq!(contents.len(), 1);
+        assert_eq!(contents[0]["role"], "user");
+        assert_eq!(contents[0]["parts"][0]["text"], "What is the weather?");
+    }
+
+    #[test]
+    fn test_gemini_convert_messages_assistant_with_text() {
+        let messages = vec![LlmMessage {
+            role: "assistant".to_string(),
+            content: Some("The weather is sunny.".to_string()),
+            content_parts: None,
+            tool_calls: None,
+            tool_call_id: None,
+        }];
+        let (_, contents) = GeminiProvider::convert_messages(&messages);
+        assert_eq!(contents[0]["role"], "model");
+        assert_eq!(contents[0]["parts"][0]["text"], "The weather is sunny.");
+    }
+
+    #[test]
+    fn test_gemini_convert_messages_empty_assistant_skipped() {
+        // assistant with no content and no tool_calls should produce no parts → skipped
+        let messages = vec![LlmMessage {
+            role: "assistant".to_string(),
+            content: None,
+            content_parts: None,
+            tool_calls: None,
+            tool_call_id: None,
+        }];
+        let (_, contents) = GeminiProvider::convert_messages(&messages);
+        assert_eq!(contents.len(), 0);
+    }
+
+    #[test]
+    fn test_gemini_convert_tools_multiple_functions() {
+        let tools = vec![
+            serde_json::json!({
+                "type": "function",
+                "function": {
+                    "name": "read_file",
+                    "description": "Read a file",
+                    "parameters": {"type": "object", "properties": {}}
+                }
+            }),
+            serde_json::json!({
+                "type": "function",
+                "function": {
+                    "name": "write_file",
+                    "description": "Write a file",
+                    "parameters": {"type": "object", "properties": {}}
+                }
+            }),
+        ];
+        let result = GeminiProvider::convert_tools(&tools).unwrap();
+        let decls = &result[0]["function_declarations"];
+        assert_eq!(decls.as_array().unwrap().len(), 2);
+        assert_eq!(decls[0]["name"], "read_file");
+        assert_eq!(decls[1]["name"], "write_file");
+    }
+
+    #[test]
+    fn test_gemini_convert_tools_missing_function_field_skipped() {
+        let tools = vec![
+            serde_json::json!({ "type": "other" }), // no "function" field
+            serde_json::json!({
+                "type": "function",
+                "function": {
+                    "name": "valid_func",
+                    "description": "valid",
+                    "parameters": {}
+                }
+            }),
+        ];
+        let result = GeminiProvider::convert_tools(&tools).unwrap();
+        let decls = &result[0]["function_declarations"];
+        assert_eq!(decls.as_array().unwrap().len(), 1);
+        assert_eq!(decls[0]["name"], "valid_func");
+    }
+
+    #[test]
+    fn test_parse_choices_with_whitespace_content() {
+        let v = serde_json::json!({
+            "choices": [{
+                "message": {
+                    "role": "assistant",
+                    "content": "   "
+                }
+            }]
+        });
+        // Note: parse_choices doesn't trim, but "   " is non-empty so it returns
+        let (content, _) = parse_choices(&v);
+        assert_eq!(content, Some("   ".to_string()));
+    }
+
 }
