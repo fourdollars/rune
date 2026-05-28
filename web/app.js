@@ -1320,6 +1320,17 @@ function renderSessionTree() {
         header.appendChild(name);
 
         if (isAdmin) {
+            const addFileBtn = document.createElement('span');
+            addFileBtn.className = 'session-add-file';
+            addFileBtn.textContent = '+';
+            addFileBtn.title = 'New markdown file';
+            addFileBtn.onclick = (e) => {
+                e.stopPropagation();
+                if (s.id !== currentSessionId) switchSession(s.id);
+                createFile();
+            };
+            header.appendChild(addFileBtn);
+
             const gear = document.createElement('span');
             gear.className = 'session-gear';
             gear.textContent = '⚙';

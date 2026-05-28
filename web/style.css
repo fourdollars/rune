@@ -1206,6 +1206,26 @@ pre.hljs-pre:hover .copy-btn {
     font-weight: 500;
 }
 
+.session-add-file {
+    opacity: 0;
+    font-size: 14px;
+    font-weight: bold;
+    cursor: pointer;
+    transition: opacity 0.15s;
+    padding: 0 4px;
+    border-radius: 3px;
+    color: var(--accent);
+}
+
+.session-header:hover .session-add-file {
+    opacity: 0.7;
+}
+
+.session-add-file:hover {
+    opacity: 1 !important;
+    background: rgba(255,255,255,0.1);
+}
+
 .session-gear {
     opacity: 0;
     font-size: 11px;
