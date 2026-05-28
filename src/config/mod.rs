@@ -1670,4 +1670,311 @@ thinking = "high"
         let _ = fs::remove_dir_all(&dir);
     }
 
+    // =========================================================
+    // Additional tests for broader coverage
+    // =========================================================
+
+    #[test]
+    fn test_load_without_clap_env_token_budget() {
+        std::env::set_var("RUNE_TOKEN_BUDGET", "50000");
+        let cfg = load_without_clap().unwrap();
+        assert_eq!(cfg.token_budget, Some(50000));
+        std::env::remove_var("RUNE_TOKEN_BUDGET");
+    }
+
+    #[test]
+    fn test_load_without_clap_env_timeout_secs() {
+        std::env::set_var("RUNE_TIMEOUT_SECS", "120");
+        let cfg = load_without_clap().unwrap();
+        assert_eq!(cfg.timeout_secs, Some(120));
+        std::env::remove_var("RUNE_TIMEOUT_SECS");
+    }
+
+    #[test]
+    fn test_load_without_clap_env_base_url() {
+        std::env::set_var("RUNE_BASE_URL", "http://localhost:11434");
+        let cfg = load_without_clap().unwrap();
+        assert_eq!(cfg.base_url.as_deref(), Some("http://localhost:11434"));
+        std::env::remove_var("RUNE_BASE_URL");
+    }
+
+    #[test]
+    fn test_load_without_clap_env_system_prompt() {
+        std::env::set_var("RUNE_SYSTEM_PROMPT", "Be concise.");
+        let cfg = load_without_clap().unwrap();
+        assert_eq!(cfg.system_prompt.as_deref(), Some("Be concise."));
+        std::env::remove_var("RUNE_SYSTEM_PROMPT");
+    }
+
+    #[test]
+    fn test_load_without_clap_env_compact_threshold() {
+        std::env::set_var("RUNE_COMPACT_THRESHOLD", "0.70");
+        let cfg = load_without_clap().unwrap();
+        assert!((cfg.compact_threshold - 0.70).abs() < 1e-5);
+        std::env::remove_var("RUNE_COMPACT_THRESHOLD");
+    }
+
+    #[test]
+    fn test_load_without_clap_env_compact_keep_last() {
+        std::env::set_var("RUNE_COMPACT_KEEP_LAST", "8");
+        let cfg = load_without_clap().unwrap();
+        assert_eq!(cfg.compact_keep_last, 8);
+        std::env::remove_var("RUNE_COMPACT_KEEP_LAST");
+    }
+
+    #[test]
+    fn test_load_without_clap_env_trace() {
+        std::env::set_var("RUNE_TRACE", "/tmp/rune-trace-test");
+        let cfg = load_without_clap().unwrap();
+        assert_eq!(cfg.trace.as_deref(), Some("/tmp/rune-trace-test"));
+        std::env::remove_var("RUNE_TRACE");
+    }
+
+    #[test]
+    fn test_load_without_clap_env_skills_dir() {
+        std::env::set_var("RUNE_SKILLS_DIR", "/custom/skills");
+        let cfg = load_without_clap().unwrap();
+        assert_eq!(cfg.skills_dir, "/custom/skills");
+        std::env::remove_var("RUNE_SKILLS_DIR");
+    }
+
+    #[test]
+    fn test_mcp_server_config_toml_parsing() {
+        let toml_str = r#"
+model = "gpt-4"
+skills_dir = "./skills"
+log_level = "info"
+
+[[mcp_servers]]
+name = "my-mcp"
+command = "/usr/bin/my-mcp"
+args = ["--port", "9000"]
+required = true
+timeout_secs = 10
+
+[[mcp_servers]]
+name = "optional-mcp"
+command = "optional-mcp-server"
+required = false
+"#;
+        let cfg: PartialConfig = toml::from_str(toml_str).unwrap();
+        let servers = cfg.mcp_servers.unwrap();
+        assert_eq!(servers.len(), 2);
+        assert_eq!(servers[0].name, "my-mcp");
+        assert_eq!(servers[0].command, "/usr/bin/my-mcp");
+        assert_eq!(servers[0].args, vec!["--port", "9000"]);
+        assert!(servers[0].required);
+        assert_eq!(servers[0].timeout_secs, Some(10));
+        assert_eq!(servers[1].name, "optional-mcp");
+        assert!(!servers[1].required);
+    }
+
+    #[test]
+    fn test_mcp_server_config_default_timeout() {
+        let toml_str = r#"
+name = "test"
+command = "test-cmd"
+"#;
+        let srv: crate::mcp::McpServerConfig = toml::from_str(toml_str).unwrap();
+        // default_timeout returns Some(30)
+        assert_eq!(srv.timeout_secs, Some(30));
+        assert!(!srv.required);
+        assert!(srv.args.is_empty());
+    }
+
+    #[test]
+    fn test_embedding_config_toml_parsing() {
+        let toml_str = r#"
+model = "gpt-4"
+skills_dir = "./skills"
+log_level = "info"
+
+[embedding]
+enabled = true
+model = "text-embedding-3-small"
+base_url = "https://api.openai.com/v1"
+api_key = "sk-embed-xxx"
+threshold = 0.5
+max_skills = 5
+"#;
+        let cfg: PartialConfig = toml::from_str(toml_str).unwrap();
+        let emb = cfg.embedding.unwrap();
+        assert!(emb.enabled);
+        assert_eq!(emb.model.as_deref(), Some("text-embedding-3-small"));
+        assert_eq!(emb.base_url.as_deref(), Some("https://api.openai.com/v1"));
+        assert_eq!(emb.api_key.as_deref(), Some("sk-embed-xxx"));
+        assert!((emb.threshold - 0.5).abs() < 1e-5);
+        assert_eq!(emb.max_skills, 5);
+    }
+
+    #[test]
+    fn test_embedding_config_default() {
+        let emb = crate::embedding::EmbeddingConfig::default();
+        assert!(!emb.enabled); // default is false
+        assert!((emb.threshold - 0.3).abs() < 1e-5);
+    }
+
+    #[test]
+    fn test_policy_config_allowed_files() {
+        let toml_str = r#"
+mode = "allowlist"
+allowed_files_ro = ["/etc/hostname", "/etc/resolv.conf"]
+allowed_files_rw = ["/tmp/output.log"]
+"#;
+        let policy: PolicyConfig = toml::from_str(toml_str).unwrap();
+        assert_eq!(policy.allowed_files_ro, vec!["/etc/hostname", "/etc/resolv.conf"]);
+        assert_eq!(policy.allowed_files_rw, vec!["/tmp/output.log"]);
+    }
+
+    #[test]
+    fn test_policy_config_denied_paths() {
+        let toml_str = r#"
+mode = "allowlist"
+denied_paths = ["/root", "/home/secret"]
+"#;
+        let policy: PolicyConfig = toml::from_str(toml_str).unwrap();
+        assert_eq!(policy.denied_paths, vec!["/root", "/home/secret"]);
+    }
+
+    #[test]
+    fn test_policy_config_memory_limits() {
+        let toml_str = r#"
+mode = "confirm"
+max_memory_mb = 2048
+max_pids = 256
+"#;
+        let policy: PolicyConfig = toml::from_str(toml_str).unwrap();
+        assert_eq!(policy.max_memory_mb, 2048);
+        assert_eq!(policy.max_pids, 256);
+    }
+
+    #[test]
+    fn test_policy_mode_default_when_omitted() {
+        // When policy is deserialized without explicit mode, default_policy_mode applies
+        let toml_str = r#"
+allowed_commands = ["ls"]
+"#;
+        let policy: PolicyConfig = toml::from_str(toml_str).unwrap();
+        assert_eq!(policy.mode, "confirm");
+    }
+
+    #[test]
+    fn test_load_toml_with_mcp_servers() {
+        let dir = std::env::temp_dir().join(format!("rune-cfg-mcp-{}", std::process::id()));
+        let _ = fs::create_dir_all(&dir);
+        let path = dir.join("rune.toml");
+        fs::write(&path, r#"
+model = "gpt-4"
+
+[[mcp_servers]]
+name = "filesystem"
+command = "npx"
+args = ["-y", "@modelcontextprotocol/server-filesystem", "/tmp"]
+required = false
+"#).unwrap();
+        let partial = load_toml(&path).unwrap();
+        let servers = partial.mcp_servers.unwrap();
+        assert_eq!(servers.len(), 1);
+        assert_eq!(servers[0].name, "filesystem");
+        assert_eq!(servers[0].command, "npx");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_load_toml_with_embedding() {
+        let dir = std::env::temp_dir().join(format!("rune-cfg-emb-{}", std::process::id()));
+        let _ = fs::create_dir_all(&dir);
+        let path = dir.join("rune.toml");
+        fs::write(&path, r#"
+model = "gpt-4"
+
+[embedding]
+enabled = false
+model = "nomic-embed-text"
+threshold = 0.4
+"#).unwrap();
+        let partial = load_toml(&path).unwrap();
+        let emb = partial.embedding.unwrap();
+        assert!(!emb.enabled);
+        assert_eq!(emb.model.as_deref(), Some("nomic-embed-text"));
+        assert!((emb.threshold - 0.4).abs() < 1e-5);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_expand_tilde_vec_empty() {
+        let mut v: Vec<String> = vec![];
+        expand_tilde_vec(&mut v);
+        assert!(v.is_empty());
+    }
+
+    #[test]
+    fn test_expand_tilde_vec_single_no_tilde() {
+        let mut v = vec!["/absolute/path".to_string()];
+        expand_tilde_vec(&mut v);
+        assert_eq!(v, vec!["/absolute/path"]);
+    }
+
+    #[test]
+    fn test_policy_syscalls_default_empty() {
+        let p = PolicyConfig::default();
+        assert!(p.allowed_syscalls.is_empty());
+    }
+
+    #[test]
+    fn test_policy_config_allowed_syscalls() {
+        let toml_str = r#"
+mode = "allowlist"
+allowed_syscalls = ["ptrace", "bpf"]
+"#;
+        let policy: PolicyConfig = toml::from_str(toml_str).unwrap();
+        assert_eq!(policy.allowed_syscalls, vec!["ptrace", "bpf"]);
+    }
+
+    #[test]
+    fn test_rune_config_default_mcp_empty() {
+        let c = RuneConfig::default();
+        assert!(c.mcp_servers.is_empty());
+    }
+
+    #[test]
+    fn test_rune_config_default_serve() {
+        let c = RuneConfig::default();
+        assert!(c.serve.port.is_none());
+        assert!(c.serve.token.is_none());
+    }
+
+    #[test]
+    fn test_load_without_clap_preload_skills_empty() {
+        let cfg = load_without_clap().unwrap();
+        assert!(cfg.preload_skills.is_empty());
+    }
+
+    #[test]
+    fn test_partial_config_missing_optional_fields() {
+        // Only model required to parse — all optional fields should be None
+        let toml_str = r#"model = "gpt-4""#;
+        let cfg: PartialConfig = toml::from_str(toml_str).unwrap();
+        assert_eq!(cfg.model.as_deref(), Some("gpt-4"));
+        assert!(cfg.api_key.is_none());
+        assert!(cfg.provider.is_none());
+        assert!(cfg.skills_dir.is_none());
+        assert!(cfg.log_level.is_none());
+        assert!(cfg.max_steps.is_none());
+        assert!(cfg.token_budget.is_none());
+        assert!(cfg.timeout_secs.is_none());
+        assert!(cfg.base_url.is_none());
+        assert!(cfg.trace.is_none());
+        assert!(cfg.context_window.is_none());
+        assert!(cfg.compact_threshold.is_none());
+        assert!(cfg.compact_keep_last.is_none());
+        assert!(cfg.policy.is_none());
+        assert!(cfg.mcp_servers.is_none());
+        assert!(cfg.embedding.is_none());
+        assert!(cfg.thinking.is_none());
+        assert!(cfg.system_prompt.is_none());
+        assert!(cfg.serve.is_none());
+    }
+
+
 }

@@ -3038,4 +3038,459 @@ read(3, "root:x:0:0:...", 4096) = 1234"#;
         assert_eq!(result, "'echo $HOME'");
     }
 
+
+    // ─── MockProvider for Agent construction tests ───────────────────────────
+
+    struct MockProvider;
+    impl crate::provider::Provider for MockProvider {
+        fn name(&self) -> &str {
+            "mock"
+        }
+        fn chat(
+            &self,
+            _request: crate::provider::LlmRequest,
+        ) -> std::pin::Pin<Box<dyn std::future::Future<Output = anyhow::Result<crate::provider::LlmResponse>> + Send + '_>> {
+            Box::pin(async move {
+                Ok(crate::provider::LlmResponse {
+                    content: Some("mock response".to_string()),
+                    tool_calls: vec![],
+                    usage: crate::provider::TokenUsage::default(),
+                    model: "mock".to_string(),
+                })
+            })
+        }
+    }
+
+    fn make_test_agent() -> Agent {
+        let config = crate::config::RuneConfig {
+            model: "mock-model".to_string(),
+            ..Default::default()
+        };
+        let mut registry = crate::provider::ProviderRegistry::new();
+        registry.register(Box::new(MockProvider));
+        Agent::new(config, registry, false, None)
+    }
+
+    // ─── Agent::new ──────────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_agent_new_default_values() {
+        let agent = make_test_agent();
+        assert_eq!(agent.message_count(), 0);
+        assert_eq!(agent.context_chars(), 0);
+        assert_eq!(agent.tokens_used(), 0);
+        assert_eq!(agent.step_count(), 0);
+        assert!(!agent.is_interactive());
+    }
+
+    #[tokio::test]
+    async fn test_agent_new_interactive_flag() {
+        let config = crate::config::RuneConfig::default();
+        let mut registry = crate::provider::ProviderRegistry::new();
+        registry.register(Box::new(MockProvider));
+        let agent = Agent::new(config, registry, true, None);
+        assert!(agent.is_interactive());
+    }
+
+    #[tokio::test]
+    async fn test_agent_new_cwd_added_to_allowed_ro() {
+        let mut config = crate::config::RuneConfig::default();
+        config.policy.allowed_paths_ro.clear();
+        config.policy.allowed_paths_rw.clear();
+        let mut registry = crate::provider::ProviderRegistry::new();
+        registry.register(Box::new(MockProvider));
+        let agent = Agent::new(config, registry, false, None);
+        let cwd = std::env::current_dir().unwrap().to_string_lossy().to_string();
+        assert!(
+            agent.config.policy.allowed_paths_ro.iter().any(|p| cwd.starts_with(p.trim_end_matches("/")))
+            || agent.config.policy.allowed_paths_rw.iter().any(|p| cwd.starts_with(p.trim_end_matches("/")))
+        );
+    }
+
+    #[tokio::test]
+    async fn test_agent_new_tokens_in_out_zero() {
+        let agent = make_test_agent();
+        assert_eq!(agent.tokens_in, 0);
+        assert_eq!(agent.tokens_out, 0);
+    }
+
+    // ─── set_system_prompt ───────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_set_system_prompt_inserts_message() {
+        let mut agent = make_test_agent();
+        assert_eq!(agent.message_count(), 0);
+        agent.set_system_prompt("You are a helpful assistant.");
+        assert_eq!(agent.message_count(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_set_system_prompt_role_is_system() {
+        let mut agent = make_test_agent();
+        agent.set_system_prompt("Hello world.");
+        assert_eq!(agent.messages[0].role, "system");
+    }
+
+    #[tokio::test]
+    async fn test_set_system_prompt_content_stored() {
+        let mut agent = make_test_agent();
+        agent.set_system_prompt("Be concise.");
+        assert_eq!(
+            agent.messages[0].content.as_deref(),
+            Some("Be concise.")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_set_system_prompt_overwrites_existing() {
+        let mut agent = make_test_agent();
+        agent.set_system_prompt("First prompt.");
+        agent.set_system_prompt("Second prompt.");
+        assert_eq!(agent.message_count(), 1);
+        assert_eq!(
+            agent.messages[0].content.as_deref(),
+            Some("Second prompt.")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_set_system_prompt_empty_string() {
+        let mut agent = make_test_agent();
+        agent.set_system_prompt("");
+        assert_eq!(agent.message_count(), 1);
+        assert_eq!(agent.messages[0].content.as_deref(), Some(""));
+    }
+
+    // ─── context_summary ─────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_context_summary_empty() {
+        let agent = make_test_agent();
+        assert!(agent.context_summary().is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_context_summary_system_only() {
+        let mut agent = make_test_agent();
+        agent.set_system_prompt("sys");
+        let summary = agent.context_summary();
+        assert_eq!(summary.len(), 1);
+        assert_eq!(summary[0], ("system".to_string(), 1));
+    }
+
+    #[tokio::test]
+    async fn test_context_summary_multiple_roles() {
+        let mut agent = make_test_agent();
+        agent.set_system_prompt("sys");
+        agent.messages.push(crate::provider::LlmMessage {
+            role: "user".to_string(),
+            content: Some("hello".to_string()),
+            tool_calls: None,
+            tool_call_id: None,
+            content_parts: None,
+        });
+        agent.messages.push(crate::provider::LlmMessage {
+            role: "assistant".to_string(),
+            content: Some("hi".to_string()),
+            tool_calls: None,
+            tool_call_id: None,
+            content_parts: None,
+        });
+        agent.messages.push(crate::provider::LlmMessage {
+            role: "user".to_string(),
+            content: Some("how are you".to_string()),
+            tool_calls: None,
+            tool_call_id: None,
+            content_parts: None,
+        });
+        let summary = agent.context_summary();
+        let summary_map: std::collections::HashMap<_, _> = summary.into_iter().collect();
+        assert_eq!(summary_map.get("system"), Some(&1));
+        assert_eq!(summary_map.get("user"), Some(&2));
+        assert_eq!(summary_map.get("assistant"), Some(&1));
+    }
+
+    #[tokio::test]
+    async fn test_context_summary_sorted() {
+        let mut agent = make_test_agent();
+        agent.messages.push(crate::provider::LlmMessage {
+            role: "user".to_string(),
+            content: Some("hi".to_string()),
+            tool_calls: None,
+            tool_call_id: None,
+            content_parts: None,
+        });
+        agent.messages.push(crate::provider::LlmMessage {
+            role: "assistant".to_string(),
+            content: Some("hello".to_string()),
+            tool_calls: None,
+            tool_call_id: None,
+            content_parts: None,
+        });
+        let summary = agent.context_summary();
+        let roles: Vec<_> = summary.iter().map(|(r, _)| r.as_str()).collect();
+        assert_eq!(roles, vec!["assistant", "user"]);
+    }
+
+    // ─── message_count ───────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_message_count_zero() {
+        let agent = make_test_agent();
+        assert_eq!(agent.message_count(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_message_count_after_system_prompt() {
+        let mut agent = make_test_agent();
+        agent.set_system_prompt("sys");
+        assert_eq!(agent.message_count(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_message_count_multiple_messages() {
+        let mut agent = make_test_agent();
+        agent.set_system_prompt("sys");
+        for _ in 0..5 {
+            agent.messages.push(crate::provider::LlmMessage {
+                role: "user".to_string(),
+                content: Some("ping".to_string()),
+                tool_calls: None,
+                tool_call_id: None,
+                content_parts: None,
+            });
+        }
+        assert_eq!(agent.message_count(), 6);
+    }
+
+    // ─── context_chars ───────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_context_chars_empty() {
+        let agent = make_test_agent();
+        assert_eq!(agent.context_chars(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_context_chars_after_system_prompt() {
+        let mut agent = make_test_agent();
+        agent.set_system_prompt("hello");
+        assert_eq!(agent.context_chars(), 5);
+    }
+
+    #[tokio::test]
+    async fn test_context_chars_multiple_messages() {
+        let mut agent = make_test_agent();
+        agent.set_system_prompt("abc"); // 3
+        agent.messages.push(crate::provider::LlmMessage {
+            role: "user".to_string(),
+            content: Some("12345".to_string()), // 5
+            tool_calls: None,
+            tool_call_id: None,
+            content_parts: None,
+        });
+        assert_eq!(agent.context_chars(), 8);
+    }
+
+    #[tokio::test]
+    async fn test_context_chars_message_with_no_content() {
+        let mut agent = make_test_agent();
+        agent.messages.push(crate::provider::LlmMessage {
+            role: "tool".to_string(),
+            content: None,
+            tool_calls: None,
+            tool_call_id: None,
+            content_parts: None,
+        });
+        assert_eq!(agent.context_chars(), 0);
+    }
+
+    // ─── total_context_tokens ────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_total_context_tokens_empty() {
+        let agent = make_test_agent();
+        assert_eq!(agent.total_context_tokens(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_total_context_tokens_with_system_prompt() {
+        let mut agent = make_test_agent();
+        agent.set_system_prompt("hello world");
+        let tokens = agent.total_context_tokens();
+        assert!(tokens > 0);
+    }
+
+    #[tokio::test]
+    async fn test_total_context_tokens_grows_with_messages() {
+        let mut agent = make_test_agent();
+        agent.set_system_prompt("sys");
+        let t1 = agent.total_context_tokens();
+        agent.messages.push(crate::provider::LlmMessage {
+            role: "user".to_string(),
+            content: Some("a longer user message here".to_string()),
+            tool_calls: None,
+            tool_call_id: None,
+            content_parts: None,
+        });
+        let t2 = agent.total_context_tokens();
+        assert!(t2 > t1);
+    }
+
+    // ─── StopReason Display ──────────────────────────────────────────────────
+
+    #[test]
+    fn test_stop_reason_display_final_answer_with_content() {
+        let r = StopReason::FinalAnswer("the answer is 42".to_string());
+        let s = format!("{:?}", r);
+        assert!(s.contains("FinalAnswer"));
+        assert!(s.contains("the answer is 42"));
+    }
+
+    #[test]
+    fn test_stop_reason_display_error_with_message() {
+        let r = StopReason::Error("network timeout".to_string());
+        let s = format!("{:?}", r);
+        assert!(s.contains("Error"));
+        assert!(s.contains("network timeout"));
+    }
+
+    #[test]
+    fn test_stop_reason_all_variants_debuggable() {
+        let variants = vec![
+            StopReason::FinalAnswer("x".into()),
+            StopReason::MaxSteps,
+            StopReason::TokenBudgetExhausted,
+            StopReason::Error("y".into()),
+            StopReason::UserInterrupt,
+        ];
+        for v in variants {
+            let s = format!("{:?}", v);
+            assert!(!s.is_empty());
+        }
+    }
+
+    // ─── ToolCallRecord ──────────────────────────────────────────────────────
+
+    #[test]
+    fn test_tool_call_record_fields() {
+        let r = ToolCallRecord {
+            name: "write_file".to_string(),
+            args_preview: r#"{"path":"/tmp/x","content":"hello"}"#.to_string(),
+            is_error: false,
+        };
+        assert_eq!(r.name, "write_file");
+        assert!(r.args_preview.contains("/tmp/x"));
+        assert!(!r.is_error);
+    }
+
+    #[test]
+    fn test_tool_call_record_error_variant() {
+        let r = ToolCallRecord {
+            name: "execute_cmd".to_string(),
+            args_preview: r#"{"cmd":"rm -rf /"}"#.to_string(),
+            is_error: true,
+        };
+        assert!(r.is_error);
+    }
+
+    #[test]
+    fn test_tool_call_record_debug_format() {
+        let r = ToolCallRecord {
+            name: "read_file".to_string(),
+            args_preview: "{}".to_string(),
+            is_error: false,
+        };
+        let s = format!("{:?}", r);
+        assert!(s.contains("read_file"));
+    }
+
+    // ─── Agent config fields ──────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_agent_config_model_stored() {
+        let mut config = crate::config::RuneConfig::default();
+        config.model = "gpt-4o-mini".to_string();
+        let mut registry = crate::provider::ProviderRegistry::new();
+        registry.register(Box::new(MockProvider));
+        let agent = Agent::new(config, registry, false, None);
+        assert_eq!(agent.config.model, "gpt-4o-mini");
+    }
+
+    #[tokio::test]
+    async fn test_agent_config_auto_approve_default_false() {
+        let config = crate::config::RuneConfig::default();
+        let mut registry = crate::provider::ProviderRegistry::new();
+        registry.register(Box::new(MockProvider));
+        let agent = Agent::new(config, registry, false, None);
+        assert!(!agent.config.auto_approve);
+    }
+
+    #[tokio::test]
+    async fn test_agent_config_auto_approve_true() {
+        let mut config = crate::config::RuneConfig::default();
+        config.auto_approve = true;
+        let mut registry = crate::provider::ProviderRegistry::new();
+        registry.register(Box::new(MockProvider));
+        let agent = Agent::new(config, registry, false, None);
+        assert!(agent.config.auto_approve);
+    }
+
+    #[tokio::test]
+    async fn test_agent_policy_allowed_paths_rw_default_has_tmp() {
+        let config = crate::config::RuneConfig::default();
+        let mut registry = crate::provider::ProviderRegistry::new();
+        registry.register(Box::new(MockProvider));
+        let agent = Agent::new(config, registry, false, None);
+        assert!(agent.config.policy.allowed_paths_rw.iter().any(|p| p == "/tmp"));
+    }
+
+    #[tokio::test]
+    async fn test_agent_optional_fields_default_none() {
+        let agent = make_test_agent();
+        assert!(agent.token_callback.is_none());
+        assert!(agent.approval_callback.is_none());
+        assert!(agent.files.is_none());
+        assert!(agent.active_file.is_none());
+        assert!(agent.chat_db.is_none());
+        assert!(agent.chat_archive_dir.is_none());
+        assert!(agent.chat_session_id.is_none());
+        assert!(agent.markdown_dir.is_none());
+    }
+
+    // ─── Integration: set_system_prompt + context methods ────────────────────
+
+    #[tokio::test]
+    async fn test_context_summary_after_set_system_prompt() {
+        let mut agent = make_test_agent();
+        agent.set_system_prompt("You are helpful.");
+        let summary = agent.context_summary();
+        assert_eq!(summary.len(), 1);
+        let (role, count) = &summary[0];
+        assert_eq!(role, "system");
+        assert_eq!(*count, 1);
+    }
+
+    #[tokio::test]
+    async fn test_message_count_and_chars_consistent() {
+        let mut agent = make_test_agent();
+        let text = "Hello, world!"; // 13 chars
+        agent.set_system_prompt(text);
+        assert_eq!(agent.message_count(), 1);
+        assert_eq!(agent.context_chars(), 13);
+    }
+
+    #[tokio::test]
+    async fn test_set_system_prompt_multiple_times_keeps_one_message() {
+        let mut agent = make_test_agent();
+        for i in 0..5 {
+            agent.set_system_prompt(&format!("prompt #{}", i));
+        }
+        assert_eq!(agent.message_count(), 1);
+        assert_eq!(
+            agent.messages[0].content.as_deref(),
+            Some("prompt #4")
+        );
+    }
+
 }
