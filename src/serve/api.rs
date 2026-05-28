@@ -862,7 +862,19 @@ async fn handle_chat_message(
     let system_prompt = build_system_prompt(&config).await;
     agent.set_system_prompt(&system_prompt);
 
-    // Chat history is loaded by agent internally via chat_db
+    // Load chat history into agent context
+    let history = state.chat_db.load_recent_async(session_id.clone(), 51).await;
+    let history_without_current: Vec<_> = history
+        .into_iter()
+        .filter(|r| !(r.role == "user" && r.content == user_msg))
+        .collect();
+    let max_history = 100usize;
+    let history_slice = if history_without_current.len() > max_history {
+        &history_without_current[history_without_current.len() - max_history..]
+    } else {
+        &history_without_current[..]
+    };
+    agent.load_history(history_slice);
 
     // Run agent
     let stop_reason = agent.run(&user_msg).await;
