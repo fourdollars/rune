@@ -753,7 +753,7 @@ function renderSearchResults(query, results) {
         const ts = new Date(r.created_at * 1000).toLocaleString('zh-TW');
         const role = r.role === 'assistant' ? '🤖' : '🧑';
         const highlighted = escapeHtml(r.content).replace(
-            new RegExp(escapeHtml(query).replace(/[.*+?^${}()|[\]\]/g, '\$&'), 'gi'),
+            new RegExp(escapeHtml(query).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi'),
             m => `<mark>${m}</mark>`
         );
         return `<div class="search-item">
