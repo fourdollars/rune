@@ -403,8 +403,8 @@ stderr: {}",
             serde_json::json!({
                 "type": "function",
                 "function": {
-                    "name": "read_spec",
-                    "description": "Read the current spec.md document (shared design document in serve mode).",
+                    "name": "list_markdown",
+                    "description": "List all available markdown files and show which one is currently active.",
                     "parameters": {
                         "type": "object",
                         "properties": {},
@@ -415,12 +415,27 @@ stderr: {}",
             serde_json::json!({
                 "type": "function",
                 "function": {
-                    "name": "edit_spec",
-                    "description": "Edit the shared spec.md document. Use 'content' for full replacement, or 'search'+'replace' for targeted edits.",
+                    "name": "read_markdown",
+                    "description": "Read a markdown file. Defaults to the currently active file if no filename is given.",
                     "parameters": {
                         "type": "object",
                         "properties": {
-                            "content": { "type": "string", "description": "Full new content (replaces entire document)" },
+                            "filename": { "type": "string", "description": "Filename to read (e.g. spec.md). Omit to read the active file." }
+                        },
+                        "required": []
+                    }
+                }
+            }),
+            serde_json::json!({
+                "type": "function",
+                "function": {
+                    "name": "edit_markdown",
+                    "description": "Edit a markdown file. Use 'content' for full replacement, or 'search'+'replace' for targeted edits. Defaults to the active file if no filename is given.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "filename": { "type": "string", "description": "Filename to edit (e.g. spec.md). Omit to edit the active file." },
+                            "content": { "type": "string", "description": "Full new content (replaces entire file)" },
                             "search": { "type": "string", "description": "Text to search for (used with replace)" },
                             "replace": { "type": "string", "description": "Replacement text (used with search)" }
                         },
@@ -1297,5 +1312,31 @@ mod tests {
         }
 
         assert!(extra_paths.is_empty());
+    }
+
+    /// Ensure the tool schema exposed to the LLM never contains legacy read_spec/edit_spec names.
+    /// This test prevents regression of the rename to list_markdown/read_markdown/edit_markdown.
+    #[test]
+    fn test_tool_schema_no_legacy_spec_tools() {
+        let registry = ToolRegistry::new(vec![]);
+        let schema = serde_json::to_string(&registry.tool_definitions()).unwrap();
+        assert!(
+            !schema.contains("read_spec"),
+            "tool schema still contains legacy 'read_spec'"
+        );
+        assert!(
+            !schema.contains("edit_spec"),
+            "tool schema still contains legacy 'edit_spec'"
+        );
+    }
+
+    /// Ensure the new markdown tools are present in the schema.
+    #[test]
+    fn test_tool_schema_has_markdown_tools() {
+        let registry = ToolRegistry::new(vec![]);
+        let schema = serde_json::to_string(&registry.tool_definitions()).unwrap();
+        assert!(schema.contains("list_markdown"), "tool schema missing 'list_markdown'");
+        assert!(schema.contains("read_markdown"), "tool schema missing 'read_markdown'");
+        assert!(schema.contains("edit_markdown"), "tool schema missing 'edit_markdown'");
     }
 }
