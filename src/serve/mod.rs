@@ -79,35 +79,8 @@ impl Default for ServeOptions {
 
 /// Start the serve mode.
 pub async fn run(config: RuneConfig, opts: ServeOptions) {
-    // Load markdown files from ~/.rune/sessions/main/markdown/
-    let md_dir = session_markdown_dir("main");
-    tokio::fs::create_dir_all(&md_dir).await
-        .expect("Failed to create session markdown dir");
-
-    // Migrate legacy spec.md from ~/.rune/spec.md if it exists
-    let legacy_spec = data_dir().join("spec.md");
-    let new_spec_path = md_dir.join("spec.md");
-    if legacy_spec.exists() && !new_spec_path.exists() {
-        tokio::fs::copy(&legacy_spec, &new_spec_path).await.ok();
-    }
-
-    // Load all .md files in the directory
-    let mut initial_files = std::collections::HashMap::new();
-    let mut read_dir = tokio::fs::read_dir(&md_dir).await
-        .unwrap_or_else(|_| panic!("Cannot read markdown dir"));
-    while let Ok(Some(entry)) = read_dir.next_entry().await {
-        let name = entry.file_name().to_string_lossy().to_string();
-        if name.ends_with(".md") {
-            if let Ok(text) = tokio::fs::read_to_string(entry.path()).await {
-                initial_files.insert(name, text);
-            }
-        }
-    }
-    if initial_files.is_empty() {
-        let default = "# Spec\n\nStart writing your spec here.\n".to_string();
-        tokio::fs::write(&new_spec_path, &default).await.ok();
-        initial_files.insert("spec.md".to_string(), default);
-    }
+    // Files are loaded per-session on client connect/switch; start empty
+    let initial_files = std::collections::HashMap::new();
 
     let (broadcast_tx, _) = broadcast::channel(256);
     let (admin_broadcast_tx, _) = broadcast::channel(64);
