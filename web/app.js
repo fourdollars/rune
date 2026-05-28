@@ -397,6 +397,7 @@ function handleServerMessage(msg) {
         case 'session_list':
             sessions = msg.sessions || [];
             renderSessionTree();
+            updatePageTitle();
             // Show + button for admin
             const newBtn = document.getElementById('btn-new-session');
             if (newBtn && isAdmin) newBtn.classList.remove('hidden');
@@ -406,6 +407,7 @@ function handleServerMessage(msg) {
             currentSessionId = msg.session_id;
             document.getElementById('chat-messages').innerHTML = '';
             renderSessionTree();
+            updatePageTitle();
             // Context overlay reset (will be shown again after next AI turn)
             const overlay = document.getElementById('context-overlay');
             if (overlay) overlay.classList.add('hidden');
@@ -1020,6 +1022,16 @@ function confirmLogout() {
 function updateDocTitle(name) {
     const el = document.getElementById('doc-title');
     if (el && !el.isContentEditable) el.textContent = name;
+    updatePageTitle();
+}
+
+function updatePageTitle() {
+    const s = sessions.find(x => x.id === currentSessionId);
+    const sessionName = s ? s.name : currentSessionId;
+    const file = (fileList && fileList.length > 0) ? currentFilename : null;
+    document.title = file
+        ? 'Rune - ' + sessionName + ' - ' + file
+        : 'Rune - ' + sessionName;
 }
 
 function createFile() {
