@@ -737,13 +737,12 @@ function flashSpecIndicator() {
 function updateModelIndicator() {
     const indicator = document.getElementById('model-indicator');
     const nameEl = document.getElementById('model-name');
-    const btn = document.getElementById('btn-model');
     if (!indicator || !nameEl) return;
     if (!activeModel) { indicator.style.display = 'none'; return; }
     nameEl.textContent = activeModel;
     indicator.style.display = 'flex';
-    // Only admin sees the switch button
-    if (btn) btn.style.display = isAdmin ? 'inline-flex' : 'none';
+    // Admin can click the name to switch; show pointer cursor
+    nameEl.style.cursor = (isAdmin && availableModels.length > 1) ? 'pointer' : 'default';
 }
 
 function showModelDialog() {
