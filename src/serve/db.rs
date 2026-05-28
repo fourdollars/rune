@@ -5,7 +5,7 @@
 //!
 //! All blocking SQLite calls are wrapped in tokio::task::spawn_blocking.
 
-use rusqlite::{params, Connection};
+use rusqlite::{params, Connection, backup::Backup};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 use std::sync::{Arc, Mutex};
@@ -46,6 +46,8 @@ pub struct SessionRecord {
 #[derive(Clone)]
 pub struct ChatDb {
     conn: Arc<Mutex<Connection>>,
+    /// If Some, DB is in-memory and should be persisted to this path on first write.
+    deferred_path: Arc<Mutex<Option<std::path::PathBuf>>>,
 }
 
 impl ChatDb {
@@ -82,7 +84,84 @@ impl ChatDb {
             ALTER TABLE messages ADD COLUMN tokens_in  INTEGER;
             ALTER TABLE messages ADD COLUMN tokens_out INTEGER;
         ");
-        Ok(Self { conn: Arc::new(Mutex::new(conn)) })
+        Ok(Self { conn: Arc::new(Mutex::new(conn)), deferred_path: Arc::new(Mutex::new(None)) })
+    }
+
+    /// Open file if it exists, otherwise in-memory with deferred persistence.
+    pub fn open_lazy(path: &Path) -> anyhow::Result<Self> {
+        if path.exists() {
+            Self::open(path)
+        } else {
+            let conn = Connection::open_in_memory()?;
+            conn.execute_batch("
+                PRAGMA journal_mode=WAL;
+                PRAGMA synchronous=NORMAL;
+                CREATE TABLE IF NOT EXISTS messages (
+                    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                    session_id  TEXT    NOT NULL DEFAULT 'default',
+                    role        TEXT    NOT NULL,
+                    nickname    TEXT    NOT NULL,
+                    content     TEXT    NOT NULL,
+                    created_at  INTEGER NOT NULL,
+                    model       TEXT,
+                    tokens_in   INTEGER,
+                    tokens_out  INTEGER
+                );
+                CREATE INDEX IF NOT EXISTS idx_messages_session
+                    ON messages(session_id, id);
+                CREATE TABLE IF NOT EXISTS sessions (
+                    id          TEXT PRIMARY KEY,
+                    name        TEXT NOT NULL,
+                    workspace   TEXT NOT NULL,
+                    created_at  INTEGER NOT NULL,
+                    created_by  TEXT
+                );
+            ")?;
+            Ok(ChatDb {
+                conn: Arc::new(Mutex::new(conn)),
+                deferred_path: Arc::new(Mutex::new(Some(path.to_path_buf()))),
+            })
+        }
+    }
+
+    /// If DB is in-memory with a deferred path, persist it to disk now.
+    /// Uses SQLite backup API to copy memory → file, then reopens from file.
+    /// No-op if already file-based.
+    pub fn ensure_persistent(&self) -> anyhow::Result<()> {
+        let path = {
+            let mut dp = self.deferred_path.lock().unwrap();
+            match dp.take() {
+                Some(p) => p,
+                None => return Ok(()), // already persistent
+            }
+        };
+        // Create parent dirs
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        // Use SQLite backup API to copy in-memory → file
+        let conn = self.conn.lock().unwrap();
+        let mut backup_conn = Connection::open(&path)?;
+        backup_conn.execute_batch("
+            PRAGMA journal_mode=WAL;
+            PRAGMA synchronous=NORMAL;
+        ")?;
+        let backup = Backup::new(&*conn, &mut backup_conn)?;
+        backup.run_to_completion(100, std::time::Duration::from_millis(10), None)?;
+        // Replace connection with file-based one
+        drop(backup);
+        drop(conn);
+        // Reopen from file and swap
+        let new_conn = Connection::open(&path)?;
+        new_conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL;")?;
+        let mut conn_guard = self.conn.lock().unwrap();
+        *conn_guard = new_conn;
+        Ok(())
+    }
+
+    /// Returns true if currently in-memory (not yet persisted to file).
+    pub fn is_memory(&self) -> bool {
+        self.deferred_path.lock().unwrap().is_some()
     }
 
     /// Insert a message. Returns the new row id.

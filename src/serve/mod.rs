@@ -86,8 +86,9 @@ pub async fn run(config: RuneConfig, opts: ServeOptions) {
     let (admin_broadcast_tx, _) = broadcast::channel(64);
 
     let db_path = data_dir().join("chat.db");
-    let chat_db = ChatDb::open(&db_path).unwrap_or_else(|e| {
+    let chat_db = ChatDb::open_lazy(&db_path).unwrap_or_else(|e| {
         eprintln!("warning: failed to open chat db: {}", e);
+        // Fallback: pure in-memory without deferred path
         ChatDb::open(std::path::Path::new(":memory:")).expect("in-memory db failed")
     });
 
@@ -104,7 +105,7 @@ pub async fn run(config: RuneConfig, opts: ServeOptions) {
         token: opts.token.clone(),
         admin_token: opts.admin_token.clone(),
         files: Arc::new(RwLock::new(initial_files)),
-        active_file: Arc::new(RwLock::new("spec.md".to_string())),
+        active_file: Arc::new(RwLock::new(String::new())),
         models,
         active_model: Arc::new(RwLock::new(first_model)),
         broadcast_tx,

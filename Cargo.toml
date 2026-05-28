@@ -8,7 +8,7 @@ license = "MIT"
 description = "High-performance zero-trust AI Agent"
 
 [dependencies]
-rusqlite = { version = "0.32", features = ["bundled"] }
+rusqlite = { version = "0.32", features = ["bundled", "backup"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 toml = "1"

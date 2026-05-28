@@ -807,6 +807,10 @@ pub async fn handle_connection(mut socket: WebSocket, state: ServerState) {
                             });
                             // id = name (directory name = session name)
                             let id = name.clone();
+                            // Persist DB to file on first session creation
+                            if let Err(e) = state.chat_db.ensure_persistent() {
+                                warn!("Failed to persist DB: {}", e);
+                            }
                             match state.chat_db.create_session(&id, &name, &ws, Some(&nickname_clone)) {
                                 Ok(_) => {
                                     info!("Session '{}' created by '{}'", id, nickname_clone);
