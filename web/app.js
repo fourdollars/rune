@@ -370,6 +370,13 @@ function handleServerMessage(msg) {
         case 'model_list':
             availableModels = msg.models || [];
             activeModel = msg.active || '';
+            // Restore saved model preference (admin only)
+            if (isAdmin) {
+                const saved = localStorage.getItem('rune_model');
+                if (saved && availableModels.includes(saved) && saved !== activeModel) {
+                    switchModel(saved);
+                }
+            }
             updateModelIndicator();
             break;
 
@@ -861,6 +868,7 @@ function hideModelDialog() {
 function switchModel(model) {
     if (ws && ws.readyState === WebSocket.OPEN) {
         ws.send(JSON.stringify({ type: 'switch_model', model }));
+        try { localStorage.setItem('rune_model', model); } catch {}
     }
 }
 
@@ -928,6 +936,7 @@ function confirmLogout() {
     // Clear all stored credentials
     localStorage.removeItem('rune_nickname');
     localStorage.removeItem('rune_token');
+    localStorage.removeItem('rune_model');
     // Reset in-memory state
     myNickname = '';
     myToken    = '';
