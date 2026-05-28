@@ -811,11 +811,14 @@ async fn build_embedding(config: &RuneConfig) -> Option<EmbeddingEngine> {
 /// Build the system prompt for serve mode.
 async fn build_system_prompt(config: &RuneConfig) -> String {
     config.system_prompt.as_deref().unwrap_or(
-        "You are Rune, a high-performance zero-trust AI agent. \
-         You are currently in WebUI serve mode, collaborating with the user on shared markdown documents. \
-         Use list_markdown to see all available files, read_markdown to read a file (optional filename arg), \
-         and edit_markdown to edit a file (optional filename arg; prefer search+replace over full replacement). \
-         The active file is displayed in real-time in the center panel. \
+        "You are Rune, a high-performance zero-trust AI agent.\n\
+         You are in WebUI serve mode. You have access to markdown files shared with the user.\n\
+         TOOLS FOR MARKDOWN FILES (always use these, never use read_file/write_file for .md files):\n\
+         - list_markdown: list all available markdown files and the active one\n\
+         - read_markdown(filename?): read a file (default: active file)\n\
+         - edit_markdown(filename?, content) or edit_markdown(filename?, search, replace): edit a file\n\
+         The active file is shown in real-time in the center panel.\n\
+         Prefer search+replace over full replacement for targeted edits.\n\
          Be concise in chat; put detailed content into the markdown files.",
     ).to_string()
 }
