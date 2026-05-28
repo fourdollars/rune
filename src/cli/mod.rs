@@ -1944,4 +1944,183 @@ model: different
         let results = crate::skills::discover_skill_files(dir, 0);
         assert!(results.is_empty());
     }
+
+    // ── resolve_path ──────────────────────────────────────────────────────
+
+    #[test]
+    fn test_resolve_path_absolute() {
+        let result = resolve_path("/usr/local/bin");
+        assert_eq!(result, "/usr/local/bin");
+    }
+
+    #[test]
+    fn test_resolve_path_normalizes_dot_dot() {
+        let result = resolve_path("/home/user/../user/docs");
+        assert_eq!(result, "/home/user/docs");
+    }
+
+    #[test]
+    fn test_resolve_path_normalizes_single_dot() {
+        let result = resolve_path("/home/./user/docs");
+        assert_eq!(result, "/home/user/docs");
+    }
+
+    #[test]
+    fn test_resolve_path_collapses_double_slash() {
+        // Double empty segments collapse
+        let result = resolve_path("/home//user");
+        assert_eq!(result, "/home/user");
+    }
+
+    #[test]
+    fn test_resolve_path_dot_dot_at_root() {
+        // Going above root stays at /
+        let result = resolve_path("/../../etc/passwd");
+        assert_eq!(result, "/etc/passwd");
+    }
+
+    #[test]
+    fn test_resolve_path_relative_becomes_absolute() {
+        // Relative paths should become absolute (under cwd)
+        let result = resolve_path("some/relative/path");
+        assert!(result.starts_with('/'), "relative path must become absolute");
+        assert!(result.ends_with("some/relative/path") || result.contains("some/relative/path"));
+    }
+
+    #[test]
+    fn test_resolve_path_tilde_expanded() {
+        // ~ should be expanded
+        let home = std::env::var("HOME").unwrap_or_default();
+        if !home.is_empty() {
+            let result = resolve_path("~/docs");
+            assert!(!result.contains('~'), "tilde should be expanded, got {}", result);
+            assert!(result.contains("docs"));
+        }
+    }
+
+    // ── is_json_mode ──────────────────────────────────────────────────────
+
+    #[test]
+    fn test_is_json_mode_false_by_default() {
+        let cfg = crate::config::RuneConfig::default();
+        assert!(!is_json_mode(&cfg));
+    }
+
+    #[test]
+    fn test_is_json_mode_true_when_set() {
+        let mut cfg = crate::config::RuneConfig::default();
+        cfg.json_output = true;
+        assert!(is_json_mode(&cfg));
+    }
+
+    // ── load_image_as_base64 ──────────────────────────────────────────────
+
+    #[test]
+    fn test_load_image_as_base64_nonexistent() {
+        let result = load_image_as_base64("/tmp/rune-test-nonexistent-image-xyz.png");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_load_image_as_base64_png() {
+        use std::io::Write;
+        // Write a minimal 1x1 PNG (valid PNG header + IHDR)
+        let path = format!("/tmp/rune-test-img-{}.png", std::process::id());
+        // Minimal valid PNG bytes (1x1 transparent)
+        let png_bytes: &[u8] = &[
+            0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, // PNG sig
+            0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44, 0x52, // IHDR chunk len+type
+        ];
+        std::fs::write(&path, png_bytes).unwrap();
+        let result = load_image_as_base64(&path);
+        assert!(result.is_ok());
+        let (b64, mime) = result.unwrap();
+        assert_eq!(mime, "image/png");
+        assert!(!b64.is_empty());
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn test_load_image_as_base64_jpeg() {
+        let path = format!("/tmp/rune-test-img-{}.jpg", std::process::id());
+        std::fs::write(&path, b"fake jpeg data").unwrap();
+        let result = load_image_as_base64(&path);
+        assert!(result.is_ok());
+        let (_, mime) = result.unwrap();
+        assert_eq!(mime, "image/jpeg");
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn test_load_image_as_base64_webp() {
+        let path = format!("/tmp/rune-test-img-{}.webp", std::process::id());
+        std::fs::write(&path, b"fake webp").unwrap();
+        let result = load_image_as_base64(&path);
+        assert!(result.is_ok());
+        let (_, mime) = result.unwrap();
+        assert_eq!(mime, "image/webp");
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn test_load_image_as_base64_gif() {
+        let path = format!("/tmp/rune-test-img-{}.gif", std::process::id());
+        std::fs::write(&path, b"GIF89a").unwrap();
+        let result = load_image_as_base64(&path);
+        assert!(result.is_ok());
+        let (_, mime) = result.unwrap();
+        assert_eq!(mime, "image/gif");
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn test_load_image_as_base64_unknown_ext_defaults_png() {
+        let path = format!("/tmp/rune-test-img-{}.bin", std::process::id());
+        std::fs::write(&path, b"binary").unwrap();
+        let result = load_image_as_base64(&path);
+        assert!(result.is_ok());
+        let (_, mime) = result.unwrap();
+        assert_eq!(mime, "image/png");
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn test_load_image_base64_content_is_valid_base64() {
+        use base64::Engine;
+        let path = format!("/tmp/rune-test-b64-{}.png", std::process::id());
+        let data = b"hello world this is test data";
+        std::fs::write(&path, data).unwrap();
+        let (b64, _) = load_image_as_base64(&path).unwrap();
+        let decoded = base64::engine::general_purpose::STANDARD.decode(&b64).unwrap();
+        assert_eq!(decoded, data);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    // ── SkillFrontmatter display_result (unit test via StopReason) ────────
+
+    #[test]
+    fn test_skill_frontmatter_default_empty() {
+        let fm = SkillFrontmatter {
+            description: None,
+            tools_allow: vec![],
+            tools_deny: vec![],
+            model: None,
+        };
+        assert!(fm.description.is_none());
+        assert!(fm.tools_allow.is_empty());
+        assert!(fm.tools_deny.is_empty());
+        assert!(fm.model.is_none());
+    }
+
+    #[test]
+    fn test_skill_frontmatter_clone() {
+        let fm = SkillFrontmatter {
+            description: Some("test".to_string()),
+            tools_allow: vec!["read_file".to_string()],
+            tools_deny: vec![],
+            model: Some("gpt-4o".to_string()),
+        };
+        let fm2 = fm.clone();
+        assert_eq!(fm, fm2);
+    }
 }

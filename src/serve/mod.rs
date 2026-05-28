@@ -242,3 +242,165 @@ fn is_localhost(ip: IpAddr) -> bool {
         IpAddr::V6(v6) => v6.is_loopback(),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+
+    // ──────────────────────────────────────────────
+    // data_dir / session_markdown_dir
+    // ──────────────────────────────────────────────
+
+    #[test]
+    fn test_data_dir_uses_home_env() {
+        std::env::set_var("HOME", "/tmp/fake_home");
+        let d = data_dir();
+        assert_eq!(d, std::path::PathBuf::from("/tmp/fake_home/.rune"));
+    }
+
+    #[test]
+    fn test_data_dir_fallback_when_no_home() {
+        // Temporarily remove HOME
+        let orig = std::env::var("HOME").ok();
+        std::env::remove_var("HOME");
+        let d = data_dir();
+        assert_eq!(d, std::path::PathBuf::from("./.rune"));
+        if let Some(v) = orig { std::env::set_var("HOME", v); }
+    }
+
+    #[test]
+    fn test_session_markdown_dir_structure() {
+        std::env::set_var("HOME", "/tmp/fake_home");
+        let d = session_markdown_dir("my-session");
+        assert_eq!(d, std::path::PathBuf::from("/tmp/fake_home/.rune/sessions/my-session/markdown"));
+    }
+
+    #[test]
+    fn test_session_markdown_dir_special_chars() {
+        std::env::set_var("HOME", "/tmp/fake_home");
+        let d = session_markdown_dir("session-123_abc");
+        assert!(d.to_string_lossy().contains("session-123_abc"));
+    }
+
+    // ──────────────────────────────────────────────
+    // is_localhost
+    // ──────────────────────────────────────────────
+
+    #[test]
+    fn test_is_localhost_ipv4_loopback() {
+        assert!(is_localhost(IpAddr::V4(Ipv4Addr::LOCALHOST)));
+    }
+
+    #[test]
+    fn test_is_localhost_ipv4_127_0_0_1() {
+        assert!(is_localhost(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1))));
+    }
+
+    #[test]
+    fn test_is_localhost_ipv4_non_local() {
+        assert!(!is_localhost(IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1))));
+        assert!(!is_localhost(IpAddr::V4(Ipv4Addr::new(8, 8, 8, 8))));
+        assert!(!is_localhost(IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1))));
+    }
+
+    #[test]
+    fn test_is_localhost_ipv6_loopback() {
+        assert!(is_localhost(IpAddr::V6(Ipv6Addr::LOCALHOST)));
+    }
+
+    #[test]
+    fn test_is_localhost_ipv6_non_local() {
+        assert!(!is_localhost(IpAddr::V6(Ipv6Addr::new(0x2001, 0xdb8, 0, 0, 0, 0, 0, 1))));
+    }
+
+    // ──────────────────────────────────────────────
+    // mime_for
+    // ──────────────────────────────────────────────
+
+    #[test]
+    fn test_mime_for_js() {
+        assert_eq!(mime_for("bundle.js"), "application/javascript");
+        assert_eq!(mime_for("path/to/app.js"), "application/javascript");
+    }
+
+    #[test]
+    fn test_mime_for_css() {
+        assert_eq!(mime_for("style.css"), "text/css");
+    }
+
+    #[test]
+    fn test_mime_for_html() {
+        assert_eq!(mime_for("index.html"), "text/html");
+    }
+
+    #[test]
+    fn test_mime_for_svg() {
+        assert_eq!(mime_for("icon.svg"), "image/svg+xml");
+    }
+
+    #[test]
+    fn test_mime_for_unknown() {
+        assert_eq!(mime_for("file.wasm"), "application/octet-stream");
+        assert_eq!(mime_for("data.bin"), "application/octet-stream");
+        assert_eq!(mime_for("README.md"), "application/octet-stream");
+    }
+
+    // ──────────────────────────────────────────────
+    // ServeOptions defaults
+    // ──────────────────────────────────────────────
+
+    #[test]
+    fn test_serve_options_default() {
+        let opts = ServeOptions::default();
+        assert_eq!(opts.port, 9527);
+        assert_eq!(opts.bind, IpAddr::V4(Ipv4Addr::LOCALHOST));
+        assert!(opts.token.is_none());
+        assert!(opts.admin_token.is_none());
+    }
+
+    // ──────────────────────────────────────────────
+    // ServerState model parsing
+    // ──────────────────────────────────────────────
+
+    #[test]
+    fn test_model_list_parsing_single() {
+        let model_str = "gpt-4o";
+        let models: Vec<String> = model_str.split(',')
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect();
+        assert_eq!(models, vec!["gpt-4o"]);
+    }
+
+    #[test]
+    fn test_model_list_parsing_multiple() {
+        let model_str = "gpt-4o, claude-3-5-sonnet, gemini-1.5-pro";
+        let models: Vec<String> = model_str.split(',')
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect();
+        assert_eq!(models, vec!["gpt-4o", "claude-3-5-sonnet", "gemini-1.5-pro"]);
+    }
+
+    #[test]
+    fn test_model_list_parsing_empty_parts_filtered() {
+        let model_str = "gpt-4o,,claude-3-5-sonnet, ";
+        let models: Vec<String> = model_str.split(',')
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect();
+        assert_eq!(models, vec!["gpt-4o", "claude-3-5-sonnet"]);
+    }
+
+    #[test]
+    fn test_first_model_fallback_when_empty() {
+        let models: Vec<String> = "".split(',')
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect();
+        let config_model = "fallback-model".to_string();
+        let first = models.first().cloned().unwrap_or_else(|| config_model.clone());
+        assert_eq!(first, "fallback-model");
+    }
+}

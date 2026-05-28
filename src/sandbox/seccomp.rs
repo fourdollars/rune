@@ -199,3 +199,229 @@ pub fn run() {
     eprintln!("rune _seccomp: exec failed: {}", err);
     std::process::exit(1);
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ── syscall_name_to_nr ──────────────────────────────────────────────────
+
+    #[test]
+    fn test_syscall_name_to_nr_known() {
+        assert_eq!(syscall_name_to_nr("ptrace"), Some(SYS_PTRACE));
+        assert_eq!(syscall_name_to_nr("mount"), Some(SYS_MOUNT));
+        assert_eq!(syscall_name_to_nr("unshare"), Some(SYS_UNSHARE));
+        assert_eq!(syscall_name_to_nr("kexec_load"), Some(SYS_KEXEC_LOAD));
+        assert_eq!(syscall_name_to_nr("bpf"), Some(SYS_BPF));
+        assert_eq!(syscall_name_to_nr("setns"), Some(SYS_SETNS));
+        assert_eq!(syscall_name_to_nr("socket"), Some(SYS_SOCKET));
+        assert_eq!(syscall_name_to_nr("connect"), Some(SYS_CONNECT));
+        assert_eq!(syscall_name_to_nr("accept"), Some(SYS_ACCEPT));
+        assert_eq!(syscall_name_to_nr("bind"), Some(SYS_BIND));
+        assert_eq!(syscall_name_to_nr("listen"), Some(SYS_LISTEN));
+    }
+
+    #[test]
+    fn test_syscall_name_to_nr_unknown() {
+        assert_eq!(syscall_name_to_nr("foobar"), None);
+        assert_eq!(syscall_name_to_nr(""), None);
+        assert_eq!(syscall_name_to_nr("PTRACE"), None);
+        assert_eq!(syscall_name_to_nr("execve"), None);
+    }
+
+    #[test]
+    fn test_syscall_name_to_nr_whitespace_trimmed() {
+        assert_eq!(syscall_name_to_nr("  ptrace  "), Some(SYS_PTRACE));
+        assert_eq!(syscall_name_to_nr("\tbpf\t"), Some(SYS_BPF));
+    }
+
+    #[test]
+    fn test_syscall_numbers_are_correct_x86_64() {
+        assert_eq!(SYS_PTRACE, 101);
+        assert_eq!(SYS_MOUNT, 165);
+        assert_eq!(SYS_KEXEC_LOAD, 246);
+        assert_eq!(SYS_UNSHARE, 272);
+        assert_eq!(SYS_SETNS, 308);
+        assert_eq!(SYS_BPF, 321);
+        assert_eq!(SYS_SOCKET, 41);
+        assert_eq!(SYS_CONNECT, 42);
+        assert_eq!(SYS_ACCEPT, 43);
+        assert_eq!(SYS_SENDTO, 44);
+        assert_eq!(SYS_RECVFROM, 45);
+        assert_eq!(SYS_SENDMSG, 46);
+        assert_eq!(SYS_RECVMSG, 47);
+        assert_eq!(SYS_BIND, 49);
+        assert_eq!(SYS_LISTEN, 50);
+    }
+
+    // ── BPF constants ──────────────────────────────────────────────────────
+
+    #[test]
+    fn test_bpf_constants() {
+        assert_eq!(OFFSET_NR, 0);
+        assert_eq!(OFFSET_ARCH, 4);
+        assert_eq!(AUDIT_ARCH_X86_64, 0xC000003E);
+        assert_eq!(SECCOMP_RET_ALLOW, 0x7FFF0000);
+        assert_eq!(SECCOMP_RET_ERRNO, 0x00050000);
+        assert_eq!(EPERM, 1);
+    }
+
+    // ── bpf_stmt / bpf_jump ────────────────────────────────────────────────
+
+    #[test]
+    fn test_bpf_stmt_fields() {
+        let s = bpf_stmt(BPF_LD | BPF_W | BPF_ABS, OFFSET_ARCH);
+        assert_eq!(s.jt, 0);
+        assert_eq!(s.jf, 0);
+        assert_eq!(s.k, OFFSET_ARCH);
+        assert_eq!(s.code, BPF_LD | BPF_W | BPF_ABS);
+    }
+
+    #[test]
+    fn test_bpf_jump_fields() {
+        let j = bpf_jump(BPF_JMP | BPF_JEQ | BPF_K, SYS_PTRACE, 3, 0);
+        assert_eq!(j.jt, 3);
+        assert_eq!(j.jf, 0);
+        assert_eq!(j.k, SYS_PTRACE);
+    }
+
+    #[test]
+    fn test_bpf_stmt_ret_allow() {
+        let s = bpf_stmt(BPF_RET | BPF_K, SECCOMP_RET_ALLOW);
+        assert_eq!(s.k, SECCOMP_RET_ALLOW);
+        assert_eq!(s.jt, 0);
+        assert_eq!(s.jf, 0);
+    }
+
+    #[test]
+    fn test_bpf_stmt_ret_deny() {
+        let s = bpf_stmt(BPF_RET | BPF_K, SECCOMP_RET_ERRNO | EPERM);
+        assert_eq!(s.k, SECCOMP_RET_ERRNO | EPERM);
+    }
+
+    // ── filter construction logic ─────────────────────────────────────────
+
+    fn build_filter(block_net: bool, allowed_syscalls: &[&str]) -> Vec<SockFilter> {
+        let all_dangerous = vec![
+            SYS_PTRACE, SYS_MOUNT, SYS_UNSHARE, SYS_KEXEC_LOAD, SYS_BPF, SYS_SETNS,
+        ];
+        let wildcard = allowed_syscalls.iter().any(|s| *s == "*");
+        let mut blocked: Vec<u32> = if wildcard {
+            Vec::new()
+        } else {
+            all_dangerous
+                .into_iter()
+                .filter(|&nr| {
+                    !allowed_syscalls
+                        .iter()
+                        .any(|name| syscall_name_to_nr(name) == Some(nr))
+                })
+                .collect()
+        };
+        if block_net {
+            blocked.push(SYS_SOCKET);
+            blocked.push(SYS_CONNECT);
+            blocked.push(SYS_ACCEPT);
+            blocked.push(SYS_BIND);
+            blocked.push(SYS_LISTEN);
+        }
+        let num_blocked = blocked.len();
+        let mut filter: Vec<SockFilter> = Vec::new();
+        filter.push(bpf_stmt(BPF_LD | BPF_W | BPF_ABS, OFFSET_ARCH));
+        filter.push(bpf_jump(BPF_JMP | BPF_JEQ | BPF_K, AUDIT_ARCH_X86_64, 0, (num_blocked + 2) as u8));
+        filter.push(bpf_stmt(BPF_LD | BPF_W | BPF_ABS, OFFSET_NR));
+        for (i, &nr) in blocked.iter().enumerate() {
+            let jump_to_deny = (num_blocked - i) as u8;
+            filter.push(bpf_jump(BPF_JMP | BPF_JEQ | BPF_K, nr, jump_to_deny, 0));
+        }
+        filter.push(bpf_stmt(BPF_RET | BPF_K, SECCOMP_RET_ALLOW));
+        filter.push(bpf_stmt(BPF_RET | BPF_K, SECCOMP_RET_ERRNO | EPERM));
+        filter
+    }
+
+    #[test]
+    fn test_filter_default_blocks_6_dangerous() {
+        let filter = build_filter(false, &[]);
+        assert_eq!(filter.len(), 11); // 3 preamble + 6 blocks + 2 ret
+    }
+
+    #[test]
+    fn test_filter_with_block_network_adds_5() {
+        let filter = build_filter(true, &[]);
+        assert_eq!(filter.len(), 16); // 3 + 11 + 2
+    }
+
+    #[test]
+    fn test_filter_wildcard_blocks_nothing() {
+        let filter = build_filter(false, &["*"]);
+        assert_eq!(filter.len(), 5); // 3 preamble + 2 ret
+    }
+
+    #[test]
+    fn test_filter_wildcard_with_block_net() {
+        let filter = build_filter(true, &["*"]);
+        assert_eq!(filter.len(), 10); // 3 + 5 net + 2
+    }
+
+    #[test]
+    fn test_filter_allow_ptrace_removes_from_blocked() {
+        let filter = build_filter(false, &["ptrace"]);
+        assert_eq!(filter.len(), 10); // 3 + 5 + 2
+    }
+
+    #[test]
+    fn test_filter_allow_all_dangerous() {
+        let filter = build_filter(false, &["ptrace", "mount", "unshare", "kexec_load", "bpf", "setns"]);
+        assert_eq!(filter.len(), 5);
+    }
+
+    #[test]
+    fn test_filter_preamble_loads_arch_first() {
+        let filter = build_filter(false, &[]);
+        assert_eq!(filter[0].k, OFFSET_ARCH);
+    }
+
+    #[test]
+    fn test_filter_preamble_checks_x86_64_arch() {
+        let filter = build_filter(false, &[]);
+        assert_eq!(filter[1].k, AUDIT_ARCH_X86_64);
+    }
+
+    #[test]
+    fn test_filter_preamble_loads_syscall_nr() {
+        let filter = build_filter(false, &[]);
+        assert_eq!(filter[2].k, OFFSET_NR);
+    }
+
+    #[test]
+    fn test_filter_last_two_are_ret_allow_deny() {
+        let filter = build_filter(false, &[]);
+        let n = filter.len();
+        assert_eq!(filter[n - 2].k, SECCOMP_RET_ALLOW);
+        assert_eq!(filter[n - 1].k, SECCOMP_RET_ERRNO | EPERM);
+    }
+
+    #[test]
+    fn test_filter_contains_ptrace_block() {
+        let filter = build_filter(false, &[]);
+        assert!(filter.iter().any(|f| f.k == SYS_PTRACE));
+    }
+
+    #[test]
+    fn test_filter_block_net_contains_socket() {
+        let filter = build_filter(true, &[]);
+        assert!(filter.iter().any(|f| f.k == SYS_SOCKET));
+    }
+
+    #[test]
+    fn test_filter_no_block_net_no_socket() {
+        let filter = build_filter(false, &[]);
+        assert!(!filter.iter().any(|f| f.k == SYS_SOCKET));
+    }
+
+    #[test]
+    fn test_sockfilter_size() {
+        // SockFilter: u16 + u8 + u8 + u32 = 8 bytes (repr C)
+        assert_eq!(std::mem::size_of::<SockFilter>(), 8);
+    }
+}

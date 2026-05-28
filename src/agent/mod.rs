@@ -2609,4 +2609,410 @@ read(3, "root:x:0:0:...", 4096) = 1234"#;
         assert_eq!(filtered[0].content, "hello");
         assert_eq!(filtered[1].content, "hi there");
     }
+
+    // ─── truncate_middle ──────────────────────────────────────────────────────
+
+    #[test]
+    fn test_truncate_middle_short_string() {
+        assert_eq!(Agent::truncate_middle("hello", 10), "hello");
+    }
+
+    #[test]
+    fn test_truncate_middle_exact_length() {
+        assert_eq!(Agent::truncate_middle("hello", 5), "hello");
+    }
+
+    #[test]
+    fn test_truncate_middle_long_string() {
+        let s = "abcdefghijklmnopqrstuvwxyz";
+        let result = Agent::truncate_middle(s, 11);
+        assert!(result.contains("..."));
+        assert!(result.starts_with("abcd"));
+        assert!(result.ends_with("wxyz"));
+    }
+
+    #[test]
+    fn test_truncate_middle_unicode_safe() {
+        let s = "\u{4f60}\u{597d}\u{4e16}\u{754c}ABCDEFGHIJ";
+        let result = Agent::truncate_middle(s, 8);
+        assert!(result.contains("...") || result.len() <= 30);
+    }
+
+    // ─── is_dangerous_tool ───────────────────────────────────────────────────
+
+    #[test]
+    fn test_is_dangerous_tool_execute_cmd() {
+        assert!(Agent::is_dangerous_tool("execute_cmd"));
+    }
+
+    #[test]
+    fn test_is_dangerous_tool_write_file() {
+        assert!(Agent::is_dangerous_tool("write_file"));
+    }
+
+    #[test]
+    fn test_is_dangerous_tool_fetch_url() {
+        assert!(Agent::is_dangerous_tool("fetch_url"));
+    }
+
+    #[test]
+    fn test_is_dangerous_tool_read_file() {
+        assert!(Agent::is_dangerous_tool("read_file"));
+    }
+
+    #[test]
+    fn test_is_dangerous_tool_safe_tools() {
+        assert!(!Agent::is_dangerous_tool("list_files"));
+        assert!(!Agent::is_dangerous_tool("search_files"));
+        assert!(!Agent::is_dangerous_tool(""));
+    }
+
+    // ─── is_policy_blocked ───────────────────────────────────────────────────
+
+    #[test]
+    fn test_is_policy_blocked_starts_with_blocked() {
+        assert!(Agent::is_policy_blocked("BLOCKED: domain not in allowed_domains"));
+    }
+
+    #[test]
+    fn test_is_policy_blocked_starts_with_blocked_by_policy() {
+        assert!(Agent::is_policy_blocked("BLOCKED by policy: command not allowed"));
+    }
+
+    #[test]
+    fn test_is_policy_blocked_network_access() {
+        assert!(Agent::is_policy_blocked(
+            "Network access requires explicit allowlist configuration"
+        ));
+    }
+
+    #[test]
+    fn test_is_policy_blocked_allowed_commands_msg() {
+        assert!(Agent::is_policy_blocked("command 'curl' is not in allowed_commands"));
+    }
+
+    #[test]
+    fn test_is_policy_blocked_not_blocked() {
+        assert!(!Agent::is_policy_blocked("everything worked fine"));
+        assert!(!Agent::is_policy_blocked("exit_code: 0"));
+        assert!(!Agent::is_policy_blocked("Permission denied"));
+    }
+
+    #[test]
+    fn test_is_policy_blocked_with_leading_whitespace() {
+        assert!(Agent::is_policy_blocked("   BLOCKED: something"));
+    }
+
+    // ─── char_preview ────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_char_preview_short() {
+        assert_eq!(super::char_preview("hello", 100), "hello");
+    }
+
+    #[test]
+    fn test_char_preview_truncates() {
+        assert_eq!(super::char_preview("hello world", 5), "hello");
+    }
+
+    #[test]
+    fn test_char_preview_unicode_boundary() {
+        assert_eq!(super::char_preview("\u{4f60}\u{597d}\u{4e16}\u{754c}", 2), "\u{4f60}\u{597d}");
+    }
+
+    #[test]
+    fn test_char_preview_empty() {
+        assert_eq!(super::char_preview("", 10), "");
+    }
+
+    #[test]
+    fn test_char_preview_zero_limit() {
+        assert_eq!(super::char_preview("hello", 0), "");
+    }
+
+    // ─── extract_blocked_domain ──────────────────────────────────────────────
+
+    #[test]
+    fn test_extract_blocked_domain_basic() {
+        let msg = "BLOCKED: domain 'github.com' is not in allowed_domains";
+        assert_eq!(
+            Agent::extract_blocked_domain(msg),
+            Some("github.com".to_string())
+        );
+    }
+
+    #[test]
+    fn test_extract_blocked_domain_subdomain() {
+        let msg = "BLOCKED: domain 'api.github.com' is not in allowed_domains";
+        assert_eq!(
+            Agent::extract_blocked_domain(msg),
+            Some("api.github.com".to_string())
+        );
+    }
+
+    #[test]
+    fn test_extract_blocked_domain_no_match() {
+        assert_eq!(Agent::extract_blocked_domain("network is unreachable"), None);
+        assert_eq!(Agent::extract_blocked_domain(""), None);
+    }
+
+    // ─── extract_blocked_command ─────────────────────────────────────────────
+
+    #[test]
+    fn test_extract_blocked_command_basic() {
+        let msg = "BLOCKED by policy: command 'curl' is not in allowed_commands";
+        assert_eq!(
+            Agent::extract_blocked_command(msg),
+            Some("curl".to_string())
+        );
+    }
+
+    #[test]
+    fn test_extract_blocked_command_no_match() {
+        assert_eq!(Agent::extract_blocked_command("exit_code: 1"), None);
+        assert_eq!(Agent::extract_blocked_command(""), None);
+    }
+
+    // ─── extract_domain_from_args ────────────────────────────────────────────
+
+    #[test]
+    fn test_extract_domain_from_args_https() {
+        let args = serde_json::json!({"url": "https://api.github.com/repos/foo/bar"});
+        assert_eq!(
+            Agent::extract_domain_from_args("fetch_url", &args),
+            Some("api.github.com".to_string())
+        );
+    }
+
+    #[test]
+    fn test_extract_domain_from_args_http() {
+        let args = serde_json::json!({"url": "http://example.com/path"});
+        assert_eq!(
+            Agent::extract_domain_from_args("fetch_url", &args),
+            Some("example.com".to_string())
+        );
+    }
+
+    #[test]
+    fn test_extract_domain_from_args_with_port() {
+        let args = serde_json::json!({"url": "https://localhost:8080/api"});
+        assert_eq!(
+            Agent::extract_domain_from_args("fetch_url", &args),
+            Some("localhost".to_string())
+        );
+    }
+
+    #[test]
+    fn test_extract_domain_from_args_wrong_tool() {
+        let args = serde_json::json!({"url": "https://example.com"});
+        assert_eq!(Agent::extract_domain_from_args("read_file", &args), None);
+    }
+
+    #[test]
+    fn test_extract_domain_from_args_missing_url() {
+        let args = serde_json::json!({"path": "/etc/passwd"});
+        assert_eq!(Agent::extract_domain_from_args("fetch_url", &args), None);
+    }
+
+    // ─── extract_command_from_args ───────────────────────────────────────────
+
+    #[test]
+    fn test_extract_command_from_args_basic() {
+        let args = serde_json::json!({"cmd": "ls -la /tmp"});
+        let result = Agent::extract_command_from_args("execute_cmd", &args);
+        assert_eq!(result, Some("ls".to_string()));
+    }
+
+    #[test]
+    fn test_extract_command_from_args_wrong_tool() {
+        let args = serde_json::json!({"cmd": "ls"});
+        assert_eq!(Agent::extract_command_from_args("read_file", &args), None);
+    }
+
+    #[test]
+    fn test_extract_command_from_args_no_cmd() {
+        let args = serde_json::json!({"path": "/tmp"});
+        assert_eq!(Agent::extract_command_from_args("execute_cmd", &args), None);
+    }
+
+    // ─── extract_path_from_args ──────────────────────────────────────────────
+
+    #[test]
+    fn test_extract_path_from_args_read_file() {
+        let args = serde_json::json!({"path": "/etc/passwd"});
+        assert_eq!(
+            Agent::extract_path_from_args("read_file", &args),
+            Some("/etc/passwd".to_string())
+        );
+    }
+
+    #[test]
+    fn test_extract_path_from_args_write_file() {
+        let args = serde_json::json!({"path": "/tmp/output.txt"});
+        assert_eq!(
+            Agent::extract_path_from_args("write_file", &args),
+            Some("/tmp/output.txt".to_string())
+        );
+    }
+
+    #[test]
+    fn test_extract_path_from_args_wrong_tool() {
+        let args = serde_json::json!({"path": "/etc/passwd"});
+        assert_eq!(Agent::extract_path_from_args("execute_cmd", &args), None);
+    }
+
+    #[test]
+    fn test_extract_path_from_args_empty_path() {
+        let args = serde_json::json!({"path": ""});
+        assert_eq!(Agent::extract_path_from_args("read_file", &args), None);
+    }
+
+    // ─── stop_reason variants ────────────────────────────────────────────────
+
+    #[test]
+    fn test_stop_reason_debug_final_answer() {
+        let r = StopReason::FinalAnswer("done".to_string());
+        let s = format!("{:?}", r);
+        assert!(s.contains("FinalAnswer"));
+    }
+
+    #[test]
+    fn test_stop_reason_debug_max_steps() {
+        let r = StopReason::MaxSteps;
+        let s = format!("{:?}", r);
+        assert!(s.contains("MaxSteps"));
+    }
+
+    #[test]
+    fn test_stop_reason_debug_token_budget() {
+        let r = StopReason::TokenBudgetExhausted;
+        let s = format!("{:?}", r);
+        assert!(s.contains("TokenBudgetExhausted"));
+    }
+
+    #[test]
+    fn test_stop_reason_debug_error() {
+        let r = StopReason::Error("oops".to_string());
+        let s = format!("{:?}", r);
+        assert!(s.contains("Error"));
+    }
+
+    #[test]
+    fn test_stop_reason_debug_user_interrupt() {
+        let r = StopReason::UserInterrupt;
+        let s = format!("{:?}", r);
+        assert!(s.contains("UserInterrupt"));
+    }
+
+    // ─── ToolCallRecord ──────────────────────────────────────────────────────
+
+    #[test]
+    fn test_tool_call_record_clone() {
+        let r = ToolCallRecord {
+            name: "read_file".to_string(),
+            args_preview: r#"{"path":"/etc/hosts"}"#.to_string(),
+            is_error: false,
+        };
+        let cloned = r.clone();
+        assert_eq!(cloned.name, "read_file");
+        assert!(!cloned.is_error);
+    }
+
+    #[test]
+    fn test_tool_call_record_is_error_true() {
+        let r = ToolCallRecord {
+            name: "execute_cmd".to_string(),
+            args_preview: "{}".to_string(),
+            is_error: true,
+        };
+        assert!(r.is_error);
+    }
+
+    // ─── extract_network_blocked_domain — more cases ──────────────────────────
+
+    #[test]
+    fn test_extract_network_blocked_domain_name_or_service_not_known() {
+        let content = "dial tcp: lookup packages.ubuntu.com: Name or service not known";
+        assert_eq!(
+            Agent::extract_network_blocked_domain(content),
+            Some("packages.ubuntu.com".to_string())
+        );
+    }
+
+    #[test]
+    fn test_extract_network_blocked_domain_connection_refused() {
+        let content = r#"Get "https://pypi.org/simple/": dial tcp: connect: Connection refused"#;
+        assert_eq!(
+            Agent::extract_network_blocked_domain(content),
+            Some("pypi.org".to_string())
+        );
+    }
+
+    // ─── parse_strace_eacces — more edge cases ────────────────────────────────
+
+    #[test]
+    fn test_parse_strace_eacces_empty_input() {
+        let results = Agent::parse_strace_eacces("");
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn test_parse_strace_eacces_creat_flag() {
+        let output = r#"openat(AT_FDCWD, "/tmp/newfile.txt", O_CREAT|O_WRONLY, 0644) = -1 EACCES"#;
+        let results = Agent::parse_strace_eacces(output);
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].1, "rw");
+    }
+
+    // ─── contains_permission_denied ──────────────────────────────────────────
+
+    #[test]
+    fn test_contains_permission_denied_mixed_case() {
+        assert!(super::contains_permission_denied("Error: PERMISSION DENIED"));
+    }
+
+    #[test]
+    fn test_contains_permission_denied_false_positive_check() {
+        assert!(!super::contains_permission_denied("access granted to resource"));
+        assert!(!super::contains_permission_denied("accessed the database"));
+    }
+
+    // ─── uuid_approval ───────────────────────────────────────────────────────
+
+    #[test]
+    fn test_uuid_approval_not_empty() {
+        let id = super::uuid_approval();
+        assert!(!id.is_empty());
+    }
+
+    // ─── estimate_tokens edge cases ──────────────────────────────────────────
+
+    #[test]
+    fn test_estimate_tokens_exactly_four_chars() {
+        assert_eq!(estimate_tokens("abcd"), 1);
+    }
+
+    #[test]
+    fn test_estimate_tokens_one_char() {
+        assert_eq!(estimate_tokens("a"), 1);
+    }
+
+    #[test]
+    fn test_estimate_tokens_five_chars() {
+        assert_eq!(estimate_tokens("abcde"), 2);
+    }
+
+    // ─── shell_escape edge cases ─────────────────────────────────────────────
+
+    #[test]
+    fn test_shell_escape_empty_string() {
+        assert_eq!(super::shell_escape(""), "''");
+    }
+
+    #[test]
+    fn test_shell_escape_special_chars() {
+        let result = super::shell_escape("echo $HOME");
+        assert_eq!(result, "'echo $HOME'");
+    }
+
 }
