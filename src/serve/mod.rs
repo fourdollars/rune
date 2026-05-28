@@ -3,7 +3,7 @@
 //! Architecture:
 //!   - axum HTTP server on configurable port (default 9527)
 //!   - Static files embedded via rust-embed (HTML/JS/CSS)
-//!   - WebSocket endpoint for chat streaming + spec.md sync
+//!   - WebSocket endpoint for chat streaming + markdown file sync
 //!   - Token auth required for non-localhost connections
 
 pub mod db;

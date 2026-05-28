@@ -1,4 +1,4 @@
-//! WebSocket handler for chat + spec.md sync.
+//! WebSocket handler for chat + markdown file sync.
 
 use crate::agent::{Agent, StopReason};
 use crate::config::RuneConfig;
@@ -589,17 +589,13 @@ pub async fn handle_connection(mut socket: WebSocket, state: ServerState) {
                         }
                     }
                     Ok(ClientMsg::FileDelete { name }) => {
-                        if name == "spec.md" && files_ref.read().await.len() == 1 {
-                            let _ = tx.send(ServerMsg::Error {
-                                message: "Cannot delete the last file".to_string(),
-                            });
-                        } else {
+                        {
                             let new_active = {
                                 let mut files = files_ref.write().await;
                                 files.remove(&name);
                                 let cur_active = active_ref.read().await.clone();
                                 let new_active = if cur_active == name {
-                                    files.keys().next().cloned().unwrap_or_else(|| "spec.md".to_string())
+                                    files.keys().next().cloned().unwrap_or_default()
                                 } else {
                                     cur_active
                                 };
@@ -786,7 +782,7 @@ pub async fn handle_connection(mut socket: WebSocket, state: ServerState) {
                             }
                         }
                         files.sort();
-                        let active = files.first().cloned().unwrap_or_else(|| "spec.md".to_string());
+                        let active = files.first().cloned().unwrap_or_default();
                         let fl_msg = ServerMsg::FileList { files, active: active.clone() };
                         if let Ok(json) = serde_json::to_string(&fl_msg) {
                             let _ = ws_forward_tx.send(json);

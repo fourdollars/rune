@@ -1,5 +1,5 @@
 // Rune WebUI — app.js
-// Three-panel layout: Sessions | spec.md | Chat
+// Three-panel layout: Sessions | Editor | Chat
 
 'use strict';
 
@@ -7,7 +7,7 @@
 let ws = null;
 let showEdit    = true;
 let showPreview = false;
-let currentFilename = 'spec.md';
+let currentFilename = '';
 let fileList = [];
 let specContent = '';
 let isConnected = false;
@@ -342,7 +342,7 @@ function handleServerMessage(msg) {
 
         case 'file_list':
             fileList = msg.files || [];
-            currentFilename = msg.active || 'spec.md';
+            currentFilename = msg.active || '';
             updateDocTitle(currentFilename);
             updateEditorVisibility(fileList.length);
             break;
@@ -396,8 +396,11 @@ function handleServerMessage(msg) {
 
         case 'session_list':
             sessions = msg.sessions || [];
+            // If current session was deleted, reset
+            if (currentSessionId && !sessions.find(s => s.id === currentSessionId)) {
+                currentSessionId = '';
+            }
             renderSessionTree();
-            // Auto-switch to first session if not currently in one
             updateChatInputState();
             if (!currentSessionId && sessions.length > 0) {
                 switchSession(sessions[0].id);
@@ -1451,7 +1454,8 @@ function deleteCurrentSession() {
     ws.send(JSON.stringify({ type: 'session_delete', session_id: settingsSessionId }));
     hideSessionSettings();
     if (currentSessionId === settingsSessionId) {
-        switchSession('default');
+        currentSessionId = '';
+        updateChatInputState();
     }
 }
 
