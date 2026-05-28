@@ -1313,9 +1313,10 @@ function renderSessionTree() {
                 // Highlight
                 tree.querySelectorAll('.session-file').forEach(f => f.classList.remove('active'));
                 fileEl.classList.add('active');
-                // Show editor if hidden
-                if (!showEdit) {
-                    showEdit = true;
+                // Show preview (and editor if both hidden)
+                if (!showPreview) {
+                    showPreview = true;
+                    if (!showEdit) showEdit = true;
                     applyPanelLayout();
                 }
             };
