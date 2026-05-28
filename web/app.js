@@ -322,6 +322,7 @@ function handleServerMessage(msg) {
 
         case 'chat_done':
             finalizeAssistantMessage();
+            removeAllApprovalButtons();
             break;
 
         case 'status':
@@ -518,7 +519,7 @@ function showApprovalRequest(id, detail) {
     div.innerHTML = `
         <div class="sender">🔒 Approval Required</div>
         <div class="body"><code>${escapeHtml(detail)}</code></div>
-        <div style="margin-top:8px;display:flex;gap:8px">
+        <div id="approval-btns-${id}" style="margin-top:8px;display:flex;gap:8px">
             <button onclick="respondApproval('${id}',true)" class="btn-approve">✓ Allow</button>
             <button onclick="respondApproval('${id}',false)" class="btn-deny">✗ Deny</button>
         </div>
@@ -527,9 +528,19 @@ function showApprovalRequest(id, detail) {
     chatMessages.scrollTop = chatMessages.scrollHeight;
 }
 
+function removeApprovalButtons(id) {
+    const btns = document.getElementById('approval-btns-' + id);
+    if (btns) btns.remove();
+}
+
+function removeAllApprovalButtons() {
+    document.querySelectorAll('[id^="approval-btns-"]').forEach(el => el.remove());
+}
+
 function respondApproval(id, approved) {
     ws.send(JSON.stringify({ type: 'approval_response', id, approved }));
     addSystemMessage(approved ? `Approved: ${id}` : `Denied: ${id}`);
+    removeApprovalButtons(id);
 }
 
 // --- Spec Editor ---
