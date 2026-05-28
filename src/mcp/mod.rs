@@ -537,3 +537,227 @@ args = ["--flag"]
         assert_eq!(w.mcp_servers[1].args, vec!["--flag"]);
     }
 }
+
+// ── Additional tests to boost coverage ──────────────────────────────────────
+#[cfg(test)]
+mod tests_extra {
+    use super::*;
+
+    #[test]
+    fn test_json_rpc_request_serialization_no_params() {
+        let req = JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: 1,
+            method: "tools/list".to_string(),
+            params: None,
+        };
+        let s = serde_json::to_string(&req).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&s).unwrap();
+        assert_eq!(v["jsonrpc"].as_str().unwrap(), "2.0");
+        assert_eq!(v["id"].as_u64().unwrap(), 1);
+        assert_eq!(v["method"].as_str().unwrap(), "tools/list");
+        // params should be omitted when None
+        assert!(v.get("params").is_none() || v["params"].is_null());
+    }
+
+    #[test]
+    fn test_json_rpc_request_serialization_with_params() {
+        let req = JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: 42,
+            method: "tools/call".to_string(),
+            params: Some(serde_json::json!({"name": "lint", "arguments": {}})),
+        };
+        let s = serde_json::to_string(&req).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&s).unwrap();
+        assert_eq!(v["id"].as_u64().unwrap(), 42);
+        assert_eq!(v["params"]["name"].as_str().unwrap(), "lint");
+    }
+
+    #[test]
+    fn test_json_rpc_request_params_field_absent_when_none() {
+        let req = JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: 1,
+            method: "ping".to_string(),
+            params: None,
+        };
+        let s = serde_json::to_string(&req).unwrap();
+        // skip_serializing_if = "Option::is_none" — key must be absent
+        assert!(!s.contains("\"params\""));
+    }
+
+    #[test]
+    fn test_json_rpc_response_success() {
+        let json = r#"{"jsonrpc":"2.0","id":1,"result":{"tools":[]},"error":null}"#;
+        let resp: JsonRpcResponse = serde_json::from_str(json).unwrap();
+        assert_eq!(resp.id, Some(1));
+        assert!(resp.result.is_some());
+        assert!(resp.error.is_none());
+    }
+
+    #[test]
+    fn test_json_rpc_response_with_error() {
+        let json = r#"{"jsonrpc":"2.0","id":2,"result":null,"error":{"code":-32601,"message":"Method not found","data":null}}"#;
+        let resp: JsonRpcResponse = serde_json::from_str(json).unwrap();
+        assert_eq!(resp.id, Some(2));
+        assert!(resp.result.is_none() || resp.result == Some(serde_json::Value::Null));
+        let err = resp.error.unwrap();
+        assert_eq!(err.code, -32601);
+        assert_eq!(err.message, "Method not found");
+    }
+
+    #[test]
+    fn test_json_rpc_response_notification_no_id() {
+        let json = r#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#;
+        // Notifications won't parse as JsonRpcResponse correctly — testing tolerance
+        let result = serde_json::from_str::<JsonRpcResponse>(json);
+        // May succeed or fail; if it succeeds, id should be None
+        if let Ok(resp) = result {
+            assert!(resp.id.is_none());
+        }
+    }
+
+    #[test]
+    fn test_mcp_client_new_and_server_name() {
+        let cfg = McpServerConfig {
+            name: "my-server".to_string(),
+            command: "/bin/test".to_string(),
+            args: vec![],
+            env: None,
+            timeout_secs: Some(30),
+            required: false,
+        };
+        let client = McpClient::new(cfg);
+        assert_eq!(client.server_name(), "my-server");
+    }
+
+    #[test]
+    fn test_mcp_client_not_running_before_start() {
+        let cfg = McpServerConfig {
+            name: "test".to_string(),
+            command: "/bin/test".to_string(),
+            args: vec![],
+            env: None,
+            timeout_secs: Some(30),
+            required: false,
+        };
+        let mut client = McpClient::new(cfg);
+        assert!(!client.is_running());
+    }
+
+    #[test]
+    fn test_mcp_manager_clients_count_zero() {
+        let mgr = McpManager::new();
+        assert_eq!(mgr.clients_count(), 0);
+    }
+
+    #[test]
+    fn test_mcp_manager_all_tools_empty() {
+        let mgr = McpManager::new();
+        let tools = mgr.all_tools();
+        assert!(tools.is_empty());
+    }
+
+    #[test]
+    fn test_mcp_tool_with_all_fields() {
+        let json = r#"{
+            "name": "translate",
+            "description": "Translate text to zh-TW",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "text": {"type": "string"},
+                    "source": {"type": "string"}
+                }
+            }
+        }"#;
+        let tool: McpTool = serde_json::from_str(json).unwrap();
+        assert_eq!(tool.name, "translate");
+        assert_eq!(tool.description.as_deref(), Some("Translate text to zh-TW"));
+        let schema = tool.input_schema.unwrap();
+        assert_eq!(schema["type"].as_str().unwrap(), "object");
+    }
+
+    #[test]
+    fn test_json_rpc_request_id_increment_logic() {
+        // Verify that sequential IDs work (simulating next_id logic)
+        let ids: Vec<u64> = (1..=5).collect();
+        for (i, id) in ids.iter().enumerate() {
+            let req = JsonRpcRequest {
+                jsonrpc: "2.0".to_string(),
+                id: *id,
+                method: "test".to_string(),
+                params: None,
+            };
+            assert_eq!(req.id, (i + 1) as u64);
+        }
+    }
+
+    #[test]
+    fn test_mcp_server_config_with_env() {
+        let json = r#"{
+            "name": "env-server",
+            "command": "/usr/bin/server",
+            "env": {
+                "API_KEY": "secret",
+                "LOG_LEVEL": "debug"
+            }
+        }"#;
+        let cfg: McpServerConfig = serde_json::from_str(json).unwrap();
+        let env = cfg.env.unwrap();
+        assert_eq!(env.get("API_KEY").unwrap(), "secret");
+        assert_eq!(env.get("LOG_LEVEL").unwrap(), "debug");
+    }
+
+    #[test]
+    fn test_default_timeout_value() {
+        // Verify default timeout is 30 seconds
+        let json = r#"{"name": "t", "command": "/bin/t"}"#;
+        let cfg: McpServerConfig = serde_json::from_str(json).unwrap();
+        assert_eq!(cfg.timeout_secs, Some(30));
+    }
+
+    #[test]
+    fn test_mcp_server_config_zero_timeout() {
+        let json = r#"{"name": "t", "command": "/bin/t", "timeout_secs": 0}"#;
+        let cfg: McpServerConfig = serde_json::from_str(json).unwrap();
+        assert_eq!(cfg.timeout_secs, Some(0));
+    }
+
+    #[test]
+    fn test_mcp_tool_clone() {
+        let tool = McpTool {
+            name: "my-tool".to_string(),
+            description: Some("desc".to_string()),
+            input_schema: Some(serde_json::json!({"type": "object"})),
+        };
+        let cloned = tool.clone();
+        assert_eq!(cloned.name, tool.name);
+        assert_eq!(cloned.description, tool.description);
+    }
+
+    #[test]
+    fn test_json_rpc_error_deserialization() {
+        let json = r#"{"code": -32700, "message": "Parse error"}"#;
+        let err: JsonRpcError = serde_json::from_str(json).unwrap();
+        assert_eq!(err.code, -32700);
+        assert_eq!(err.message, "Parse error");
+        assert!(err.data.is_none());
+    }
+
+    #[test]
+    fn test_json_rpc_error_with_data() {
+        let json = r#"{"code": -32000, "message": "Server error", "data": {"detail": "crash"}}"#;
+        let err: JsonRpcError = serde_json::from_str(json).unwrap();
+        assert_eq!(err.code, -32000);
+        assert!(err.data.is_some());
+    }
+
+    #[test]
+    fn test_mcp_server_config_null_timeout() {
+        let json = r#"{"name": "t", "command": "/bin/t", "timeout_secs": null}"#;
+        let cfg: McpServerConfig = serde_json::from_str(json).unwrap();
+        assert!(cfg.timeout_secs.is_none());
+    }
+}

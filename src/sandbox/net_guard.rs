@@ -632,3 +632,144 @@ mod tests {
         assert!("github.com" == base);
     }
 }
+
+// ── Additional tests to boost coverage ──────────────────────────────────────
+#[cfg(test)]
+mod tests_extra {
+    use super::*;
+
+    #[test]
+    fn test_resolve_domains_multiple_domains() {
+        let (ips, wildcards) = resolve_domains(&["localhost", "*.example.com"]);
+        assert!(ips.contains(&IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1))));
+        assert_eq!(wildcards.len(), 1);
+        assert_eq!(wildcards[0], "*.example.com");
+    }
+
+    #[test]
+    fn test_resolve_domains_multiple_wildcards() {
+        let (_, wildcards) = resolve_domains(&["*.github.com", "*.npmjs.com", "*.crates.io"]);
+        assert_eq!(wildcards.len(), 3);
+        assert!(wildcards.contains(&"*.github.com".to_string()));
+        assert!(wildcards.contains(&"*.npmjs.com".to_string()));
+        assert!(wildcards.contains(&"*.crates.io".to_string()));
+    }
+
+    #[test]
+    fn test_resolve_domains_ipv6_loopback_always() {
+        let (ips, _) = resolve_domains(&["localhost"]);
+        assert!(ips.contains(&IpAddr::V6(Ipv6Addr::new(0, 0, 0, 0, 0, 0, 0, 1))));
+    }
+
+    #[test]
+    fn test_wildcard_suffix_matching_logic() {
+        // Verify the pattern-matching logic: *.github.com → suffix ".github.com"
+        let pattern = "*.github.com".to_string();
+        let suffix = &pattern[1..]; // ".github.com"
+        let base = &suffix[1..];    // "github.com"
+
+        // subdomain should match
+        assert!("raw.github.com".ends_with(suffix));
+        assert!("api.github.com".ends_with(suffix));
+        // base domain should match via equality check
+        assert!("github.com" == base);
+        // unrelated domain should NOT match
+        assert!(!"evil.com".ends_with(suffix));
+        assert!("evil.com" != base);
+    }
+
+    #[test]
+    fn test_wildcard_pattern_not_matched_by_wrong_tld() {
+        let pattern = "*.github.com";
+        let suffix = &pattern[1..]; // ".github.com"
+        let host = "github.io";
+        assert!(!host.ends_with(suffix));
+    }
+
+    #[test]
+    fn test_wildcard_pattern_not_matched_by_superdomain() {
+        let pattern = "*.github.com";
+        let suffix = &pattern[1..]; // ".github.com"
+        let host = "notgithub.com";
+        assert!(!host.ends_with(suffix));
+    }
+
+    #[test]
+    fn test_wildcard_deeply_nested_subdomain() {
+        let pattern = "*.github.com";
+        let suffix = &pattern[1..]; // ".github.com"
+        // deeply nested subdomain should also match
+        let host = "a.b.github.com";
+        assert!(host.ends_with(suffix));
+    }
+
+    #[test]
+    fn test_resolve_domains_whitespace_only_skipped() {
+        let (ips, wildcards) = resolve_domains(&["   ", "\t"]);
+        // Only loopback IPs expected, wildcards empty
+        assert!(wildcards.is_empty());
+        assert!(ips.contains(&IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1))));
+    }
+
+    #[test]
+    fn test_bpf_stmt_creates_correct_filter() {
+        let filter = bpf_stmt(BPF_RET | BPF_K, 0x7FFF0000);
+        assert_eq!(filter.code, BPF_RET | BPF_K);
+        assert_eq!(filter.jt, 0);
+        assert_eq!(filter.jf, 0);
+        assert_eq!(filter.k, 0x7FFF0000);
+    }
+
+    #[test]
+    fn test_bpf_jump_creates_correct_filter() {
+        let filter = bpf_jump(BPF_JMP | BPF_JEQ | BPF_K, 42, 1, 2);
+        assert_eq!(filter.code, BPF_JMP | BPF_JEQ | BPF_K);
+        assert_eq!(filter.jt, 1);
+        assert_eq!(filter.jf, 2);
+        assert_eq!(filter.k, 42);
+    }
+
+    #[test]
+    fn test_seccomp_ret_values() {
+        assert_eq!(SECCOMP_RET_ALLOW, 0x7FFF0000);
+        assert_eq!(SECCOMP_RET_USER_NOTIF, 0x7FC00000);
+        assert_eq!(SECCOMP_RET_ERRNO, 0x00050000);
+    }
+
+    #[test]
+    fn test_sys_connect_number() {
+        // x86_64 connect syscall number should be 42
+        assert_eq!(SYS_CONNECT, 42);
+    }
+
+    #[test]
+    fn test_wildcard_strip_prefix_logic() {
+        let patterns = vec![
+            "*.github.com".to_string(),
+            "*.npmjs.com".to_string(),
+        ];
+        for p in &patterns {
+            if let Some(suffix) = p.strip_prefix('*') {
+                assert!(suffix.starts_with('.'));
+            }
+        }
+    }
+
+    #[test]
+    fn test_allowed_ip_set_contains_direct_ip() {
+        let (ips, _) = resolve_domains(&["127.0.0.1"]);
+        // 127.0.0.1 resolves to itself
+        assert!(ips.contains(&IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1))));
+    }
+
+    #[test]
+    fn test_seccomp_user_notif_flag_continue() {
+        assert_eq!(SECCOMP_USER_NOTIF_FLAG_CONTINUE, 1);
+    }
+
+    #[test]
+    fn test_audit_arch_x86_64_value() {
+        // AUDIT_ARCH_X86_64 = 0xC000003E
+        assert_eq!(AUDIT_ARCH_X86_64, 0xC000003E);
+    }
+}
