@@ -225,7 +225,7 @@ async fn broadcast_session_list(state: &ServerState) {
             files,
         });
     }
-    let msg = ServerMsg::SessionList { sessions: entries, active: "default".to_string() };
+    let msg = ServerMsg::SessionList { sessions: entries, active: String::new() };
     if let Ok(json) = serde_json::to_string(&msg) {
         let _ = state.broadcast_tx.send(json);
     }
@@ -254,7 +254,7 @@ async fn build_session_list_msg(state: &ServerState) -> Option<String> {
             files,
         });
     }
-    let msg = ServerMsg::SessionList { sessions: entries, active: "default".to_string() };
+    let msg = ServerMsg::SessionList { sessions: entries, active: String::new() };
     serde_json::to_string(&msg).ok()
 }
 
@@ -338,14 +338,7 @@ pub async fn handle_connection(mut socket: WebSocket, state: ServerState) {
         }
     }
 
-    // Send chat history (last 200 messages) to the newly connected client
-    let history = state.chat_db.load_recent_async("default".to_string(), 200).await;
-    if !history.is_empty() {
-        let hist_msg = ServerMsg::History { messages: history };
-        if let Ok(json) = serde_json::to_string(&hist_msg) {
-            let _ = ws_tx.send(Message::Text(json.into())).await;
-        }
-    }
+    // No history loaded on connect — client will switch to a session after receiving session_list
 
     // Tell client their role
     let auth_msg = ServerMsg::AuthResult { is_admin };
@@ -473,7 +466,7 @@ pub async fn handle_connection(mut socket: WebSocket, state: ServerState) {
     let config = state.config.clone();
     let broadcast_tx = state.broadcast_tx.clone();
     let nickname_clone = nickname.clone();
-    let mut current_session = "default".to_string();
+    let mut current_session = String::new();
 
     while let Some(Ok(msg)) = ws_rx.next().await {
         match msg {
@@ -862,10 +855,8 @@ pub async fn handle_connection(mut socket: WebSocket, state: ServerState) {
                             let _ = tx.send(ServerMsg::Error {
                                 message: "Permission denied: only admins can delete sessions".to_string(),
                             });
-                        } else if session_id == "default" {
-                            let _ = tx.send(ServerMsg::Error {
-                                message: "Cannot delete the default session".to_string(),
-                            });
+                        } else if false {
+                            // placeholder for future guards
                         } else {
                             match state.chat_db.delete_session(&session_id) {
                                 Ok(true) => {

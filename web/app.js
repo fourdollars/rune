@@ -22,7 +22,7 @@ let availableModels = [];
 
 // --- Session state ---
 let sessions = [];
-let currentSessionId = 'default';
+let currentSessionId = '';
 let dirBrowserTargetInput = null;
 let settingsSessionId = null;
 
@@ -397,6 +397,10 @@ function handleServerMessage(msg) {
         case 'session_list':
             sessions = msg.sessions || [];
             renderSessionTree();
+            // Auto-switch to first session if not currently in one
+            if (!currentSessionId && sessions.length > 0) {
+                switchSession(sessions[0].id);
+            }
             updatePageTitle();
             // Show + button for admin
             const newBtn = document.getElementById('btn-new-session');
@@ -1026,6 +1030,10 @@ function updateDocTitle(name) {
 }
 
 function updatePageTitle() {
+    if (!currentSessionId) {
+        document.title = 'Rune';
+        return;
+    }
     const s = sessions.find(x => x.id === currentSessionId);
     const sessionName = s ? s.name : currentSessionId;
     const file = (fileList && fileList.length > 0) ? currentFilename : null;
@@ -1253,6 +1261,10 @@ function renderSessionTree() {
     const tree = document.getElementById('session-tree');
     if (!tree) return;
     tree.innerHTML = '';
+    if (sessions.length === 0) {
+        tree.innerHTML = '<div style="padding:12px;color:var(--text-muted);font-size:11px;text-align:center">No sessions yet.<br>Click + to create one.</div>';
+        return;
+    }
     sessions.forEach(s => {
         const item = document.createElement('div');
         item.className = 'session-item';
@@ -1385,7 +1397,7 @@ function saveSessionSettings() {
 }
 
 function deleteCurrentSession() {
-    if (!settingsSessionId || settingsSessionId === 'default') return;
+    if (!settingsSessionId) return;
     if (!confirm('Delete this session? Chat history will be preserved but session metadata will be removed.')) return;
     ws.send(JSON.stringify({ type: 'session_delete', session_id: settingsSessionId }));
     hideSessionSettings();
