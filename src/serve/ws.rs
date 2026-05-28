@@ -801,18 +801,12 @@ pub async fn handle_connection(mut socket: WebSocket, state: ServerState) {
                                     .map(|p| p.to_string_lossy().to_string())
                                     .unwrap_or_else(|_| "/tmp".to_string())
                             });
-                            // Generate an id from name (lowercase, hyphens)
-                            let id: String = name.to_lowercase()
-                                .chars()
-                                .map(|c| if c.is_alphanumeric() { c } else { '-' })
-                                .collect::<String>()
-                                .trim_matches('-')
-                                .to_string();
-                            let id = if id.is_empty() { format!("session-{}", chrono_ts()) } else { id };
+                            // id = name (directory name = session name)
+                            let id = name.clone();
                             match state.chat_db.create_session(&id, &name, &ws, Some(&nickname_clone)) {
                                 Ok(_) => {
                                     info!("Session '{}' created by '{}'", id, nickname_clone);
-                                    // Create markdown dir
+                                    // Create session directory structure
                                     let md_dir = super::session_markdown_dir(&id);
                                     let _ = tokio::fs::create_dir_all(&md_dir).await;
                                     // Broadcast updated session list
@@ -833,13 +827,23 @@ pub async fn handle_connection(mut socket: WebSocket, state: ServerState) {
                             });
                         } else {
                             match state.chat_db.rename_session(&session_id, &name) {
-                                Ok(true) => {
-                                    info!("Session '{}' renamed to '{}' by '{}'", session_id, name, nickname_clone);
+                                Ok(Some(new_id)) => {
+                                    info!("Session '{}' renamed to '{}' by '{}'", session_id, new_id, nickname_clone);
+                                    // Rename the session directory
+                                    let old_dir = super::data_dir().join("sessions").join(&session_id);
+                                    let new_dir = super::data_dir().join("sessions").join(&new_id);
+                                    if old_dir.exists() && !new_dir.exists() {
+                                        let _ = tokio::fs::rename(&old_dir, &new_dir).await;
+                                    }
+                                    // Update current_session if client was on this session
+                                    if current_session == session_id {
+                                        current_session = new_id.clone();
+                                    }
                                     broadcast_session_list(&state).await;
                                 }
-                                Ok(false) => {
+                                Ok(None) => {
                                     let _ = tx.send(ServerMsg::Error {
-                                        message: "Session not found".to_string(),
+                                        message: "Session not found or name conflict".to_string(),
                                     });
                                 }
                                 Err(e) => {

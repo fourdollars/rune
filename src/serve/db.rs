@@ -189,7 +189,7 @@ impl ChatDb {
     pub fn list_sessions(&self) -> anyhow::Result<Vec<SessionRecord>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT id, name, workspace, created_at, created_by FROM sessions ORDER BY created_at ASC"
+            "SELECT id, name, workspace, created_at, created_by FROM sessions ORDER BY name ASC"
         )?;
         let rows = stmt.query_map([], |row| {
             Ok(SessionRecord {
@@ -203,14 +203,34 @@ impl ChatDb {
         Ok(rows)
     }
 
-    /// Rename a session. Returns true if session exists.
-    pub fn rename_session(&self, id: &str, new_name: &str) -> anyhow::Result<bool> {
+    /// Rename a session (updates both id and name, since id = name).
+    /// Also updates session_id in messages table.
+    /// Returns the new id if successful, None if not found or conflict.
+    pub fn rename_session(&self, id: &str, new_name: &str) -> anyhow::Result<Option<String>> {
         let conn = self.conn.lock().unwrap();
+        // Check if new id already exists
+        let exists: bool = conn.query_row(
+            "SELECT COUNT(*) FROM sessions WHERE id = ?1",
+            params![new_name],
+            |row| row.get::<_, i64>(0),
+        )? > 0;
+        if exists && new_name != id {
+            return Ok(None); // conflict
+        }
+        // Update session row (id + name)
         let changed = conn.execute(
-            "UPDATE sessions SET name = ?1 WHERE id = ?2",
+            "UPDATE sessions SET id = ?1, name = ?1 WHERE id = ?2",
             params![new_name, id],
         )?;
-        Ok(changed > 0)
+        if changed == 0 {
+            return Ok(None);
+        }
+        // Update messages to new session_id
+        conn.execute(
+            "UPDATE messages SET session_id = ?1 WHERE session_id = ?2",
+            params![new_name, id],
+        )?;
+        Ok(Some(new_name.to_string()))
     }
 
     /// Update session workspace path. Returns true if session exists.
@@ -612,16 +632,44 @@ mod tests {
     #[test]
     fn test_rename_session() {
         let db = in_memory_db();
-        db.create_session("s1", "Old Name", "/tmp", None).unwrap();
-        assert!(db.rename_session("s1", "New Name").unwrap());
-        let s = db.get_session("s1").unwrap().unwrap();
-        assert_eq!(s.name, "New Name");
+        db.create_session("s1", "s1", "/tmp", None).unwrap();
+        let result = db.rename_session("s1", "new-name").unwrap();
+        assert_eq!(result, Some("new-name".to_string()));
+        // Old id gone, new id exists
+        assert!(db.get_session("s1").unwrap().is_none());
+        let s = db.get_session("new-name").unwrap().unwrap();
+        assert_eq!(s.name, "new-name");
+        assert_eq!(s.id, "new-name");
     }
 
     #[test]
-    fn test_rename_nonexistent_returns_false() {
+    fn test_rename_session_updates_messages() {
         let db = in_memory_db();
-        assert!(!db.rename_session("nope", "X").unwrap());
+        db.create_session("old", "old", "/tmp", None).unwrap();
+        db.insert("old", "user", "alice", "hello").unwrap();
+        let _ = db.rename_session("old", "new").unwrap();
+        // Messages should now be under "new"
+        let msgs = db.load_recent("new", 10).unwrap();
+        assert_eq!(msgs.len(), 1);
+        assert_eq!(msgs[0].content, "hello");
+        // Old session_id has no messages
+        let old_msgs = db.load_recent("old", 10).unwrap();
+        assert!(old_msgs.is_empty());
+    }
+
+    #[test]
+    fn test_rename_nonexistent_returns_none() {
+        let db = in_memory_db();
+        assert_eq!(db.rename_session("nope", "X").unwrap(), None);
+    }
+
+    #[test]
+    fn test_rename_session_conflict() {
+        let db = in_memory_db();
+        db.create_session("a", "a", "/tmp", None).unwrap();
+        db.create_session("b", "b", "/tmp", None).unwrap();
+        // Can't rename a → b (b already exists)
+        assert_eq!(db.rename_session("a", "b").unwrap(), None);
     }
 
     #[test]
