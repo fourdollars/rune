@@ -321,18 +321,13 @@ pub async fn handle_connection(mut socket: WebSocket, state: ServerState) {
     // Now split the socket after auth passed
     let (mut ws_tx, mut ws_rx) = socket.split();
 
-    // Send file list + active file content on connect
+    // Send empty file list on connect; proper list arrives after session_switch
     {
-        let files = state.files.read().await;
-        let active = state.active_file.read().await.clone();
-        let mut file_names: Vec<String> = files.keys().cloned().collect();
-        file_names.sort();
-        let list_msg = ServerMsg::FileList { files: file_names, active: active.clone() };
+        let list_msg = ServerMsg::FileList { files: vec![], active: String::new() };
         if let Ok(json) = serde_json::to_string(&list_msg) {
             let _ = ws_tx.send(Message::Text(json.into())).await;
         }
-        let content = files.get(&active).cloned().unwrap_or_default();
-        let content_msg = ServerMsg::FileContent { filename: active, content };
+        let content_msg = ServerMsg::FileContent { filename: String::new(), content: String::new() };
         if let Ok(json) = serde_json::to_string(&content_msg) {
             let _ = ws_tx.send(Message::Text(json.into())).await;
         }
@@ -461,7 +456,7 @@ pub async fn handle_connection(mut socket: WebSocket, state: ServerState) {
     }
 
     // Process incoming messages
-    let files_ref   = state.files.clone();
+    let _files_ref   = state.files.clone(); // legacy; file ops are disk-based now
     let active_ref  = state.active_file.clone();
     let config = state.config.clone();
     let broadcast_tx = state.broadcast_tx.clone();
@@ -537,10 +532,7 @@ pub async fn handle_connection(mut socket: WebSocket, state: ServerState) {
                             warn!("Invalid filename in spec_update: {}", fname);
                         } else {
                             debug!("Spec update for '{}' from '{}'", fname, nickname_clone);
-                            {
-                                let mut files = files_ref.write().await;
-                                files.insert(fname.clone(), content.clone());
-                            }
+
                             // Persist to disk
                             let file_path = super::session_markdown_dir(&current_session).join(&fname);
                             if let Err(e) = tokio::fs::write(&file_path, &content).await {
@@ -596,94 +588,101 @@ pub async fn handle_connection(mut socket: WebSocket, state: ServerState) {
                         }
                     }
                     Ok(ClientMsg::FileDelete { name }) => {
-                        {
-                            let new_active = {
-                                let mut files = files_ref.write().await;
-                                files.remove(&name);
-                                let cur_active = active_ref.read().await.clone();
-                                let new_active = if cur_active == name {
-                                    files.keys().next().cloned().unwrap_or_default()
-                                } else {
-                                    cur_active
-                                };
-                                new_active
-                            };
-                            *active_ref.write().await = new_active.clone();
-                            let file_path = super::session_markdown_dir(&current_session).join(&name);
+                        if current_session.is_empty() {
+                            let _ = tx.send(ServerMsg::Error {
+                                message: "No session selected".to_string(),
+                            });
+                        } else {
+                            let md_dir = super::session_markdown_dir(&current_session);
+                            let file_path = md_dir.join(&name);
                             tokio::fs::remove_file(&file_path).await.ok();
-                            let del = ServerMsg::FileDeleted { filename: name };
+                            let del = ServerMsg::FileDeleted { filename: name.clone() };
                             if let Ok(json) = serde_json::to_string(&del) {
                                 let _ = broadcast_tx.send(json);
                             }
-                            let files = files_ref.read().await;
-                            let mut file_names: Vec<String> = files.keys().cloned().collect();
-                            file_names.sort();
-                            let list = ServerMsg::FileList { files: file_names, active: new_active.clone() };
+                            // Reload file list from disk
+                            let mut files = Vec::new();
+                            if let Ok(mut rd) = tokio::fs::read_dir(&md_dir).await {
+                                while let Ok(Some(entry)) = rd.next_entry().await {
+                                    let fname = entry.file_name().to_string_lossy().to_string();
+                                    if fname.ends_with(".md") {
+                                        files.push(fname);
+                                    }
+                                }
+                            }
+                            files.sort();
+                            let new_active = files.first().cloned().unwrap_or_default();
+                            let list = ServerMsg::FileList { files, active: new_active.clone() };
                             if let Ok(json) = serde_json::to_string(&list) {
                                 let _ = broadcast_tx.send(json);
                             }
-                            let content = files.get(&new_active).cloned().unwrap_or_default();
-                            let fc = ServerMsg::FileContent { filename: new_active, content };
-                            if let Ok(json) = serde_json::to_string(&fc) {
-                                let _ = broadcast_tx.send(json);
+                            // Send content of new active file
+                            if !new_active.is_empty() {
+                                if let Ok(c) = tokio::fs::read_to_string(md_dir.join(&new_active)).await {
+                                    let fc = ServerMsg::FileContent { filename: new_active, content: c };
+                                    if let Ok(json) = serde_json::to_string(&fc) {
+                                        let _ = broadcast_tx.send(json);
+                                    }
+                                }
                             }
                         }
                     }
                     Ok(ClientMsg::FileSwitch { name }) => {
-                        let content = {
-                            let files = files_ref.read().await;
-                            files.get(&name).cloned()
-                        };
-                        if let Some(content) = content {
-                            *active_ref.write().await = name.clone();
-                            let files = files_ref.read().await;
-                            let mut file_names: Vec<String> = files.keys().cloned().collect();
-                            file_names.sort();
-                            let list = ServerMsg::FileList { files: file_names, active: name.clone() };
-                            if let Ok(json) = serde_json::to_string(&list) {
-                                let _ = broadcast_tx.send(json);
-                            }
-                            let fc = ServerMsg::FileContent { filename: name, content };
-                            if let Ok(json) = serde_json::to_string(&fc) {
-                                let _ = broadcast_tx.send(json);
-                            }
-                        } else {
+                        if current_session.is_empty() {
                             let _ = tx.send(ServerMsg::Error {
-                                message: format!("File not found: {}", name),
+                                message: "No session selected".to_string(),
                             });
+                        } else {
+                            let file_path = super::session_markdown_dir(&current_session).join(&name);
+                            match tokio::fs::read_to_string(&file_path).await {
+                                Ok(content) => {
+                                    let fc = ServerMsg::FileContent { filename: name, content };
+                                    if let Ok(json) = serde_json::to_string(&fc) {
+                                        let _ = ws_forward_tx.send(json);
+                                    }
+                                }
+                                Err(_) => {
+                                    let _ = tx.send(ServerMsg::Error {
+                                        message: format!("File not found: {}", name),
+                                    });
+                                }
+                            }
                         }
                     }
                     Ok(ClientMsg::FileRename { old_name, new_name }) => {
-                        if !is_valid_filename(&new_name) {
+                        if current_session.is_empty() {
+                            let _ = tx.send(ServerMsg::Error {
+                                message: "No session selected".to_string(),
+                            });
+                        } else if !is_valid_filename(&new_name) {
                             let _ = tx.send(ServerMsg::Error {
                                 message: format!("Invalid filename: {}", new_name),
                             });
-                        } else if files_ref.read().await.contains_key(&new_name) {
-                            let _ = tx.send(ServerMsg::Error {
-                                message: format!("File already exists: {}", new_name),
-                            });
                         } else {
-                            let content = {
-                                let mut files = files_ref.write().await;
-                                let c = files.remove(&old_name);
-                                if let Some(ref text) = c {
-                                    files.insert(new_name.clone(), text.clone());
+                            let md_dir = super::session_markdown_dir(&current_session);
+                            let new_path = md_dir.join(&new_name);
+                            if new_path.exists() {
+                                let _ = tx.send(ServerMsg::Error {
+                                    message: format!("File already exists: {}", new_name),
+                                });
+                            } else {
+                                let old_path = md_dir.join(&old_name);
+                                if old_path.exists() {
+                                    tokio::fs::rename(&old_path, &new_path).await.ok();
                                 }
-                                c
-                            };
-                            if content.is_some() {
-                                let old_path = super::session_markdown_dir(&current_session).join(&old_name);
-                                let new_path = super::session_markdown_dir(&current_session).join(&new_name);
-                                tokio::fs::rename(&old_path, &new_path).await.ok();
-                                let cur = active_ref.read().await.clone();
-                                if cur == old_name {
-                                    *active_ref.write().await = new_name.clone();
+                                // Reload file list from disk
+                                let mut files = Vec::new();
+                                if let Ok(mut rd) = tokio::fs::read_dir(&md_dir).await {
+                                    while let Ok(Some(entry)) = rd.next_entry().await {
+                                        let fname = entry.file_name().to_string_lossy().to_string();
+                                        if fname.ends_with(".md") {
+                                            files.push(fname);
+                                        }
+                                    }
                                 }
-                                let files = files_ref.read().await;
-                                let active = active_ref.read().await.clone();
-                                let mut file_names: Vec<String> = files.keys().cloned().collect();
-                                file_names.sort();
-                                let list = ServerMsg::FileList { files: file_names, active };
+                                files.sort();
+                                let active = new_name.clone();
+                                let list = ServerMsg::FileList { files, active };
                                 if let Ok(json) = serde_json::to_string(&list) {
                                     let _ = broadcast_tx.send(json);
                                 }
@@ -1185,14 +1184,10 @@ async fn handle_chat_message(
 
     // Push updated active file to all clients after agent edits
     let active = active_file.read().await.clone();
-    let active_content = files.read().await.get(&active).cloned().unwrap_or_default();
+    let file_path = super::session_markdown_dir(&session_id).join(&active);
+    let active_content = tokio::fs::read_to_string(&file_path).await.unwrap_or_default();
     let fc_msg = ServerMsg::FileContent { filename: active.clone(), content: active_content.clone() };
     if let Ok(json) = serde_json::to_string(&fc_msg) { let _ = broadcast_tx.send(json); }
-    // Persist to disk
-    let file_path = super::session_markdown_dir(&session_id).join(&active);
-    if let Err(e) = tokio::fs::write(&file_path, &active_content).await {
-        warn!("Failed to persist {} after agent edit: {}", active, e);
-    }
 
     let idle = ServerMsg::Status { state: "idle".to_string() };
     if let Ok(json) = serde_json::to_string(&idle) { let _ = broadcast_tx.send(json); }
