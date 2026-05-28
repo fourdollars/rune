@@ -143,6 +143,30 @@ mod tests {
     }
 
     #[test]
+    fn test_app_js_has_archive_search_functions() {
+        let js = get("app.js").unwrap();
+        assert!(js.contains("showArchiveDialog"),  "missing showArchiveDialog");
+        assert!(js.contains("confirmArchive"),      "missing confirmArchive");
+        assert!(js.contains("showSearchDialog"),    "missing showSearchDialog");
+        assert!(js.contains("doSearch"),            "missing doSearch");
+        assert!(js.contains("renderSearchResults"), "missing renderSearchResults");
+        assert!(js.contains("archive_chat"),        "missing archive_chat ws message");
+        assert!(js.contains("search_chat"),         "missing search_chat ws message");
+        assert!(js.contains("archive_done"),        "missing archive_done handler");
+        assert!(js.contains("search_results"),      "missing search_results handler");
+    }
+
+    #[test]
+    fn test_index_html_has_archive_search_ui() {
+        let html = get("index.html").unwrap();
+        assert!(html.contains("btn-archive"),   "missing btn-archive");
+        assert!(html.contains("btn-search"),    "missing btn-search");
+        assert!(html.contains("archive-modal"), "missing archive-modal");
+        assert!(html.contains("search-modal"),  "missing search-modal");
+        assert!(html.contains("search-input"),  "missing search-input");
+    }
+
+    #[test]
     fn test_app_js_has_logout_functions() {
         let js = get("app.js").unwrap();
         assert!(js.contains("showLogoutDialog"),  "app.js missing showLogoutDialog");

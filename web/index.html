@@ -20,6 +20,33 @@
       </div>
     </div>
 
+    <!-- Archive confirm dialog -->
+    <div id="archive-modal" class="modal-overlay hidden">
+        <div class="modal">
+            <h2>📦 封存對話</h2>
+            <p>將目前的對話歷史封存，聊天視窗將會清空。<br>封存後仍可透過搜尋找回。</p>
+            <div class="modal-actions">
+                <button class="btn-secondary" onclick="hideArchiveDialog()">取消</button>
+                <button class="btn-primary" onclick="confirmArchive()">確定封存</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Search dialog -->
+    <div id="search-modal" class="modal-overlay hidden">
+        <div class="modal modal-wide">
+            <h2>🔍 搜尋對話記錄</h2>
+            <div class="search-input-row">
+                <input type="text" id="search-input" placeholder="輸入關鍵字…" onkeydown="if(event.key==='Enter')doSearch()">
+                <button class="btn-primary" onclick="doSearch()">搜尋</button>
+            </div>
+            <div id="search-results" class="search-results"></div>
+            <div class="modal-actions">
+                <button class="btn-secondary" onclick="hideSearchDialog()">關閉</button>
+            </div>
+        </div>
+    </div>
+
     <!-- Logout confirm dialog -->
     <div id="logout-modal" class="modal-overlay hidden">
         <div class="modal">
@@ -79,6 +106,8 @@
                         <button id="btn-edit" class="toolbar-btn active" onclick="toggleEdit()" title="Toggle editor">✏️</button>
                         <button id="btn-preview" class="toolbar-btn" onclick="togglePreview()" title="Toggle preview">👁</button>
                         <span id="status-indicator" class="status idle">● idle</span>
+                        <button id="btn-search" class="toolbar-btn" onclick="showSearchDialog()" title="Search chat history">🔍</button>
+                        <button id="btn-archive" class="toolbar-btn" onclick="showArchiveDialog()" title="Archive chat">📦</button>
                         <button id="btn-logout" class="toolbar-btn logout-btn" onclick="showLogoutDialog()" title="Logout">⏏</button>
                     </div>
                 </div>

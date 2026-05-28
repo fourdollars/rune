@@ -34,3 +34,6 @@ lto = true            # Link-Time Optimization (thin → full)
 codegen-units = 1     # Single codegen unit for better optimization
 panic = "abort"       # No unwinding tables
 strip = true          # Strip symbols automatically
+
+[dev-dependencies]
+tempfile = "3"

@@ -32,6 +32,14 @@ enum ClientMsg {
     #[serde(rename = "approval_response")]
     ApprovalResponse { id: String, approved: bool },
 
+    /// Archive current chat history and clear the active window.
+    #[serde(rename = "archive_chat")]
+    ArchiveChat,
+
+    /// Search across current chat + all archives.
+    #[serde(rename = "search_chat")]
+    SearchChat { query: String },
+
     /// Create a new markdown file.
     #[serde(rename = "file_create")]
     FileCreate { name: String },
@@ -108,6 +116,14 @@ enum ServerMsg {
     /// A file was deleted.
     #[serde(rename = "file_deleted")]
     FileDeleted { filename: String },
+
+    /// Archive completed.
+    #[serde(rename = "archive_done")]
+    ArchiveDone { filename: String, count: usize },
+
+    /// Search results.
+    #[serde(rename = "search_results")]
+    SearchResults { query: String, results: Vec<super::db::ChatRecord> },
 }
 
 /// Handle a single WebSocket connection.
@@ -514,6 +530,46 @@ pub async fn handle_connection(mut socket: WebSocket, state: ServerState) {
                                     let _ = broadcast_tx.send(json);
                                 }
                             }
+                        }
+                    }
+                    Ok(ClientMsg::ArchiveChat) => {
+                        let ts = std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .unwrap_or_default()
+                            .as_secs();
+                        let filename = format!("{}.jsonl", ts);
+                        let archive_dir = super::session_markdown_dir("main")
+                            .parent().unwrap().join("archives");
+                        let archive_path = archive_dir.join(&filename);
+                        let db = state.chat_db.clone();
+                        match db.archive_async("default".to_string(), archive_path).await {
+                            Ok(count) => {
+                                let msg = ServerMsg::ArchiveDone { filename: filename.clone(), count };
+                                if let Ok(json) = serde_json::to_string(&msg) {
+                                    let _ = broadcast_tx.send(json);
+                                }
+                                info!("Chat archived to {} ({} messages)", filename, count);
+                            }
+                            Err(e) => {
+                                let _ = tx.send(ServerMsg::Error {
+                                    message: format!("Archive failed: {}", e),
+                                });
+                            }
+                        }
+                    }
+                    Ok(ClientMsg::SearchChat { query }) => {
+                        let archive_dir = super::session_markdown_dir("main")
+                            .parent().unwrap().join("archives");
+                        let db = state.chat_db.clone();
+                        let results = db.search_async(
+                            "default".to_string(),
+                            query.clone(),
+                            archive_dir,
+                        ).await;
+                        let msg = ServerMsg::SearchResults { query, results };
+                        if let Ok(json) = serde_json::to_string(&msg) {
+                            let _ = tx.send(msg);
+                            drop(json);
                         }
                     }
                     Ok(ClientMsg::ApprovalResponse { id, approved }) => {

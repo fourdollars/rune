@@ -340,6 +340,17 @@ function handleServerMessage(msg) {
             // file_list will follow, handled there
             break;
 
+        case 'archive_done':
+            hideArchiveDialog();
+            // Clear chat UI
+            document.getElementById('chat-messages').innerHTML = '';
+            addSystemMessage(`📦 對話已封存（${msg.count} 則），檔案：${msg.filename}`);
+            break;
+
+        case 'search_results':
+            renderSearchResults(msg.query, msg.results || []);
+            break;
+
         case 'auth_result':
             isAdmin = msg.is_admin;
             if (isAdmin) addSystemMessage('👑 You are connected as admin');
@@ -703,6 +714,55 @@ function flashSpecIndicator() {
 }
 
 // --- Status ---
+// --- Archive ---
+function showArchiveDialog() {
+    document.getElementById('archive-modal').classList.remove('hidden');
+}
+function hideArchiveDialog() {
+    document.getElementById('archive-modal').classList.add('hidden');
+}
+function confirmArchive() {
+    if (isConnected) ws.send(JSON.stringify({ type: 'archive_chat' }));
+}
+
+// --- Search ---
+function showSearchDialog() {
+    document.getElementById('search-modal').classList.remove('hidden');
+    document.getElementById('search-input').focus();
+}
+function hideSearchDialog() {
+    document.getElementById('search-modal').classList.add('hidden');
+}
+function doSearch() {
+    const q = document.getElementById('search-input').value.trim();
+    if (!q) return;
+    document.getElementById('search-results').innerHTML = '<div class="search-loading">搜尋中…</div>';
+    if (isConnected) ws.send(JSON.stringify({ type: 'search_chat', query: q }));
+}
+function renderSearchResults(query, results) {
+    const el = document.getElementById('search-results');
+    if (!results.length) {
+        el.innerHTML = `<div class="search-empty">找不到「${escapeHtml(query)}」的相關記錄</div>`;
+        return;
+    }
+    const html = results.map(r => {
+        const ts = new Date(r.created_at * 1000).toLocaleString('zh-TW');
+        const role = r.role === 'assistant' ? '🤖' : '🧑';
+        const highlighted = escapeHtml(r.content).replace(
+            new RegExp(escapeHtml(query).replace(/[.*+?^${}()|[\]\]/g, '\$&'), 'gi'),
+            m => `<mark>${m}</mark>`
+        );
+        return `<div class="search-item">
+            <div class="search-meta">${role} <strong>${escapeHtml(r.nickname)}</strong> <span class="search-time">${ts}</span></div>
+            <div class="search-content">${highlighted}</div>
+        </div>`;
+    }).join('');
+    el.innerHTML = `<div class="search-count">${results.length} 則結果</div>` + html;
+}
+function escapeHtml(str) {
+    return str.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
 // --- Logout ---
 function showLogoutDialog() {
     document.getElementById('logout-modal').classList.remove('hidden');

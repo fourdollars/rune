@@ -108,6 +108,119 @@ impl ChatDb {
             db.load_recent(&session_id, limit).unwrap_or_default()
         }).await.unwrap_or_default()
     }
+
+    /// Dump all messages for a session to JSONL, then delete them from the DB.
+    /// Returns the number of messages archived.
+    pub fn archive(&self, session_id: &str, archive_path: &Path) -> anyhow::Result<usize> {
+        use std::io::Write;
+        let conn = self.conn.lock().unwrap();
+        // Load all messages for this session
+        let mut stmt = conn.prepare(
+            "SELECT id, session_id, role, nickname, content, created_at
+             FROM messages WHERE session_id = ?1 ORDER BY id ASC"
+        )?;
+        let records: Vec<ChatRecord> = stmt.query_map(params![session_id], |row| {
+            Ok(ChatRecord {
+                id:         row.get(0)?,
+                session_id: row.get(1)?,
+                role:       row.get(2)?,
+                nickname:   row.get(3)?,
+                content:    row.get(4)?,
+                created_at: row.get(5)?,
+            })
+        })?.filter_map(|r| r.ok()).collect();
+
+        if records.is_empty() {
+            return Ok(0);
+        }
+
+        // Write JSONL
+        if let Some(parent) = archive_path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        let mut file = std::fs::File::create(archive_path)?;
+        for rec in &records {
+            let line = serde_json::to_string(rec)?;
+            writeln!(file, "{}", line)?;
+        }
+
+        // Delete archived messages from DB
+        conn.execute(
+            "DELETE FROM messages WHERE session_id = ?1",
+            params![session_id],
+        )?;
+
+        Ok(records.len())
+    }
+
+    /// Full-text search across current DB + all JSONL archive files in archive_dir.
+    /// Returns matching records sorted oldest first (archives first, then live).
+    pub fn search(&self, session_id: &str, query: &str, archive_dir: &Path) -> anyhow::Result<Vec<ChatRecord>> {
+        let query_lower = query.to_lowercase();
+        let mut results: Vec<ChatRecord> = Vec::new();
+
+        // 1. Search archive JSONL files
+        if archive_dir.exists() {
+            let mut entries: Vec<_> = std::fs::read_dir(archive_dir)?
+                .filter_map(|e| e.ok())
+                .filter(|e| e.path().extension().map(|x| x == "jsonl").unwrap_or(false))
+                .collect();
+            entries.sort_by_key(|e| e.file_name());
+            for entry in entries {
+                if let Ok(text) = std::fs::read_to_string(entry.path()) {
+                    for line in text.lines() {
+                        if let Ok(rec) = serde_json::from_str::<ChatRecord>(line) {
+                            if rec.session_id == session_id
+                                && (rec.content.to_lowercase().contains(&query_lower)
+                                    || rec.nickname.to_lowercase().contains(&query_lower))
+                            {
+                                results.push(rec);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // 2. Search live DB
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT id, session_id, role, nickname, content, created_at
+             FROM messages WHERE session_id = ?1 ORDER BY id ASC"
+        )?;
+        let live: Vec<ChatRecord> = stmt.query_map(params![session_id], |row| {
+            Ok(ChatRecord {
+                id:         row.get(0)?,
+                session_id: row.get(1)?,
+                role:       row.get(2)?,
+                nickname:   row.get(3)?,
+                content:    row.get(4)?,
+                created_at: row.get(5)?,
+            })
+        })?.filter_map(|r| r.ok())
+          .filter(|r| r.content.to_lowercase().contains(&query_lower)
+                   || r.nickname.to_lowercase().contains(&query_lower))
+          .collect();
+        results.extend(live);
+
+        Ok(results)
+    }
+
+    /// Async wrapper for archive.
+    pub async fn archive_async(&self, session_id: String, archive_path: std::path::PathBuf) -> anyhow::Result<usize> {
+        let db = self.clone();
+        tokio::task::spawn_blocking(move || {
+            db.archive(&session_id, &archive_path)
+        }).await?
+    }
+
+    /// Async wrapper for search.
+    pub async fn search_async(&self, session_id: String, query: String, archive_dir: std::path::PathBuf) -> Vec<ChatRecord> {
+        let db = self.clone();
+        tokio::task::spawn_blocking(move || {
+            db.search(&session_id, &query, &archive_dir).unwrap_or_default()
+        }).await.unwrap_or_default()
+    }
 }
 
 #[cfg(test)]
@@ -191,6 +304,81 @@ mod tests {
         db.insert("default", "user", "alice", "test").unwrap();
         let rows = db.load_recent("default", 1).unwrap();
         assert!(rows[0].created_at > 0);
+    }
+
+    #[test]
+    fn test_archive_writes_jsonl_and_clears_db() {
+        use std::io::BufRead;
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("chat.db");
+        let db = ChatDb::open(&db_path).unwrap();
+        db.insert("default", "user", "alice", "hello").unwrap();
+        db.insert("default", "assistant", "ᚱᚢᚾᛖ", "hi").unwrap();
+
+        let archive_path = dir.path().join("arc.jsonl");
+        let count = db.archive("default", &archive_path).unwrap();
+        assert_eq!(count, 2);
+
+        // DB should be empty now
+        let rows = db.load_recent("default", 10).unwrap();
+        assert!(rows.is_empty(), "DB should be cleared after archive");
+
+        // JSONL should have 2 lines
+        let file = std::fs::File::open(&archive_path).unwrap();
+        let lines: Vec<_> = std::io::BufReader::new(file).lines().collect();
+        assert_eq!(lines.len(), 2);
+        let rec: ChatRecord = serde_json::from_str(&lines[0].as_ref().unwrap()).unwrap();
+        assert_eq!(rec.content, "hello");
+    }
+
+    #[test]
+    fn test_archive_empty_returns_zero() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("chat.db");
+        let db = ChatDb::open(&db_path).unwrap();
+        let archive_path = dir.path().join("arc.jsonl");
+        let count = db.archive("default", &archive_path).unwrap();
+        assert_eq!(count, 0);
+        assert!(!archive_path.exists(), "No file should be created for empty archive");
+    }
+
+    #[test]
+    fn test_search_live_messages() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("chat.db");
+        let db = ChatDb::open(&db_path).unwrap();
+        db.insert("default", "user", "alice", "hello world").unwrap();
+        db.insert("default", "assistant", "ᚱᚢᚾᛖ", "goodbye").unwrap();
+        db.insert("default", "user", "alice", "hello again").unwrap();
+
+        let arc_dir = dir.path().join("archives");
+        let results = db.search("default", "hello", &arc_dir).unwrap();
+        assert_eq!(results.len(), 2);
+        assert!(results.iter().all(|r| r.content.contains("hello")));
+    }
+
+    #[test]
+    fn test_search_across_archive_and_live() {
+        use std::io::Write;
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("chat.db");
+        let db = ChatDb::open(&db_path).unwrap();
+
+        // Create an archive JSONL with one matching record
+        let arc_dir = dir.path().join("archives");
+        std::fs::create_dir_all(&arc_dir).unwrap();
+        let arc_path = arc_dir.join("old.jsonl");
+        let old_rec = ChatRecord { id: 1, session_id: "default".into(), role: "user".into(),
+            nickname: "bob".into(), content: "search me".into(), created_at: 1000 };
+        let mut f = std::fs::File::create(&arc_path).unwrap();
+        writeln!(f, "{}", serde_json::to_string(&old_rec).unwrap()).unwrap();
+
+        // Live DB also has one match
+        db.insert("default", "user", "alice", "search me too").unwrap();
+        db.insert("default", "user", "alice", "nothing here").unwrap();
+
+        let results = db.search("default", "search me", &arc_dir).unwrap();
+        assert_eq!(results.len(), 2, "Should find 1 archive + 1 live result");
     }
 
     #[tokio::test]
