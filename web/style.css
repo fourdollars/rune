@@ -664,6 +664,7 @@ pre.hljs-pre:hover .copy-btn {
     z-index: 1000;
 }
 .modal-overlay.hidden { display: none; }
+#dir-browser-modal { z-index: 1100; }
 .modal-box {
     background: var(--bg-secondary);
     border: 1px solid var(--border);
