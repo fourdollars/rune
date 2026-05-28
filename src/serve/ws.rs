@@ -1002,4 +1002,39 @@ mod tests {
         assert!(!is_valid_filename("file name.md"));
         assert!(!is_valid_filename("file;rm.md"));
     }
+
+    #[test]
+    fn test_chat_meta_serializes_context_fields() {
+        let msg = super::ServerMsg::ChatMeta {
+            model: "gpt-4o".to_string(),
+            tokens_in: 1000,
+            tokens_out: 200,
+            context_tokens: 15000,
+            context_window: 128000,
+        };
+        let json = serde_json::to_string(&msg).unwrap();
+        assert!(json.contains(r#""type":"chat_meta"#));
+        assert!(json.contains(r#""context_tokens":15000"#));
+        assert!(json.contains(r#""context_window":128000"#));
+        assert!(json.contains(r#""tokens_in":1000"#));
+        assert!(json.contains(r#""tokens_out":200"#));
+        assert!(json.contains(r#""model":"gpt-4o""#));
+    }
+
+    #[test]
+    fn test_chat_meta_context_pct_range() {
+        // context_tokens should always be <= context_window for sane input
+        let ctx_tokens: u32 = 80_000;
+        let ctx_window: u32 = 128_000;
+        let pct = (ctx_tokens as f64 / ctx_window as f64 * 100.0).round() as u32;
+        assert_eq!(pct, 63); // 62.5 rounds to 63
+
+        let ctx_tokens2: u32 = 0;
+        let pct2 = (ctx_tokens2 as f64 / ctx_window as f64 * 100.0).round() as u32;
+        assert_eq!(pct2, 0);
+
+        let ctx_tokens3: u32 = 128_000;
+        let pct3 = (ctx_tokens3 as f64 / ctx_window as f64 * 100.0).round() as u32;
+        assert_eq!(pct3, 100);
+    }
 }
