@@ -859,6 +859,14 @@ pre.hljs-pre:hover .copy-btn {
     display: flex;
     align-items: center;
     justify-content: space-between;
+    gap: 4px;
+}
+.chat-header h3 {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    margin: 0;
+    white-space: nowrap;
 }
 .chat-header-right {
     display: flex;
@@ -1070,4 +1078,49 @@ pre.hljs-pre:hover .copy-btn {
     font-weight: normal;
     opacity: 0.8;
     vertical-align: middle;
+}
+
+/* --- Model indicator (next to title) --- */
+.model-indicator {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    margin-left: 8px;
+}
+.model-name {
+    font-size: 11px;
+    color: var(--text-muted, #888);
+    max-width: 160px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* --- Model list in modal --- */
+.model-list {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin: 12px 0;
+    max-height: 300px;
+    overflow-y: auto;
+}
+.model-option {
+    padding: 8px 14px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--bg-surface);
+    color: var(--text);
+    cursor: pointer;
+    text-align: left;
+    font-size: 13px;
+    transition: background 0.15s;
+}
+.model-option:hover {
+    background: var(--bg-hover, #2a2a2a);
+}
+.model-option.active {
+    border-color: var(--accent);
+    color: var(--accent);
+    font-weight: 600;
 }

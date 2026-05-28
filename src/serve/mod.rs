@@ -47,6 +47,10 @@ pub struct ServerState {
     pub files: Arc<RwLock<std::collections::HashMap<String, String>>>,
     /// Currently active filename shown in the editor.
     pub active_file: Arc<RwLock<String>>,
+    /// All available models (parsed from config.model by comma).
+    pub models: Vec<String>,
+    /// Currently selected model (may be overridden at runtime).
+    pub active_model: Arc<RwLock<String>>,
     /// Broadcast to ALL connected clients.
     pub broadcast_tx: broadcast::Sender<String>,
     /// Broadcast to ADMIN clients only (approval requests).
@@ -114,12 +118,22 @@ pub async fn run(config: RuneConfig, opts: ServeOptions) {
         ChatDb::open(std::path::Path::new(":memory:")).expect("in-memory db failed")
     });
 
+    // Parse comma-separated model list from config
+    let models: Vec<String> = config.model
+        .split(',')
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .collect();
+    let first_model = models.first().cloned().unwrap_or_else(|| config.model.clone());
+
     let state = ServerState {
         config: config.clone(),
         token: opts.token.clone(),
         admin_token: opts.admin_token.clone(),
         files: Arc::new(RwLock::new(initial_files)),
         active_file: Arc::new(RwLock::new("spec.md".to_string())),
+        models,
+        active_model: Arc::new(RwLock::new(first_model)),
         broadcast_tx,
         admin_broadcast_tx,
         chat_db,

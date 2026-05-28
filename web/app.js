@@ -18,6 +18,8 @@ let specVersion = 0;
 let myNickname = '';
 let myToken = '';
 let isAdmin = false;
+let availableModels = [];
+let activeModel = '';
 
 // --- DOM refs ---
 const preview = document.getElementById('preview');
@@ -358,6 +360,18 @@ function handleServerMessage(msg) {
         case 'auth_result':
             isAdmin = msg.is_admin;
             if (isAdmin) addSystemMessage('👑 You are connected as admin');
+            break;
+
+        case 'model_list':
+            availableModels = msg.models || [];
+            activeModel = msg.active || '';
+            updateModelIndicator();
+            break;
+
+        case 'model_changed':
+            activeModel = msg.model || '';
+            updateModelIndicator();
+            addSystemMessage('🔄 Model switched to: ' + activeModel);
             break;
 
         case 'system':
@@ -719,6 +733,44 @@ function flashSpecIndicator() {
 
 // --- Status ---
 // --- Archive ---
+// --- Model switcher ---
+function updateModelIndicator() {
+    const indicator = document.getElementById('model-indicator');
+    const nameEl = document.getElementById('model-name');
+    const btn = document.getElementById('btn-model');
+    if (!indicator || !nameEl) return;
+    if (!activeModel) { indicator.style.display = 'none'; return; }
+    nameEl.textContent = activeModel;
+    indicator.style.display = 'flex';
+    // Only admin sees the switch button
+    if (btn) btn.style.display = isAdmin ? 'inline-flex' : 'none';
+}
+
+function showModelDialog() {
+    if (!isAdmin || availableModels.length <= 1) return;
+    const listEl = document.getElementById('model-list');
+    if (!listEl) return;
+    listEl.innerHTML = '';
+    availableModels.forEach(m => {
+        const btn = document.createElement('button');
+        btn.className = 'model-option' + (m === activeModel ? ' active' : '');
+        btn.textContent = m;
+        btn.onclick = () => { switchModel(m); hideModelDialog(); };
+        listEl.appendChild(btn);
+    });
+    document.getElementById('model-modal').classList.remove('hidden');
+}
+
+function hideModelDialog() {
+    document.getElementById('model-modal').classList.add('hidden');
+}
+
+function switchModel(model) {
+    if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: 'switch_model', model }));
+    }
+}
+
 function showArchiveDialog() {
     document.getElementById('archive-modal').classList.remove('hidden');
 }

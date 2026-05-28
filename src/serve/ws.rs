@@ -55,6 +55,10 @@ enum ClientMsg {
     /// Rename a markdown file.
     #[serde(rename = "file_rename")]
     FileRename { old_name: String, new_name: String },
+
+    /// Switch the active AI model (admin only).
+    #[serde(rename = "switch_model")]
+    SwitchModel { model: String },
 }
 
 /// Outgoing WebSocket message types to the client.
@@ -124,6 +128,14 @@ enum ServerMsg {
     /// Search results.
     #[serde(rename = "search_results")]
     SearchResults { query: String, results: Vec<super::db::ChatRecord> },
+
+    /// Available model list + currently active model (sent on connect).
+    #[serde(rename = "model_list")]
+    ModelList { models: Vec<String>, active: String },
+
+    /// Broadcast when active model changes.
+    #[serde(rename = "model_changed")]
+    ModelChanged { model: String },
 }
 
 /// Handle a single WebSocket connection.
@@ -219,6 +231,18 @@ pub async fn handle_connection(mut socket: WebSocket, state: ServerState) {
     let auth_msg = ServerMsg::AuthResult { is_admin };
     if let Ok(json) = serde_json::to_string(&auth_msg) {
         let _ = ws_tx.send(Message::Text(json.into())).await;
+    }
+
+    // Send model list
+    {
+        let active_model = state.active_model.read().await.clone();
+        let ml_msg = ServerMsg::ModelList {
+            models: state.models.clone(),
+            active: active_model,
+        };
+        if let Ok(json) = serde_json::to_string(&ml_msg) {
+            let _ = ws_tx.send(Message::Text(json.into())).await;
+        }
     }
 
     // Send ready status
@@ -365,9 +389,10 @@ pub async fn handle_connection(mut socket: WebSocket, state: ServerState) {
                         let pending_clone = pending_approvals.clone();
                         let db_clone = state.chat_db.clone();
                         let admin_bcast_clone = state.admin_broadcast_tx.clone();
+                        let active_model_clone = state.active_model.read().await.clone();
                         tokio::spawn(async move {
                             let result = tokio::task::spawn(async move {
-                                handle_chat_message(content, config_clone, files_clone, active_clone, tx_clone, bcast_clone, admin_bcast_clone, pending_clone, db_clone).await;
+                                handle_chat_message(content, config_clone, active_model_clone, files_clone, active_clone, tx_clone, bcast_clone, admin_bcast_clone, pending_clone, db_clone).await;
                             }).await;
                             if let Err(e) = result {
                                 eprintln!("Agent task panicked: {:?}", e);
@@ -572,6 +597,25 @@ pub async fn handle_connection(mut socket: WebSocket, state: ServerState) {
                             drop(json);
                         }
                     }
+                    Ok(ClientMsg::SwitchModel { model }) => {
+                        // Only admin can switch model; model must be in allowed list
+                        if !is_admin {
+                            let _ = tx.send(ServerMsg::Error {
+                                message: "Permission denied: only admins can switch model".to_string(),
+                            });
+                        } else if !state.models.contains(&model) {
+                            let _ = tx.send(ServerMsg::Error {
+                                message: format!("Unknown model: {}", model),
+                            });
+                        } else {
+                            *state.active_model.write().await = model.clone();
+                            info!("Model switched to '{}' by admin '{}'", model, nickname_clone);
+                            let changed = ServerMsg::ModelChanged { model };
+                            if let Ok(json) = serde_json::to_string(&changed) {
+                                let _ = state.broadcast_tx.send(json);
+                            }
+                        }
+                    }
                     Ok(ClientMsg::ApprovalResponse { id, approved }) => {
                         if is_admin {
                             info!("Approval response from admin '{}': {} = {}", nickname_clone, id, approved);
@@ -634,6 +678,7 @@ fn is_valid_filename(name: &str) -> bool {
 async fn handle_chat_message(
     user_msg: String,
     config: RuneConfig,
+    active_model: String,
     files: Arc<RwLock<std::collections::HashMap<String, String>>>,
     active_file: Arc<RwLock<String>>,
     tx: mpsc::UnboundedSender<ServerMsg>,
@@ -692,7 +737,10 @@ async fn handle_chat_message(
             })
         });
 
-    let mut agent = Agent::new(config.clone(), provider, true, embedding);
+    // Override model from active_model (runtime switch support)
+    let mut cfg = config.clone();
+    cfg.model = active_model.clone();
+    let mut agent = Agent::new(cfg, provider, true, embedding);
     agent.token_callback = Some(token_callback);
     agent.approval_callback = Some(approval_callback);
     agent.files = Some(files.clone());

@@ -59,6 +59,16 @@
         </div>
     </div>
 
+    <div id="model-modal" class="modal-overlay hidden">
+        <div class="modal">
+            <h2>Switch Model</h2>
+            <div id="model-list" class="model-list"></div>
+            <div class="modal-actions">
+                <button class="btn-secondary" onclick="hideModelDialog()">Cancel</button>
+            </div>
+        </div>
+    </div>
+
     <div id="app">
         <!-- Left Panel: Sessions -->
         <aside id="panel-left" class="panel panel-left collapsed">
@@ -102,6 +112,9 @@
             <div class="panel-content">
                 <div class="chat-header">
                     <h3><a href="https://fourdollars.github.io/rune/" target="_blank" rel="noopener" class="title-link">ᚱᚢᚾᛖ</a><span id="status-indicator" class="status idle">● idle</span></h3>
+                    <div id="model-indicator" class="model-indicator" style="display:none">
+                        <span id="model-name" class="model-name"></span><button id="btn-model" class="toolbar-btn" onclick="showModelDialog()" title="Switch model">🔄</button>
+                    </div>
                     <div class="chat-header-right">
                         <button id="btn-edit" class="toolbar-btn active" onclick="toggleEdit()" title="Toggle editor">✏️</button>
                         <button id="btn-preview" class="toolbar-btn" onclick="togglePreview()" title="Toggle preview">👁</button>
