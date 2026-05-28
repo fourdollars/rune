@@ -450,7 +450,7 @@ function sendMessage() {
     if (!text || !isConnected || !currentSessionId) return;
 
     // Send to server — do NOT optimistic render; wait for broadcast echo
-    api('chat', { session_id: currentSessionId, content: text });
+    api('chat', { session_id: currentSessionId, content: text, nickname: myNickname });
     chatInput.value = '';
     chatInput.style.height = 'auto';
 }

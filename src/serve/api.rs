@@ -104,6 +104,7 @@ pub struct EventsQuery {
 pub struct ChatReq {
     pub session_id: String,
     pub content: String,
+    pub nickname: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -397,8 +398,9 @@ pub async fn chat_handler(
     info!("Chat message: {}", preview);
 
     // Broadcast user message
+    let nickname = req.nickname.clone().unwrap_or_else(|| "user".to_string());
     let user_msg = SseMsg::ChatMessage {
-        nickname: "user".to_string(),
+        nickname: nickname.clone(),
         content: req.content.clone(),
     };
     broadcast(&state, &user_msg);
@@ -407,7 +409,7 @@ pub async fn chat_handler(
     state.chat_db.insert_async(
         req.session_id.clone(),
         "user".to_string(),
-        "user".to_string(),
+        nickname,
         req.content.clone(),
     ).await;
 
