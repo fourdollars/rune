@@ -1377,6 +1377,7 @@ dependencies = [
  "colored",
  "futures",
  "hex",
+ "http-body-util",
  "indicatif",
  "libc",
  "reqwest",
@@ -1389,6 +1390,7 @@ dependencies = [
  "tokio",
  "tokio-stream",
  "toml",
+ "tower",
  "tracing",
  "tracing-subscriber",
 ]

@@ -1200,3 +1200,497 @@ mod tests {
         }
     }
 }
+
+
+#[cfg(test)]
+mod integration_tests {
+//! Integration tests for SSE + REST API handlers.
+//! Uses tower::ServiceExt to call axum Router directly without network.
+
+use axum::{
+    body::Body,
+    http::{Request, StatusCode},
+    routing::{get, post},
+    Router,
+};
+use http_body_util::BodyExt;
+use serde_json::{json, Value};
+use std::sync::Arc;
+use tempfile::TempDir;
+use tokio::sync::{broadcast, RwLock};
+use tower::ServiceExt;
+
+use crate::config::RuneConfig;
+use crate::serve::api::*;
+use crate::serve::db::ChatDb;
+use crate::serve::ServerState;
+
+/// Build a test app with all routes and a fresh temp state.
+fn test_app() -> (Router, TempDir) {
+    let tmp = tempfile::tempdir().unwrap();
+    let state = test_state(&tmp);
+    let app = Router::new()
+        .route("/api/events", get(events_handler))
+        .route("/api/chat", post(chat_handler))
+        .route("/api/file/create", post(file_create_handler))
+        .route("/api/file/delete", post(file_delete_handler))
+        .route("/api/file/rename", post(file_rename_handler))
+        .route("/api/file/switch", post(file_switch_handler))
+        .route("/api/file/update", post(file_update_handler))
+        .route("/api/session/create", post(session_create_handler))
+        .route("/api/session/rename", post(session_rename_handler))
+        .route("/api/session/delete", post(session_delete_handler))
+        .route("/api/session/switch", post(session_switch_handler))
+        .route("/api/session/set-workspace", post(session_set_workspace_handler))
+        .route("/api/model/switch", post(model_switch_handler))
+        .route("/api/chat/archive", post(archive_handler))
+        .route("/api/chat/search", post(search_handler))
+        .route("/api/approval", post(approval_handler))
+        .route("/api/dir/browse", post(dir_browse_handler))
+        .with_state(state);
+    (app, tmp)
+}
+
+fn test_state(tmp: &TempDir) -> ServerState {
+    let (broadcast_tx, _) = broadcast::channel(256);
+    let (admin_broadcast_tx, _) = broadcast::channel(256);
+    let db_path = tmp.path().join("test.db");
+    let db = ChatDb::open(&db_path).unwrap();
+    ServerState {
+        config: RuneConfig::default(),
+        token: None,
+        admin_token: Some("admin123".into()),
+        files: Arc::new(RwLock::new(std::collections::HashMap::new())),
+        active_file: Arc::new(RwLock::new(String::new())),
+        models: vec!["gpt-5-mini".into(), "claude-sonnet-4.6".into()],
+        active_model: Arc::new(RwLock::new("gpt-5-mini".into())),
+        broadcast_tx,
+        admin_broadcast_tx,
+        chat_db: db,
+    }
+}
+
+fn test_state_with_token(tmp: &TempDir) -> ServerState {
+    let mut state = test_state(tmp);
+    state.token = Some("secret".into());
+    state
+}
+
+async fn post_json(app: &Router, path: &str, body: Value) -> (StatusCode, Value) {
+    let req = Request::builder()
+        .method("POST")
+        .uri(path)
+        .header("Content-Type", "application/json")
+        .body(Body::from(serde_json::to_vec(&body).unwrap()))
+        .unwrap();
+    let resp = app.clone().oneshot(req).await.unwrap();
+    let status = resp.status();
+    let bytes = resp.into_body().collect().await.unwrap().to_bytes();
+    let val: Value = serde_json::from_slice(&bytes).unwrap_or(json!(null));
+    (status, val)
+}
+
+// ─── Session CRUD tests ────────────────────────────────────────────────────
+
+#[tokio::test]
+async fn test_session_create() {
+    let (app, _tmp) = test_app();
+    let (status, body) = post_json(&app, "/api/session/create", json!({
+        "name": "test-session",
+        "workspace": "/tmp"
+    })).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["ok"], true);
+}
+
+#[tokio::test]
+async fn test_session_create_empty_name() {
+    let (app, _tmp) = test_app();
+    let (status, body) = post_json(&app, "/api/session/create", json!({
+        "name": "",
+    })).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["ok"], false);
+    assert!(body["error"].as_str().unwrap().contains("required"));
+}
+
+#[tokio::test]
+async fn test_session_create_duplicate() {
+    let (app, _tmp) = test_app();
+    post_json(&app, "/api/session/create", json!({"name": "dup"})).await;
+    let (_, body) = post_json(&app, "/api/session/create", json!({"name": "dup"})).await;
+    assert_eq!(body["ok"], false);
+}
+
+#[tokio::test]
+async fn test_session_delete() {
+    let (app, _tmp) = test_app();
+    post_json(&app, "/api/session/create", json!({"name": "del-me"})).await;
+    let (_, body) = post_json(&app, "/api/session/delete", json!({"session_id": "del-me"})).await;
+    assert_eq!(body["ok"], true);
+}
+
+#[tokio::test]
+async fn test_session_delete_nonexistent() {
+    let (app, _tmp) = test_app();
+    let (_, body) = post_json(&app, "/api/session/delete", json!({"session_id": "nope"})).await;
+    assert_eq!(body["ok"], false);
+}
+
+#[tokio::test]
+async fn test_session_switch() {
+    let (app, _tmp) = test_app();
+    post_json(&app, "/api/session/create", json!({"name": "s1"})).await;
+    let (_, body) = post_json(&app, "/api/session/switch", json!({"session_id": "s1"})).await;
+    assert_eq!(body["ok"], true);
+}
+
+#[tokio::test]
+async fn test_session_rename() {
+    let (app, _tmp) = test_app();
+    post_json(&app, "/api/session/create", json!({"name": "old-name"})).await;
+    let (_, body) = post_json(&app, "/api/session/rename", json!({
+        "session_id": "old-name",
+        "name": "new-name"
+    })).await;
+    assert_eq!(body["ok"], true);
+}
+
+#[tokio::test]
+async fn test_session_set_workspace() {
+    let (app, _tmp) = test_app();
+    post_json(&app, "/api/session/create", json!({"name": "ws-test"})).await;
+    let (_, body) = post_json(&app, "/api/session/set-workspace", json!({
+        "session_id": "ws-test",
+        "workspace": "/home/user/project"
+    })).await;
+    assert_eq!(body["ok"], true);
+}
+
+// ─── File CRUD tests ───────────────────────────────────────────────────────
+
+#[tokio::test]
+async fn test_file_create() {
+    let (app, _tmp) = test_app();
+    post_json(&app, "/api/session/create", json!({"name": "file-test"})).await;
+    let (_, body) = post_json(&app, "/api/file/create", json!({
+        "session_id": "file-test",
+        "name": "notes.md"
+    })).await;
+    assert_eq!(body["ok"], true);
+}
+
+#[tokio::test]
+async fn test_file_create_invalid_name() {
+    let (app, _tmp) = test_app();
+    post_json(&app, "/api/session/create", json!({"name": "f1"})).await;
+    let (_, body) = post_json(&app, "/api/file/create", json!({
+        "session_id": "f1",
+        "name": "bad file.txt"
+    })).await;
+    assert_eq!(body["ok"], false);
+    assert!(body["error"].as_str().unwrap().contains("Invalid"));
+}
+
+#[tokio::test]
+async fn test_file_create_duplicate() {
+    let (app, _tmp) = test_app();
+    post_json(&app, "/api/session/create", json!({"name": "f2"})).await;
+    post_json(&app, "/api/file/create", json!({"session_id": "f2", "name": "a.md"})).await;
+    let (_, body) = post_json(&app, "/api/file/create", json!({"session_id": "f2", "name": "a.md"})).await;
+    assert_eq!(body["ok"], false);
+    assert!(body["error"].as_str().unwrap().contains("exists"));
+}
+
+#[tokio::test]
+async fn test_file_create_no_session() {
+    let (app, _tmp) = test_app();
+    let (_, body) = post_json(&app, "/api/file/create", json!({
+        "session_id": "",
+        "name": "x.md"
+    })).await;
+    assert_eq!(body["ok"], false);
+}
+
+#[tokio::test]
+async fn test_file_update_and_switch() {
+    let (app, _tmp) = test_app();
+    post_json(&app, "/api/session/create", json!({"name": "f3"})).await;
+    post_json(&app, "/api/file/create", json!({"session_id": "f3", "name": "doc.md"})).await;
+
+    // Update
+    let (_, body) = post_json(&app, "/api/file/update", json!({
+        "session_id": "f3",
+        "filename": "doc.md",
+        "content": "# Hello\nWorld"
+    })).await;
+    assert_eq!(body["ok"], true);
+
+    // Switch (read back)
+    let (_, body) = post_json(&app, "/api/file/switch", json!({
+        "session_id": "f3",
+        "name": "doc.md"
+    })).await;
+    assert_eq!(body["ok"], true);
+}
+
+#[tokio::test]
+async fn test_file_switch_not_found() {
+    let (app, _tmp) = test_app();
+    post_json(&app, "/api/session/create", json!({"name": "f4"})).await;
+    let (_, body) = post_json(&app, "/api/file/switch", json!({
+        "session_id": "f4",
+        "name": "nope.md"
+    })).await;
+    assert_eq!(body["ok"], false);
+}
+
+#[tokio::test]
+async fn test_file_rename() {
+    let (app, _tmp) = test_app();
+    post_json(&app, "/api/session/create", json!({"name": "f5"})).await;
+    post_json(&app, "/api/file/create", json!({"session_id": "f5", "name": "old.md"})).await;
+    let (_, body) = post_json(&app, "/api/file/rename", json!({
+        "session_id": "f5",
+        "old_name": "old.md",
+        "new_name": "new.md"
+    })).await;
+    assert_eq!(body["ok"], true);
+}
+
+#[tokio::test]
+async fn test_file_rename_conflict() {
+    let (app, _tmp) = test_app();
+    post_json(&app, "/api/session/create", json!({"name": "f6"})).await;
+    post_json(&app, "/api/file/create", json!({"session_id": "f6", "name": "a.md"})).await;
+    post_json(&app, "/api/file/create", json!({"session_id": "f6", "name": "b.md"})).await;
+    let (_, body) = post_json(&app, "/api/file/rename", json!({
+        "session_id": "f6",
+        "old_name": "a.md",
+        "new_name": "b.md"
+    })).await;
+    assert_eq!(body["ok"], false);
+    assert!(body["error"].as_str().unwrap().contains("exists"));
+}
+
+#[tokio::test]
+async fn test_file_delete() {
+    let (app, _tmp) = test_app();
+    post_json(&app, "/api/session/create", json!({"name": "f7"})).await;
+    post_json(&app, "/api/file/create", json!({"session_id": "f7", "name": "rm.md"})).await;
+    let (_, body) = post_json(&app, "/api/file/delete", json!({
+        "session_id": "f7",
+        "name": "rm.md"
+    })).await;
+    assert_eq!(body["ok"], true);
+}
+
+#[tokio::test]
+async fn test_file_update_invalid_filename() {
+    let (app, _tmp) = test_app();
+    post_json(&app, "/api/session/create", json!({"name": "f8"})).await;
+    let (_, body) = post_json(&app, "/api/file/update", json!({
+        "session_id": "f8",
+        "filename": "",
+        "content": "x"
+    })).await;
+    assert_eq!(body["ok"], false);
+}
+
+// ─── Model switch tests ────────────────────────────────────────────────────
+
+#[tokio::test]
+async fn test_model_switch_valid() {
+    let (app, _tmp) = test_app();
+    let (_, body) = post_json(&app, "/api/model/switch", json!({
+        "model": "claude-sonnet-4.6"
+    })).await;
+    assert_eq!(body["ok"], true);
+}
+
+#[tokio::test]
+async fn test_model_switch_unknown() {
+    let (app, _tmp) = test_app();
+    let (_, body) = post_json(&app, "/api/model/switch", json!({
+        "model": "unknown-model"
+    })).await;
+    assert_eq!(body["ok"], false);
+    assert!(body["error"].as_str().unwrap().contains("Unknown"));
+}
+
+// ─── Chat tests ────────────────────────────────────────────────────────────
+
+#[tokio::test]
+async fn test_chat_no_session() {
+    let (app, _tmp) = test_app();
+    let (_, body) = post_json(&app, "/api/chat", json!({
+        "session_id": "",
+        "content": "hello"
+    })).await;
+    assert_eq!(body["ok"], false);
+    assert!(body["error"].as_str().unwrap().contains("session"));
+}
+
+#[tokio::test]
+async fn test_chat_empty_content() {
+    let (app, _tmp) = test_app();
+    let (_, body) = post_json(&app, "/api/chat", json!({
+        "session_id": "s1",
+        "content": "   "
+    })).await;
+    assert_eq!(body["ok"], false);
+    assert!(body["error"].as_str().unwrap().contains("Empty"));
+}
+
+// ─── Archive + Search tests ────────────────────────────────────────────────
+
+#[tokio::test]
+async fn test_archive_no_session() {
+    let (app, _tmp) = test_app();
+    let (_, body) = post_json(&app, "/api/chat/archive", json!({
+        "session_id": ""
+    })).await;
+    assert_eq!(body["ok"], false);
+}
+
+#[tokio::test]
+async fn test_search_empty_query() {
+    let (app, _tmp) = test_app();
+    let (_, body) = post_json(&app, "/api/chat/search", json!({
+        "session_id": "s1",
+        "query": ""
+    })).await;
+    assert_eq!(body["ok"], false);
+    assert!(body["error"].as_str().unwrap().contains("Empty"));
+}
+
+#[tokio::test]
+async fn test_search_valid() {
+    let (app, _tmp) = test_app();
+    post_json(&app, "/api/session/create", json!({"name": "search-test"})).await;
+    let (_, body) = post_json(&app, "/api/chat/search", json!({
+        "session_id": "search-test",
+        "query": "hello"
+    })).await;
+    assert_eq!(body["ok"], true);
+}
+
+// ─── Dir browse tests ──────────────────────────────────────────────────────
+
+#[tokio::test]
+async fn test_dir_browse_root() {
+    let (app, _tmp) = test_app();
+    let (_, body) = post_json(&app, "/api/dir/browse", json!({
+        "path": "/tmp"
+    })).await;
+    assert_eq!(body["ok"], true);
+    assert!(body["data"].is_object());
+}
+
+#[tokio::test]
+async fn test_dir_browse_nonexistent() {
+    let (app, _tmp) = test_app();
+    let (_, body) = post_json(&app, "/api/dir/browse", json!({
+        "path": "/nonexistent_path_12345"
+    })).await;
+    // Should still return ok with empty entries
+    assert_eq!(body["ok"], true);
+}
+
+// ─── Approval test ─────────────────────────────────────────────────────────
+
+#[tokio::test]
+async fn test_approval_granted() {
+    let (app, _tmp) = test_app();
+    let (_, body) = post_json(&app, "/api/approval", json!({
+        "id": "test-123",
+        "approved": true
+    })).await;
+    assert_eq!(body["ok"], true);
+}
+
+#[tokio::test]
+async fn test_approval_denied() {
+    let (app, _tmp) = test_app();
+    let (_, body) = post_json(&app, "/api/approval", json!({
+        "id": "test-456",
+        "approved": false
+    })).await;
+    assert_eq!(body["ok"], true);
+}
+
+// ─── SSE endpoint test ─────────────────────────────────────────────────────
+
+#[tokio::test]
+async fn test_sse_events_connect() {
+    let (app, _tmp) = test_app();
+    let req = Request::builder()
+        .method("GET")
+        .uri("/api/events?nickname=tester")
+        .body(Body::empty())
+        .unwrap();
+    let resp = app.oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    // Content-Type should be text/event-stream
+    let ct = resp.headers().get("content-type").unwrap().to_str().unwrap();
+    assert!(ct.contains("text/event-stream"), "Expected SSE content type, got: {}", ct);
+}
+
+// ─── Full flow integration test ────────────────────────────────────────────
+
+#[tokio::test]
+async fn test_full_session_file_flow() {
+    let (app, _tmp) = test_app();
+
+    // Create session
+    let (_, body) = post_json(&app, "/api/session/create", json!({
+        "name": "integration",
+        "workspace": "/tmp"
+    })).await;
+    assert_eq!(body["ok"], true);
+
+    // Create file
+    let (_, body) = post_json(&app, "/api/file/create", json!({
+        "session_id": "integration",
+        "name": "readme.md"
+    })).await;
+    assert_eq!(body["ok"], true);
+
+    // Update file
+    let (_, body) = post_json(&app, "/api/file/update", json!({
+        "session_id": "integration",
+        "filename": "readme.md",
+        "content": "# Integration Test\n\nThis works!"
+    })).await;
+    assert_eq!(body["ok"], true);
+
+    // Switch to file (read back)
+    let (_, body) = post_json(&app, "/api/file/switch", json!({
+        "session_id": "integration",
+        "name": "readme.md"
+    })).await;
+    assert_eq!(body["ok"], true);
+
+    // Rename file
+    let (_, body) = post_json(&app, "/api/file/rename", json!({
+        "session_id": "integration",
+        "old_name": "readme.md",
+        "new_name": "docs.md"
+    })).await;
+    assert_eq!(body["ok"], true);
+
+    // Delete file
+    let (_, body) = post_json(&app, "/api/file/delete", json!({
+        "session_id": "integration",
+        "name": "docs.md"
+    })).await;
+    assert_eq!(body["ok"], true);
+
+    // Delete session
+    let (_, body) = post_json(&app, "/api/session/delete", json!({
+        "session_id": "integration"
+    })).await;
+    assert_eq!(body["ok"], true);
+}
+
+}
