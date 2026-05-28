@@ -15,6 +15,7 @@ use crate::config::RuneConfig;
 use axum::{
     extract::ConnectInfo,
     http::{header, StatusCode},
+    middleware as axum_mw,
     response::{Html, IntoResponse},
     routing::{get, post},
     Router,
@@ -113,6 +114,35 @@ pub async fn run(config: RuneConfig, opts: ServeOptions) {
         chat_db,
     };
 
+    // Auth middleware for POST API endpoints
+    async fn auth_middleware(
+        axum::extract::State(state): axum::extract::State<ServerState>,
+        ConnectInfo(addr): ConnectInfo<SocketAddr>,
+        req: axum::http::Request<axum::body::Body>,
+        next: axum::middleware::Next,
+    ) -> axum::response::Response {
+        // Localhost always allowed
+        if is_localhost(addr.ip()) {
+            return next.run(req).await;
+        }
+        // Check token
+        if let Some(ref expected) = state.token {
+            let provided = req.headers()
+                .get("authorization")
+                .and_then(|v| v.to_str().ok())
+                .and_then(|v| v.strip_prefix("Bearer "));
+            // Also accept admin token
+            let admin_ok = state.admin_token.as_deref()
+                .map(|at| provided == Some(at))
+                .unwrap_or(false);
+            if provided != Some(expected.as_str()) && !admin_ok {
+                let body = axum::Json(serde_json::json!({"ok": false, "error": "Authentication failed"}));
+                return (StatusCode::UNAUTHORIZED, body).into_response();
+            }
+        }
+        next.run(req).await
+    }
+
     let app = Router::new()
         .route("/", get(index_handler))
         .route("/favicon.ico", get(favicon_handler))
@@ -138,6 +168,7 @@ pub async fn run(config: RuneConfig, opts: ServeOptions) {
         .route("/api/chat/search", post(api::search_handler))
         .route("/api/approval", post(api::approval_handler))
         .route("/api/dir/browse", post(api::dir_browse_handler))
+        .layer(axum_mw::from_fn_with_state(state.clone(), auth_middleware))
         .with_state(state);
 
     let addr = SocketAddr::new(opts.bind, opts.port);
@@ -417,7 +448,36 @@ mod tests {
         use axum::http::{Request, StatusCode};
         use tower::ServiceExt;
 
-        let app = Router::new().route("/", get(index_handler));
+        // Auth middleware for POST API endpoints
+    async fn auth_middleware(
+        axum::extract::State(state): axum::extract::State<ServerState>,
+        ConnectInfo(addr): ConnectInfo<SocketAddr>,
+        req: axum::http::Request<axum::body::Body>,
+        next: axum::middleware::Next,
+    ) -> axum::response::Response {
+        // Localhost always allowed
+        if is_localhost(addr.ip()) {
+            return next.run(req).await;
+        }
+        // Check token
+        if let Some(ref expected) = state.token {
+            let provided = req.headers()
+                .get("authorization")
+                .and_then(|v| v.to_str().ok())
+                .and_then(|v| v.strip_prefix("Bearer "));
+            // Also accept admin token
+            let admin_ok = state.admin_token.as_deref()
+                .map(|at| provided == Some(at))
+                .unwrap_or(false);
+            if provided != Some(expected.as_str()) && !admin_ok {
+                let body = axum::Json(serde_json::json!({"ok": false, "error": "Authentication failed"}));
+                return (StatusCode::UNAUTHORIZED, body).into_response();
+            }
+        }
+        next.run(req).await
+    }
+
+    let app = Router::new().route("/", get(index_handler));
         let req = Request::builder()
             .uri("/")
             .body(axum::body::Body::empty())
@@ -436,7 +496,36 @@ mod tests {
         use axum::http::{Request, StatusCode};
         use tower::ServiceExt;
 
-        let app = Router::new().route("/favicon.ico", get(favicon_handler));
+        // Auth middleware for POST API endpoints
+    async fn auth_middleware(
+        axum::extract::State(state): axum::extract::State<ServerState>,
+        ConnectInfo(addr): ConnectInfo<SocketAddr>,
+        req: axum::http::Request<axum::body::Body>,
+        next: axum::middleware::Next,
+    ) -> axum::response::Response {
+        // Localhost always allowed
+        if is_localhost(addr.ip()) {
+            return next.run(req).await;
+        }
+        // Check token
+        if let Some(ref expected) = state.token {
+            let provided = req.headers()
+                .get("authorization")
+                .and_then(|v| v.to_str().ok())
+                .and_then(|v| v.strip_prefix("Bearer "));
+            // Also accept admin token
+            let admin_ok = state.admin_token.as_deref()
+                .map(|at| provided == Some(at))
+                .unwrap_or(false);
+            if provided != Some(expected.as_str()) && !admin_ok {
+                let body = axum::Json(serde_json::json!({"ok": false, "error": "Authentication failed"}));
+                return (StatusCode::UNAUTHORIZED, body).into_response();
+            }
+        }
+        next.run(req).await
+    }
+
+    let app = Router::new().route("/favicon.ico", get(favicon_handler));
         let req = Request::builder()
             .uri("/favicon.ico")
             .body(axum::body::Body::empty())
@@ -461,7 +550,36 @@ mod tests {
         use axum::http::{Request, StatusCode};
         use tower::ServiceExt;
 
-        let app = Router::new().route("/assets/{*path}", get(static_handler));
+        // Auth middleware for POST API endpoints
+    async fn auth_middleware(
+        axum::extract::State(state): axum::extract::State<ServerState>,
+        ConnectInfo(addr): ConnectInfo<SocketAddr>,
+        req: axum::http::Request<axum::body::Body>,
+        next: axum::middleware::Next,
+    ) -> axum::response::Response {
+        // Localhost always allowed
+        if is_localhost(addr.ip()) {
+            return next.run(req).await;
+        }
+        // Check token
+        if let Some(ref expected) = state.token {
+            let provided = req.headers()
+                .get("authorization")
+                .and_then(|v| v.to_str().ok())
+                .and_then(|v| v.strip_prefix("Bearer "));
+            // Also accept admin token
+            let admin_ok = state.admin_token.as_deref()
+                .map(|at| provided == Some(at))
+                .unwrap_or(false);
+            if provided != Some(expected.as_str()) && !admin_ok {
+                let body = axum::Json(serde_json::json!({"ok": false, "error": "Authentication failed"}));
+                return (StatusCode::UNAUTHORIZED, body).into_response();
+            }
+        }
+        next.run(req).await
+    }
+
+    let app = Router::new().route("/assets/{*path}", get(static_handler));
         let req = Request::builder()
             .uri("/assets/app.js")
             .body(axum::body::Body::empty())
@@ -486,7 +604,36 @@ mod tests {
         use axum::http::{Request, StatusCode};
         use tower::ServiceExt;
 
-        let app = Router::new().route("/assets/{*path}", get(static_handler));
+        // Auth middleware for POST API endpoints
+    async fn auth_middleware(
+        axum::extract::State(state): axum::extract::State<ServerState>,
+        ConnectInfo(addr): ConnectInfo<SocketAddr>,
+        req: axum::http::Request<axum::body::Body>,
+        next: axum::middleware::Next,
+    ) -> axum::response::Response {
+        // Localhost always allowed
+        if is_localhost(addr.ip()) {
+            return next.run(req).await;
+        }
+        // Check token
+        if let Some(ref expected) = state.token {
+            let provided = req.headers()
+                .get("authorization")
+                .and_then(|v| v.to_str().ok())
+                .and_then(|v| v.strip_prefix("Bearer "));
+            // Also accept admin token
+            let admin_ok = state.admin_token.as_deref()
+                .map(|at| provided == Some(at))
+                .unwrap_or(false);
+            if provided != Some(expected.as_str()) && !admin_ok {
+                let body = axum::Json(serde_json::json!({"ok": false, "error": "Authentication failed"}));
+                return (StatusCode::UNAUTHORIZED, body).into_response();
+            }
+        }
+        next.run(req).await
+    }
+
+    let app = Router::new().route("/assets/{*path}", get(static_handler));
         let req = Request::builder()
             .uri("/assets/style.css")
             .body(axum::body::Body::empty())
@@ -503,7 +650,36 @@ mod tests {
         use axum::http::{Request, StatusCode};
         use tower::ServiceExt;
 
-        let app = Router::new().route("/assets/{*path}", get(static_handler));
+        // Auth middleware for POST API endpoints
+    async fn auth_middleware(
+        axum::extract::State(state): axum::extract::State<ServerState>,
+        ConnectInfo(addr): ConnectInfo<SocketAddr>,
+        req: axum::http::Request<axum::body::Body>,
+        next: axum::middleware::Next,
+    ) -> axum::response::Response {
+        // Localhost always allowed
+        if is_localhost(addr.ip()) {
+            return next.run(req).await;
+        }
+        // Check token
+        if let Some(ref expected) = state.token {
+            let provided = req.headers()
+                .get("authorization")
+                .and_then(|v| v.to_str().ok())
+                .and_then(|v| v.strip_prefix("Bearer "));
+            // Also accept admin token
+            let admin_ok = state.admin_token.as_deref()
+                .map(|at| provided == Some(at))
+                .unwrap_or(false);
+            if provided != Some(expected.as_str()) && !admin_ok {
+                let body = axum::Json(serde_json::json!({"ok": false, "error": "Authentication failed"}));
+                return (StatusCode::UNAUTHORIZED, body).into_response();
+            }
+        }
+        next.run(req).await
+    }
+
+    let app = Router::new().route("/assets/{*path}", get(static_handler));
         let req = Request::builder()
             .uri("/assets/icon.svg")
             .body(axum::body::Body::empty())
@@ -520,7 +696,36 @@ mod tests {
         use axum::http::{Request, StatusCode};
         use tower::ServiceExt;
 
-        let app = Router::new().route("/assets/{*path}", get(static_handler));
+        // Auth middleware for POST API endpoints
+    async fn auth_middleware(
+        axum::extract::State(state): axum::extract::State<ServerState>,
+        ConnectInfo(addr): ConnectInfo<SocketAddr>,
+        req: axum::http::Request<axum::body::Body>,
+        next: axum::middleware::Next,
+    ) -> axum::response::Response {
+        // Localhost always allowed
+        if is_localhost(addr.ip()) {
+            return next.run(req).await;
+        }
+        // Check token
+        if let Some(ref expected) = state.token {
+            let provided = req.headers()
+                .get("authorization")
+                .and_then(|v| v.to_str().ok())
+                .and_then(|v| v.strip_prefix("Bearer "));
+            // Also accept admin token
+            let admin_ok = state.admin_token.as_deref()
+                .map(|at| provided == Some(at))
+                .unwrap_or(false);
+            if provided != Some(expected.as_str()) && !admin_ok {
+                let body = axum::Json(serde_json::json!({"ok": false, "error": "Authentication failed"}));
+                return (StatusCode::UNAUTHORIZED, body).into_response();
+            }
+        }
+        next.run(req).await
+    }
+
+    let app = Router::new().route("/assets/{*path}", get(static_handler));
         let req = Request::builder()
             .uri("/assets/data.bin")
             .body(axum::body::Body::empty())
@@ -537,7 +742,36 @@ mod tests {
         use axum::http::{Request, StatusCode};
         use tower::ServiceExt;
 
-        let app = Router::new().route("/assets-bin/{*path}", get(binary_asset_handler));
+        // Auth middleware for POST API endpoints
+    async fn auth_middleware(
+        axum::extract::State(state): axum::extract::State<ServerState>,
+        ConnectInfo(addr): ConnectInfo<SocketAddr>,
+        req: axum::http::Request<axum::body::Body>,
+        next: axum::middleware::Next,
+    ) -> axum::response::Response {
+        // Localhost always allowed
+        if is_localhost(addr.ip()) {
+            return next.run(req).await;
+        }
+        // Check token
+        if let Some(ref expected) = state.token {
+            let provided = req.headers()
+                .get("authorization")
+                .and_then(|v| v.to_str().ok())
+                .and_then(|v| v.strip_prefix("Bearer "));
+            // Also accept admin token
+            let admin_ok = state.admin_token.as_deref()
+                .map(|at| provided == Some(at))
+                .unwrap_or(false);
+            if provided != Some(expected.as_str()) && !admin_ok {
+                let body = axum::Json(serde_json::json!({"ok": false, "error": "Authentication failed"}));
+                return (StatusCode::UNAUTHORIZED, body).into_response();
+            }
+        }
+        next.run(req).await
+    }
+
+    let app = Router::new().route("/assets-bin/{*path}", get(binary_asset_handler));
         let req = Request::builder()
             .uri("/assets-bin/nonexistent.wasm")
             .body(axum::body::Body::empty())
