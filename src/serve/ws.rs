@@ -649,6 +649,10 @@ pub async fn handle_connection(mut socket: WebSocket, state: ServerState) {
                             let _ = tx.send(ServerMsg::Error {
                                 message: format!("Invalid filename: {}", new_name),
                             });
+                        } else if files_ref.read().await.contains_key(&new_name) {
+                            let _ = tx.send(ServerMsg::Error {
+                                message: format!("File already exists: {}", new_name),
+                            });
                         } else {
                             let content = {
                                 let mut files = files_ref.write().await;
