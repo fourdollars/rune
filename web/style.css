@@ -1130,3 +1130,17 @@ pre.hljs-pre:hover .copy-btn {
     color: var(--accent);
     text-decoration: underline;
 }
+
+/* --- Message metadata (model + tokens) --- */
+.sender {
+    display: flex;
+    align-items: baseline;
+    gap: 6px;
+}
+.msg-meta {
+    font-size: 10px;
+    color: var(--text-muted, #777);
+    font-weight: normal;
+    opacity: 0.75;
+    white-space: nowrap;
+}

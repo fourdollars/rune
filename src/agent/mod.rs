@@ -56,6 +56,8 @@ pub struct Agent {
     messages: Vec<LlmMessage>,
     step_count: u32,
     tokens_used: u32,
+    pub tokens_in: u32,
+    pub tokens_out: u32,
     provider: ProviderRegistry,
     tools: ToolRegistry,
     mcp_manager: Option<Arc<TokioMutex<McpManager>>>,
@@ -177,6 +179,8 @@ impl Agent {
             messages: Vec::new(),
             step_count: 0,
             tokens_used: 0,
+            tokens_in: 0,
+            tokens_out: 0,
             provider,
             tools,
             mcp_manager,
@@ -532,6 +536,8 @@ impl Agent {
         }
         self.step_count = 0;
         self.tokens_used = 0;
+        self.tokens_in = 0;
+        self.tokens_out = 0;
     }
 
     /// Push a user message with explicit content parts (e.g., images).
@@ -696,6 +702,8 @@ impl Agent {
 
             // Update token usage
             self.tokens_used += response.usage.total_tokens;
+            self.tokens_in  += response.usage.prompt_tokens;
+            self.tokens_out += response.usage.completion_tokens;
 
             // If no tool calls, we have our final answer
             if response.tool_calls.is_empty() {
@@ -2587,9 +2595,11 @@ read(3, "root:x:0:0:...", 4096) = 1234"#;
         // Instead, test load_history logic via a minimal agent construction:
         let records = vec![
             ChatRecord { id: 1, session_id: "default".into(), role: "user".into(),
-                nickname: "alice".into(), content: "hello".into(), created_at: 0 },
+                nickname: "alice".into(), content: "hello".into(), created_at: 0,
+            model: None, tokens_in: None, tokens_out: None },
             ChatRecord { id: 2, session_id: "default".into(), role: "assistant".into(),
-                nickname: "rune".into(), content: "hi there".into(), created_at: 1 },
+                nickname: "rune".into(), content: "hi there".into(), created_at: 1,
+            model: None, tokens_in: None, tokens_out: None },
         ];
         // Verify filtering: tool_call roles should be excluded
         let filtered: Vec<_> = records.iter()

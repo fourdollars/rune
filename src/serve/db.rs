@@ -20,6 +20,15 @@ pub struct ChatRecord {
     pub nickname: String, // user nickname, or "ᚱᚢᚾᛖ" for assistant
     pub content: String,
     pub created_at: i64, // unix timestamp (seconds)
+    /// Model name used for this response (assistant only).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    /// Prompt tokens consumed (assistant only).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tokens_in: Option<i32>,
+    /// Completion tokens generated (assistant only).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tokens_out: Option<i32>,
 }
 
 /// Thread-safe SQLite connection wrapper.
@@ -41,24 +50,42 @@ impl ChatDb {
                 role        TEXT    NOT NULL,
                 nickname    TEXT    NOT NULL,
                 content     TEXT    NOT NULL,
-                created_at  INTEGER NOT NULL
+                created_at  INTEGER NOT NULL,
+                model       TEXT,
+                tokens_in   INTEGER,
+                tokens_out  INTEGER
             );
             CREATE INDEX IF NOT EXISTS idx_messages_session
                 ON messages(session_id, id);
         ")?;
+        // Migrate existing DBs that lack the new columns (idempotent)
+        let _ = conn.execute_batch("
+            ALTER TABLE messages ADD COLUMN model      TEXT;
+            ALTER TABLE messages ADD COLUMN tokens_in  INTEGER;
+            ALTER TABLE messages ADD COLUMN tokens_out INTEGER;
+        ");
         Ok(Self { conn: Arc::new(Mutex::new(conn)) })
     }
 
     /// Insert a message. Returns the new row id.
     pub fn insert(&self, session_id: &str, role: &str, nickname: &str, content: &str) -> anyhow::Result<i64> {
+        self.insert_with_meta(session_id, role, nickname, content, None, None, None)
+    }
+
+    /// Insert a message with optional model/token metadata.
+    pub fn insert_with_meta(
+        &self, session_id: &str, role: &str, nickname: &str, content: &str,
+        model: Option<&str>, tokens_in: Option<i32>, tokens_out: Option<i32>,
+    ) -> anyhow::Result<i64> {
         let conn = self.conn.lock().unwrap();
         let ts = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
             .as_secs() as i64;
         conn.execute(
-            "INSERT INTO messages (session_id, role, nickname, content, created_at) VALUES (?1,?2,?3,?4,?5)",
-            params![session_id, role, nickname, content, ts],
+            "INSERT INTO messages (session_id, role, nickname, content, created_at, model, tokens_in, tokens_out)
+             VALUES (?1,?2,?3,?4,?5,?6,?7,?8)",
+            params![session_id, role, nickname, content, ts, model, tokens_in, tokens_out],
         )?;
         Ok(conn.last_insert_rowid())
     }
@@ -67,7 +94,7 @@ impl ChatDb {
     pub fn load_recent(&self, session_id: &str, limit: usize) -> anyhow::Result<Vec<ChatRecord>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT id, session_id, role, nickname, content, created_at
+            "SELECT id, session_id, role, nickname, content, created_at, model, tokens_in, tokens_out
              FROM messages
              WHERE session_id = ?1
              ORDER BY id DESC
@@ -81,6 +108,9 @@ impl ChatDb {
                 nickname:   row.get(3)?,
                 content:    row.get(4)?,
                 created_at: row.get(5)?,
+                model:      row.get(6)?,
+                tokens_in:  row.get(7)?,
+                tokens_out: row.get(8)?,
             })
         })?
         .filter_map(|r| r.ok())
@@ -93,9 +123,21 @@ impl ChatDb {
 
     /// Async wrapper for insert (runs on blocking thread pool).
     pub async fn insert_async(&self, session_id: String, role: String, nickname: String, content: String) {
+        self.insert_with_meta_async(session_id, role, nickname, content, None, None, None).await;
+    }
+
+    /// Async wrapper for insert_with_meta.
+    pub async fn insert_with_meta_async(
+        &self,
+        session_id: String, role: String, nickname: String, content: String,
+        model: Option<String>, tokens_in: Option<i32>, tokens_out: Option<i32>,
+    ) {
         let db = self.clone();
         tokio::task::spawn_blocking(move || {
-            if let Err(e) = db.insert(&session_id, &role, &nickname, &content) {
+            if let Err(e) = db.insert_with_meta(
+                &session_id, &role, &nickname, &content,
+                model.as_deref(), tokens_in, tokens_out,
+            ) {
                 warn!("Failed to persist chat message: {}", e);
             }
         }).await.ok();
@@ -116,7 +158,7 @@ impl ChatDb {
         let conn = self.conn.lock().unwrap();
         // Load all messages for this session
         let mut stmt = conn.prepare(
-            "SELECT id, session_id, role, nickname, content, created_at
+            "SELECT id, session_id, role, nickname, content, created_at, model, tokens_in, tokens_out
              FROM messages WHERE session_id = ?1 ORDER BY id ASC"
         )?;
         let records: Vec<ChatRecord> = stmt.query_map(params![session_id], |row| {
@@ -127,6 +169,9 @@ impl ChatDb {
                 nickname:   row.get(3)?,
                 content:    row.get(4)?,
                 created_at: row.get(5)?,
+                model:      row.get(6)?,
+                tokens_in:  row.get(7)?,
+                tokens_out: row.get(8)?,
             })
         })?.filter_map(|r| r.ok()).collect();
 
@@ -185,7 +230,7 @@ impl ChatDb {
         // 2. Search live DB
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT id, session_id, role, nickname, content, created_at
+            "SELECT id, session_id, role, nickname, content, created_at, model, tokens_in, tokens_out
              FROM messages WHERE session_id = ?1 ORDER BY id ASC"
         )?;
         let live: Vec<ChatRecord> = stmt.query_map(params![session_id], |row| {
@@ -196,6 +241,9 @@ impl ChatDb {
                 nickname:   row.get(3)?,
                 content:    row.get(4)?,
                 created_at: row.get(5)?,
+                model:      row.get(6)?,
+                tokens_in:  row.get(7)?,
+                tokens_out: row.get(8)?,
             })
         })?.filter_map(|r| r.ok())
           .filter(|r| r.content.to_lowercase().contains(&query_lower)
@@ -369,7 +417,8 @@ mod tests {
         std::fs::create_dir_all(&arc_dir).unwrap();
         let arc_path = arc_dir.join("old.jsonl");
         let old_rec = ChatRecord { id: 1, session_id: "default".into(), role: "user".into(),
-            nickname: "bob".into(), content: "search me".into(), created_at: 1000 };
+            nickname: "bob".into(), content: "search me".into(), created_at: 1000,
+            model: None, tokens_in: None, tokens_out: None };
         let mut f = std::fs::File::create(&arc_path).unwrap();
         writeln!(f, "{}", serde_json::to_string(&old_rec).unwrap()).unwrap();
 
@@ -388,5 +437,42 @@ mod tests {
         let rows = db.load_recent_async("default".into(), 10).await;
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].content, "async msg");
+    }
+
+    #[test]
+    fn test_insert_with_meta_persists_model_tokens() {
+        let db = in_memory_db();
+        db.insert_with_meta("default", "assistant", "ᚱᚢᚾᛖ", "hello", Some("gpt-5-mini"), Some(100), Some(42)).unwrap();
+        let rows = db.load_recent("default", 1).unwrap();
+        assert_eq!(rows[0].model.as_deref(), Some("gpt-5-mini"));
+        assert_eq!(rows[0].tokens_in,  Some(100));
+        assert_eq!(rows[0].tokens_out, Some(42));
+    }
+
+    #[test]
+    fn test_insert_without_meta_has_none_fields() {
+        let db = in_memory_db();
+        db.insert("default", "user", "alice", "hi").unwrap();
+        let rows = db.load_recent("default", 1).unwrap();
+        assert!(rows[0].model.is_none());
+        assert!(rows[0].tokens_in.is_none());
+        assert!(rows[0].tokens_out.is_none());
+    }
+
+    #[test]
+    fn test_archive_preserves_meta_in_jsonl() {
+        use std::io::BufRead;
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("chat.db");
+        let db = ChatDb::open(&db_path).unwrap();
+        db.insert_with_meta("default", "assistant", "ᚱᚢᚾᛖ", "reply", Some("gpt-4o"), Some(50), Some(25)).unwrap();
+        let archive_path = dir.path().join("arc.jsonl");
+        db.archive("default", &archive_path).unwrap();
+        let file = std::fs::File::open(&archive_path).unwrap();
+        let line = std::io::BufReader::new(file).lines().next().unwrap().unwrap();
+        let rec: ChatRecord = serde_json::from_str(&line).unwrap();
+        assert_eq!(rec.model.as_deref(), Some("gpt-4o"));
+        assert_eq!(rec.tokens_in,  Some(50));
+        assert_eq!(rec.tokens_out, Some(25));
     }
 }

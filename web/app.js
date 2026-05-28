@@ -320,6 +320,10 @@ function handleServerMessage(msg) {
             appendToLastAssistant(msg.content);
             break;
 
+        case 'chat_meta':
+            attachMetaToLastAssistant(msg.model, msg.tokens_in, msg.tokens_out);
+            break;
+
         case 'chat_done':
             finalizeAssistantMessage();
             removeAllApprovalButtons();
@@ -451,6 +455,16 @@ function replayHistory(messages) {
             const sender = document.createElement('div');
             sender.className = 'sender';
             sender.textContent = 'ᚱᚢᚾᛖ';
+            // Attach model + token meta if available
+            if (m.model || m.tokens_in || m.tokens_out) {
+                const meta = document.createElement('span');
+                meta.className = 'msg-meta';
+                let parts = [];
+                if (m.model) parts.push(m.model);
+                if (m.tokens_in || m.tokens_out) parts.push(`↑${m.tokens_in||0} ↓${m.tokens_out||0}`);
+                meta.textContent = parts.join(' · ');
+                sender.appendChild(meta);
+            }
             const body = document.createElement('div');
             body.className = 'body';
             if (typeof marked !== 'undefined') {
@@ -475,6 +489,7 @@ function updateOnlineCount(count) {
 }
 
 let currentAssistantEl = null;
+let currentAssistantDiv = null;
 let currentAssistantText = '';
 
 function appendToLastAssistant(token) {
@@ -493,6 +508,7 @@ function appendToLastAssistant(token) {
         div.appendChild(body);
         chatMessages.appendChild(div);
         currentAssistantEl = body;
+        currentAssistantDiv = div;
         currentAssistantText = '';
     }
     currentAssistantText += token;
@@ -510,6 +526,24 @@ function finalizeAssistantMessage() {
     }
     currentAssistantEl = null;
     currentAssistantText = '';
+    currentAssistantDiv = null;
+}
+
+function attachMetaToLastAssistant(model, tokIn, tokOut) {
+    const target = currentAssistantDiv || chatMessages.querySelector('.chat-msg.assistant:last-child');
+    if (!target) return;
+    const sender = target.querySelector('.sender');
+    if (!sender) return;
+    // Remove old meta if any
+    const old = sender.querySelector('.msg-meta');
+    if (old) old.remove();
+    const meta = document.createElement('span');
+    meta.className = 'msg-meta';
+    let parts = [];
+    if (model) parts.push(model);
+    if (tokIn || tokOut) parts.push(`↑${tokIn||0} ↓${tokOut||0}`);
+    meta.textContent = parts.join(' · ');
+    sender.appendChild(meta);
 }
 
 function showApprovalRequest(id, detail) {

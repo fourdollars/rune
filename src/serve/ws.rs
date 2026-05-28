@@ -125,6 +125,10 @@ enum ServerMsg {
     #[serde(rename = "archive_done")]
     ArchiveDone { filename: String, count: usize },
 
+    /// Model + token usage for the just-completed assistant turn.
+    #[serde(rename = "chat_meta")]
+    ChatMeta { model: String, tokens_in: u32, tokens_out: u32 },
+
     /// Search results.
     #[serde(rename = "search_results")]
     SearchResults { query: String, results: Vec<super::db::ChatRecord> },
@@ -809,16 +813,29 @@ async fn handle_chat_message(
         _ => {}
     }
 
-    // Persist assistant message to SQLite
+    // Persist assistant message to SQLite (with model + token metadata)
     let final_text = assistant_text.lock().map(|t| t.clone()).unwrap_or_default();
     if !final_text.is_empty() {
-        chat_db.insert_async(
+        let tok_in  = if agent.tokens_in  > 0 { Some(agent.tokens_in  as i32) } else { None };
+        let tok_out = if agent.tokens_out > 0 { Some(agent.tokens_out as i32) } else { None };
+        chat_db.insert_with_meta_async(
             "default".to_string(),
             "assistant".to_string(),
             "ᚱᚢᚾᛖ".to_string(),
             final_text,
+            Some(active_model.clone()),
+            tok_in,
+            tok_out,
         ).await;
     }
+
+    // Broadcast model + token metadata (before chat_done)
+    let meta = ServerMsg::ChatMeta {
+        model: active_model.clone(),
+        tokens_in: agent.tokens_in,
+        tokens_out: agent.tokens_out,
+    };
+    if let Ok(json) = serde_json::to_string(&meta) { let _ = broadcast_tx.send(json); }
 
     // Broadcast chat done
     let done = ServerMsg::ChatDone {};
