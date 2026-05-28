@@ -326,6 +326,8 @@ body {
     font-size: 15px;
     line-height: 1.7;
     max-width: 800px;
+    width: 100%;
+    box-sizing: border-box;
 }
 
 #preview h1, #preview h2, #preview h3 {
