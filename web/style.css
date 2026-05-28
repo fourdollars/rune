@@ -1050,3 +1050,16 @@ pre.hljs-pre:hover .copy-btn {
     opacity: 0.75;
     text-decoration: underline;
 }
+
+/* --- Status indicator inline in h3 title --- */
+.chat-header h3 {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+.chat-header h3 #status-indicator {
+    font-size: 12px;
+    font-weight: normal;
+    opacity: 0.8;
+    vertical-align: middle;
+}
