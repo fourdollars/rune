@@ -1137,6 +1137,55 @@ pre.hljs-pre:hover .copy-btn {
     align-items: baseline;
     gap: 6px;
 }
+.chat-body {
+    position: relative;
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    min-height: 0;
+}
+
+.context-overlay {
+    position: absolute;
+    bottom: 6px;
+    right: 10px;
+    z-index: 10;
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    padding: 3px 8px;
+    border-radius: 10px;
+    background: rgba(0, 0, 0, 0.45);
+    backdrop-filter: blur(4px);
+    -webkit-backdrop-filter: blur(4px);
+    border: 1px solid rgba(255,255,255,0.08);
+    font-size: 10px;
+    font-family: var(--font-mono, monospace);
+    color: rgba(255,255,255,0.65);
+    pointer-events: none;
+    transition: opacity 0.3s;
+    white-space: nowrap;
+}
+
+.context-overlay.hidden {
+    display: none;
+}
+
+.context-overlay.warn {
+    color: #f0c040;
+    border-color: rgba(240,192,64,0.3);
+}
+
+.context-overlay.danger {
+    color: #ff6b6b;
+    border-color: rgba(255,107,107,0.3);
+}
+
+.context-sep {
+    opacity: 0.5;
+}
+
 .msg-meta {
     font-size: 10px;
     color: var(--text-muted, #777);

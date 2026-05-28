@@ -123,7 +123,14 @@
                         <button id="btn-logout" class="toolbar-btn logout-btn" onclick="showLogoutDialog()" title="Logout">⏏</button>
                     </div>
                 </div>
-                <div id="chat-messages" class="chat-messages"></div>
+                <div class="chat-body">
+                    <div id="chat-messages" class="chat-messages"></div>
+                    <div id="context-overlay" class="context-overlay hidden">
+                        <span id="context-pct">0%</span>
+                        <span class="context-sep">·</span>
+                        <span id="context-counts">0 / 0</span>
+                    </div>
+                </div>
                 <div class="chat-input-area">
                     <textarea id="chat-input" placeholder="Message ᚱᚢᚾᛖ..." rows="2"></textarea>
                     <button id="chat-send" onclick="sendMessage()">⏎</button>

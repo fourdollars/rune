@@ -127,7 +127,7 @@ enum ServerMsg {
 
     /// Model + token usage for the just-completed assistant turn.
     #[serde(rename = "chat_meta")]
-    ChatMeta { model: String, tokens_in: u32, tokens_out: u32 },
+    ChatMeta { model: String, tokens_in: u32, tokens_out: u32, context_tokens: u32, context_window: u32 },
 
     /// Search results.
     #[serde(rename = "search_results")]
@@ -830,10 +830,14 @@ async fn handle_chat_message(
     }
 
     // Broadcast model + token metadata (before chat_done)
+    let ctx_tokens = agent.total_context_tokens() as u32;
+    let ctx_window  = agent.config.context_window as u32;
     let meta = ServerMsg::ChatMeta {
         model: active_model.clone(),
         tokens_in: agent.tokens_in,
         tokens_out: agent.tokens_out,
+        context_tokens: ctx_tokens,
+        context_window: ctx_window,
     };
     if let Ok(json) = serde_json::to_string(&meta) { let _ = broadcast_tx.send(json); }
 

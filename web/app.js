@@ -321,7 +321,7 @@ function handleServerMessage(msg) {
             break;
 
         case 'chat_meta':
-            attachMetaToLastAssistant(msg.model, msg.tokens_in, msg.tokens_out);
+            attachMetaToLastAssistant(msg.model, msg.tokens_in, msg.tokens_out, msg.context_tokens, msg.context_window);
             break;
 
         case 'chat_done':
@@ -581,7 +581,7 @@ function finalizeAssistantMessage() {
     currentAssistantDiv = null;
 }
 
-function attachMetaToLastAssistant(model, tokIn, tokOut) {
+function attachMetaToLastAssistant(model, tokIn, tokOut, ctxTokens, ctxWindow) {
     const target = currentAssistantDiv || chatMessages.querySelector('.chat-msg.assistant:last-child');
     if (!target) return;
     const sender = target.querySelector('.sender');
@@ -600,6 +600,22 @@ function attachMetaToLastAssistant(model, tokIn, tokOut) {
     const timeEl = sender.querySelector('.msg-time');
     if (timeEl) sender.insertBefore(meta, timeEl);
     else sender.appendChild(meta);
+    // Update context overlay
+    if (ctxWindow && ctxWindow > 0) updateContextOverlay(ctxTokens || 0, ctxWindow);
+}
+
+function updateContextOverlay(ctxTokens, ctxWindow) {
+    const overlay = document.getElementById('context-overlay');
+    const pctEl   = document.getElementById('context-pct');
+    const cntEl   = document.getElementById('context-counts');
+    if (!overlay || !pctEl || !cntEl) return;
+    const pct = Math.round((ctxTokens / ctxWindow) * 100);
+    pctEl.textContent = pct + '% context used';
+    const fmt = n => n >= 1000 ? (n / 1000).toFixed(1) + 'k' : String(n);
+    cntEl.textContent = fmt(ctxTokens) + ' / ' + fmt(ctxWindow);
+    overlay.classList.remove('hidden', 'warn', 'danger');
+    if (pct >= 80) overlay.classList.add('danger');
+    else if (pct >= 60) overlay.classList.add('warn');
 }
 
 function showApprovalRequest(id, detail) {
