@@ -473,6 +473,7 @@ pub async fn handle_connection(mut socket: WebSocket, state: ServerState) {
     let config = state.config.clone();
     let broadcast_tx = state.broadcast_tx.clone();
     let nickname_clone = nickname.clone();
+    let mut current_session = "default".to_string();
 
     while let Some(Ok(msg)) = ws_rx.next().await {
         match msg {
@@ -493,7 +494,7 @@ pub async fn handle_connection(mut socket: WebSocket, state: ServerState) {
                         }
                         // Persist user message to SQLite
                         state.chat_db.insert_async(
-                            "default".to_string(),
+                            current_session.clone(),
                             "user".to_string(),
                             nickname_clone.clone(),
                             content.clone(),
@@ -515,9 +516,10 @@ pub async fn handle_connection(mut socket: WebSocket, state: ServerState) {
                         let db_clone = state.chat_db.clone();
                         let admin_bcast_clone = state.admin_broadcast_tx.clone();
                         let active_model_clone = state.active_model.read().await.clone();
+                        let session_clone = current_session.clone();
                         tokio::spawn(async move {
                             let result = tokio::task::spawn(async move {
-                                handle_chat_message(content, config_clone, active_model_clone, files_clone, active_clone, tx_clone, bcast_clone, admin_bcast_clone, pending_clone, db_clone).await;
+                                handle_chat_message(content, config_clone, active_model_clone, files_clone, active_clone, tx_clone, bcast_clone, admin_bcast_clone, pending_clone, db_clone, session_clone).await;
                             }).await;
                             if let Err(e) = result {
                                 eprintln!("Agent task panicked: {:?}", e);
@@ -692,7 +694,7 @@ pub async fn handle_connection(mut socket: WebSocket, state: ServerState) {
                             .parent().unwrap().join("archives");
                         let archive_path = archive_dir.join(&filename);
                         let db = state.chat_db.clone();
-                        match db.archive_async("default".to_string(), archive_path).await {
+                        match db.archive_async(current_session.clone(), archive_path).await {
                             Ok(count) => {
                                 let msg = ServerMsg::ArchiveDone { filename: filename.clone(), count };
                                 if let Ok(json) = serde_json::to_string(&msg) {
@@ -708,11 +710,11 @@ pub async fn handle_connection(mut socket: WebSocket, state: ServerState) {
                         }
                     }
                     Ok(ClientMsg::SearchChat { query }) => {
-                        let archive_dir = super::session_markdown_dir("main")
+                        let archive_dir = super::session_markdown_dir(&current_session)
                             .parent().unwrap().join("archives");
                         let db = state.chat_db.clone();
                         let results = db.search_async(
-                            "default".to_string(),
+                            current_session.clone(),
                             query.clone(),
                             archive_dir,
                         ).await;
@@ -756,11 +758,16 @@ pub async fn handle_connection(mut socket: WebSocket, state: ServerState) {
                     }
                     Ok(ClientMsg::SessionSwitch { session_id }) => {
                         // Any user can switch their view to another session
+                        current_session = session_id.clone();
                         // Reload chat history and file list for that session
                         let history = state.chat_db.load_recent_async(session_id.clone(), 100).await;
+                        // Send session_switched first, then history
+                        let switched_msg = ServerMsg::SessionSwitched { session_id: session_id.clone() };
+                        if let Ok(json) = serde_json::to_string(&switched_msg) {
+                            let _ = ws_forward_tx.send(json);
+                        }
                         let hist_msg = ServerMsg::History { messages: history };
                         if let Ok(json) = serde_json::to_string(&hist_msg) {
-                            let _ = tx.send(ServerMsg::SessionSwitched { session_id: session_id.clone() });
                             let _ = ws_forward_tx.send(json);
                         }
                         // Send file list for this session
@@ -1008,6 +1015,7 @@ async fn handle_chat_message(
     admin_broadcast_tx: tokio::sync::broadcast::Sender<String>,
     pending_approvals: PendingApprovals,
     chat_db: crate::serve::db::ChatDb,
+    session_id: String,
 ) {
     // Build provider
     let provider = match build_provider(&config) {
@@ -1068,7 +1076,7 @@ async fn handle_chat_message(
     agent.files = Some(files.clone());
     agent.active_file = Some(active_file.clone());
     agent.chat_db = Some(chat_db.clone());
-    agent.chat_session_id = Some("default".to_string());
+    agent.chat_session_id = Some(session_id.clone());
     agent.chat_archive_dir = Some(super::session_markdown_dir("main")
         .parent().unwrap().join("archives"));
 
@@ -1078,7 +1086,7 @@ async fn handle_chat_message(
 
     // Load chat history (last 50 turns) into agent context, excluding the
     // current user message (already being passed to agent.run())
-    let history = chat_db.load_recent_async("default".to_string(), 51).await;
+    let history = chat_db.load_recent_async(session_id.clone(), 51).await;
     // Drop the last record if it's the user message we're about to send
     let history_without_current: Vec<_> = history
         .into_iter()
@@ -1137,7 +1145,7 @@ async fn handle_chat_message(
         let tok_in  = if agent.tokens_in  > 0 { Some(agent.tokens_in  as i32) } else { None };
         let tok_out = if agent.tokens_out > 0 { Some(agent.tokens_out as i32) } else { None };
         chat_db.insert_with_meta_async(
-            "default".to_string(),
+            session_id.clone(),
             "assistant".to_string(),
             "ᚱᚢᚾᛖ".to_string(),
             final_text,

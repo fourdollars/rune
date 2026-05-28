@@ -344,6 +344,7 @@ function handleServerMessage(msg) {
             fileList = msg.files || [];
             currentFilename = msg.active || 'spec.md';
             updateDocTitle(currentFilename);
+            updateEditorVisibility(fileList.length);
             break;
 
         case 'file_content':
@@ -405,6 +406,9 @@ function handleServerMessage(msg) {
             currentSessionId = msg.session_id;
             document.getElementById('chat-messages').innerHTML = '';
             renderSessionTree();
+            // Context overlay reset (will be shown again after next AI turn)
+            const overlay = document.getElementById('context-overlay');
+            if (overlay) overlay.classList.add('hidden');
             break;
 
         case 'dir_browse_result':
@@ -675,6 +679,29 @@ function respondApproval(id, approved) {
 }
 
 // --- Spec Editor ---
+function updateEditorVisibility(fileCount) {
+    const btnEdit = document.getElementById('btn-edit');
+    const btnPreview = document.getElementById('btn-preview');
+    if (fileCount === 0) {
+        // No markdown files: hide buttons and collapse editor
+        btnEdit.classList.add('hidden');
+        btnPreview.classList.add('hidden');
+        showEdit = false;
+        showPreview = false;
+    } else {
+        // Has files: show buttons, restore from localStorage
+        btnEdit.classList.remove('hidden');
+        btnPreview.classList.remove('hidden');
+        try {
+            const se = localStorage.getItem('rune_show_edit');
+            const sp = localStorage.getItem('rune_show_preview');
+            showEdit    = se !== null ? se === '1' : true;
+            showPreview = sp !== null ? sp === '1' : false;
+        } catch {}
+    }
+    applyPanelLayout();
+}
+
 function applyPanelLayout() {
     const center     = document.getElementById('panel-center');
     const centerBody = document.getElementById('center-body');
