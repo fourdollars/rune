@@ -4,7 +4,6 @@
 'use strict';
 
 // --- State ---
-let ws = null;
 let showEdit    = true;
 let showPreview = false;
 let currentFilename = '';
@@ -137,8 +136,8 @@ function initEditor() {
             // Live preview update
             if (showPreview) renderPreview();
             // Sync to server
-            if (editorDirty && isConnected) {
-                ws.send(JSON.stringify({ type: 'spec_update', content: specContent, filename: currentFilename }));
+            if (editorDirty && currentSessionId) {
+                api('file/update', { session_id: currentSessionId, filename: currentFilename, content: specContent });
                 editorDirty = false;
             }
         }, 300);
@@ -257,96 +256,71 @@ document.getElementById('nickname-input').addEventListener('keydown', (e) => {
     if (e.key === 'Enter') submitNickname();
 });
 
-// --- WebSocket ---
+// --- Connection ---
 function connect() {
-    const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const params = new URLSearchParams(location.search);
-    const tokenParam = params.get('token') ? `?token=${params.get('token')}` : '';
-    const url = `${proto}//${location.host}/ws${tokenParam}`;
-    ws = new WebSocket(url);
+    const params = new URLSearchParams();
+    if (myNickname) params.set('nickname', myNickname);
+    if (myToken) params.set('token', myToken);
 
-    ws.onopen = () => {
+    const evtSource = new EventSource('/api/events?' + params.toString());
+
+    evtSource.onopen = () => {
         isConnected = true;
-        setStatus('idle');
-        // Send nickname as first message
-        ws.send(JSON.stringify({ type: 'set_nickname', name: myNickname, token: myToken || undefined }));
+        addSystemMessage('Connected');
     };
 
-    ws.onmessage = (event) => {
-        try {
-            const msg = JSON.parse(event.data);
-            handleServerMessage(msg);
-        } catch (e) {
-            console.error('Invalid message:', e);
-        }
-    };
-
-    ws.onclose = () => {
+    evtSource.onerror = (e) => {
         isConnected = false;
-        setStatus('disconnected');
-        if (!loggedOut) {
-            addSystemMessage('Disconnected. Reconnecting...');
-            setTimeout(connect, 2000);
-        }
+        console.error('SSE error:', e);
+        addSystemMessage('Disconnected. Reconnecting...');
     };
 
-    ws.onerror = (e) => {
-        console.error('WebSocket error:', e);
-    };
+    // Listen for all event types
+    const eventTypes = [
+        'auth_result', 'model_list', 'session_list', 'session_switched',
+        'history', 'file_list', 'file_content', 'file_deleted',
+        'chat_token', 'chat_done', 'chat_meta', 'chat_message',
+        'status', 'system', 'users_update', 'error',
+        'model_changed', 'approval_request', 'archive_done',
+        'search_results', 'dir_browse_result'
+    ];
+
+    eventTypes.forEach(type => {
+        evtSource.addEventListener(type, (e) => {
+            try {
+                const msg = JSON.parse(e.data);
+                handleMessage(msg);
+            } catch(err) {
+                console.error('Parse error:', err, e.data);
+            }
+        });
+    });
 }
 
-function handleServerMessage(msg) {
+// Helper for POST requests
+async function api(endpoint, body) {
+    const headers = { 'Content-Type': 'application/json' };
+    if (myToken) headers['Authorization'] = 'Bearer ' + myToken;
+    try {
+        const resp = await fetch('/api/' + endpoint, {
+            method: 'POST',
+            headers,
+            body: JSON.stringify(body),
+        });
+        const data = await resp.json();
+        if (!data.ok && data.error) {
+            addSystemMessage('Error: ' + data.error);
+        }
+        return data;
+    } catch(e) {
+        console.error('API error:', e);
+        addSystemMessage('Error: ' + e.message);
+        return { ok: false, error: e.message };
+    }
+}
+
+function handleMessage(msg) {
     switch (msg.type) {
-        case 'spec_full': {
-            const isAgentUpdate = specVersion > 0 && msg.content !== specContent;
-            if (msg.content !== specContent) {
-                specContent = msg.content;
-                setEditorValue(specContent);
-                if (showPreview) renderPreview();
-            }
-            if (isAgentUpdate) flashSpecIndicator();
-            specVersion++;
-            break;
-        }
-        case 'spec_patch': {
-            if (msg.content !== specContent) {
-                specContent = msg.content;
-                setEditorValue(specContent);
-                if (showPreview) renderPreview();
-                flashSpecIndicator();
-            }
-            break;
-        }
-
-        case 'chat_message':
-            // Broadcast chat message from a user
-            addChatMessage(msg.nickname, msg.content);
-            break;
-
-        case 'chat_token':
-            appendToLastAssistant(msg.content);
-            break;
-
-        case 'chat_meta':
-            attachMetaToLastAssistant(msg.model, msg.tokens_in, msg.tokens_out, msg.context_tokens, msg.context_window);
-            break;
-
-        case 'chat_done':
-            finalizeAssistantMessage();
-            removeAllApprovalButtons();
-            break;
-
-        case 'status':
-            setStatus(msg.state);
-            break;
-
-        case 'file_list':
-            fileList = msg.files || [];
-            currentFilename = msg.active || '';
-            updateDocTitle(currentFilename);
-            updateEditorVisibility(fileList.length);
-            break;
-
         case 'file_content':
             currentFilename = msg.filename;
             specContent = msg.content;
@@ -354,31 +328,45 @@ function handleServerMessage(msg) {
             if (showPreview) renderPreview();
             updateDocTitle(msg.filename);
             break;
-
-        case 'file_deleted':
-            // file_list will follow, handled there
+        case 'chat_message':
+            addChatMessage(msg.nickname, msg.content);
             break;
-
+        case 'chat_token':
+            appendToLastAssistant(msg.content);
+            break;
+        case 'chat_meta':
+            attachMetaToLastAssistant(msg.model, msg.tokens_in, msg.tokens_out, msg.context_tokens, msg.context_window);
+            break;
+        case 'chat_done':
+            finalizeAssistantMessage();
+            removeAllApprovalButtons();
+            break;
+        case 'status':
+            setStatus(msg.state);
+            break;
+        case 'file_list':
+            fileList = msg.files || [];
+            currentFilename = msg.active || '';
+            updateDocTitle(currentFilename);
+            updateEditorVisibility(fileList.length);
+            break;
+        case 'file_deleted':
+            break;
         case 'archive_done':
             hideArchiveDialog();
-            // Clear chat UI
             document.getElementById('chat-messages').innerHTML = '';
-            addSystemMessage(`📦 Archived ${msg.count} message(s) → ${msg.filename}`);
+            addSystemMessage('📦 Archived ' + (msg.count || 0) + ' message(s) → ' + msg.filename);
             break;
-
         case 'search_results':
             renderSearchResults(msg.query, msg.results || []);
             break;
-
         case 'auth_result':
             isAdmin = msg.is_admin;
             if (isAdmin) addSystemMessage('👑 You are connected as admin');
             break;
-
         case 'model_list':
             availableModels = msg.models || [];
             activeModel = msg.active || '';
-            // Restore saved model preference (admin only)
             if (isAdmin) {
                 const saved = localStorage.getItem('rune_model');
                 if (saved && availableModels.includes(saved) && saved !== activeModel) {
@@ -387,16 +375,13 @@ function handleServerMessage(msg) {
             }
             updateModelIndicator();
             break;
-
         case 'model_changed':
             activeModel = msg.model || '';
             updateModelIndicator();
             addSystemMessage('🔄 Model switched to: ' + activeModel);
             break;
-
         case 'session_list':
             sessions = msg.sessions || [];
-            // If current session was deleted, reset
             if (currentSessionId && !sessions.find(s => s.id === currentSessionId)) {
                 currentSessionId = '';
             }
@@ -406,44 +391,35 @@ function handleServerMessage(msg) {
                 switchSession(sessions[0].id);
             }
             updatePageTitle();
-            // Show + button for admin
             const newBtn = document.getElementById('btn-new-session');
             if (newBtn && isAdmin) newBtn.classList.remove('hidden');
             break;
-
         case 'session_switched':
             currentSessionId = msg.session_id;
             updateChatInputState();
             document.getElementById('chat-messages').innerHTML = '';
             renderSessionTree();
             updatePageTitle();
-            // Context overlay reset (will be shown again after next AI turn)
-            const overlay = document.getElementById('context-overlay');
-            if (overlay) overlay.classList.add('hidden');
+            const overlay2 = document.getElementById('context-overlay');
+            if (overlay2) overlay2.classList.add('hidden');
             break;
-
         case 'dir_browse_result':
             renderDirBrowser(msg.path, msg.parent, msg.entries || []);
             break;
-
         case 'system':
             addSystemMessage(msg.content);
             break;
-
         case 'history':
             replayHistory(msg.messages);
             break;
-
         case 'users_update':
             updateOnlineCount(msg.count);
             break;
-
         case 'approval_request':
             showApprovalRequest(msg.id, msg.detail);
             break;
-
         case 'error':
-            addSystemMessage(`Error: ${msg.message}`);
+            addSystemMessage('Error: ' + msg.message);
             break;
     }
 }
@@ -454,7 +430,7 @@ function sendMessage() {
     if (!text || !isConnected || !currentSessionId) return;
 
     // Send to server — do NOT optimistic render; wait for broadcast echo
-    ws.send(JSON.stringify({ type: 'chat_send', content: text }));
+    api('chat', { session_id: currentSessionId, content: text });
     chatInput.value = '';
     chatInput.style.height = 'auto';
 }
@@ -714,7 +690,7 @@ function removeAllApprovalButtons() {
 }
 
 function respondApproval(id, approved) {
-    ws.send(JSON.stringify({ type: 'approval_response', id, approved }));
+    api('approval', { id, approved });
     addSystemMessage(approved ? `Approved: ${id}` : `Denied: ${id}`);
     removeApprovalButtons(id);
 }
@@ -975,8 +951,8 @@ function hideModelDialog() {
 }
 
 function switchModel(model) {
-    if (ws && ws.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify({ type: 'switch_model', model }));
+    if (isConnected) {
+        api('model/switch', { model });
         try { localStorage.setItem('rune_model', model); } catch {}
     }
 }
@@ -988,7 +964,7 @@ function hideArchiveDialog() {
     document.getElementById('archive-modal').classList.add('hidden');
 }
 function confirmArchive() {
-    if (isConnected) ws.send(JSON.stringify({ type: 'archive_chat' }));
+    api('chat/archive', { session_id: currentSessionId });
 }
 
 // --- Search ---
@@ -1003,7 +979,7 @@ function doSearch() {
     const q = document.getElementById('search-input').value.trim();
     if (!q) return;
     document.getElementById('search-results').innerHTML = '<div class="search-loading">Searching…</div>';
-    if (isConnected) ws.send(JSON.stringify({ type: 'search_chat', query: q }));
+    api('chat/search', { session_id: currentSessionId, query: q });
 }
 function renderSearchResults(query, results) {
     const el = document.getElementById('search-results');
@@ -1041,7 +1017,7 @@ function hideLogoutDialog() {
 function confirmLogout() {
     loggedOut = true;
     // Close WS
-    if (ws) { try { ws.close(); } catch(e) {} ws = null; }
+    // EventSource handles reconnection automatically
     // Clear all stored credentials
     localStorage.removeItem('rune_nickname');
     localStorage.removeItem('rune_token');
@@ -1083,16 +1059,16 @@ function createFile() {
     const clean = name.trim();
     if (!clean.endsWith('.md')) { alert('Filename must end in .md'); return; }
     if (!/^[a-zA-Z0-9_\-\.]+\.md$/.test(clean)) { alert('Invalid filename. Use only letters, numbers, _ - .'); return; }
-    if (isConnected) ws.send(JSON.stringify({ type: 'file_create', name: clean }));
+    api('file/create', { session_id: currentSessionId, name: clean });
 }
 
 function deleteCurrentFile() {
     if (!confirm('Delete ' + currentFilename + '?')) return;
-    if (isConnected) ws.send(JSON.stringify({ type: 'file_delete', name: currentFilename }));
+    api('file/delete', { session_id: currentSessionId, name: currentFilename });
 }
 
 function switchFile(name) {
-    if (isConnected) ws.send(JSON.stringify({ type: 'file_switch', name }));
+    api('file/switch', { session_id: currentSessionId, name });
 }
 
 function renameCurrentFile(newName) {
@@ -1100,7 +1076,7 @@ function renameCurrentFile(newName) {
     if (!clean || clean === currentFilename) return;
     if (!clean.endsWith('.md')) { alert('Filename must end in .md'); return; }
     if (!/^[a-zA-Z0-9_\-\.]+\.md$/.test(clean)) { alert('Invalid filename'); return; }
-    if (isConnected) ws.send(JSON.stringify({ type: 'file_rename', old_name: currentFilename, new_name: clean }));
+    api('file/rename', { session_id: currentSessionId, old_name: currentFilename, new_name: clean });
 }
 
 function initDocTitle() {
@@ -1355,7 +1331,7 @@ function renderSessionTree() {
             fileEl.onclick = () => {
                 if (s.id !== currentSessionId) switchSession(s.id);
                 // Switch file
-                ws.send(JSON.stringify({ type: 'file_switch', name: fname }));
+                api('file/switch', { session_id: currentSessionId, name: fname });
                 // Highlight
                 tree.querySelectorAll('.session-file').forEach(f => f.classList.remove('active'));
                 fileEl.classList.add('active');
@@ -1386,7 +1362,7 @@ function toggleSessionFiles(sessionId) {
 function switchSession(sessionId) {
     if (sessionId === currentSessionId) return;
     currentSessionId = sessionId;
-    ws.send(JSON.stringify({ type: 'session_switch', session_id: sessionId }));
+    api('session/switch', { session_id: sessionId });
     renderSessionTree();
 }
 
@@ -1410,7 +1386,7 @@ function createSession() {
     const name = document.getElementById('new-session-name').value.trim();
     const workspace = document.getElementById('new-session-workspace').value.trim();
     if (!name) return;
-    ws.send(JSON.stringify({ type: 'session_create', name, workspace: workspace || undefined }));
+    api('session/create', { name, workspace: workspace || undefined });
     hideNewSessionDialog();
 }
 
@@ -1440,10 +1416,10 @@ function saveSessionSettings() {
     const workspace = document.getElementById('session-settings-workspace').value.trim();
     const s = sessions.find(x => x.id === settingsSessionId);
     if (s && name && name !== s.name) {
-        ws.send(JSON.stringify({ type: 'session_rename', session_id: settingsSessionId, name }));
+        api('session/rename', { session_id: settingsSessionId, name });
     }
     if (s && workspace && workspace !== s.workspace) {
-        ws.send(JSON.stringify({ type: 'session_set_workspace', session_id: settingsSessionId, workspace }));
+        api('session/set-workspace', { session_id: settingsSessionId, workspace });
     }
     hideSessionSettings();
 }
@@ -1451,7 +1427,7 @@ function saveSessionSettings() {
 function deleteCurrentSession() {
     if (!settingsSessionId) return;
     if (!confirm('Delete this session? Chat history will be preserved but session metadata will be removed.')) return;
-    ws.send(JSON.stringify({ type: 'session_delete', session_id: settingsSessionId }));
+    api('session/delete', { session_id: settingsSessionId });
     hideSessionSettings();
     if (currentSessionId === settingsSessionId) {
         currentSessionId = '';
@@ -1475,7 +1451,7 @@ function hideDirBrowser() {
 
 function navigateDir(path) {
     document.getElementById('dir-browser-path').value = path;
-    ws.send(JSON.stringify({ type: 'dir_browse', path }));
+    api('dir/browse', { path }).then(r => { if (r.ok && r.data) handleMessage(r.data); });
 }
 
 function renderDirBrowser(path, parent, entries) {

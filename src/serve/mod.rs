@@ -3,20 +3,20 @@
 //! Architecture:
 //!   - axum HTTP server on configurable port (default 9527)
 //!   - Static files embedded via rust-embed (HTML/JS/CSS)
-//!   - WebSocket endpoint for chat streaming + markdown file sync
+//!   - SSE endpoint for server→client push + REST API for client→server
 //!   - Token auth required for non-localhost connections
 
 pub mod db;
 mod static_files;
-mod ws;
+pub mod api;
 pub use db::ChatDb;
 
 use crate::config::RuneConfig;
 use axum::{
-    extract::{ConnectInfo, State, WebSocketUpgrade},
+    extract::ConnectInfo,
     http::{header, StatusCode},
-    response::{Html, IntoResponse, Response},
-    routing::get,
+    response::{Html, IntoResponse},
+    routing::{get, post},
     Router,
 };
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
@@ -115,11 +115,29 @@ pub async fn run(config: RuneConfig, opts: ServeOptions) {
 
     let app = Router::new()
         .route("/", get(index_handler))
-        .route("/ws", get(ws_handler))
         .route("/favicon.ico", get(favicon_handler))
         .route("/favicon.svg", get(favicon_handler))
         .route("/assets/{*path}", get(static_handler))
         .route("/assets-bin/{*path}", get(binary_asset_handler))
+        // SSE endpoint
+        .route("/api/events", get(api::events_handler))
+        // REST API endpoints
+        .route("/api/chat", post(api::chat_handler))
+        .route("/api/file/create", post(api::file_create_handler))
+        .route("/api/file/delete", post(api::file_delete_handler))
+        .route("/api/file/rename", post(api::file_rename_handler))
+        .route("/api/file/switch", post(api::file_switch_handler))
+        .route("/api/file/update", post(api::file_update_handler))
+        .route("/api/session/create", post(api::session_create_handler))
+        .route("/api/session/rename", post(api::session_rename_handler))
+        .route("/api/session/delete", post(api::session_delete_handler))
+        .route("/api/session/switch", post(api::session_switch_handler))
+        .route("/api/session/set-workspace", post(api::session_set_workspace_handler))
+        .route("/api/model/switch", post(api::model_switch_handler))
+        .route("/api/chat/archive", post(api::archive_handler))
+        .route("/api/chat/search", post(api::search_handler))
+        .route("/api/approval", post(api::approval_handler))
+        .route("/api/dir/browse", post(api::dir_browse_handler))
         .with_state(state);
 
     let addr = SocketAddr::new(opts.bind, opts.port);
@@ -219,22 +237,7 @@ async fn static_handler(
     }
 }
 
-/// WebSocket upgrade handler — token auth deferred to handshake message.
-/// Clients send token inside set_nickname; URL query token no longer required.
-async fn ws_handler(
-    ws: WebSocketUpgrade,
-    State(state): State<ServerState>,
-    ConnectInfo(addr): ConnectInfo<SocketAddr>,
-) -> impl IntoResponse {
-    // Localhost always allowed.
-    // Remote only allowed when token is configured (verified in ws::handle_connection).
-    if !is_localhost(addr.ip()) && state.token.is_none() {
-        return StatusCode::FORBIDDEN.into_response();
-    }
 
-    ws.on_upgrade(move |socket| ws::handle_connection(socket, state))
-        .into_response()
-}
 
 fn is_localhost(ip: IpAddr) -> bool {
     match ip {

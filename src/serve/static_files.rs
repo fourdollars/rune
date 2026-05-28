@@ -150,8 +150,8 @@ mod tests {
         assert!(js.contains("showSearchDialog"),    "missing showSearchDialog");
         assert!(js.contains("doSearch"),            "missing doSearch");
         assert!(js.contains("renderSearchResults"), "missing renderSearchResults");
-        assert!(js.contains("archive_chat"),        "missing archive_chat ws message");
-        assert!(js.contains("search_chat"),         "missing search_chat ws message");
+        assert!(js.contains("chat/archive"),        "missing chat/archive api call");
+        assert!(js.contains("chat/search"),         "missing chat/search api call");
         assert!(js.contains("archive_done"),        "missing archive_done handler");
         assert!(js.contains("search_results"),      "missing search_results handler");
     }
