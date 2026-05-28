@@ -11,6 +11,7 @@ let currentFilename = 'spec.md';
 let fileList = [];
 let specContent = '';
 let isConnected = false;
+let loggedOut   = false;
 let editorDirty = false;
 let debounceTimer = null;
 let specVersion = 0;
@@ -219,6 +220,7 @@ function submitNickname() {
         else localStorage.removeItem('rune_token');
     } catch {}
     document.getElementById('nickname-modal').classList.add('hidden');
+    loggedOut = false;
     connect();
 }
 
@@ -273,8 +275,10 @@ function connect() {
     ws.onclose = () => {
         isConnected = false;
         setStatus('disconnected');
-        addSystemMessage('Disconnected. Reconnecting...');
-        setTimeout(connect, 2000);
+        if (!loggedOut) {
+            addSystemMessage('Disconnected. Reconnecting...');
+            setTimeout(connect, 2000);
+        }
     };
 
     ws.onerror = (e) => {
@@ -773,6 +777,7 @@ function hideLogoutDialog() {
 }
 
 function confirmLogout() {
+    loggedOut = true;
     // Close WS
     if (ws) { try { ws.close(); } catch(e) {} ws = null; }
     // Clear all stored credentials
