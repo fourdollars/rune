@@ -474,6 +474,11 @@ pub async fn handle_connection(mut socket: WebSocket, state: ServerState) {
                 let text_str: &str = &text;
                 match serde_json::from_str::<ClientMsg>(text_str) {
                     Ok(ClientMsg::ChatSend { content }) => {
+                        if current_session.is_empty() {
+                            let _ = tx.send(ServerMsg::Error {
+                                message: "No session selected. Please create or switch to a session first.".to_string(),
+                            });
+                        } else {
                         let preview: String = content.chars().take(50).collect();
                         info!("Chat message from '{}': {}", nickname_clone, preview);
 
@@ -518,6 +523,7 @@ pub async fn handle_connection(mut socket: WebSocket, state: ServerState) {
                                 eprintln!("Agent task panicked: {:?}", e);
                             }
                         });
+                        } // end if current_session not empty
                     }
                     Ok(ClientMsg::SpecUpdate { content, filename }) => {
                         let fname = {

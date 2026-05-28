@@ -398,6 +398,7 @@ function handleServerMessage(msg) {
             sessions = msg.sessions || [];
             renderSessionTree();
             // Auto-switch to first session if not currently in one
+            updateChatInputState();
             if (!currentSessionId && sessions.length > 0) {
                 switchSession(sessions[0].id);
             }
@@ -409,6 +410,7 @@ function handleServerMessage(msg) {
 
         case 'session_switched':
             currentSessionId = msg.session_id;
+            updateChatInputState();
             document.getElementById('chat-messages').innerHTML = '';
             renderSessionTree();
             updatePageTitle();
@@ -446,12 +448,22 @@ function handleServerMessage(msg) {
 // --- Chat ---
 function sendMessage() {
     const text = chatInput.value.trim();
-    if (!text || !isConnected) return;
+    if (!text || !isConnected || !currentSessionId) return;
 
     // Send to server — do NOT optimistic render; wait for broadcast echo
     ws.send(JSON.stringify({ type: 'chat_send', content: text }));
     chatInput.value = '';
     chatInput.style.height = 'auto';
+}
+
+function updateChatInputState() {
+    if (!currentSessionId) {
+        chatInput.disabled = true;
+        chatInput.placeholder = 'Create a session first...';
+    } else {
+        chatInput.disabled = false;
+        chatInput.placeholder = 'Type a message...';
+    }
 }
 
 function fmtTime(unixSec) {
