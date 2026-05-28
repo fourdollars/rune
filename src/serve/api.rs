@@ -919,23 +919,46 @@ async fn handle_chat_message(
 
 fn build_provider(config: &RuneConfig) -> anyhow::Result<ProviderRegistry> {
     let mut registry = ProviderRegistry::new();
-    let api_key = config.api_key.clone().unwrap_or_default();
 
-    for model_name in config.model.split(',').map(|s| s.trim()) {
-        if model_name.is_empty() { continue; }
-        if model_name.starts_with("github-copilot/") {
-            if !api_key.is_empty() {
-                registry.register(Box::new(CopilotProvider::new(api_key.clone())));
-            }
-        } else if model_name.starts_with("gemini/") {
-            if !api_key.is_empty() {
-                registry.register(Box::new(GeminiProvider::new(api_key.clone(), Some(model_name.to_string()), None)));
-            }
+    let key = config
+        .api_key
+        .clone()
+        .ok_or_else(|| anyhow::anyhow!("No API key configured. Run `rune init` first."))?;
+
+    let provider_name = config.provider.as_deref().unwrap_or_else(|| {
+        if key.starts_with("ghu_")
+            || key.starts_with("ghp_")
+            || config.base_url.as_deref().map(|u| u.contains("githubcopilot")).unwrap_or(false)
+        {
+            "github-copilot"
+        } else if key.starts_with("AIza")
+            || config.base_url.as_deref().map(|u| u.contains("generativelanguage.googleapis.com")).unwrap_or(false)
+        {
+            "gemini"
+        } else if key.starts_with("sk-or-") {
+            "openrouter"
         } else {
-            let base = config.base_url.clone();
-            if !api_key.is_empty() {
-                registry.register(Box::new(OpenAiProvider::new(model_name.to_string(), api_key.clone(), base)));
-            }
+            "openai"
+        }
+    });
+
+    match provider_name {
+        "github-copilot" | "copilot" => {
+            registry.register(Box::new(CopilotProvider::new(key)));
+        }
+        "gemini" | "google" => {
+            registry.register(Box::new(GeminiProvider::new(
+                key,
+                Some(config.model.clone()),
+                config.base_url.clone(),
+            )));
+        }
+        other => {
+            registry.register(Box::new(OpenAiProvider::new(
+                other.to_string(),
+                key,
+                config.base_url.clone(),
+            )));
         }
     }
 
@@ -944,15 +967,16 @@ fn build_provider(config: &RuneConfig) -> anyhow::Result<ProviderRegistry> {
     }
     Ok(registry)
 }
-
 async fn build_embedding(config: &RuneConfig) -> Option<EmbeddingEngine> {
     let api_key = config.api_key.clone().unwrap_or_default();
     if api_key.is_empty() {
         return None;
     }
-    // Use the embedding config from RuneConfig
     let emb_config = config.embedding.clone();
-    if config.model.starts_with("github-copilot/") {
+    let provider_name = config.provider.as_deref().unwrap_or("");
+    if provider_name == "github-copilot" || provider_name == "copilot"
+        || api_key.starts_with("ghu_") || api_key.starts_with("ghp_")
+    {
         Some(EmbeddingEngine::new_copilot(emb_config, api_key))
     } else {
         Some(EmbeddingEngine::new(emb_config))
