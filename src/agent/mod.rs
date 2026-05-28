@@ -82,6 +82,12 @@ pub struct Agent {
     pub files: Option<Arc<RwLock<std::collections::HashMap<String, String>>>>,
     /// Currently active filename.
     pub active_file: Option<Arc<RwLock<String>>>,
+    /// Chat DB for search_chat tool (serve mode only).
+    pub chat_db: Option<crate::serve::db::ChatDb>,
+    /// Archive directory for search_chat tool.
+    pub chat_archive_dir: Option<std::path::PathBuf>,
+    /// Session ID used by search_chat.
+    pub chat_session_id: Option<String>,
 }
 
 impl Agent {
@@ -188,6 +194,9 @@ impl Agent {
             approval_callback: None,
             files: None,
             active_file: None,
+            chat_db: None,
+            chat_archive_dir: None,
+            chat_session_id: None,
         }
     }
 
@@ -1004,6 +1013,27 @@ impl Agent {
         }
     }
 
+/// Handle search_chat tool for serve mode — full-text search across live DB + archives.
+    async fn handle_search_chat_tool(&self, args: &serde_json::Value) -> Option<String> {
+        let db = self.chat_db.as_ref()?;
+        let query = args.get("query").and_then(|v| v.as_str())?;
+        let session_id = self.chat_session_id.as_deref().unwrap_or("default");
+        let archive_dir = self.chat_archive_dir.clone()
+            .unwrap_or_else(|| std::path::PathBuf::from("."));
+        let results = db.search_async(
+            session_id.to_string(),
+            query.to_string(),
+            archive_dir,
+        ).await;
+        if results.is_empty() {
+            return Some(format!("No messages found for query: \"{}\"", query));
+        }
+        let lines: Vec<String> = results.iter().map(|r| {
+            format!("[ts={}] {}: {}", r.created_at, r.nickname, char_preview(&r.content, 200))
+        }).collect();
+        Some(format!("{} result(s) for \"{}\":\n{}", lines.len(), query, lines.join("\n")))
+    }
+
 /// Handle markdown tools (list_markdown / read_markdown / edit_markdown) for serve mode.
     /// Returns Some(output) if handled, None if not a markdown tool.
     async fn handle_markdown_tool(&self, name: &str, args: &serde_json::Value) -> Option<String> {
@@ -1197,6 +1227,13 @@ impl Agent {
         // Intercept markdown tools (list_markdown / read_markdown / edit_markdown) for serve mode
         if let Some(spec_output) = self.handle_markdown_tool(&tc.function.name, &args).await {
             return Ok(spec_output);
+        }
+
+        // Intercept search_chat tool for serve mode
+        if tc.function.name == "search_chat" {
+            if let Some(output) = self.handle_search_chat_tool(&args).await {
+                return Ok(output);
+            }
         }
 
         let mut output = self.tools.execute(&tc.function.name, args.clone()).await;

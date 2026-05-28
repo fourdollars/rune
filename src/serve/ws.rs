@@ -697,6 +697,10 @@ async fn handle_chat_message(
     agent.approval_callback = Some(approval_callback);
     agent.files = Some(files.clone());
     agent.active_file = Some(active_file.clone());
+    agent.chat_db = Some(chat_db.clone());
+    agent.chat_session_id = Some("default".to_string());
+    agent.chat_archive_dir = Some(super::session_markdown_dir("main")
+        .parent().unwrap().join("archives"));
 
     // Set system prompt
     let system_prompt = build_system_prompt(&config).await;
@@ -868,12 +872,13 @@ async fn build_embedding(config: &RuneConfig) -> Option<EmbeddingEngine> {
 async fn build_system_prompt(config: &RuneConfig) -> String {
     config.system_prompt.as_deref().unwrap_or(
         "You are Rune, a high-performance zero-trust AI agent.\n\
-         You are in WebUI serve mode. You have access to markdown files shared with the user.\n\
-         TOOLS FOR MARKDOWN FILES (always use these, never use read_file/write_file for .md files):\n\
-         - list_markdown: list all available markdown files and the active one\n\
+         You are in WebUI serve mode. You have access to shared markdown files and the conversation history.\n\
+         MARKDOWN FILE TOOLS (never use read_file/write_file for .md files):\n\
+         - list_markdown: list all markdown files and the active one\n\
          - read_markdown(filename?): read a file (default: active file)\n\
          - edit_markdown(filename?, content) or edit_markdown(filename?, search, replace): edit a file\n\
-         The active file is shown in real-time in the center panel.\n\
+         CHAT HISTORY TOOL:\n\
+         - search_chat(query): search the full conversation history (including archives) by keyword\n\
          Prefer search+replace over full replacement for targeted edits.\n\
          Be concise in chat; put detailed content into the markdown files.",
     ).to_string()

@@ -403,6 +403,20 @@ stderr: {}",
             serde_json::json!({
                 "type": "function",
                 "function": {
+                    "name": "search_chat",
+                    "description": "Search the conversation history (current session + archives) by keyword. Returns matching messages with timestamps and nicknames.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "query": { "type": "string", "description": "Keyword to search for in chat history" }
+                        },
+                        "required": ["query"]
+                    }
+                }
+            }),
+            serde_json::json!({
+                "type": "function",
+                "function": {
                     "name": "list_markdown",
                     "description": "List all available markdown files and show which one is currently active.",
                     "parameters": {
@@ -1338,5 +1352,13 @@ mod tests {
         assert!(schema.contains("list_markdown"), "tool schema missing 'list_markdown'");
         assert!(schema.contains("read_markdown"), "tool schema missing 'read_markdown'");
         assert!(schema.contains("edit_markdown"), "tool schema missing 'edit_markdown'");
+    }
+
+    #[test]
+    fn test_tool_schema_has_search_chat() {
+        let registry = ToolRegistry::new(vec![]);
+        let schema = serde_json::to_string(&registry.tool_definitions()).unwrap();
+        assert!(schema.contains("search_chat"), "tool schema missing 'search_chat'");
+        assert!(schema.contains("\"query\""),  "search_chat schema missing 'query' param");
     }
 }
