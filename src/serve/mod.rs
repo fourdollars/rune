@@ -143,15 +143,9 @@ pub async fn run(config: RuneConfig, opts: ServeOptions) {
         next.run(req).await
     }
 
-    let app = Router::new()
-        .route("/", get(index_handler))
-        .route("/favicon.ico", get(favicon_handler))
-        .route("/favicon.svg", get(favicon_handler))
-        .route("/assets/{*path}", get(static_handler))
-        .route("/assets-bin/{*path}", get(binary_asset_handler))
-        // SSE endpoint
+    // API routes with auth middleware
+    let api_routes = Router::new()
         .route("/api/events", get(api::events_handler))
-        // REST API endpoints
         .route("/api/chat", post(api::chat_handler))
         .route("/api/file/create", post(api::file_create_handler))
         .route("/api/file/delete", post(api::file_delete_handler))
@@ -168,7 +162,16 @@ pub async fn run(config: RuneConfig, opts: ServeOptions) {
         .route("/api/chat/search", post(api::search_handler))
         .route("/api/approval", post(api::approval_handler))
         .route("/api/dir/browse", post(api::dir_browse_handler))
-        .layer(axum_mw::from_fn_with_state(state.clone(), auth_middleware))
+        .layer(axum_mw::from_fn_with_state(state.clone(), auth_middleware));
+
+    // Static routes (no auth needed)
+    let app = Router::new()
+        .route("/", get(index_handler))
+        .route("/favicon.ico", get(favicon_handler))
+        .route("/favicon.svg", get(favicon_handler))
+        .route("/assets/{*path}", get(static_handler))
+        .route("/assets-bin/{*path}", get(binary_asset_handler))
+        .merge(api_routes)
         .with_state(state);
 
     let addr = SocketAddr::new(opts.bind, opts.port);
