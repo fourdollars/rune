@@ -496,8 +496,7 @@ pub async fn handle_connection(mut socket: WebSocket, state: ServerState) {
                         let tx_clone = tx.clone();
                         let bcast_clone = broadcast_tx.clone();
                         let config_clone = config.clone();
-                        let files_clone = state.files.clone();
-                        let active_clone = state.active_file.clone();
+                        
 
                         // Send thinking status (broadcast)
                         let thinking = ServerMsg::Status { state: "thinking".to_string() };
@@ -512,7 +511,7 @@ pub async fn handle_connection(mut socket: WebSocket, state: ServerState) {
                         let session_clone = current_session.clone();
                         tokio::spawn(async move {
                             let result = tokio::task::spawn(async move {
-                                handle_chat_message(content, config_clone, active_model_clone, files_clone, active_clone, tx_clone, bcast_clone, admin_bcast_clone, pending_clone, db_clone, session_clone).await;
+                                handle_chat_message(content, config_clone, active_model_clone, tx_clone, bcast_clone, admin_bcast_clone, pending_clone, db_clone, session_clone).await;
                             }).await;
                             if let Err(e) = result {
                                 eprintln!("Agent task panicked: {:?}", e);
@@ -1019,8 +1018,6 @@ async fn handle_chat_message(
     user_msg: String,
     config: RuneConfig,
     active_model: String,
-    files: Arc<RwLock<std::collections::HashMap<String, String>>>,
-    active_file: Arc<RwLock<String>>,
     tx: mpsc::UnboundedSender<ServerMsg>,
     broadcast_tx: tokio::sync::broadcast::Sender<String>,
     admin_broadcast_tx: tokio::sync::broadcast::Sender<String>,
@@ -1084,8 +1081,8 @@ async fn handle_chat_message(
     let mut agent = Agent::new(cfg, provider, true, embedding);
     agent.token_callback = Some(token_callback);
     agent.approval_callback = Some(approval_callback);
-    agent.files = Some(files.clone());
-    agent.active_file = Some(active_file.clone());
+    agent.markdown_dir = Some(super::session_markdown_dir(&session_id));
+    // active_file is now determined per-session from disk
     agent.chat_db = Some(chat_db.clone());
     agent.chat_session_id = Some(session_id.clone());
     agent.chat_archive_dir = Some(super::session_markdown_dir(&session_id)
@@ -1182,12 +1179,39 @@ async fn handle_chat_message(
     let done = ServerMsg::ChatDone {};
     if let Ok(json) = serde_json::to_string(&done) { let _ = broadcast_tx.send(json); }
 
-    // Push updated active file to all clients after agent edits
-    let active = active_file.read().await.clone();
-    let file_path = super::session_markdown_dir(&session_id).join(&active);
-    let active_content = tokio::fs::read_to_string(&file_path).await.unwrap_or_default();
-    let fc_msg = ServerMsg::FileContent { filename: active.clone(), content: active_content.clone() };
-    if let Ok(json) = serde_json::to_string(&fc_msg) { let _ = broadcast_tx.send(json); }
+    // Push updated markdown files to all clients after agent edits
+    let md_dir = super::session_markdown_dir(&session_id);
+    if let Ok(mut rd) = tokio::fs::read_dir(&md_dir).await {
+        while let Ok(Some(entry)) = rd.next_entry().await {
+            let fname = entry.file_name().to_string_lossy().to_string();
+            if fname.ends_with(".md") {
+                if let Ok(c) = tokio::fs::read_to_string(entry.path()).await {
+                    let fc_msg = ServerMsg::FileContent { filename: fname, content: c };
+                    if let Ok(json) = serde_json::to_string(&fc_msg) {
+                        let _ = broadcast_tx.send(json);
+                    }
+                }
+            }
+        }
+    }
+    // Also refresh file list
+    {
+        let mut files = Vec::new();
+        if let Ok(mut rd) = tokio::fs::read_dir(&md_dir).await {
+            while let Ok(Some(entry)) = rd.next_entry().await {
+                let fname = entry.file_name().to_string_lossy().to_string();
+                if fname.ends_with(".md") {
+                    files.push(fname);
+                }
+            }
+        }
+        files.sort();
+        let active = files.first().cloned().unwrap_or_default();
+        let fl_msg = ServerMsg::FileList { files, active };
+        if let Ok(json) = serde_json::to_string(&fl_msg) {
+            let _ = broadcast_tx.send(json);
+        }
+    }
 
     let idle = ServerMsg::Status { state: "idle".to_string() };
     if let Ok(json) = serde_json::to_string(&idle) { let _ = broadcast_tx.send(json); }

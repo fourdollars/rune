@@ -90,6 +90,8 @@ pub struct Agent {
     pub chat_archive_dir: Option<std::path::PathBuf>,
     /// Session ID used by search_chat.
     pub chat_session_id: Option<String>,
+    /// Per-session markdown directory for file operations.
+    pub markdown_dir: Option<std::path::PathBuf>,
 }
 
 impl Agent {
@@ -201,6 +203,7 @@ impl Agent {
             chat_db: None,
             chat_archive_dir: None,
             chat_session_id: None,
+            markdown_dir: None,
         }
     }
 
@@ -1044,58 +1047,78 @@ impl Agent {
 
 /// Handle markdown tools (list_markdown / read_markdown / edit_markdown) for serve mode.
     /// Returns Some(output) if handled, None if not a markdown tool.
+    /// All operations are disk-based per-session (no shared in-memory map).
     async fn handle_markdown_tool(&self, name: &str, args: &serde_json::Value) -> Option<String> {
-        let files = self.files.as_ref()?;
+        let md_dir = self.markdown_dir.as_ref()?;
 
-        // Resolve filename: use arg if provided, else fall back to active_file (async-safe).
+        // Resolve filename: use arg if provided, else first .md file in dir
         let fname_arg = args.get("filename").and_then(|v| v.as_str()).map(|s| s.to_string());
         let fname = if let Some(f) = fname_arg {
             f
-        } else if let Some(af) = &self.active_file {
-            af.read().await.clone()
         } else {
-            "spec.md".to_string()
+            // Find first .md file as default
+            let mut default_name = String::new();
+            if let Ok(mut rd) = tokio::fs::read_dir(md_dir).await {
+                while let Ok(Some(entry)) = rd.next_entry().await {
+                    let n = entry.file_name().to_string_lossy().to_string();
+                    if n.ends_with(".md") {
+                        default_name = n;
+                        break;
+                    }
+                }
+            }
+            if default_name.is_empty() {
+                return Some("Error: no markdown files in this session".to_string());
+            }
+            default_name
         };
 
         match name {
             "list_markdown" => {
-                let files_r = files.read().await;
-                let mut names: Vec<String> = files_r.keys().cloned().collect();
+                let mut names = Vec::new();
+                if let Ok(mut rd) = tokio::fs::read_dir(md_dir).await {
+                    while let Ok(Some(entry)) = rd.next_entry().await {
+                        let n = entry.file_name().to_string_lossy().to_string();
+                        if n.ends_with(".md") {
+                            names.push(n);
+                        }
+                    }
+                }
                 names.sort();
-                let active = if let Some(af) = &self.active_file {
-                    af.read().await.clone()
-                } else {
-                    "spec.md".to_string()
-                };
-                Some(format!("Files: {}\nActive: {}", names.join(", "), active))
+                Some(format!("Files: {}", names.join(", ")))
             }
             "read_markdown" => {
-                let files_r = files.read().await;
-                match files_r.get(&fname) {
-                    Some(c) => Some(c.clone()),
-                    None => Some(format!("Error: file not found: {}", fname)),
+                let file_path = md_dir.join(&fname);
+                match tokio::fs::read_to_string(&file_path).await {
+                    Ok(c) => Some(c),
+                    Err(_) => Some(format!("Error: file not found: {}", fname)),
                 }
             }
             "edit_markdown" => {
                 let new_content = args.get("content").and_then(|v| v.as_str());
                 let search = args.get("search").and_then(|v| v.as_str());
                 let replace = args.get("replace").and_then(|v| v.as_str());
+                let file_path = md_dir.join(&fname);
 
                 if let Some(full_content) = new_content {
-                    let mut files_w = files.write().await;
-                    files_w.insert(fname.clone(), full_content.to_string());
+                    if let Err(e) = tokio::fs::write(&file_path, full_content).await {
+                        return Some(format!("Error writing {}: {}", fname, e));
+                    }
                     Some(format!("{} updated (full replace)", fname))
                 } else if let (Some(search_str), Some(replace_str)) = (search, replace) {
-                    let mut files_w = files.write().await;
-                    if let Some(current) = files_w.get_mut(&fname) {
-                        if current.contains(search_str) {
-                            *current = current.replacen(search_str, replace_str, 1);
-                            Some(format!("{} updated: replaced '{}...'", fname, char_preview(search_str, 40)))
-                        } else {
-                            Some(format!("Error: search text not found in {}", fname))
+                    match tokio::fs::read_to_string(&file_path).await {
+                        Ok(current) => {
+                            if current.contains(search_str) {
+                                let updated = current.replacen(search_str, replace_str, 1);
+                                if let Err(e) = tokio::fs::write(&file_path, &updated).await {
+                                    return Some(format!("Error writing {}: {}", fname, e));
+                                }
+                                Some(format!("{} updated: replaced '{}...'", fname, char_preview(search_str, 40)))
+                            } else {
+                                Some(format!("Error: search text not found in {}", fname))
+                            }
                         }
-                    } else {
-                        Some(format!("Error: file not found: {}", fname))
+                        Err(_) => Some(format!("Error: file not found: {}", fname)),
                     }
                 } else {
                     Some("Error: edit_markdown requires either 'content' (full replace) or 'search'+'replace' (targeted edit)".to_string())
