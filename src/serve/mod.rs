@@ -406,4 +406,380 @@ mod tests {
         let first = models.first().cloned().unwrap_or_else(|| config_model.clone());
         assert_eq!(first, "fallback-model");
     }
+
+    // ──────────────────────────────────────────────
+    // HTTP handler integration tests (via tower)
+    // ──────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_index_handler_returns_html_or_500() {
+        use axum::{routing::get, Router};
+        use axum::http::{Request, StatusCode};
+        use tower::ServiceExt;
+
+        let app = Router::new().route("/", get(index_handler));
+        let req = Request::builder()
+            .uri("/")
+            .body(axum::body::Body::empty())
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        // Either 200 (embedded file found) or 500 (no embed in test binary)
+        assert!(
+            resp.status() == StatusCode::OK || resp.status() == StatusCode::INTERNAL_SERVER_ERROR,
+            "unexpected status: {}", resp.status()
+        );
+    }
+
+    #[tokio::test]
+    async fn test_favicon_handler_returns_svg_or_404() {
+        use axum::{routing::get, Router};
+        use axum::http::{Request, StatusCode};
+        use tower::ServiceExt;
+
+        let app = Router::new().route("/favicon.ico", get(favicon_handler));
+        let req = Request::builder()
+            .uri("/favicon.ico")
+            .body(axum::body::Body::empty())
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        assert!(
+            resp.status() == StatusCode::OK || resp.status() == StatusCode::NOT_FOUND,
+            "unexpected status: {}", resp.status()
+        );
+        if resp.status() == StatusCode::OK {
+            let ct = resp.headers()
+                .get(axum::http::header::CONTENT_TYPE)
+                .and_then(|v| v.to_str().ok())
+                .unwrap_or("");
+            assert_eq!(ct, "image/svg+xml");
+        }
+    }
+
+    #[tokio::test]
+    async fn test_static_handler_js_returns_ok_or_404() {
+        use axum::{routing::get, Router};
+        use axum::http::{Request, StatusCode};
+        use tower::ServiceExt;
+
+        let app = Router::new().route("/assets/{*path}", get(static_handler));
+        let req = Request::builder()
+            .uri("/assets/app.js")
+            .body(axum::body::Body::empty())
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        assert!(
+            resp.status() == StatusCode::OK || resp.status() == StatusCode::NOT_FOUND,
+            "unexpected status: {}", resp.status()
+        );
+        if resp.status() == StatusCode::OK {
+            let ct = resp.headers()
+                .get(axum::http::header::CONTENT_TYPE)
+                .and_then(|v| v.to_str().ok())
+                .unwrap_or("");
+            assert_eq!(ct, "application/javascript");
+        }
+    }
+
+    #[tokio::test]
+    async fn test_static_handler_css_returns_ok_or_404() {
+        use axum::{routing::get, Router};
+        use axum::http::{Request, StatusCode};
+        use tower::ServiceExt;
+
+        let app = Router::new().route("/assets/{*path}", get(static_handler));
+        let req = Request::builder()
+            .uri("/assets/style.css")
+            .body(axum::body::Body::empty())
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        assert!(
+            resp.status() == StatusCode::OK || resp.status() == StatusCode::NOT_FOUND,
+        );
+    }
+
+    #[tokio::test]
+    async fn test_static_handler_svg_returns_ok_or_404() {
+        use axum::{routing::get, Router};
+        use axum::http::{Request, StatusCode};
+        use tower::ServiceExt;
+
+        let app = Router::new().route("/assets/{*path}", get(static_handler));
+        let req = Request::builder()
+            .uri("/assets/icon.svg")
+            .body(axum::body::Body::empty())
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        assert!(
+            resp.status() == StatusCode::OK || resp.status() == StatusCode::NOT_FOUND,
+        );
+    }
+
+    #[tokio::test]
+    async fn test_static_handler_octet_fallback() {
+        use axum::{routing::get, Router};
+        use axum::http::{Request, StatusCode};
+        use tower::ServiceExt;
+
+        let app = Router::new().route("/assets/{*path}", get(static_handler));
+        let req = Request::builder()
+            .uri("/assets/data.bin")
+            .body(axum::body::Body::empty())
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        assert!(
+            resp.status() == StatusCode::OK || resp.status() == StatusCode::NOT_FOUND,
+        );
+    }
+
+    #[tokio::test]
+    async fn test_binary_asset_handler_not_found() {
+        use axum::{routing::get, Router};
+        use axum::http::{Request, StatusCode};
+        use tower::ServiceExt;
+
+        let app = Router::new().route("/assets-bin/{*path}", get(binary_asset_handler));
+        let req = Request::builder()
+            .uri("/assets-bin/nonexistent.wasm")
+            .body(axum::body::Body::empty())
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    }
+
+    // ──────────────────────────────────────────────
+    // mime_for — additional edge cases
+    // ──────────────────────────────────────────────
+
+    #[test]
+    fn test_mime_for_path_with_directory() {
+        assert_eq!(mime_for("assets/deep/path/bundle.js"), "application/javascript");
+        assert_eq!(mime_for("assets/theme/dark.css"), "text/css");
+    }
+
+    #[test]
+    fn test_mime_for_dotfile() {
+        assert_eq!(mime_for(".hidden"), "application/octet-stream");
+    }
+
+    #[test]
+    fn test_mime_for_empty_string() {
+        assert_eq!(mime_for(""), "application/octet-stream");
+    }
+
+    // ──────────────────────────────────────────────
+    // data_dir — additional edge cases
+    // ──────────────────────────────────────────────
+
+    #[test]
+    fn test_data_dir_ends_with_rune() {
+        std::env::set_var("HOME", "/some/path");
+        let d = data_dir();
+        assert_eq!(d.file_name().unwrap(), ".rune");
+    }
+
+    #[test]
+    fn test_session_markdown_dir_ends_with_markdown() {
+        std::env::set_var("HOME", "/tmp");
+        let d = session_markdown_dir("sess");
+        assert_eq!(d.file_name().unwrap(), "markdown");
+    }
+
+    // ──────────────────────────────────────────────
+    // ServeOptions — custom construction
+    // ──────────────────────────────────────────────
+
+    #[test]
+    fn test_serve_options_custom_port() {
+        let opts = ServeOptions {
+            port: 8080,
+            bind: IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)),
+            token: Some("tok".into()),
+            admin_token: Some("admin".into()),
+        };
+        assert_eq!(opts.port, 8080);
+        assert_eq!(opts.bind, IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)));
+        assert_eq!(opts.token.as_deref(), Some("tok"));
+        assert_eq!(opts.admin_token.as_deref(), Some("admin"));
+    }
+
+    // ──────────────────────────────────────────────
+    // is_localhost — additional edge cases
+    // ──────────────────────────────────────────────
+
+    #[test]
+    fn test_is_localhost_ipv4_all_zeros() {
+        assert!(!is_localhost(IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0))));
+    }
+
+    #[test]
+    fn test_is_localhost_ipv4_broadcast() {
+        assert!(!is_localhost(IpAddr::V4(Ipv4Addr::new(255, 255, 255, 255))));
+    }
+
+    #[test]
+    fn test_is_localhost_ipv6_all_zeros() {
+        assert!(!is_localhost(IpAddr::V6(Ipv6Addr::new(0, 0, 0, 0, 0, 0, 0, 0))));
+    }
+
+    // ──────────────────────────────────────────────
+    // ServerState construction
+    // ──────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_server_state_construction() {
+        use crate::config::RuneConfig;
+        use std::sync::Arc;
+        use tokio::sync::{broadcast, RwLock};
+
+        let (broadcast_tx, _) = broadcast::channel(256);
+        let (admin_broadcast_tx, _) = broadcast::channel(64);
+        let db = ChatDb::open(std::path::Path::new(":memory:")).expect("in-memory db");
+
+        let config = RuneConfig::default();
+        let models: Vec<String> = config.model
+            .split(',')
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect();
+        let first_model = models.first().cloned().unwrap_or_else(|| config.model.clone());
+
+        let state = ServerState {
+            config: config.clone(),
+            token: None,
+            admin_token: Some("admin".into()),
+            files: Arc::new(RwLock::new(std::collections::HashMap::new())),
+            active_file: Arc::new(RwLock::new(String::new())),
+            models: models.clone(),
+            active_model: Arc::new(RwLock::new(first_model.clone())),
+            broadcast_tx,
+            admin_broadcast_tx,
+            chat_db: db,
+        };
+
+        assert_eq!(state.token, None);
+        assert_eq!(state.admin_token.as_deref(), Some("admin"));
+        assert_eq!(*state.active_model.read().await, first_model);
+    }
+
+    #[tokio::test]
+    async fn test_server_state_with_token() {
+        use crate::config::RuneConfig;
+        use std::sync::Arc;
+        use tokio::sync::{broadcast, RwLock};
+
+        let (broadcast_tx, _) = broadcast::channel(256);
+        let (admin_broadcast_tx, _) = broadcast::channel(64);
+        let db = ChatDb::open(std::path::Path::new(":memory:")).expect("in-memory db");
+
+        let state = ServerState {
+            config: RuneConfig::default(),
+            token: Some("my-secret-token".into()),
+            admin_token: None,
+            files: Arc::new(RwLock::new(std::collections::HashMap::new())),
+            active_file: Arc::new(RwLock::new("main.md".into())),
+            models: vec!["gpt-4o".into()],
+            active_model: Arc::new(RwLock::new("gpt-4o".into())),
+            broadcast_tx,
+            admin_broadcast_tx,
+            chat_db: db,
+        };
+
+        assert_eq!(state.token.as_deref(), Some("my-secret-token"));
+        assert!(state.admin_token.is_none());
+        assert_eq!(*state.active_file.read().await, "main.md");
+    }
+
+    #[tokio::test]
+    async fn test_server_state_broadcast_channel() {
+        use crate::config::RuneConfig;
+        use std::sync::Arc;
+        use tokio::sync::{broadcast, RwLock};
+
+        let (broadcast_tx, mut broadcast_rx) = broadcast::channel(256);
+        let (admin_broadcast_tx, _) = broadcast::channel(64);
+        let db = ChatDb::open(std::path::Path::new(":memory:")).expect("in-memory db");
+
+        let state = ServerState {
+            config: RuneConfig::default(),
+            token: None,
+            admin_token: None,
+            files: Arc::new(RwLock::new(std::collections::HashMap::new())),
+            active_file: Arc::new(RwLock::new(String::new())),
+            models: vec![],
+            active_model: Arc::new(RwLock::new(String::new())),
+            broadcast_tx,
+            admin_broadcast_tx,
+            chat_db: db,
+        };
+
+        // Verify broadcast channel is functional
+        state.broadcast_tx.send("hello".into()).unwrap();
+        let msg = broadcast_rx.recv().await.unwrap();
+        assert_eq!(msg, "hello");
+    }
+
+    #[tokio::test]
+    async fn test_data_dir_db_path() {
+        std::env::set_var("HOME", "/tmp/testrun");
+        let db_path = data_dir().join("chat.db");
+        assert_eq!(db_path, std::path::PathBuf::from("/tmp/testrun/.rune/chat.db"));
+    }
+
+    // ──────────────────────────────────────────────
+    // run() — startup smoke test (cancelled quickly)
+    // ──────────────────────────────────────────────
+
+    /// Smoke-test: call `run()` on a random port and immediately cancel it.
+    /// This covers the initialization path (db open, model parse, state build,
+    /// router construction, addr setup, token/admin prints) without actually
+    /// waiting for HTTP traffic.
+    #[tokio::test]
+    async fn test_run_startup_and_cancel() {
+        use crate::config::RuneConfig;
+        use std::net::{IpAddr, Ipv4Addr};
+        use tokio::time::{timeout, Duration};
+
+        std::env::set_var("HOME", "/tmp/test_run_home");
+
+        let config = RuneConfig::default();
+        let opts = ServeOptions {
+            port: 19527, // Use a fixed high port unlikely to conflict
+            bind: IpAddr::V4(Ipv4Addr::LOCALHOST),
+            token: Some("test-tok".into()),
+            admin_token: Some("test-admin".into()),
+        };
+
+        // run() binds and serves; we cancel after 100ms
+        let result = timeout(
+            Duration::from_millis(100),
+            run(config, opts),
+        ).await;
+
+        // Timeout means the server started listening (good);
+        // an Err(Elapsed) is expected and correct.
+        assert!(result.is_err(), "expected timeout, got early return");
+    }
+
+    #[tokio::test]
+    async fn test_run_no_token_startup() {
+        use crate::config::RuneConfig;
+        use std::net::{IpAddr, Ipv4Addr};
+        use tokio::time::{timeout, Duration};
+
+        std::env::set_var("HOME", "/tmp/test_run_home2");
+
+        let config = RuneConfig::default();
+        let opts = ServeOptions {
+            port: 19528,
+            bind: IpAddr::V4(Ipv4Addr::LOCALHOST),
+            token: None,
+            admin_token: None,
+        };
+
+        let result = timeout(
+            Duration::from_millis(100),
+            run(config, opts),
+        ).await;
+        assert!(result.is_err());
+    }
 }
