@@ -125,17 +125,23 @@ pub async fn run(config: RuneConfig, opts: ServeOptions) {
         if is_localhost(addr.ip()) {
             return next.run(req).await;
         }
-        // Check token
+        // Check token from header OR query param (EventSource can't set headers)
         if let Some(ref expected) = state.token {
-            let provided = req.headers()
+            let from_header = req.headers()
                 .get("authorization")
                 .and_then(|v| v.to_str().ok())
-                .and_then(|v| v.strip_prefix("Bearer "));
+                .and_then(|v| v.strip_prefix("Bearer "))
+                .map(|s| s.to_string());
+            let from_query = req.uri().query()
+                .and_then(|q| q.split('&')
+                    .find(|p| p.starts_with("token="))
+                    .map(|p| p.trim_start_matches("token=").to_string()));
+            let provided = from_header.or(from_query);
             // Also accept admin token
             let admin_ok = state.admin_token.as_deref()
-                .map(|at| provided == Some(at))
+                .map(|at| provided.as_deref() == Some(at))
                 .unwrap_or(false);
-            if provided != Some(expected.as_str()) && !admin_ok {
+            if provided.as_deref() != Some(expected.as_str()) && !admin_ok {
                 let body = axum::Json(serde_json::json!({"ok": false, "error": "Authentication failed"}));
                 return (StatusCode::UNAUTHORIZED, body).into_response();
             }
@@ -145,7 +151,6 @@ pub async fn run(config: RuneConfig, opts: ServeOptions) {
 
     // API routes with auth middleware
     let api_routes = Router::new()
-        .route("/api/events", get(api::events_handler))
         .route("/api/chat", post(api::chat_handler))
         .route("/api/file/create", post(api::file_create_handler))
         .route("/api/file/delete", post(api::file_delete_handler))
@@ -164,9 +169,10 @@ pub async fn run(config: RuneConfig, opts: ServeOptions) {
         .route("/api/dir/browse", post(api::dir_browse_handler))
         .layer(axum_mw::from_fn_with_state(state.clone(), auth_middleware));
 
-    // Static routes (no auth needed)
+    // Static + SSE routes (SSE has its own auth logic inside the handler)
     let app = Router::new()
         .route("/", get(index_handler))
+        .route("/api/events", get(api::events_handler))
         .route("/favicon.ico", get(favicon_handler))
         .route("/favicon.svg", get(favicon_handler))
         .route("/assets/{*path}", get(static_handler))
@@ -462,17 +468,23 @@ mod tests {
         if is_localhost(addr.ip()) {
             return next.run(req).await;
         }
-        // Check token
+        // Check token from header OR query param (EventSource can't set headers)
         if let Some(ref expected) = state.token {
-            let provided = req.headers()
+            let from_header = req.headers()
                 .get("authorization")
                 .and_then(|v| v.to_str().ok())
-                .and_then(|v| v.strip_prefix("Bearer "));
+                .and_then(|v| v.strip_prefix("Bearer "))
+                .map(|s| s.to_string());
+            let from_query = req.uri().query()
+                .and_then(|q| q.split('&')
+                    .find(|p| p.starts_with("token="))
+                    .map(|p| p.trim_start_matches("token=").to_string()));
+            let provided = from_header.or(from_query);
             // Also accept admin token
             let admin_ok = state.admin_token.as_deref()
-                .map(|at| provided == Some(at))
+                .map(|at| provided.as_deref() == Some(at))
                 .unwrap_or(false);
-            if provided != Some(expected.as_str()) && !admin_ok {
+            if provided.as_deref() != Some(expected.as_str()) && !admin_ok {
                 let body = axum::Json(serde_json::json!({"ok": false, "error": "Authentication failed"}));
                 return (StatusCode::UNAUTHORIZED, body).into_response();
             }
@@ -510,17 +522,23 @@ mod tests {
         if is_localhost(addr.ip()) {
             return next.run(req).await;
         }
-        // Check token
+        // Check token from header OR query param (EventSource can't set headers)
         if let Some(ref expected) = state.token {
-            let provided = req.headers()
+            let from_header = req.headers()
                 .get("authorization")
                 .and_then(|v| v.to_str().ok())
-                .and_then(|v| v.strip_prefix("Bearer "));
+                .and_then(|v| v.strip_prefix("Bearer "))
+                .map(|s| s.to_string());
+            let from_query = req.uri().query()
+                .and_then(|q| q.split('&')
+                    .find(|p| p.starts_with("token="))
+                    .map(|p| p.trim_start_matches("token=").to_string()));
+            let provided = from_header.or(from_query);
             // Also accept admin token
             let admin_ok = state.admin_token.as_deref()
-                .map(|at| provided == Some(at))
+                .map(|at| provided.as_deref() == Some(at))
                 .unwrap_or(false);
-            if provided != Some(expected.as_str()) && !admin_ok {
+            if provided.as_deref() != Some(expected.as_str()) && !admin_ok {
                 let body = axum::Json(serde_json::json!({"ok": false, "error": "Authentication failed"}));
                 return (StatusCode::UNAUTHORIZED, body).into_response();
             }
@@ -564,17 +582,23 @@ mod tests {
         if is_localhost(addr.ip()) {
             return next.run(req).await;
         }
-        // Check token
+        // Check token from header OR query param (EventSource can't set headers)
         if let Some(ref expected) = state.token {
-            let provided = req.headers()
+            let from_header = req.headers()
                 .get("authorization")
                 .and_then(|v| v.to_str().ok())
-                .and_then(|v| v.strip_prefix("Bearer "));
+                .and_then(|v| v.strip_prefix("Bearer "))
+                .map(|s| s.to_string());
+            let from_query = req.uri().query()
+                .and_then(|q| q.split('&')
+                    .find(|p| p.starts_with("token="))
+                    .map(|p| p.trim_start_matches("token=").to_string()));
+            let provided = from_header.or(from_query);
             // Also accept admin token
             let admin_ok = state.admin_token.as_deref()
-                .map(|at| provided == Some(at))
+                .map(|at| provided.as_deref() == Some(at))
                 .unwrap_or(false);
-            if provided != Some(expected.as_str()) && !admin_ok {
+            if provided.as_deref() != Some(expected.as_str()) && !admin_ok {
                 let body = axum::Json(serde_json::json!({"ok": false, "error": "Authentication failed"}));
                 return (StatusCode::UNAUTHORIZED, body).into_response();
             }
@@ -618,17 +642,23 @@ mod tests {
         if is_localhost(addr.ip()) {
             return next.run(req).await;
         }
-        // Check token
+        // Check token from header OR query param (EventSource can't set headers)
         if let Some(ref expected) = state.token {
-            let provided = req.headers()
+            let from_header = req.headers()
                 .get("authorization")
                 .and_then(|v| v.to_str().ok())
-                .and_then(|v| v.strip_prefix("Bearer "));
+                .and_then(|v| v.strip_prefix("Bearer "))
+                .map(|s| s.to_string());
+            let from_query = req.uri().query()
+                .and_then(|q| q.split('&')
+                    .find(|p| p.starts_with("token="))
+                    .map(|p| p.trim_start_matches("token=").to_string()));
+            let provided = from_header.or(from_query);
             // Also accept admin token
             let admin_ok = state.admin_token.as_deref()
-                .map(|at| provided == Some(at))
+                .map(|at| provided.as_deref() == Some(at))
                 .unwrap_or(false);
-            if provided != Some(expected.as_str()) && !admin_ok {
+            if provided.as_deref() != Some(expected.as_str()) && !admin_ok {
                 let body = axum::Json(serde_json::json!({"ok": false, "error": "Authentication failed"}));
                 return (StatusCode::UNAUTHORIZED, body).into_response();
             }
@@ -664,17 +694,23 @@ mod tests {
         if is_localhost(addr.ip()) {
             return next.run(req).await;
         }
-        // Check token
+        // Check token from header OR query param (EventSource can't set headers)
         if let Some(ref expected) = state.token {
-            let provided = req.headers()
+            let from_header = req.headers()
                 .get("authorization")
                 .and_then(|v| v.to_str().ok())
-                .and_then(|v| v.strip_prefix("Bearer "));
+                .and_then(|v| v.strip_prefix("Bearer "))
+                .map(|s| s.to_string());
+            let from_query = req.uri().query()
+                .and_then(|q| q.split('&')
+                    .find(|p| p.starts_with("token="))
+                    .map(|p| p.trim_start_matches("token=").to_string()));
+            let provided = from_header.or(from_query);
             // Also accept admin token
             let admin_ok = state.admin_token.as_deref()
-                .map(|at| provided == Some(at))
+                .map(|at| provided.as_deref() == Some(at))
                 .unwrap_or(false);
-            if provided != Some(expected.as_str()) && !admin_ok {
+            if provided.as_deref() != Some(expected.as_str()) && !admin_ok {
                 let body = axum::Json(serde_json::json!({"ok": false, "error": "Authentication failed"}));
                 return (StatusCode::UNAUTHORIZED, body).into_response();
             }
@@ -710,17 +746,23 @@ mod tests {
         if is_localhost(addr.ip()) {
             return next.run(req).await;
         }
-        // Check token
+        // Check token from header OR query param (EventSource can't set headers)
         if let Some(ref expected) = state.token {
-            let provided = req.headers()
+            let from_header = req.headers()
                 .get("authorization")
                 .and_then(|v| v.to_str().ok())
-                .and_then(|v| v.strip_prefix("Bearer "));
+                .and_then(|v| v.strip_prefix("Bearer "))
+                .map(|s| s.to_string());
+            let from_query = req.uri().query()
+                .and_then(|q| q.split('&')
+                    .find(|p| p.starts_with("token="))
+                    .map(|p| p.trim_start_matches("token=").to_string()));
+            let provided = from_header.or(from_query);
             // Also accept admin token
             let admin_ok = state.admin_token.as_deref()
-                .map(|at| provided == Some(at))
+                .map(|at| provided.as_deref() == Some(at))
                 .unwrap_or(false);
-            if provided != Some(expected.as_str()) && !admin_ok {
+            if provided.as_deref() != Some(expected.as_str()) && !admin_ok {
                 let body = axum::Json(serde_json::json!({"ok": false, "error": "Authentication failed"}));
                 return (StatusCode::UNAUTHORIZED, body).into_response();
             }
@@ -756,17 +798,23 @@ mod tests {
         if is_localhost(addr.ip()) {
             return next.run(req).await;
         }
-        // Check token
+        // Check token from header OR query param (EventSource can't set headers)
         if let Some(ref expected) = state.token {
-            let provided = req.headers()
+            let from_header = req.headers()
                 .get("authorization")
                 .and_then(|v| v.to_str().ok())
-                .and_then(|v| v.strip_prefix("Bearer "));
+                .and_then(|v| v.strip_prefix("Bearer "))
+                .map(|s| s.to_string());
+            let from_query = req.uri().query()
+                .and_then(|q| q.split('&')
+                    .find(|p| p.starts_with("token="))
+                    .map(|p| p.trim_start_matches("token=").to_string()));
+            let provided = from_header.or(from_query);
             // Also accept admin token
             let admin_ok = state.admin_token.as_deref()
-                .map(|at| provided == Some(at))
+                .map(|at| provided.as_deref() == Some(at))
                 .unwrap_or(false);
-            if provided != Some(expected.as_str()) && !admin_ok {
+            if provided.as_deref() != Some(expected.as_str()) && !admin_ok {
                 let body = axum::Json(serde_json::json!({"ok": false, "error": "Authentication failed"}));
                 return (StatusCode::UNAUTHORIZED, body).into_response();
             }

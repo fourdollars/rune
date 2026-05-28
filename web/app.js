@@ -10,6 +10,7 @@ let currentFilename = '';
 let fileList = [];
 let specContent = '';
 let isConnected = false;
+let evtSource = null;
 let loggedOut   = false;
 let editorDirty = false;
 let debounceTimer = null;
@@ -258,11 +259,14 @@ document.getElementById('nickname-input').addEventListener('keydown', (e) => {
 
 // --- Connection ---
 function connect() {
+    if (evtSource) { evtSource.close(); evtSource = null; }
+
     const params = new URLSearchParams();
     if (myNickname) params.set('nickname', myNickname);
     if (myToken) params.set('token', myToken);
 
-    const evtSource = new EventSource('/api/events?' + params.toString());
+    evtSource = new EventSource('/api/events?' + params.toString());
+    let authFailed = false;
 
     evtSource.onopen = () => {
         isConnected = true;
@@ -271,6 +275,12 @@ function connect() {
 
     evtSource.onerror = (e) => {
         isConnected = false;
+        if (authFailed) {
+            // Don't reconnect on auth failure — show login
+            evtSource.close();
+            evtSource = null;
+            return;
+        }
         console.error('SSE error:', e);
         addSystemMessage('Disconnected. Reconnecting...');
     };
@@ -289,6 +299,16 @@ function connect() {
         evtSource.addEventListener(type, (e) => {
             try {
                 const msg = JSON.parse(e.data);
+                // Handle auth failure: close SSE, show login modal
+                if (msg.type === 'error' && msg.message && msg.message.includes('Authentication failed')) {
+                    authFailed = true;
+                    evtSource.close();
+                    evtSource = null;
+                    isConnected = false;
+                    addSystemMessage('Authentication failed. Please check your token.');
+                    document.getElementById('nickname-modal').classList.remove('hidden');
+                    return;
+                }
                 handleMessage(msg);
             } catch(err) {
                 console.error('Parse error:', err, e.data);
