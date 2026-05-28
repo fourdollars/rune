@@ -412,6 +412,11 @@ function sendMessage() {
     chatInput.style.height = 'auto';
 }
 
+function fmtTime(unixSec) {
+    const d = unixSec ? new Date(unixSec * 1000) : new Date();
+    return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false });
+}
+
 function addChatMessage(nickname, content) {
     const isMe = nickname === myNickname;
     const div = document.createElement('div');
@@ -419,7 +424,13 @@ function addChatMessage(nickname, content) {
 
     const sender = document.createElement('div');
     sender.className = 'sender';
-    sender.textContent = isMe ? `🧑 ${nickname} (you)` : `👤 ${nickname}`;
+    const nameSpan = document.createElement('span');
+    nameSpan.textContent = isMe ? `🧑 ${nickname} (you)` : `👤 ${nickname}`;
+    const timeSpan = document.createElement('span');
+    timeSpan.className = 'msg-time';
+    timeSpan.textContent = fmtTime(null);
+    sender.appendChild(nameSpan);
+    sender.appendChild(timeSpan);
 
     const body = document.createElement('div');
     body.className = 'body';
@@ -447,14 +458,34 @@ function replayHistory(messages) {
     addSystemMessage('── archived ──');
     for (const m of messages) {
         if (m.role === 'user') {
-            addChatMessage(m.nickname, m.content);
+            // Render history user message with original timestamp
+            const isMe = m.nickname === myNickname;
+            const div = document.createElement('div');
+            div.className = `chat-msg ${isMe ? 'user' : 'other'}`;
+            const sender = document.createElement('div');
+            sender.className = 'sender';
+            const nameSpan = document.createElement('span');
+            nameSpan.textContent = isMe ? `🧑 ${m.nickname} (you)` : `👤 ${m.nickname}`;
+            const timeSpan = document.createElement('span');
+            timeSpan.className = 'msg-time';
+            timeSpan.textContent = fmtTime(m.created_at || null);
+            sender.appendChild(nameSpan);
+            sender.appendChild(timeSpan);
+            const body = document.createElement('div');
+            body.className = 'body';
+            body.textContent = m.content;
+            div.appendChild(sender);
+            div.appendChild(body);
+            chatMessages.appendChild(div);
         } else if (m.role === 'assistant') {
             // Render as completed assistant message
             const div = document.createElement('div');
             div.className = 'chat-msg assistant';
             const sender = document.createElement('div');
             sender.className = 'sender';
-            sender.textContent = 'ᚱᚢᚾᛖ';
+            const nameSpan = document.createElement('span');
+            nameSpan.textContent = 'ᚱᚢᚾᛖ';
+            sender.appendChild(nameSpan);
             // Attach model + token meta if available
             if (m.model || m.tokens_in || m.tokens_out) {
                 const meta = document.createElement('span');
@@ -465,6 +496,10 @@ function replayHistory(messages) {
                 meta.textContent = parts.join(' · ');
                 sender.appendChild(meta);
             }
+            const timeSpan = document.createElement('span');
+            timeSpan.className = 'msg-time';
+            timeSpan.textContent = fmtTime(m.created_at || null);
+            sender.appendChild(timeSpan);
             const body = document.createElement('div');
             body.className = 'body';
             if (typeof marked !== 'undefined') {
@@ -499,7 +534,13 @@ function appendToLastAssistant(token) {
 
         const sender = document.createElement('div');
         sender.className = 'sender';
-        sender.textContent = 'ᚱᚢᚾᛖ';
+        const nameSpan = document.createElement('span');
+        nameSpan.textContent = 'ᚱᚢᚾᛖ';
+        const timeSpan = document.createElement('span');
+        timeSpan.className = 'msg-time';
+        timeSpan.textContent = fmtTime(null);
+        sender.appendChild(nameSpan);
+        sender.appendChild(timeSpan);
 
         const body = document.createElement('div');
         body.className = 'body';
@@ -535,15 +576,19 @@ function attachMetaToLastAssistant(model, tokIn, tokOut) {
     const sender = target.querySelector('.sender');
     if (!sender) return;
     // Remove old meta if any
-    const old = sender.querySelector('.msg-meta');
-    if (old) old.remove();
+    const oldMeta = sender.querySelector('.msg-meta');
+    if (oldMeta) oldMeta.remove();
+    if (!model && !tokIn && !tokOut) return;
     const meta = document.createElement('span');
     meta.className = 'msg-meta';
     let parts = [];
     if (model) parts.push(model);
     if (tokIn || tokOut) parts.push(`↑${tokIn||0} ↓${tokOut||0}`);
     meta.textContent = parts.join(' · ');
-    sender.appendChild(meta);
+    // Insert before .msg-time if present
+    const timeEl = sender.querySelector('.msg-time');
+    if (timeEl) sender.insertBefore(meta, timeEl);
+    else sender.appendChild(meta);
 }
 
 function showApprovalRequest(id, detail) {

@@ -1131,7 +1131,7 @@ pre.hljs-pre:hover .copy-btn {
     text-decoration: underline;
 }
 
-/* --- Message metadata (model + tokens) --- */
+/* --- Message metadata (model + tokens + time) --- */
 .sender {
     display: flex;
     align-items: baseline;
@@ -1143,4 +1143,12 @@ pre.hljs-pre:hover .copy-btn {
     font-weight: normal;
     opacity: 0.75;
     white-space: nowrap;
+}
+.msg-time {
+    margin-left: auto;
+    font-size: 10px;
+    color: var(--text-muted, #777);
+    opacity: 0.6;
+    white-space: nowrap;
+    padding-left: 8px;
 }
