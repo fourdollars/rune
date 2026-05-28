@@ -57,6 +57,16 @@ body {
     flex-shrink: 0;
 }
 
+.panel-left.fullscreen {
+    width: 100%;
+    max-width: none;
+    border-right: none;
+}
+
+.panel-left.fullscreen .resize-handle {
+    display: none;
+}
+
 .panel-right {
     width: var(--panel-width);
     min-width: 160px;

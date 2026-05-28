@@ -464,6 +464,26 @@ function updateChatInputState() {
         chatInput.disabled = false;
         chatInput.placeholder = 'Type a message...';
     }
+    applyNoSessionLayout();
+}
+
+function applyNoSessionLayout() {
+    const panelLeft = document.getElementById('panel-left');
+    const panelCenter = document.getElementById('panel-center');
+    const panelRight = document.getElementById('panel-right');
+
+    if (!currentSessionId) {
+        // No session: expand session panel, hide everything else
+        panelCenter.classList.add('hidden');
+        panelRight.classList.add('hidden');
+        panelLeft.classList.remove('collapsed');
+        panelLeft.classList.add('fullscreen');
+    } else {
+        // Session active: restore normal layout
+        panelLeft.classList.remove('fullscreen');
+        panelCenter.classList.remove('hidden');
+        panelRight.classList.remove('hidden');
+    }
 }
 
 function fmtTime(unixSec) {
