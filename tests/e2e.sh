@@ -199,6 +199,23 @@ set -e
 # Will fail (invalid key) but should not panic or show "unknown provider"
 assert_not_contains "$OUT" "unknown provider" "RUNE_PROVIDER=openai accepted"
 
+# ── WS E2E Tests (login, archive, search) ─────────────────
+echo ""
+echo "── WebSocket E2E ──────────────────────"
+WS_E2E="$(dirname "$0")/ws_e2e.py"
+if command -v python3 >/dev/null 2>&1 && python3 -c "import websockets" 2>/dev/null; then
+    if python3 "$WS_E2E" 2>&1; then
+        PASS=$((PASS + 11))
+    else
+        WS_FAIL=$(python3 "$WS_E2E" 2>&1 | grep -c "✗" || true)
+        WS_PASS=$(python3 "$WS_E2E" 2>&1 | grep -c "✓" || true)
+        PASS=$((PASS + WS_PASS))
+        FAIL=$((FAIL + WS_FAIL))
+    fi
+else
+    dim "  (skipped: python3 or websockets not available)"
+fi
+
 # ── Summary ───────────────────────────────────────────────
 echo ""
 echo "═══════════════════════════════════════"
