@@ -1306,74 +1306,109 @@ function renderCollectionList() {
     if (!tree) return;
     tree.innerHTML = '';
     if (collections.length === 0) {
-        tree.innerHTML = '<div style="padding:12px;color:var(--text-muted);font-size:11px;text-align:center">No collections yet.<br>Click + to create one.</div>';
+        tree.innerHTML = '<div class="explorer-empty">No collections yet.<br>Click <b>+</b> to create one.</div>';
         return;
     }
     collections.forEach(s => {
-        const item = document.createElement('div');
-        item.className = 'collection-item';
-        item.dataset.sessionId = s.id;
+        const section = document.createElement('div');
+        section.className = 'explorer-section';
 
-        const header = document.createElement('div');
-        header.className = 'collection-header' + (s.id === currentCollectionId ? ' active' : '');
+        // Folder row
+        const folderRow = document.createElement('div');
+        folderRow.className = 'explorer-row' + (s.id === currentCollectionId && !(s.files||[]).length ? ' active' : '');
+        folderRow.onclick = () => {
+            const children = section.querySelector('.explorer-children');
+            const chev = folderRow.querySelector('.chevron');
+            if (children.classList.contains('collapsed')) {
+                children.classList.remove('collapsed');
+                chev.classList.add('open');
+            } else {
+                children.classList.add('collapsed');
+                chev.classList.remove('open');
+            }
+            switchCollection(s.id);
+        };
 
-        const name = document.createElement('span');
-        name.className = 'collection-name';
-        name.textContent = s.name;
-        name.onclick = () => switchCollection(s.id);
+        const chevron = document.createElement('span');
+        chevron.className = 'chevron open';
+        chevron.textContent = '›';
 
-                header.appendChild(name);
+        const folderIcon = document.createElement('span');
+        folderIcon.className = 'icon';
+        folderIcon.textContent = (s.id === currentCollectionId) ? '📂' : '📁';
+
+        const folderLabel = document.createElement('span');
+        folderLabel.className = 'label';
+        folderLabel.textContent = s.name;
+        folderLabel.style.fontWeight = '500';
+
+        folderRow.appendChild(chevron);
+        folderRow.appendChild(folderIcon);
+        folderRow.appendChild(folderLabel);
 
         if (isAdmin) {
-            const addFileBtn = document.createElement('span');
-            addFileBtn.className = 'collection-add-file';
-            addFileBtn.textContent = '+';
-            addFileBtn.title = 'New markdown file';
-            addFileBtn.onclick = (e) => {
+            const actions = document.createElement('span');
+            actions.className = 'actions';
+
+            const addBtn = document.createElement('button');
+            addBtn.textContent = '📄+';
+            addBtn.title = 'New file';
+            addBtn.onclick = (e) => {
                 e.stopPropagation();
                 if (s.id !== currentCollectionId) switchCollection(s.id);
                 createFile();
             };
-            header.appendChild(addFileBtn);
+            actions.appendChild(addBtn);
 
-            const gear = document.createElement('span');
-            gear.className = 'collection-gear';
-            gear.textContent = '⚙';
-            gear.onclick = (e) => { e.stopPropagation(); showCollectionSettings(s.id); };
-            header.appendChild(gear);
+            const gearBtn = document.createElement('button');
+            gearBtn.textContent = '⚙';
+            gearBtn.title = 'Settings';
+            gearBtn.onclick = (e) => { e.stopPropagation(); showCollectionSettings(s.id); };
+            actions.appendChild(gearBtn);
+
+            folderRow.appendChild(actions);
         }
 
-        item.appendChild(header);
+        section.appendChild(folderRow);
 
-        // File list
-        const filesDiv = document.createElement('div');
-        filesDiv.className = 'collection-files' ;
-        filesDiv.id = 'collection-files-' + s.id;
+        // Children (files)
+        const children = document.createElement('div');
+        children.className = 'explorer-children';
         (s.files || []).forEach(fname => {
-            const fileEl = document.createElement('div');
-            fileEl.className = 'collection-file';
-            fileEl.textContent = fname;
-            fileEl.title = fname;
-            fileEl.onclick = () => {
+            const fileRow = document.createElement('div');
+            fileRow.className = 'explorer-row';
+            fileRow.style.paddingLeft = '20px';
+
+            const fileIcon = document.createElement('span');
+            fileIcon.className = 'icon';
+            fileIcon.textContent = fname.endsWith('.md') ? '📝' : '📄';
+
+            const fileLabel = document.createElement('span');
+            fileLabel.className = 'label';
+            fileLabel.textContent = fname;
+
+            fileRow.appendChild(fileIcon);
+            fileRow.appendChild(fileLabel);
+
+            fileRow.onclick = () => {
                 if (s.id !== currentCollectionId) switchCollection(s.id);
-                // Switch file
-                api('file/switch', { collection_id: currentCollectionId, name: fname });
-                // Highlight
-                tree.querySelectorAll('.collection-file').forEach(f => f.classList.remove('active'));
-                fileEl.classList.add('active');
-                // Show preview (and editor if both hidden)
+                api('file/switch', { collection_id: s.id, name: fname });
+                tree.querySelectorAll('.explorer-row').forEach(r => r.classList.remove('active'));
+                fileRow.classList.add('active');
                 if (!showPreview) {
                     showPreview = true;
                     if (!showEdit) showEdit = true;
                     applyPanelLayout();
                 }
             };
-            filesDiv.appendChild(fileEl);
+            children.appendChild(fileRow);
         });
-        item.appendChild(filesDiv);
-        tree.appendChild(item);
+        section.appendChild(children);
+        tree.appendChild(section);
     });
 }
+
+
 
 
 
