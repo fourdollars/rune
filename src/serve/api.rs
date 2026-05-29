@@ -53,7 +53,7 @@ pub enum SseMsg {
     #[serde(rename = "history")]
     History { messages: Vec<crate::serve::db::ChatRecord> },
     #[serde(rename = "auth_result")]
-    AuthResult { is_admin: bool },
+    AuthResult { is_admin: bool, is_guest: bool },
     #[serde(rename = "file_list")]
     FileList { files: Vec<FileEntry>, active: String },
     #[serde(rename = "file_content")]
@@ -248,6 +248,13 @@ pub fn check_admin(state: &ServerState, admin_token: Option<&str>) -> bool {
     }
 }
 
+pub fn check_guest(state: &ServerState, token: Option<&str>) -> bool {
+    match &state.guest_token {
+        None => false,
+        Some(gt) => !gt.is_empty() && token == Some(gt.as_str()),
+    }
+}
+
 pub fn is_valid_filename(name: &str) -> bool {
     !name.is_empty()
         && name.ends_with(".md")
@@ -303,7 +310,8 @@ pub async fn events_handler(
 
     // Auth check
     let is_admin = check_admin(&state, token);
-    let token_ok = check_token(&state, token) || is_admin;
+    let is_guest = check_guest(&state, token);
+    let token_ok = check_token(&state, token) || is_admin || is_guest;
     if !token_ok {
         // Return 401 as a one-shot SSE error then close
         let err_stream = futures::stream::once(async {
@@ -324,7 +332,7 @@ pub async fn events_handler(
     let mut init_msgs = Vec::new();
 
     // Auth result
-    init_msgs.push(SseMsg::AuthResult { is_admin });
+    init_msgs.push(SseMsg::AuthResult { is_admin, is_guest });
 
     // Model list
     let active_model = state.active_model.read().await.clone();
@@ -1391,6 +1399,7 @@ mod tests {
                 name: "Test".into(),
                 files: vec!["spec.md".into()],
                 public: false,
+                public_files: vec![],
             }],
             active: "test".into(),
         };
@@ -1461,6 +1470,7 @@ mod tests {
             name: "Session One".into(),
             files: vec!["readme.md".into()],
             public: false,
+                public_files: vec![],
         };
         let json = serde_json::to_string(&entry).unwrap();
         assert!(json.contains(r#""id":"s1""#));
@@ -1498,6 +1508,7 @@ mod tests {
             config: crate::config::RuneConfig::default(),
             token,
             admin_token,
+            guest_token: None,
             files: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
             active_file: Arc::new(tokio::sync::RwLock::new(String::new())),
             models: vec!["test-model".into()],
@@ -1567,6 +1578,7 @@ fn test_state(tmp: &TempDir) -> ServerState {
         config: RuneConfig::default(),
         token: None,
         admin_token: Some("admin123".into()),
+        guest_token: None,
         files: Arc::new(RwLock::new(std::collections::HashMap::new())),
         active_file: Arc::new(RwLock::new(String::new())),
         models: vec!["gpt-5-mini".into(), "claude-sonnet-4.6".into()],

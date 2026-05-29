@@ -19,6 +19,7 @@ let specVersion = 0;
 let myNickname = '';
 let myToken = '';
 let isAdmin = false;
+let isGuest = false;
 let availableModels = [];
 
 // --- Note state ---
@@ -409,12 +410,21 @@ function handleMessage(msg) {
             break;
         case 'auth_result':
             isAdmin = msg.is_admin;
+            isGuest = !!msg.is_guest;
             // Rainbow title for admin
             const runeTitle = document.getElementById('rune-title');
             if (runeTitle && isAdmin) {
                 runeTitle.classList.add('rune-title-rainbow');
             }
             if (isAdmin) addSystemMessage('👑 You are connected as admin');
+            if (isGuest) {
+                addSystemMessage('👁 Read-only guest mode');
+                // Hide chat input and action buttons
+                const chatInput = document.getElementById('chat-input');
+                if (chatInput) chatInput.closest('.chat-input-area').style.display = 'none';
+                const explorerActions = document.querySelector('.explorer-actions');
+                if (explorerActions) explorerActions.style.display = 'none';
+            }
             break;
         case 'model_list':
             availableModels = msg.models || [];

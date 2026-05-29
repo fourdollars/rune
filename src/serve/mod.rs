@@ -44,6 +44,8 @@ pub struct ServerState {
     pub token: Option<String>,
     /// Admin token — clients presenting this token get admin role.
     pub admin_token: Option<String>,
+    /// Guest token — read-only access, no mutations allowed.
+    pub guest_token: Option<String>,
     /// All markdown files: filename → content.
     pub files: Arc<RwLock<std::collections::HashMap<String, String>>>,
     /// Currently active filename shown in the editor.
@@ -65,6 +67,7 @@ pub struct NotesOptions {
     pub bind: IpAddr,
     pub token: Option<String>,
     pub admin_token: Option<String>,
+    pub guest_token: Option<String>,
 }
 
 impl Default for NotesOptions {
@@ -74,6 +77,7 @@ impl Default for NotesOptions {
             bind: IpAddr::V4(Ipv4Addr::LOCALHOST),
             token: None,
             admin_token: None,
+            guest_token: None,
         }
     }
 }
@@ -125,6 +129,7 @@ pub async fn run(config: RuneConfig, opts: NotesOptions) {
         config: config.clone(),
         token: opts.token.clone(),
         admin_token: opts.admin_token.clone(),
+        guest_token: opts.guest_token.clone(),
         files: Arc::new(RwLock::new(initial_files)),
         active_file: Arc::new(RwLock::new(String::new())),
         models,
@@ -157,13 +162,28 @@ pub async fn run(config: RuneConfig, opts: NotesOptions) {
                     .find(|p| p.starts_with("token="))
                     .map(|p| p.trim_start_matches("token=").to_string()));
             let provided = from_header.or(from_query);
-            // Also accept admin token
+            // Also accept admin token or guest token
             let admin_ok = state.admin_token.as_deref()
                 .map(|at| provided.as_deref() == Some(at))
                 .unwrap_or(false);
-            if provided.as_deref() != Some(expected.as_str()) && !admin_ok {
+            let guest_ok = state.guest_token.as_deref()
+                .map(|gt| !gt.is_empty() && provided.as_deref() == Some(gt))
+                .unwrap_or(false);
+            if provided.as_deref() != Some(expected.as_str()) && !admin_ok && !guest_ok {
                 let body = axum::Json(serde_json::json!({"ok": false, "error": "Authentication failed"}));
                 return (StatusCode::UNAUTHORIZED, body).into_response();
+            }
+            // Guest: block all mutations (only allow read-only endpoints)
+            if guest_ok {
+                let path = req.uri().path().to_string();
+                let allowed_guest_paths = [
+                    "/api/note/switch",
+                    "/api/file/switch",
+                ];
+                if !allowed_guest_paths.iter().any(|p| path == *p) {
+                    let body = axum::Json(serde_json::json!({"ok": false, "error": "Guest access is read-only"}));
+                    return (StatusCode::FORBIDDEN, body).into_response();
+                }
             }
         }
         next.run(req).await
@@ -215,6 +235,9 @@ pub async fn run(config: RuneConfig, opts: NotesOptions) {
     }
     if opts.admin_token.is_some() {
         println!("  👑 Admin token configured");
+    }
+    if opts.guest_token.is_some() {
+        println!("  👁 Guest token configured (read-only)");
     }
 
     // Ignore SIGHUP so server stays up when SSH session ends
@@ -506,13 +529,28 @@ mod tests {
                     .find(|p| p.starts_with("token="))
                     .map(|p| p.trim_start_matches("token=").to_string()));
             let provided = from_header.or(from_query);
-            // Also accept admin token
+            // Also accept admin token or guest token
             let admin_ok = state.admin_token.as_deref()
                 .map(|at| provided.as_deref() == Some(at))
                 .unwrap_or(false);
-            if provided.as_deref() != Some(expected.as_str()) && !admin_ok {
+            let guest_ok = state.guest_token.as_deref()
+                .map(|gt| !gt.is_empty() && provided.as_deref() == Some(gt))
+                .unwrap_or(false);
+            if provided.as_deref() != Some(expected.as_str()) && !admin_ok && !guest_ok {
                 let body = axum::Json(serde_json::json!({"ok": false, "error": "Authentication failed"}));
                 return (StatusCode::UNAUTHORIZED, body).into_response();
+            }
+            // Guest: block all mutations (only allow read-only endpoints)
+            if guest_ok {
+                let path = req.uri().path().to_string();
+                let allowed_guest_paths = [
+                    "/api/note/switch",
+                    "/api/file/switch",
+                ];
+                if !allowed_guest_paths.iter().any(|p| path == *p) {
+                    let body = axum::Json(serde_json::json!({"ok": false, "error": "Guest access is read-only"}));
+                    return (StatusCode::FORBIDDEN, body).into_response();
+                }
             }
         }
         next.run(req).await
@@ -560,13 +598,28 @@ mod tests {
                     .find(|p| p.starts_with("token="))
                     .map(|p| p.trim_start_matches("token=").to_string()));
             let provided = from_header.or(from_query);
-            // Also accept admin token
+            // Also accept admin token or guest token
             let admin_ok = state.admin_token.as_deref()
                 .map(|at| provided.as_deref() == Some(at))
                 .unwrap_or(false);
-            if provided.as_deref() != Some(expected.as_str()) && !admin_ok {
+            let guest_ok = state.guest_token.as_deref()
+                .map(|gt| !gt.is_empty() && provided.as_deref() == Some(gt))
+                .unwrap_or(false);
+            if provided.as_deref() != Some(expected.as_str()) && !admin_ok && !guest_ok {
                 let body = axum::Json(serde_json::json!({"ok": false, "error": "Authentication failed"}));
                 return (StatusCode::UNAUTHORIZED, body).into_response();
+            }
+            // Guest: block all mutations (only allow read-only endpoints)
+            if guest_ok {
+                let path = req.uri().path().to_string();
+                let allowed_guest_paths = [
+                    "/api/note/switch",
+                    "/api/file/switch",
+                ];
+                if !allowed_guest_paths.iter().any(|p| path == *p) {
+                    let body = axum::Json(serde_json::json!({"ok": false, "error": "Guest access is read-only"}));
+                    return (StatusCode::FORBIDDEN, body).into_response();
+                }
             }
         }
         next.run(req).await
@@ -620,13 +673,28 @@ mod tests {
                     .find(|p| p.starts_with("token="))
                     .map(|p| p.trim_start_matches("token=").to_string()));
             let provided = from_header.or(from_query);
-            // Also accept admin token
+            // Also accept admin token or guest token
             let admin_ok = state.admin_token.as_deref()
                 .map(|at| provided.as_deref() == Some(at))
                 .unwrap_or(false);
-            if provided.as_deref() != Some(expected.as_str()) && !admin_ok {
+            let guest_ok = state.guest_token.as_deref()
+                .map(|gt| !gt.is_empty() && provided.as_deref() == Some(gt))
+                .unwrap_or(false);
+            if provided.as_deref() != Some(expected.as_str()) && !admin_ok && !guest_ok {
                 let body = axum::Json(serde_json::json!({"ok": false, "error": "Authentication failed"}));
                 return (StatusCode::UNAUTHORIZED, body).into_response();
+            }
+            // Guest: block all mutations (only allow read-only endpoints)
+            if guest_ok {
+                let path = req.uri().path().to_string();
+                let allowed_guest_paths = [
+                    "/api/note/switch",
+                    "/api/file/switch",
+                ];
+                if !allowed_guest_paths.iter().any(|p| path == *p) {
+                    let body = axum::Json(serde_json::json!({"ok": false, "error": "Guest access is read-only"}));
+                    return (StatusCode::FORBIDDEN, body).into_response();
+                }
             }
         }
         next.run(req).await
@@ -680,13 +748,28 @@ mod tests {
                     .find(|p| p.starts_with("token="))
                     .map(|p| p.trim_start_matches("token=").to_string()));
             let provided = from_header.or(from_query);
-            // Also accept admin token
+            // Also accept admin token or guest token
             let admin_ok = state.admin_token.as_deref()
                 .map(|at| provided.as_deref() == Some(at))
                 .unwrap_or(false);
-            if provided.as_deref() != Some(expected.as_str()) && !admin_ok {
+            let guest_ok = state.guest_token.as_deref()
+                .map(|gt| !gt.is_empty() && provided.as_deref() == Some(gt))
+                .unwrap_or(false);
+            if provided.as_deref() != Some(expected.as_str()) && !admin_ok && !guest_ok {
                 let body = axum::Json(serde_json::json!({"ok": false, "error": "Authentication failed"}));
                 return (StatusCode::UNAUTHORIZED, body).into_response();
+            }
+            // Guest: block all mutations (only allow read-only endpoints)
+            if guest_ok {
+                let path = req.uri().path().to_string();
+                let allowed_guest_paths = [
+                    "/api/note/switch",
+                    "/api/file/switch",
+                ];
+                if !allowed_guest_paths.iter().any(|p| path == *p) {
+                    let body = axum::Json(serde_json::json!({"ok": false, "error": "Guest access is read-only"}));
+                    return (StatusCode::FORBIDDEN, body).into_response();
+                }
             }
         }
         next.run(req).await
@@ -732,13 +815,28 @@ mod tests {
                     .find(|p| p.starts_with("token="))
                     .map(|p| p.trim_start_matches("token=").to_string()));
             let provided = from_header.or(from_query);
-            // Also accept admin token
+            // Also accept admin token or guest token
             let admin_ok = state.admin_token.as_deref()
                 .map(|at| provided.as_deref() == Some(at))
                 .unwrap_or(false);
-            if provided.as_deref() != Some(expected.as_str()) && !admin_ok {
+            let guest_ok = state.guest_token.as_deref()
+                .map(|gt| !gt.is_empty() && provided.as_deref() == Some(gt))
+                .unwrap_or(false);
+            if provided.as_deref() != Some(expected.as_str()) && !admin_ok && !guest_ok {
                 let body = axum::Json(serde_json::json!({"ok": false, "error": "Authentication failed"}));
                 return (StatusCode::UNAUTHORIZED, body).into_response();
+            }
+            // Guest: block all mutations (only allow read-only endpoints)
+            if guest_ok {
+                let path = req.uri().path().to_string();
+                let allowed_guest_paths = [
+                    "/api/note/switch",
+                    "/api/file/switch",
+                ];
+                if !allowed_guest_paths.iter().any(|p| path == *p) {
+                    let body = axum::Json(serde_json::json!({"ok": false, "error": "Guest access is read-only"}));
+                    return (StatusCode::FORBIDDEN, body).into_response();
+                }
             }
         }
         next.run(req).await
@@ -784,13 +882,28 @@ mod tests {
                     .find(|p| p.starts_with("token="))
                     .map(|p| p.trim_start_matches("token=").to_string()));
             let provided = from_header.or(from_query);
-            // Also accept admin token
+            // Also accept admin token or guest token
             let admin_ok = state.admin_token.as_deref()
                 .map(|at| provided.as_deref() == Some(at))
                 .unwrap_or(false);
-            if provided.as_deref() != Some(expected.as_str()) && !admin_ok {
+            let guest_ok = state.guest_token.as_deref()
+                .map(|gt| !gt.is_empty() && provided.as_deref() == Some(gt))
+                .unwrap_or(false);
+            if provided.as_deref() != Some(expected.as_str()) && !admin_ok && !guest_ok {
                 let body = axum::Json(serde_json::json!({"ok": false, "error": "Authentication failed"}));
                 return (StatusCode::UNAUTHORIZED, body).into_response();
+            }
+            // Guest: block all mutations (only allow read-only endpoints)
+            if guest_ok {
+                let path = req.uri().path().to_string();
+                let allowed_guest_paths = [
+                    "/api/note/switch",
+                    "/api/file/switch",
+                ];
+                if !allowed_guest_paths.iter().any(|p| path == *p) {
+                    let body = axum::Json(serde_json::json!({"ok": false, "error": "Guest access is read-only"}));
+                    return (StatusCode::FORBIDDEN, body).into_response();
+                }
             }
         }
         next.run(req).await
@@ -836,13 +949,28 @@ mod tests {
                     .find(|p| p.starts_with("token="))
                     .map(|p| p.trim_start_matches("token=").to_string()));
             let provided = from_header.or(from_query);
-            // Also accept admin token
+            // Also accept admin token or guest token
             let admin_ok = state.admin_token.as_deref()
                 .map(|at| provided.as_deref() == Some(at))
                 .unwrap_or(false);
-            if provided.as_deref() != Some(expected.as_str()) && !admin_ok {
+            let guest_ok = state.guest_token.as_deref()
+                .map(|gt| !gt.is_empty() && provided.as_deref() == Some(gt))
+                .unwrap_or(false);
+            if provided.as_deref() != Some(expected.as_str()) && !admin_ok && !guest_ok {
                 let body = axum::Json(serde_json::json!({"ok": false, "error": "Authentication failed"}));
                 return (StatusCode::UNAUTHORIZED, body).into_response();
+            }
+            // Guest: block all mutations (only allow read-only endpoints)
+            if guest_ok {
+                let path = req.uri().path().to_string();
+                let allowed_guest_paths = [
+                    "/api/note/switch",
+                    "/api/file/switch",
+                ];
+                if !allowed_guest_paths.iter().any(|p| path == *p) {
+                    let body = axum::Json(serde_json::json!({"ok": false, "error": "Guest access is read-only"}));
+                    return (StatusCode::FORBIDDEN, body).into_response();
+                }
             }
         }
         next.run(req).await
@@ -906,6 +1034,7 @@ mod tests {
             bind: IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)),
             token: Some("tok".into()),
             admin_token: Some("admin".into()),
+            guest_token: None,
         };
         assert_eq!(opts.port, 8080);
         assert_eq!(opts.bind, IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)));
@@ -958,6 +1087,7 @@ mod tests {
             config: config.clone(),
             token: None,
             admin_token: Some("admin".into()),
+            guest_token: None,
             files: Arc::new(RwLock::new(std::collections::HashMap::new())),
             active_file: Arc::new(RwLock::new(String::new())),
             models: models.clone(),
@@ -986,6 +1116,7 @@ mod tests {
             config: RuneConfig::default(),
             token: Some("my-secret-token".into()),
             admin_token: None,
+            guest_token: None,
             files: Arc::new(RwLock::new(std::collections::HashMap::new())),
             active_file: Arc::new(RwLock::new("main.md".into())),
             models: vec!["gpt-4o".into()],
@@ -1014,6 +1145,7 @@ mod tests {
             config: RuneConfig::default(),
             token: None,
             admin_token: None,
+            guest_token: None,
             files: Arc::new(RwLock::new(std::collections::HashMap::new())),
             active_file: Arc::new(RwLock::new(String::new())),
             models: vec![],
@@ -1058,6 +1190,7 @@ mod tests {
             bind: IpAddr::V4(Ipv4Addr::LOCALHOST),
             token: Some("test-tok".into()),
             admin_token: Some("test-admin".into()),
+            guest_token: None,
         };
 
         // run() binds and serves; we cancel after 100ms
@@ -1085,6 +1218,7 @@ mod tests {
             bind: IpAddr::V4(Ipv4Addr::LOCALHOST),
             token: None,
             admin_token: None,
+            guest_token: None,
         };
 
         let result = timeout(

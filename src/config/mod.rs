@@ -84,6 +84,8 @@ pub struct NotesConfig {
     pub token: Option<String>,
     /// Admin token: clients with this token get admin role (can approve tool requests).
     pub admin_token: Option<String>,
+    /// Guest token: read-only access. Cannot chat, create, edit, or delete anything.
+    pub guest_token: Option<String>,
 }
 
 

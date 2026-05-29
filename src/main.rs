@@ -100,6 +100,7 @@ async fn async_main() {
                 .unwrap_or(IpAddr::V4(Ipv4Addr::LOCALHOST)),
             token: notes_cfg.token.clone(),
             admin_token: notes_cfg.admin_token.clone(),
+            guest_token: notes_cfg.guest_token.clone(),
         };
 
         // CLI flags override config file
