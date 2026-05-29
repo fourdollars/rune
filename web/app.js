@@ -1316,7 +1316,6 @@ function renderCollectionList() {
 
         const header = document.createElement('div');
         header.className = 'collection-header' + (s.id === currentCollectionId ? ' active' : '');
-toggleCollectionFiles(s.id); };
 
         const name = document.createElement('span');
         name.className = 'collection-name';
