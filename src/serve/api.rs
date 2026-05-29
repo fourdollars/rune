@@ -637,6 +637,22 @@ pub async fn note_delete_handler(
 ) -> Json<ApiResponse> {
     match state.chat_db.delete_note(&req.note_id) {
         Ok(true) => {
+            // Remove the note directory if markdown/ is empty (or absent)
+            let note_dir = super::data_dir().join("notes").join(&req.note_id);
+            let md_dir = note_dir.join("markdown");
+            let md_empty = tokio::fs::read_dir(&md_dir).await
+                .map(|_| false) // will check properly below
+                .unwrap_or(true); // dir absent → treat as empty
+            // Re-check properly: read_dir succeeded means dir exists; peek first entry
+            let md_empty = {
+                match tokio::fs::read_dir(&md_dir).await {
+                    Err(_) => true, // markdown/ doesn't exist
+                    Ok(mut rd) => rd.next_entry().await.unwrap_or(None).is_none(),
+                }
+            };
+            if md_empty {
+                let _ = tokio::fs::remove_dir_all(&note_dir).await;
+            }
             broadcast_note_list(&state).await;
             Json(ApiResponse::success())
         }
