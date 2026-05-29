@@ -1121,15 +1121,6 @@ pre.hljs-pre:hover .copy-btn {
     gap: 6px;
 }
 /* Collection tree */
-.collections-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    margin-bottom: 8px;
-}
-
-.collections-header h3 {
-    margin-bottom: 0;
 }
 
 
@@ -1285,6 +1276,7 @@ pre.hljs-pre:hover .copy-btn {
 
 /* ─── Explorer Action Bar ─── */
 .explorer-actions {
+    margin-top: auto;
     display: flex;
     align-items: center;
     justify-content: center;
