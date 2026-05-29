@@ -953,7 +953,7 @@ const PUBLIC_PREVIEW_HTML: &str = r#"<!DOCTYPE html>
 })();
 </script>
 <footer style="max-width:860px;margin:32px auto 16px;padding-top:16px;border-top:1px solid currentColor;opacity:0.3;text-align:center;font-size:12px">
-  Powered by <a href="https://fourdollars.github.io/rune/" style="color:inherit;text-decoration:underline">ᚱᚢᚾᛖ</a>
+  Wrought by <a href="https://fourdollars.github.io/rune/" style="color:inherit;text-decoration:underline">ᚱᚢᚾᛖ</a>
 </footer>
 </body>
 </html>"#;
@@ -982,7 +982,7 @@ pub async fn public_notes_list_handler(
         html.push_str("</ul></li>");
     }
     if !any { html.push_str("<li><em>No public notes available.</em></li>"); }
-    html.push_str("</ul><footer style='margin-top:40px;padding-top:16px;border-top:1px solid #ccc;opacity:0.4;text-align:center;font-size:12px'>Powered by <a href='https://fourdollars.github.io/rune/' style='color:inherit;text-decoration:underline'>ᚱᚢᚾᛖ</a></footer></body></html>");
+    html.push_str("</ul><footer style='margin-top:40px;padding-top:16px;border-top:1px solid #ccc;opacity:0.4;text-align:center;font-size:12px'>Wrought by <a href='https://fourdollars.github.io/rune/' style='color:inherit;text-decoration:underline'>ᚱᚢᚾᛖ</a></footer></body></html>");
     axum::response::Html(html)
 }
 
