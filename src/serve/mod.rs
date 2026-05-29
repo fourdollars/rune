@@ -146,35 +146,6 @@ pub async fn run(config: RuneConfig, opts: NotesOptions) {
         req: axum::http::Request<axum::body::Body>,
         next: axum::middleware::Next,
     ) -> axum::response::Response {
-        // Localhost: skip token auth but still enforce guest restrictions
-        if is_localhost(addr.ip()) {
-            // Extract token to check if it's a guest
-            let from_header = req.headers()
-                .get("authorization")
-                .and_then(|v| v.to_str().ok())
-                .and_then(|v| v.strip_prefix("Bearer "))
-                .map(|s| s.to_string());
-            let from_query = req.uri().query()
-                .and_then(|q| q.split('&')
-                    .find(|p| p.starts_with("token="))
-                    .map(|p| p.trim_start_matches("token=").to_string()));
-            let provided = from_header.or(from_query);
-            let is_guest = state.guest_token.as_deref()
-                .map(|gt| !gt.is_empty() && provided.as_deref() == Some(gt))
-                .unwrap_or(false);
-            if is_guest {
-                let path = req.uri().path().to_string();
-                let allowed_guest_paths = [
-                    "/api/note/switch",
-                    "/api/file/switch",
-                ];
-                if !allowed_guest_paths.iter().any(|p| path == *p) {
-                    let body = axum::Json(serde_json::json!({"ok": false, "error": "Guest access is read-only"}));
-                    return (StatusCode::FORBIDDEN, body).into_response();
-                }
-            }
-            return next.run(req).await;
-        }
         // Check token from header OR query param (EventSource can't set headers)
         if let Some(ref expected) = state.user_token {
             let from_header = req.headers()
@@ -538,35 +509,6 @@ mod tests {
         req: axum::http::Request<axum::body::Body>,
         next: axum::middleware::Next,
     ) -> axum::response::Response {
-        // Localhost: skip token auth but still enforce guest restrictions
-        if is_localhost(addr.ip()) {
-            // Extract token to check if it's a guest
-            let from_header = req.headers()
-                .get("authorization")
-                .and_then(|v| v.to_str().ok())
-                .and_then(|v| v.strip_prefix("Bearer "))
-                .map(|s| s.to_string());
-            let from_query = req.uri().query()
-                .and_then(|q| q.split('&')
-                    .find(|p| p.starts_with("token="))
-                    .map(|p| p.trim_start_matches("token=").to_string()));
-            let provided = from_header.or(from_query);
-            let is_guest = state.guest_token.as_deref()
-                .map(|gt| !gt.is_empty() && provided.as_deref() == Some(gt))
-                .unwrap_or(false);
-            if is_guest {
-                let path = req.uri().path().to_string();
-                let allowed_guest_paths = [
-                    "/api/note/switch",
-                    "/api/file/switch",
-                ];
-                if !allowed_guest_paths.iter().any(|p| path == *p) {
-                    let body = axum::Json(serde_json::json!({"ok": false, "error": "Guest access is read-only"}));
-                    return (StatusCode::FORBIDDEN, body).into_response();
-                }
-            }
-            return next.run(req).await;
-        }
         // Check token from header OR query param (EventSource can't set headers)
         if let Some(ref expected) = state.user_token {
             let from_header = req.headers()
@@ -632,35 +574,6 @@ mod tests {
         req: axum::http::Request<axum::body::Body>,
         next: axum::middleware::Next,
     ) -> axum::response::Response {
-        // Localhost: skip token auth but still enforce guest restrictions
-        if is_localhost(addr.ip()) {
-            // Extract token to check if it's a guest
-            let from_header = req.headers()
-                .get("authorization")
-                .and_then(|v| v.to_str().ok())
-                .and_then(|v| v.strip_prefix("Bearer "))
-                .map(|s| s.to_string());
-            let from_query = req.uri().query()
-                .and_then(|q| q.split('&')
-                    .find(|p| p.starts_with("token="))
-                    .map(|p| p.trim_start_matches("token=").to_string()));
-            let provided = from_header.or(from_query);
-            let is_guest = state.guest_token.as_deref()
-                .map(|gt| !gt.is_empty() && provided.as_deref() == Some(gt))
-                .unwrap_or(false);
-            if is_guest {
-                let path = req.uri().path().to_string();
-                let allowed_guest_paths = [
-                    "/api/note/switch",
-                    "/api/file/switch",
-                ];
-                if !allowed_guest_paths.iter().any(|p| path == *p) {
-                    let body = axum::Json(serde_json::json!({"ok": false, "error": "Guest access is read-only"}));
-                    return (StatusCode::FORBIDDEN, body).into_response();
-                }
-            }
-            return next.run(req).await;
-        }
         // Check token from header OR query param (EventSource can't set headers)
         if let Some(ref expected) = state.user_token {
             let from_header = req.headers()
@@ -732,35 +645,6 @@ mod tests {
         req: axum::http::Request<axum::body::Body>,
         next: axum::middleware::Next,
     ) -> axum::response::Response {
-        // Localhost: skip token auth but still enforce guest restrictions
-        if is_localhost(addr.ip()) {
-            // Extract token to check if it's a guest
-            let from_header = req.headers()
-                .get("authorization")
-                .and_then(|v| v.to_str().ok())
-                .and_then(|v| v.strip_prefix("Bearer "))
-                .map(|s| s.to_string());
-            let from_query = req.uri().query()
-                .and_then(|q| q.split('&')
-                    .find(|p| p.starts_with("token="))
-                    .map(|p| p.trim_start_matches("token=").to_string()));
-            let provided = from_header.or(from_query);
-            let is_guest = state.guest_token.as_deref()
-                .map(|gt| !gt.is_empty() && provided.as_deref() == Some(gt))
-                .unwrap_or(false);
-            if is_guest {
-                let path = req.uri().path().to_string();
-                let allowed_guest_paths = [
-                    "/api/note/switch",
-                    "/api/file/switch",
-                ];
-                if !allowed_guest_paths.iter().any(|p| path == *p) {
-                    let body = axum::Json(serde_json::json!({"ok": false, "error": "Guest access is read-only"}));
-                    return (StatusCode::FORBIDDEN, body).into_response();
-                }
-            }
-            return next.run(req).await;
-        }
         // Check token from header OR query param (EventSource can't set headers)
         if let Some(ref expected) = state.user_token {
             let from_header = req.headers()
@@ -832,35 +716,6 @@ mod tests {
         req: axum::http::Request<axum::body::Body>,
         next: axum::middleware::Next,
     ) -> axum::response::Response {
-        // Localhost: skip token auth but still enforce guest restrictions
-        if is_localhost(addr.ip()) {
-            // Extract token to check if it's a guest
-            let from_header = req.headers()
-                .get("authorization")
-                .and_then(|v| v.to_str().ok())
-                .and_then(|v| v.strip_prefix("Bearer "))
-                .map(|s| s.to_string());
-            let from_query = req.uri().query()
-                .and_then(|q| q.split('&')
-                    .find(|p| p.starts_with("token="))
-                    .map(|p| p.trim_start_matches("token=").to_string()));
-            let provided = from_header.or(from_query);
-            let is_guest = state.guest_token.as_deref()
-                .map(|gt| !gt.is_empty() && provided.as_deref() == Some(gt))
-                .unwrap_or(false);
-            if is_guest {
-                let path = req.uri().path().to_string();
-                let allowed_guest_paths = [
-                    "/api/note/switch",
-                    "/api/file/switch",
-                ];
-                if !allowed_guest_paths.iter().any(|p| path == *p) {
-                    let body = axum::Json(serde_json::json!({"ok": false, "error": "Guest access is read-only"}));
-                    return (StatusCode::FORBIDDEN, body).into_response();
-                }
-            }
-            return next.run(req).await;
-        }
         // Check token from header OR query param (EventSource can't set headers)
         if let Some(ref expected) = state.user_token {
             let from_header = req.headers()
@@ -924,35 +779,6 @@ mod tests {
         req: axum::http::Request<axum::body::Body>,
         next: axum::middleware::Next,
     ) -> axum::response::Response {
-        // Localhost: skip token auth but still enforce guest restrictions
-        if is_localhost(addr.ip()) {
-            // Extract token to check if it's a guest
-            let from_header = req.headers()
-                .get("authorization")
-                .and_then(|v| v.to_str().ok())
-                .and_then(|v| v.strip_prefix("Bearer "))
-                .map(|s| s.to_string());
-            let from_query = req.uri().query()
-                .and_then(|q| q.split('&')
-                    .find(|p| p.starts_with("token="))
-                    .map(|p| p.trim_start_matches("token=").to_string()));
-            let provided = from_header.or(from_query);
-            let is_guest = state.guest_token.as_deref()
-                .map(|gt| !gt.is_empty() && provided.as_deref() == Some(gt))
-                .unwrap_or(false);
-            if is_guest {
-                let path = req.uri().path().to_string();
-                let allowed_guest_paths = [
-                    "/api/note/switch",
-                    "/api/file/switch",
-                ];
-                if !allowed_guest_paths.iter().any(|p| path == *p) {
-                    let body = axum::Json(serde_json::json!({"ok": false, "error": "Guest access is read-only"}));
-                    return (StatusCode::FORBIDDEN, body).into_response();
-                }
-            }
-            return next.run(req).await;
-        }
         // Check token from header OR query param (EventSource can't set headers)
         if let Some(ref expected) = state.user_token {
             let from_header = req.headers()
@@ -1016,35 +842,6 @@ mod tests {
         req: axum::http::Request<axum::body::Body>,
         next: axum::middleware::Next,
     ) -> axum::response::Response {
-        // Localhost: skip token auth but still enforce guest restrictions
-        if is_localhost(addr.ip()) {
-            // Extract token to check if it's a guest
-            let from_header = req.headers()
-                .get("authorization")
-                .and_then(|v| v.to_str().ok())
-                .and_then(|v| v.strip_prefix("Bearer "))
-                .map(|s| s.to_string());
-            let from_query = req.uri().query()
-                .and_then(|q| q.split('&')
-                    .find(|p| p.starts_with("token="))
-                    .map(|p| p.trim_start_matches("token=").to_string()));
-            let provided = from_header.or(from_query);
-            let is_guest = state.guest_token.as_deref()
-                .map(|gt| !gt.is_empty() && provided.as_deref() == Some(gt))
-                .unwrap_or(false);
-            if is_guest {
-                let path = req.uri().path().to_string();
-                let allowed_guest_paths = [
-                    "/api/note/switch",
-                    "/api/file/switch",
-                ];
-                if !allowed_guest_paths.iter().any(|p| path == *p) {
-                    let body = axum::Json(serde_json::json!({"ok": false, "error": "Guest access is read-only"}));
-                    return (StatusCode::FORBIDDEN, body).into_response();
-                }
-            }
-            return next.run(req).await;
-        }
         // Check token from header OR query param (EventSource can't set headers)
         if let Some(ref expected) = state.user_token {
             let from_header = req.headers()
@@ -1108,35 +905,6 @@ mod tests {
         req: axum::http::Request<axum::body::Body>,
         next: axum::middleware::Next,
     ) -> axum::response::Response {
-        // Localhost: skip token auth but still enforce guest restrictions
-        if is_localhost(addr.ip()) {
-            // Extract token to check if it's a guest
-            let from_header = req.headers()
-                .get("authorization")
-                .and_then(|v| v.to_str().ok())
-                .and_then(|v| v.strip_prefix("Bearer "))
-                .map(|s| s.to_string());
-            let from_query = req.uri().query()
-                .and_then(|q| q.split('&')
-                    .find(|p| p.starts_with("token="))
-                    .map(|p| p.trim_start_matches("token=").to_string()));
-            let provided = from_header.or(from_query);
-            let is_guest = state.guest_token.as_deref()
-                .map(|gt| !gt.is_empty() && provided.as_deref() == Some(gt))
-                .unwrap_or(false);
-            if is_guest {
-                let path = req.uri().path().to_string();
-                let allowed_guest_paths = [
-                    "/api/note/switch",
-                    "/api/file/switch",
-                ];
-                if !allowed_guest_paths.iter().any(|p| path == *p) {
-                    let body = axum::Json(serde_json::json!({"ok": false, "error": "Guest access is read-only"}));
-                    return (StatusCode::FORBIDDEN, body).into_response();
-                }
-            }
-            return next.run(req).await;
-        }
         // Check token from header OR query param (EventSource can't set headers)
         if let Some(ref expected) = state.user_token {
             let from_header = req.headers()
