@@ -157,6 +157,8 @@ pub struct NoteDeleteReq {
 #[derive(Debug, Deserialize)]
 pub struct NoteSwitchReq {
     pub note_id: String,
+    #[serde(default)]
+    pub preferred_file: Option<String>,
 }
 
 
@@ -679,8 +681,12 @@ pub async fn note_switch_handler(
     }
     files.sort();
 
-    // Load first file content
-    let first_file = files.first().cloned();
+    // Load preferred file (client hint) or fall back to first file
+    let first_file = req.preferred_file
+        .as_deref()
+        .filter(|f| files.contains(&f.to_string()))
+        .map(|f| f.to_string())
+        .or_else(|| files.first().cloned());
     let first_content = if let Some(ref fname) = first_file {
         tokio::fs::read_to_string(md_dir.join(fname)).await.ok()
     } else {

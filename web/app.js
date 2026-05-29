@@ -367,13 +367,6 @@ function handleMessage(msg) {
             break;
         case 'file_list':
             fileList = msg.files || [];
-            // On first file_list after page load, try to restore saved file
-            if (!panelStateRestored && !currentFilename) {
-                try {
-                    const savedFile = localStorage.getItem('rune_file');
-                    if (savedFile && fileList.includes(savedFile)) currentFilename = savedFile;
-                } catch {}
-            }
             // If current file still exists, re-fetch its content (may have been edited by agent)
             if (currentFilename && fileList.includes(currentFilename)) {
                 api('file/switch', { note_id: currentNoteId, name: currentFilename });
@@ -1461,7 +1454,15 @@ async function switchNote(sessionId) {
     updateChatInputState();
     updatePageTitle();
 
-    const data = await api('note/switch', { note_id: sessionId });
+    // When restoring on page load, pass the saved file so server returns right content
+    const savedFileForNote = (() => {
+        try {
+            const sn = localStorage.getItem('rune_note');
+            const sf = localStorage.getItem('rune_file');
+            return (sn === sessionId && sf) ? sf : null;
+        } catch { return null; }
+    })();
+    const data = await api('note/switch', { note_id: sessionId, preferred_file: savedFileForNote || undefined });
     if (!data || !data.ok) return;
 
     // Replay history from response
@@ -1470,9 +1471,11 @@ async function switchNote(sessionId) {
         replayHistory(data.history);
     }
 
-    // Update file list
+    // Update file list; restore panel state on first switch after page load
     fileList = data.files || [];
     updateEditorVisibility(fileList.length);
+    // Mark as restored so subsequent file_list events don't re-read localStorage
+    panelStateRestored = true;
 
     // Load first file content
     if (data.current_file && data.file_content !== undefined) {
