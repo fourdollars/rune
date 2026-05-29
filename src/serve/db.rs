@@ -86,6 +86,10 @@ impl ChatDb {
         let _ = conn.execute_batch("
             ALTER TABLE sessions DROP COLUMN workspace;
         ");
+        // Migration: rename session_id -> collection_id in messages table
+        let _ = conn.execute_batch("
+            ALTER TABLE messages RENAME COLUMN session_id TO collection_id;
+        ");
         Ok(Self { conn: Arc::new(Mutex::new(conn)), deferred_path: Arc::new(Mutex::new(None)) })
     }
 
