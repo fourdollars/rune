@@ -1065,7 +1065,6 @@ function confirmLogout() {
 
 // --- File management ---
 function updateDocTitle(name) {
-    if (el && !el.isContentEditable) el.textContent = name;
     updatePageTitle();
 }
 
