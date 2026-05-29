@@ -491,6 +491,11 @@ function applyNoNoteLayout() {
     const panelCenter = document.getElementById('panel-center');
     const panelRight = document.getElementById('panel-right');
 
+    if (!currentNoteId) {
+        // No active note: hide Edit/Preview buttons
+        updateEditorVisibility(0);
+    }
+
     if (!currentNoteId && notes.length === 0) {
         // Truly no notes: expand note panel fullscreen
         panelCenter.classList.add('hidden');
