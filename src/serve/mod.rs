@@ -146,40 +146,44 @@ pub async fn run(config: RuneConfig, opts: NotesOptions) {
         req: axum::http::Request<axum::body::Body>,
         next: axum::middleware::Next,
     ) -> axum::response::Response {
-        // Check token from header OR query param (EventSource can't set headers)
+        // Extract token from header OR query param
+        let from_header = req.headers()
+            .get("authorization")
+            .and_then(|v| v.to_str().ok())
+            .and_then(|v| v.strip_prefix("Bearer "))
+            .map(|s| s.to_string());
+        let from_query = req.uri().query()
+            .and_then(|q| q.split('&')
+                .find(|p| p.starts_with("token="))
+                .map(|p| p.trim_start_matches("token=").to_string()));
+        let provided = from_header.or(from_query);
+
+        // Check roles
+        let admin_ok = state.admin_token.as_deref()
+            .map(|at| provided.as_deref() == Some(at))
+            .unwrap_or(false);
+        let guest_ok = state.guest_token.as_deref()
+            .map(|gt| !gt.is_empty() && provided.as_deref() == Some(gt))
+            .unwrap_or(false);
+
+        // Token auth (if user_token is configured)
         if let Some(ref expected) = state.user_token {
-            let from_header = req.headers()
-                .get("authorization")
-                .and_then(|v| v.to_str().ok())
-                .and_then(|v| v.strip_prefix("Bearer "))
-                .map(|s| s.to_string());
-            let from_query = req.uri().query()
-                .and_then(|q| q.split('&')
-                    .find(|p| p.starts_with("token="))
-                    .map(|p| p.trim_start_matches("token=").to_string()));
-            let provided = from_header.or(from_query);
-            // Also accept admin token or guest token
-            let admin_ok = state.admin_token.as_deref()
-                .map(|at| provided.as_deref() == Some(at))
-                .unwrap_or(false);
-            let guest_ok = state.guest_token.as_deref()
-                .map(|gt| !gt.is_empty() && provided.as_deref() == Some(gt))
-                .unwrap_or(false);
             if provided.as_deref() != Some(expected.as_str()) && !admin_ok && !guest_ok {
                 let body = axum::Json(serde_json::json!({"ok": false, "error": "Authentication failed"}));
                 return (StatusCode::UNAUTHORIZED, body).into_response();
             }
-            // Guest: block all mutations (only allow read-only endpoints)
-            if guest_ok {
-                let path = req.uri().path().to_string();
-                let allowed_guest_paths = [
-                    "/api/note/switch",
-                    "/api/file/switch",
-                ];
-                if !allowed_guest_paths.iter().any(|p| path == *p) {
-                    let body = axum::Json(serde_json::json!({"ok": false, "error": "Guest access is read-only"}));
-                    return (StatusCode::FORBIDDEN, body).into_response();
-                }
+        }
+
+        // Guest: block all mutations regardless of user_token config
+        if guest_ok {
+            let path = req.uri().path().to_string();
+            let allowed_guest_paths = [
+                "/api/note/switch",
+                "/api/file/switch",
+            ];
+            if !allowed_guest_paths.iter().any(|p| path == *p) {
+                let body = axum::Json(serde_json::json!({"ok": false, "error": "Guest access is read-only"}));
+                return (StatusCode::FORBIDDEN, body).into_response();
             }
         }
         next.run(req).await
@@ -509,40 +513,44 @@ mod tests {
         req: axum::http::Request<axum::body::Body>,
         next: axum::middleware::Next,
     ) -> axum::response::Response {
-        // Check token from header OR query param (EventSource can't set headers)
+        // Extract token from header OR query param
+        let from_header = req.headers()
+            .get("authorization")
+            .and_then(|v| v.to_str().ok())
+            .and_then(|v| v.strip_prefix("Bearer "))
+            .map(|s| s.to_string());
+        let from_query = req.uri().query()
+            .and_then(|q| q.split('&')
+                .find(|p| p.starts_with("token="))
+                .map(|p| p.trim_start_matches("token=").to_string()));
+        let provided = from_header.or(from_query);
+
+        // Check roles
+        let admin_ok = state.admin_token.as_deref()
+            .map(|at| provided.as_deref() == Some(at))
+            .unwrap_or(false);
+        let guest_ok = state.guest_token.as_deref()
+            .map(|gt| !gt.is_empty() && provided.as_deref() == Some(gt))
+            .unwrap_or(false);
+
+        // Token auth (if user_token is configured)
         if let Some(ref expected) = state.user_token {
-            let from_header = req.headers()
-                .get("authorization")
-                .and_then(|v| v.to_str().ok())
-                .and_then(|v| v.strip_prefix("Bearer "))
-                .map(|s| s.to_string());
-            let from_query = req.uri().query()
-                .and_then(|q| q.split('&')
-                    .find(|p| p.starts_with("token="))
-                    .map(|p| p.trim_start_matches("token=").to_string()));
-            let provided = from_header.or(from_query);
-            // Also accept admin token or guest token
-            let admin_ok = state.admin_token.as_deref()
-                .map(|at| provided.as_deref() == Some(at))
-                .unwrap_or(false);
-            let guest_ok = state.guest_token.as_deref()
-                .map(|gt| !gt.is_empty() && provided.as_deref() == Some(gt))
-                .unwrap_or(false);
             if provided.as_deref() != Some(expected.as_str()) && !admin_ok && !guest_ok {
                 let body = axum::Json(serde_json::json!({"ok": false, "error": "Authentication failed"}));
                 return (StatusCode::UNAUTHORIZED, body).into_response();
             }
-            // Guest: block all mutations (only allow read-only endpoints)
-            if guest_ok {
-                let path = req.uri().path().to_string();
-                let allowed_guest_paths = [
-                    "/api/note/switch",
-                    "/api/file/switch",
-                ];
-                if !allowed_guest_paths.iter().any(|p| path == *p) {
-                    let body = axum::Json(serde_json::json!({"ok": false, "error": "Guest access is read-only"}));
-                    return (StatusCode::FORBIDDEN, body).into_response();
-                }
+        }
+
+        // Guest: block all mutations regardless of user_token config
+        if guest_ok {
+            let path = req.uri().path().to_string();
+            let allowed_guest_paths = [
+                "/api/note/switch",
+                "/api/file/switch",
+            ];
+            if !allowed_guest_paths.iter().any(|p| path == *p) {
+                let body = axum::Json(serde_json::json!({"ok": false, "error": "Guest access is read-only"}));
+                return (StatusCode::FORBIDDEN, body).into_response();
             }
         }
         next.run(req).await
@@ -574,40 +582,44 @@ mod tests {
         req: axum::http::Request<axum::body::Body>,
         next: axum::middleware::Next,
     ) -> axum::response::Response {
-        // Check token from header OR query param (EventSource can't set headers)
+        // Extract token from header OR query param
+        let from_header = req.headers()
+            .get("authorization")
+            .and_then(|v| v.to_str().ok())
+            .and_then(|v| v.strip_prefix("Bearer "))
+            .map(|s| s.to_string());
+        let from_query = req.uri().query()
+            .and_then(|q| q.split('&')
+                .find(|p| p.starts_with("token="))
+                .map(|p| p.trim_start_matches("token=").to_string()));
+        let provided = from_header.or(from_query);
+
+        // Check roles
+        let admin_ok = state.admin_token.as_deref()
+            .map(|at| provided.as_deref() == Some(at))
+            .unwrap_or(false);
+        let guest_ok = state.guest_token.as_deref()
+            .map(|gt| !gt.is_empty() && provided.as_deref() == Some(gt))
+            .unwrap_or(false);
+
+        // Token auth (if user_token is configured)
         if let Some(ref expected) = state.user_token {
-            let from_header = req.headers()
-                .get("authorization")
-                .and_then(|v| v.to_str().ok())
-                .and_then(|v| v.strip_prefix("Bearer "))
-                .map(|s| s.to_string());
-            let from_query = req.uri().query()
-                .and_then(|q| q.split('&')
-                    .find(|p| p.starts_with("token="))
-                    .map(|p| p.trim_start_matches("token=").to_string()));
-            let provided = from_header.or(from_query);
-            // Also accept admin token or guest token
-            let admin_ok = state.admin_token.as_deref()
-                .map(|at| provided.as_deref() == Some(at))
-                .unwrap_or(false);
-            let guest_ok = state.guest_token.as_deref()
-                .map(|gt| !gt.is_empty() && provided.as_deref() == Some(gt))
-                .unwrap_or(false);
             if provided.as_deref() != Some(expected.as_str()) && !admin_ok && !guest_ok {
                 let body = axum::Json(serde_json::json!({"ok": false, "error": "Authentication failed"}));
                 return (StatusCode::UNAUTHORIZED, body).into_response();
             }
-            // Guest: block all mutations (only allow read-only endpoints)
-            if guest_ok {
-                let path = req.uri().path().to_string();
-                let allowed_guest_paths = [
-                    "/api/note/switch",
-                    "/api/file/switch",
-                ];
-                if !allowed_guest_paths.iter().any(|p| path == *p) {
-                    let body = axum::Json(serde_json::json!({"ok": false, "error": "Guest access is read-only"}));
-                    return (StatusCode::FORBIDDEN, body).into_response();
-                }
+        }
+
+        // Guest: block all mutations regardless of user_token config
+        if guest_ok {
+            let path = req.uri().path().to_string();
+            let allowed_guest_paths = [
+                "/api/note/switch",
+                "/api/file/switch",
+            ];
+            if !allowed_guest_paths.iter().any(|p| path == *p) {
+                let body = axum::Json(serde_json::json!({"ok": false, "error": "Guest access is read-only"}));
+                return (StatusCode::FORBIDDEN, body).into_response();
             }
         }
         next.run(req).await
@@ -645,40 +657,44 @@ mod tests {
         req: axum::http::Request<axum::body::Body>,
         next: axum::middleware::Next,
     ) -> axum::response::Response {
-        // Check token from header OR query param (EventSource can't set headers)
+        // Extract token from header OR query param
+        let from_header = req.headers()
+            .get("authorization")
+            .and_then(|v| v.to_str().ok())
+            .and_then(|v| v.strip_prefix("Bearer "))
+            .map(|s| s.to_string());
+        let from_query = req.uri().query()
+            .and_then(|q| q.split('&')
+                .find(|p| p.starts_with("token="))
+                .map(|p| p.trim_start_matches("token=").to_string()));
+        let provided = from_header.or(from_query);
+
+        // Check roles
+        let admin_ok = state.admin_token.as_deref()
+            .map(|at| provided.as_deref() == Some(at))
+            .unwrap_or(false);
+        let guest_ok = state.guest_token.as_deref()
+            .map(|gt| !gt.is_empty() && provided.as_deref() == Some(gt))
+            .unwrap_or(false);
+
+        // Token auth (if user_token is configured)
         if let Some(ref expected) = state.user_token {
-            let from_header = req.headers()
-                .get("authorization")
-                .and_then(|v| v.to_str().ok())
-                .and_then(|v| v.strip_prefix("Bearer "))
-                .map(|s| s.to_string());
-            let from_query = req.uri().query()
-                .and_then(|q| q.split('&')
-                    .find(|p| p.starts_with("token="))
-                    .map(|p| p.trim_start_matches("token=").to_string()));
-            let provided = from_header.or(from_query);
-            // Also accept admin token or guest token
-            let admin_ok = state.admin_token.as_deref()
-                .map(|at| provided.as_deref() == Some(at))
-                .unwrap_or(false);
-            let guest_ok = state.guest_token.as_deref()
-                .map(|gt| !gt.is_empty() && provided.as_deref() == Some(gt))
-                .unwrap_or(false);
             if provided.as_deref() != Some(expected.as_str()) && !admin_ok && !guest_ok {
                 let body = axum::Json(serde_json::json!({"ok": false, "error": "Authentication failed"}));
                 return (StatusCode::UNAUTHORIZED, body).into_response();
             }
-            // Guest: block all mutations (only allow read-only endpoints)
-            if guest_ok {
-                let path = req.uri().path().to_string();
-                let allowed_guest_paths = [
-                    "/api/note/switch",
-                    "/api/file/switch",
-                ];
-                if !allowed_guest_paths.iter().any(|p| path == *p) {
-                    let body = axum::Json(serde_json::json!({"ok": false, "error": "Guest access is read-only"}));
-                    return (StatusCode::FORBIDDEN, body).into_response();
-                }
+        }
+
+        // Guest: block all mutations regardless of user_token config
+        if guest_ok {
+            let path = req.uri().path().to_string();
+            let allowed_guest_paths = [
+                "/api/note/switch",
+                "/api/file/switch",
+            ];
+            if !allowed_guest_paths.iter().any(|p| path == *p) {
+                let body = axum::Json(serde_json::json!({"ok": false, "error": "Guest access is read-only"}));
+                return (StatusCode::FORBIDDEN, body).into_response();
             }
         }
         next.run(req).await
@@ -716,40 +732,44 @@ mod tests {
         req: axum::http::Request<axum::body::Body>,
         next: axum::middleware::Next,
     ) -> axum::response::Response {
-        // Check token from header OR query param (EventSource can't set headers)
+        // Extract token from header OR query param
+        let from_header = req.headers()
+            .get("authorization")
+            .and_then(|v| v.to_str().ok())
+            .and_then(|v| v.strip_prefix("Bearer "))
+            .map(|s| s.to_string());
+        let from_query = req.uri().query()
+            .and_then(|q| q.split('&')
+                .find(|p| p.starts_with("token="))
+                .map(|p| p.trim_start_matches("token=").to_string()));
+        let provided = from_header.or(from_query);
+
+        // Check roles
+        let admin_ok = state.admin_token.as_deref()
+            .map(|at| provided.as_deref() == Some(at))
+            .unwrap_or(false);
+        let guest_ok = state.guest_token.as_deref()
+            .map(|gt| !gt.is_empty() && provided.as_deref() == Some(gt))
+            .unwrap_or(false);
+
+        // Token auth (if user_token is configured)
         if let Some(ref expected) = state.user_token {
-            let from_header = req.headers()
-                .get("authorization")
-                .and_then(|v| v.to_str().ok())
-                .and_then(|v| v.strip_prefix("Bearer "))
-                .map(|s| s.to_string());
-            let from_query = req.uri().query()
-                .and_then(|q| q.split('&')
-                    .find(|p| p.starts_with("token="))
-                    .map(|p| p.trim_start_matches("token=").to_string()));
-            let provided = from_header.or(from_query);
-            // Also accept admin token or guest token
-            let admin_ok = state.admin_token.as_deref()
-                .map(|at| provided.as_deref() == Some(at))
-                .unwrap_or(false);
-            let guest_ok = state.guest_token.as_deref()
-                .map(|gt| !gt.is_empty() && provided.as_deref() == Some(gt))
-                .unwrap_or(false);
             if provided.as_deref() != Some(expected.as_str()) && !admin_ok && !guest_ok {
                 let body = axum::Json(serde_json::json!({"ok": false, "error": "Authentication failed"}));
                 return (StatusCode::UNAUTHORIZED, body).into_response();
             }
-            // Guest: block all mutations (only allow read-only endpoints)
-            if guest_ok {
-                let path = req.uri().path().to_string();
-                let allowed_guest_paths = [
-                    "/api/note/switch",
-                    "/api/file/switch",
-                ];
-                if !allowed_guest_paths.iter().any(|p| path == *p) {
-                    let body = axum::Json(serde_json::json!({"ok": false, "error": "Guest access is read-only"}));
-                    return (StatusCode::FORBIDDEN, body).into_response();
-                }
+        }
+
+        // Guest: block all mutations regardless of user_token config
+        if guest_ok {
+            let path = req.uri().path().to_string();
+            let allowed_guest_paths = [
+                "/api/note/switch",
+                "/api/file/switch",
+            ];
+            if !allowed_guest_paths.iter().any(|p| path == *p) {
+                let body = axum::Json(serde_json::json!({"ok": false, "error": "Guest access is read-only"}));
+                return (StatusCode::FORBIDDEN, body).into_response();
             }
         }
         next.run(req).await
@@ -779,40 +799,44 @@ mod tests {
         req: axum::http::Request<axum::body::Body>,
         next: axum::middleware::Next,
     ) -> axum::response::Response {
-        // Check token from header OR query param (EventSource can't set headers)
+        // Extract token from header OR query param
+        let from_header = req.headers()
+            .get("authorization")
+            .and_then(|v| v.to_str().ok())
+            .and_then(|v| v.strip_prefix("Bearer "))
+            .map(|s| s.to_string());
+        let from_query = req.uri().query()
+            .and_then(|q| q.split('&')
+                .find(|p| p.starts_with("token="))
+                .map(|p| p.trim_start_matches("token=").to_string()));
+        let provided = from_header.or(from_query);
+
+        // Check roles
+        let admin_ok = state.admin_token.as_deref()
+            .map(|at| provided.as_deref() == Some(at))
+            .unwrap_or(false);
+        let guest_ok = state.guest_token.as_deref()
+            .map(|gt| !gt.is_empty() && provided.as_deref() == Some(gt))
+            .unwrap_or(false);
+
+        // Token auth (if user_token is configured)
         if let Some(ref expected) = state.user_token {
-            let from_header = req.headers()
-                .get("authorization")
-                .and_then(|v| v.to_str().ok())
-                .and_then(|v| v.strip_prefix("Bearer "))
-                .map(|s| s.to_string());
-            let from_query = req.uri().query()
-                .and_then(|q| q.split('&')
-                    .find(|p| p.starts_with("token="))
-                    .map(|p| p.trim_start_matches("token=").to_string()));
-            let provided = from_header.or(from_query);
-            // Also accept admin token or guest token
-            let admin_ok = state.admin_token.as_deref()
-                .map(|at| provided.as_deref() == Some(at))
-                .unwrap_or(false);
-            let guest_ok = state.guest_token.as_deref()
-                .map(|gt| !gt.is_empty() && provided.as_deref() == Some(gt))
-                .unwrap_or(false);
             if provided.as_deref() != Some(expected.as_str()) && !admin_ok && !guest_ok {
                 let body = axum::Json(serde_json::json!({"ok": false, "error": "Authentication failed"}));
                 return (StatusCode::UNAUTHORIZED, body).into_response();
             }
-            // Guest: block all mutations (only allow read-only endpoints)
-            if guest_ok {
-                let path = req.uri().path().to_string();
-                let allowed_guest_paths = [
-                    "/api/note/switch",
-                    "/api/file/switch",
-                ];
-                if !allowed_guest_paths.iter().any(|p| path == *p) {
-                    let body = axum::Json(serde_json::json!({"ok": false, "error": "Guest access is read-only"}));
-                    return (StatusCode::FORBIDDEN, body).into_response();
-                }
+        }
+
+        // Guest: block all mutations regardless of user_token config
+        if guest_ok {
+            let path = req.uri().path().to_string();
+            let allowed_guest_paths = [
+                "/api/note/switch",
+                "/api/file/switch",
+            ];
+            if !allowed_guest_paths.iter().any(|p| path == *p) {
+                let body = axum::Json(serde_json::json!({"ok": false, "error": "Guest access is read-only"}));
+                return (StatusCode::FORBIDDEN, body).into_response();
             }
         }
         next.run(req).await
@@ -842,40 +866,44 @@ mod tests {
         req: axum::http::Request<axum::body::Body>,
         next: axum::middleware::Next,
     ) -> axum::response::Response {
-        // Check token from header OR query param (EventSource can't set headers)
+        // Extract token from header OR query param
+        let from_header = req.headers()
+            .get("authorization")
+            .and_then(|v| v.to_str().ok())
+            .and_then(|v| v.strip_prefix("Bearer "))
+            .map(|s| s.to_string());
+        let from_query = req.uri().query()
+            .and_then(|q| q.split('&')
+                .find(|p| p.starts_with("token="))
+                .map(|p| p.trim_start_matches("token=").to_string()));
+        let provided = from_header.or(from_query);
+
+        // Check roles
+        let admin_ok = state.admin_token.as_deref()
+            .map(|at| provided.as_deref() == Some(at))
+            .unwrap_or(false);
+        let guest_ok = state.guest_token.as_deref()
+            .map(|gt| !gt.is_empty() && provided.as_deref() == Some(gt))
+            .unwrap_or(false);
+
+        // Token auth (if user_token is configured)
         if let Some(ref expected) = state.user_token {
-            let from_header = req.headers()
-                .get("authorization")
-                .and_then(|v| v.to_str().ok())
-                .and_then(|v| v.strip_prefix("Bearer "))
-                .map(|s| s.to_string());
-            let from_query = req.uri().query()
-                .and_then(|q| q.split('&')
-                    .find(|p| p.starts_with("token="))
-                    .map(|p| p.trim_start_matches("token=").to_string()));
-            let provided = from_header.or(from_query);
-            // Also accept admin token or guest token
-            let admin_ok = state.admin_token.as_deref()
-                .map(|at| provided.as_deref() == Some(at))
-                .unwrap_or(false);
-            let guest_ok = state.guest_token.as_deref()
-                .map(|gt| !gt.is_empty() && provided.as_deref() == Some(gt))
-                .unwrap_or(false);
             if provided.as_deref() != Some(expected.as_str()) && !admin_ok && !guest_ok {
                 let body = axum::Json(serde_json::json!({"ok": false, "error": "Authentication failed"}));
                 return (StatusCode::UNAUTHORIZED, body).into_response();
             }
-            // Guest: block all mutations (only allow read-only endpoints)
-            if guest_ok {
-                let path = req.uri().path().to_string();
-                let allowed_guest_paths = [
-                    "/api/note/switch",
-                    "/api/file/switch",
-                ];
-                if !allowed_guest_paths.iter().any(|p| path == *p) {
-                    let body = axum::Json(serde_json::json!({"ok": false, "error": "Guest access is read-only"}));
-                    return (StatusCode::FORBIDDEN, body).into_response();
-                }
+        }
+
+        // Guest: block all mutations regardless of user_token config
+        if guest_ok {
+            let path = req.uri().path().to_string();
+            let allowed_guest_paths = [
+                "/api/note/switch",
+                "/api/file/switch",
+            ];
+            if !allowed_guest_paths.iter().any(|p| path == *p) {
+                let body = axum::Json(serde_json::json!({"ok": false, "error": "Guest access is read-only"}));
+                return (StatusCode::FORBIDDEN, body).into_response();
             }
         }
         next.run(req).await
@@ -905,40 +933,44 @@ mod tests {
         req: axum::http::Request<axum::body::Body>,
         next: axum::middleware::Next,
     ) -> axum::response::Response {
-        // Check token from header OR query param (EventSource can't set headers)
+        // Extract token from header OR query param
+        let from_header = req.headers()
+            .get("authorization")
+            .and_then(|v| v.to_str().ok())
+            .and_then(|v| v.strip_prefix("Bearer "))
+            .map(|s| s.to_string());
+        let from_query = req.uri().query()
+            .and_then(|q| q.split('&')
+                .find(|p| p.starts_with("token="))
+                .map(|p| p.trim_start_matches("token=").to_string()));
+        let provided = from_header.or(from_query);
+
+        // Check roles
+        let admin_ok = state.admin_token.as_deref()
+            .map(|at| provided.as_deref() == Some(at))
+            .unwrap_or(false);
+        let guest_ok = state.guest_token.as_deref()
+            .map(|gt| !gt.is_empty() && provided.as_deref() == Some(gt))
+            .unwrap_or(false);
+
+        // Token auth (if user_token is configured)
         if let Some(ref expected) = state.user_token {
-            let from_header = req.headers()
-                .get("authorization")
-                .and_then(|v| v.to_str().ok())
-                .and_then(|v| v.strip_prefix("Bearer "))
-                .map(|s| s.to_string());
-            let from_query = req.uri().query()
-                .and_then(|q| q.split('&')
-                    .find(|p| p.starts_with("token="))
-                    .map(|p| p.trim_start_matches("token=").to_string()));
-            let provided = from_header.or(from_query);
-            // Also accept admin token or guest token
-            let admin_ok = state.admin_token.as_deref()
-                .map(|at| provided.as_deref() == Some(at))
-                .unwrap_or(false);
-            let guest_ok = state.guest_token.as_deref()
-                .map(|gt| !gt.is_empty() && provided.as_deref() == Some(gt))
-                .unwrap_or(false);
             if provided.as_deref() != Some(expected.as_str()) && !admin_ok && !guest_ok {
                 let body = axum::Json(serde_json::json!({"ok": false, "error": "Authentication failed"}));
                 return (StatusCode::UNAUTHORIZED, body).into_response();
             }
-            // Guest: block all mutations (only allow read-only endpoints)
-            if guest_ok {
-                let path = req.uri().path().to_string();
-                let allowed_guest_paths = [
-                    "/api/note/switch",
-                    "/api/file/switch",
-                ];
-                if !allowed_guest_paths.iter().any(|p| path == *p) {
-                    let body = axum::Json(serde_json::json!({"ok": false, "error": "Guest access is read-only"}));
-                    return (StatusCode::FORBIDDEN, body).into_response();
-                }
+        }
+
+        // Guest: block all mutations regardless of user_token config
+        if guest_ok {
+            let path = req.uri().path().to_string();
+            let allowed_guest_paths = [
+                "/api/note/switch",
+                "/api/file/switch",
+            ];
+            if !allowed_guest_paths.iter().any(|p| path == *p) {
+                let body = axum::Json(serde_json::json!({"ok": false, "error": "Guest access is read-only"}));
+                return (StatusCode::FORBIDDEN, body).into_response();
             }
         }
         next.run(req).await

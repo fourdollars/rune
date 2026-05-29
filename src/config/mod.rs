@@ -82,6 +82,9 @@ pub struct NotesConfig {
     pub bind: Option<String>,
     /// User token required from clients. None = no token required.
     pub user_token: Option<String>,
+    /// Backward compat: old "token" field maps to user_token.
+    #[serde(default)]
+    pub token: Option<String>,
     /// Admin token: clients with this token get admin role (can approve tool requests).
     pub admin_token: Option<String>,
     /// Guest token: read-only access. Cannot chat, create, edit, or delete anything.
