@@ -856,6 +856,7 @@ async fn handle_chat_message(
     let mut agent = Agent::new(cfg, provider, true, embedding);
     agent.token_callback = Some(token_callback);
     agent.approval_callback = Some(approval_callback);
+    agent.user_name = if !nickname.is_empty() && nickname != "user" { Some(nickname) } else { None };
     agent.markdown_dir = Some(super::session_markdown_dir(&session_id));
     agent.chat_db = Some(state.chat_db.clone());
     agent.chat_session_id = Some(session_id.clone());
@@ -863,12 +864,7 @@ async fn handle_chat_message(
         .parent().unwrap().join("archives"));
 
     // Set system prompt
-    let mut system_prompt = build_system_prompt(&config).await;
-    if !nickname.is_empty() && nickname != "user" {
-        system_prompt.push_str(&format!("
-
-The user's name is: {}", nickname));
-    }
+    let system_prompt = build_system_prompt(&config).await;
     agent.set_system_prompt(&system_prompt);
 
     // Load chat history into agent context

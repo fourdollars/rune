@@ -44,6 +44,8 @@ pub struct ImageUrlDetail {
 pub struct LlmMessage {
     pub role: String,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub content: Option<String>,
     /// Multi-part content for vision (text + images). Overrides content when set.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -1646,6 +1648,7 @@ mod tests {
         let messages = vec![
             LlmMessage {
                 role: "system".to_string(),
+                name: None,
                 content: Some("You are helpful.".to_string()),
                 content_parts: None,
                 tool_calls: None,
@@ -1653,6 +1656,7 @@ mod tests {
             },
             LlmMessage {
                 role: "user".to_string(),
+                name: None,
                 content: Some("Hello".to_string()),
                 content_parts: None,
                 tool_calls: None,
@@ -1669,6 +1673,7 @@ mod tests {
     fn test_gemini_convert_messages_assistant_to_model() {
         let messages = vec![LlmMessage {
             role: "assistant".to_string(),
+            name: None,
             content: Some("Hi there!".to_string()),
             content_parts: None,
             tool_calls: None,
@@ -1743,6 +1748,7 @@ mod tests {
     fn test_llm_message_content_parts_none_skipped() {
         let msg = LlmMessage {
             role: "user".to_string(),
+            name: None,
             content: Some("hello".to_string()),
             content_parts: None,
             tool_calls: None,
@@ -1872,6 +1878,7 @@ mod tests {
         // Plain text tool output must be wrapped in {"result": "..."} for Gemini
         let messages = vec![LlmMessage {
             role: "tool".to_string(),
+            name: None,
             content: Some("obvious".to_string()),
             content_parts: None,
             tool_calls: None,
@@ -1888,6 +1895,7 @@ mod tests {
         // JSON object tool output should be passed through as-is
         let messages = vec![LlmMessage {
             role: "tool".to_string(),
+            name: None,
             content: Some(r#"{"name":"test","value":42}"#.to_string()),
             content_parts: None,
             tool_calls: None,
@@ -1904,6 +1912,7 @@ mod tests {
         // Function name should be extracted from tool_call_id format "name|gemini_tc_N"
         let messages = vec![LlmMessage {
             role: "tool".to_string(),
+            name: None,
             content: Some("{}".to_string()),
             content_parts: None,
             tool_calls: None,
@@ -1920,6 +1929,7 @@ mod tests {
         // the reconstructed functionCall part should include thought_signature
         let messages = vec![LlmMessage {
             role: "assistant".to_string(),
+            name: None,
             content: None,
             content_parts: None,
             tool_calls: Some(vec![LlmToolCall {
@@ -1944,6 +1954,7 @@ mod tests {
         // Function response should include thought_signature from tool_call_id
         let messages = vec![LlmMessage {
             role: "tool".to_string(),
+            name: None,
             content: Some(r#"{"output":"done"}"#.to_string()),
             content_parts: None,
             tool_calls: None,
@@ -1960,6 +1971,7 @@ mod tests {
         // No thought_signature in ID → no field in output
         let messages = vec![LlmMessage {
             role: "assistant".to_string(),
+            name: None,
             content: None,
             content_parts: None,
             tool_calls: Some(vec![LlmToolCall {
@@ -1983,6 +1995,7 @@ mod tests {
         // functionCall.id from Gemini should be preserved in reconstructed model message
         let messages = vec![LlmMessage {
             role: "assistant".to_string(),
+            name: None,
             content: None,
             content_parts: None,
             tool_calls: Some(vec![LlmToolCall {
@@ -2006,6 +2019,7 @@ mod tests {
         // functionResponse should include the id from functionCall
         let messages = vec![LlmMessage {
             role: "tool".to_string(),
+            name: None,
             content: Some(r#"{"result":"hello"}"#.to_string()),
             content_parts: None,
             tool_calls: None,
@@ -2025,6 +2039,7 @@ mod tests {
         let messages = vec![
             LlmMessage {
                 role: "assistant".to_string(),
+                name: None,
                 content: Some("Let me check.".to_string()),
                 content_parts: None,
                 tool_calls: Some(vec![LlmToolCall {
@@ -2039,6 +2054,7 @@ mod tests {
             },
             LlmMessage {
                 role: "tool".to_string(),
+                name: None,
                 content: Some(r#"{"body":"<html>..."}"#.to_string()),
                 content_parts: None,
                 tool_calls: None,
@@ -2063,6 +2079,7 @@ mod tests {
         // When fc_id is empty, id field should not be in the output
         let messages = vec![LlmMessage {
             role: "assistant".to_string(),
+            name: None,
             content: None,
             content_parts: None,
             tool_calls: Some(vec![LlmToolCall {
@@ -2594,6 +2611,7 @@ mod tests {
             model: "gpt-4o".to_string(),
             messages: vec![LlmMessage {
                 role: "user".to_string(),
+                name: None,
                 content: Some("Hello".to_string()),
                 content_parts: None,
                 tool_calls: None,
@@ -2615,6 +2633,7 @@ mod tests {
     fn test_llm_message_tool_call_serialization() {
         let msg = LlmMessage {
             role: "assistant".to_string(),
+            name: None,
             content: None,
             content_parts: None,
             tool_calls: Some(vec![LlmToolCall {
@@ -2724,6 +2743,7 @@ mod tests {
         // Non-object JSON array should be wrapped in {"result": ...}
         let messages = vec![LlmMessage {
             role: "tool".to_string(),
+            name: None,
             content: Some(r#"[1, 2, 3]"#.to_string()),
             content_parts: None,
             tool_calls: None,
@@ -2738,6 +2758,7 @@ mod tests {
     fn test_gemini_convert_messages_user_message() {
         let messages = vec![LlmMessage {
             role: "user".to_string(),
+            name: None,
             content: Some("What is the weather?".to_string()),
             content_parts: None,
             tool_calls: None,
@@ -2754,6 +2775,7 @@ mod tests {
     fn test_gemini_convert_messages_assistant_with_text() {
         let messages = vec![LlmMessage {
             role: "assistant".to_string(),
+            name: None,
             content: Some("The weather is sunny.".to_string()),
             content_parts: None,
             tool_calls: None,
@@ -2769,6 +2791,7 @@ mod tests {
         // assistant with no content and no tool_calls should produce no parts → skipped
         let messages = vec![LlmMessage {
             role: "assistant".to_string(),
+            name: None,
             content: None,
             content_parts: None,
             tool_calls: None,

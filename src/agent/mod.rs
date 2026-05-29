@@ -92,6 +92,8 @@ pub struct Agent {
     pub chat_session_id: Option<String>,
     /// Per-session markdown directory for file operations.
     pub markdown_dir: Option<std::path::PathBuf>,
+    /// Display name of the current user (for multi-user chat).
+    pub user_name: Option<String>,
 }
 
 impl Agent {
@@ -204,6 +206,7 @@ impl Agent {
             chat_archive_dir: None,
             chat_session_id: None,
             markdown_dir: None,
+            user_name: None,
         }
     }
 
@@ -231,12 +234,20 @@ impl Agent {
         let history_msgs: Vec<LlmMessage> = records
             .iter()
             .filter(|r| r.role == "user" || r.role == "assistant")
-            .map(|r| LlmMessage {
-                role: r.role.clone(),
-                content: Some(r.content.clone()),
-                tool_calls: None,
-                tool_call_id: None,
-                content_parts: None,
+            .map(|r| {
+                let name = if r.role == "user" && !r.nickname.is_empty() && r.nickname != "user" {
+                    Some(r.nickname.clone())
+                } else {
+                    None
+                };
+                LlmMessage {
+                    role: r.role.clone(),
+                    name,
+                    content: Some(r.content.clone()),
+                    tool_calls: None,
+                    tool_call_id: None,
+                    content_parts: None,
+                }
             })
             .collect();
         // Insert history before any in-progress messages
@@ -258,6 +269,7 @@ impl Agent {
                 0,
                 LlmMessage {
                     role: "system".to_string(),
+                    name: None,
                     content: Some(prompt.to_string()),
                     tool_calls: None,
                     tool_call_id: None,
@@ -414,6 +426,7 @@ impl Agent {
         }
         new_messages.push(LlmMessage {
             role: "system".to_string(),
+            name: None,
             content: Some(summary),
             tool_calls: None,
             tool_call_id: None,
@@ -514,6 +527,7 @@ impl Agent {
         // Add compaction summary
         new_messages.push(LlmMessage {
             role: "system".to_string(),
+            name: None,
             content: Some(summary),
             tool_calls: None,
             tool_call_id: None,
@@ -547,6 +561,7 @@ impl Agent {
     pub fn push_user_message_with_parts(&mut self, text: String, parts: Vec<ContentPart>) {
         self.messages.push(LlmMessage {
             role: "user".to_string(),
+            name: None,
             content: Some(text),
             tool_calls: None,
             tool_call_id: None,
@@ -614,6 +629,7 @@ impl Agent {
                     .unwrap_or_default();
                 self.messages.push(LlmMessage {
                     role: "system".to_string(),
+                    name: None,
                     content: Some(format!(
                         "[Skill: {} | base_dir: {}]\nIMPORTANT: All relative paths referenced in this skill (e.g. references/, scripts/) must be resolved from base_dir above. Use absolute paths when reading skill files.\n{}\n[End Skill: {}]",
                         skill.metadata.name, skill_dir, skill.content, skill.metadata.name
@@ -650,6 +666,7 @@ impl Agent {
         // Add user message
         self.messages.push(LlmMessage {
             role: "user".to_string(),
+            name: self.user_name.clone(),
             content: Some(user_input.to_string()),
             tool_calls: None,
             tool_call_id: None,
@@ -713,6 +730,7 @@ impl Agent {
                 let answer = response.content.unwrap_or_default();
                 self.messages.push(LlmMessage {
                     role: "assistant".to_string(),
+                    name: None,
                     content: Some(answer.clone()),
                     tool_calls: None,
                     tool_call_id: None,
@@ -726,6 +744,7 @@ impl Agent {
             // We have tool calls
             self.messages.push(LlmMessage {
                 role: "assistant".to_string(),
+                name: None,
                 content: response.content.clone(),
                 tool_calls: Some(response.tool_calls.clone()),
                 tool_call_id: None,
@@ -817,6 +836,7 @@ impl Agent {
                     let is_err = output.is_error;
                     self.messages.push(LlmMessage {
                         role: "tool".to_string(),
+                        name: None,
                         content: Some(output.content),
                         tool_calls: None,
                         tool_call_id: Some(tc_id.clone()),
@@ -864,6 +884,7 @@ impl Agent {
                             eprintln!("  {} {}", "✗".red(), err_msg.dimmed());
                             self.messages.push(LlmMessage {
                                 role: "tool".to_string(),
+                                name: None,
                                 content: Some(err_msg),
                                 tool_calls: None,
                                 tool_call_id: Some(tc.id.clone()),
@@ -875,6 +896,7 @@ impl Agent {
                     };
                     self.messages.push(LlmMessage {
                         role: "tool".to_string(),
+                        name: None,
                         content: Some(result),
                         tool_calls: None,
                         tool_call_id: Some(tc.id.clone()),
@@ -3184,6 +3206,7 @@ read(3, "root:x:0:0:...", 4096) = 1234"#;
         agent.set_system_prompt("sys");
         agent.messages.push(crate::provider::LlmMessage {
             role: "user".to_string(),
+            name: None,
             content: Some("hello".to_string()),
             tool_calls: None,
             tool_call_id: None,
@@ -3191,6 +3214,7 @@ read(3, "root:x:0:0:...", 4096) = 1234"#;
         });
         agent.messages.push(crate::provider::LlmMessage {
             role: "assistant".to_string(),
+            name: None,
             content: Some("hi".to_string()),
             tool_calls: None,
             tool_call_id: None,
@@ -3198,6 +3222,7 @@ read(3, "root:x:0:0:...", 4096) = 1234"#;
         });
         agent.messages.push(crate::provider::LlmMessage {
             role: "user".to_string(),
+            name: None,
             content: Some("how are you".to_string()),
             tool_calls: None,
             tool_call_id: None,
@@ -3215,6 +3240,7 @@ read(3, "root:x:0:0:...", 4096) = 1234"#;
         let mut agent = make_test_agent();
         agent.messages.push(crate::provider::LlmMessage {
             role: "user".to_string(),
+            name: None,
             content: Some("hi".to_string()),
             tool_calls: None,
             tool_call_id: None,
@@ -3222,6 +3248,7 @@ read(3, "root:x:0:0:...", 4096) = 1234"#;
         });
         agent.messages.push(crate::provider::LlmMessage {
             role: "assistant".to_string(),
+            name: None,
             content: Some("hello".to_string()),
             tool_calls: None,
             tool_call_id: None,
@@ -3254,6 +3281,7 @@ read(3, "root:x:0:0:...", 4096) = 1234"#;
         for _ in 0..5 {
             agent.messages.push(crate::provider::LlmMessage {
                 role: "user".to_string(),
+                name: None,
                 content: Some("ping".to_string()),
                 tool_calls: None,
                 tool_call_id: None,
@@ -3284,6 +3312,7 @@ read(3, "root:x:0:0:...", 4096) = 1234"#;
         agent.set_system_prompt("abc"); // 3
         agent.messages.push(crate::provider::LlmMessage {
             role: "user".to_string(),
+            name: None,
             content: Some("12345".to_string()), // 5
             tool_calls: None,
             tool_call_id: None,
@@ -3297,6 +3326,7 @@ read(3, "root:x:0:0:...", 4096) = 1234"#;
         let mut agent = make_test_agent();
         agent.messages.push(crate::provider::LlmMessage {
             role: "tool".to_string(),
+            name: None,
             content: None,
             tool_calls: None,
             tool_call_id: None,
@@ -3328,6 +3358,7 @@ read(3, "root:x:0:0:...", 4096) = 1234"#;
         let t1 = agent.total_context_tokens();
         agent.messages.push(crate::provider::LlmMessage {
             role: "user".to_string(),
+            name: None,
             content: Some("a longer user message here".to_string()),
             tool_calls: None,
             tool_call_id: None,
