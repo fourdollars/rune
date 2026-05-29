@@ -1140,12 +1140,13 @@ function togglePanel(side) {
         } catch {
             panel.style.width = '280px';
         }
-        
     } else {
         // Collapsing: save current width, then clear inline so CSS !important takes over
         try { localStorage.setItem('rune_panel_' + side, panel.offsetWidth); } catch {}
         panel.style.width = '';
     }
+    // Persist collapsed state
+    try { localStorage.setItem('rune_panel_' + side + '_collapsed', panel.classList.contains('collapsed') ? '1' : '0'); } catch {}
 }
 
 function updateToggleIcon(panel, side) {
@@ -1206,6 +1207,14 @@ document.addEventListener('keydown', (e) => {
 function initPanelResize() {
     ['left', 'right'].forEach(side => {
         const panel = document.getElementById('panel-' + side);
+        // Restore collapsed state
+        const wasCollapsed = localStorage.getItem('rune_panel_' + side + '_collapsed');
+        if (wasCollapsed === '1' && !panel.classList.contains('collapsed')) {
+            panel.classList.add('collapsed');
+        } else if (wasCollapsed === '0' && panel.classList.contains('collapsed')) {
+            panel.classList.remove('collapsed');
+        }
+        // Restore width
         const saved = localStorage.getItem('rune_panel_' + side);
         if (saved && !panel.classList.contains('collapsed')) panel.style.width = saved + 'px';
         updateToggleIcon(panel, side);
