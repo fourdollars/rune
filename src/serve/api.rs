@@ -605,20 +605,11 @@ pub async fn collection_delete_handler(
 pub async fn collection_switch_handler(
     State(state): State<ServerState>,
     Json(req): Json<CollectionSwitchReq>,
-) -> Json<ApiResponse> {
-    // Load history
+) -> Json<serde_json::Value> {
+    // Load history for response (per-client, not broadcast)
     let history = state.chat_db.load_recent_async(req.collection_id.clone(), 100).await;
 
-    // Broadcast switch + history + file list
-    let switched = SseMsg::CollectionSwitched { collection_id: req.collection_id.clone() };
-    broadcast(&state, &switched);
-
-    let hist = SseMsg::History { messages: history };
-    broadcast(&state, &hist);
-
-    broadcast_file_list(&state, &req.collection_id).await;
-
-    // Send content of first file
+    // Load file list
     let md_dir = super::collection_markdown_dir(&req.collection_id);
     let mut files = Vec::new();
     if let Ok(mut rd) = tokio::fs::read_dir(&md_dir).await {
@@ -628,14 +619,24 @@ pub async fn collection_switch_handler(
         }
     }
     files.sort();
-    if let Some(first) = files.first() {
-        if let Ok(content) = tokio::fs::read_to_string(md_dir.join(first)).await {
-            let fc = SseMsg::FileContent { filename: first.clone(), content };
-            broadcast(&state, &fc);
-        }
-    }
 
-    Json(ApiResponse::success())
+    // Load first file content
+    let first_file = files.first().cloned();
+    let first_content = if let Some(ref fname) = first_file {
+        tokio::fs::read_to_string(md_dir.join(fname)).await.ok()
+    } else {
+        None
+    };
+
+    // Return all data in response (no broadcast — switch is per-client)
+    Json(serde_json::json!({
+        "ok": true,
+        "collection_id": req.collection_id,
+        "history": history,
+        "files": files,
+        "current_file": first_file,
+        "file_content": first_content,
+    }))
 }
 
 

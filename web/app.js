@@ -420,8 +420,10 @@ function handleMessage(msg) {
             }
             renderCollectionList();
             updateChatInputState();
-            if (!currentCollectionId && collections.length > 0) {
-                switchCollection(collections[0].id);
+            if (!currentCollectionId) {
+                const saved = localStorage.getItem('rune_collection');
+                const target = (saved && collections.find(s => s.id === saved)) ? saved : (collections.length > 0 ? collections[0].id : '');
+                if (target) switchCollection(target);
             }
             updatePageTitle();
             const newBtn = document.getElementById('btn-new-collection');
@@ -1412,11 +1414,41 @@ function renderCollectionList() {
 
 
 
-function switchCollection(sessionId) {
+async function switchCollection(sessionId) {
     if (sessionId === currentCollectionId) return;
     currentCollectionId = sessionId;
-    api('collection/switch', { collection_id: sessionId });
+    localStorage.setItem('rune_collection', sessionId);
     renderCollectionList();
+    updateChatInputState();
+    updatePageTitle();
+
+    const data = await api('collection/switch', { collection_id: sessionId });
+    if (!data || !data.ok) return;
+
+    // Replay history from response
+    document.getElementById('chat-messages').innerHTML = '';
+    if (data.history && data.history.length) {
+        replayHistory(data.history);
+    }
+
+    // Update file list
+    fileList = data.files || [];
+    updateEditorVisibility(fileList.length);
+
+    // Load first file content
+    if (data.current_file && data.file_content !== undefined) {
+        currentFilename = data.current_file;
+        specContent = data.file_content || '';
+        updateDocTitle(currentFilename);
+        renderPreview();
+        if (typeof editor !== 'undefined' && editor) {
+            editor.setValue(specContent);
+        }
+    } else {
+        currentFilename = '';
+        specContent = '';
+        updateDocTitle('');
+    }
 }
 
 // --- New Collection Dialog ---
