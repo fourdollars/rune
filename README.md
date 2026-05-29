@@ -344,6 +344,59 @@ For scripting, combine skills with pipe mode:
 echo "Use @sysadmin skill. Check disk usage." | rune --json --yes
 ```
 
+## Rune Notes
+
+A self-hosted, AI-powered Markdown wiki with real-time collaboration and public sharing — all served from the same single binary.
+
+```bash
+rune notes --bind 0.0.0.0 --port 9527
+```
+
+### Features
+
+- **AI Agent** — Built-in chat assistant that can read, create, and edit your Markdown files
+- **Real-time Collaboration** — Multiple users via Server-Sent Events (SSE)
+- **Public Sharing** — Selectively publish notes/files as rendered Markdown pages
+- **Multi-Note** — Organize files into separate notes (workspaces)
+- **Mermaid Diagrams** — Rendered in preview and public pages
+- **Syntax Highlighting** — Code blocks with highlight.js
+- **Light/Dark Theme** — Public pages follow system `prefers-color-scheme`
+- **Zero Cloud Dependency** — Your data stays on your server
+
+### Configuration
+
+```toml
+[notes]
+port = 9527
+bind = "0.0.0.0"
+user_token = "your-user-token"
+admin_token = "your-admin-token"
+guest_token = "your-guest-token"
+```
+
+### Role Permissions
+
+| Capability | Admin | User | Guest |
+|---|:---:|:---:|:---:|
+| View notes & files | ✅ | ✅ | ✅ |
+| Read chat history | ✅ | ✅ | ✅ |
+| Switch notes/files | ✅ | ✅ | ✅ |
+| Chat with AI | ✅ | ✅ | ❌ |
+| Create/edit/delete files | ✅ | ✅ | ❌ |
+| Create/rename/delete notes | ✅ | ✅ | ❌ |
+| Approve AI tool requests | ✅ | ❌ | ❌ |
+| Toggle public visibility | ✅ | ❌ | ❌ |
+| Switch AI model | ✅ | ❌ | ❌ |
+
+### Public Pages
+
+Admin can toggle visibility (👁/🙈) for individual notes and files. When both the note and file are set to public, anyone can view the rendered Markdown at:
+
+- **Index:** `http://host:port/notes/` — lists all public notes and files
+- **Preview:** `http://host:port/notes/{note}/{filename}` — rendered Markdown page
+
+No authentication required for public pages.
+
 ## Concourse CI Resource Type
 
 ### Quick Start — Weather Check

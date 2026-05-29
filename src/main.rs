@@ -98,7 +98,7 @@ async fn async_main() {
                 .as_deref()
                 .and_then(|b| b.parse().ok())
                 .unwrap_or(IpAddr::V4(Ipv4Addr::LOCALHOST)),
-            token: notes_cfg.token.clone(),
+            user_token: notes_cfg.user_token.clone(),
             admin_token: notes_cfg.admin_token.clone(),
             guest_token: notes_cfg.guest_token.clone(),
         };
@@ -123,7 +123,7 @@ async fn async_main() {
                 }
                 "--token" | "-t" => {
                     if i + 1 < args.len() {
-                        opts.token = Some(args[i + 1].clone());
+                        opts.user_token = Some(args[i + 1].clone());
                         i += 1;
                     }
                 }
@@ -139,10 +139,10 @@ async fn async_main() {
         }
 
         // Env var override (higher than config, lower than CLI flags)
-        if opts.token.is_none() {
-            if let Ok(t) = env::var("RUNE_NOTES_TOKEN") {
+        if opts.user_token.is_none() {
+            if let Ok(t) = env::var("RUNE_NOTES_USER_TOKEN") {
                 if !t.is_empty() {
-                    opts.token = Some(t);
+                    opts.user_token = Some(t);
                 }
             }
         }

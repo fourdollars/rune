@@ -80,8 +80,8 @@ pub struct NotesConfig {
     pub port: Option<u16>,
     /// Bind address (default: 127.0.0.1).
     pub bind: Option<String>,
-    /// Access token required from clients. None = no token required.
-    pub token: Option<String>,
+    /// User token required from clients. None = no token required.
+    pub user_token: Option<String>,
     /// Admin token: clients with this token get admin role (can approve tool requests).
     pub admin_token: Option<String>,
     /// Guest token: read-only access. Cannot chat, create, edit, or delete anything.
@@ -1337,7 +1337,7 @@ log_level = "info"
         let s = NotesConfig::default();
         assert!(s.port.is_none());
         assert!(s.bind.is_none());
-        assert!(s.token.is_none());
+        assert!(s.user_token.is_none());
         assert!(s.admin_token.is_none());
     }
 
@@ -1351,14 +1351,14 @@ log_level = "info"
 [notes]
 port = 9527
 bind = "0.0.0.0"
-token = "secret"
+user_token = "secret"
 admin_token = "admin_secret"
 "#;
         let cfg: PartialConfig = toml::from_str(toml_str).unwrap();
         let serve = cfg.notes.unwrap();
         assert_eq!(serve.port, Some(9527));
         assert_eq!(serve.bind.as_deref(), Some("0.0.0.0"));
-        assert_eq!(serve.token.as_deref(), Some("secret"));
+        assert_eq!(serve.user_token.as_deref(), Some("secret"));
         assert_eq!(serve.admin_token.as_deref(), Some("admin_secret"));
     }
 
@@ -1943,7 +1943,7 @@ allowed_syscalls = ["ptrace", "bpf"]
     fn test_rune_config_default_serve() {
         let c = RuneConfig::default();
         assert!(c.notes.port.is_none());
-        assert!(c.notes.token.is_none());
+        assert!(c.notes.user_token.is_none());
     }
 
     #[test]

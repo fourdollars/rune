@@ -41,7 +41,7 @@ pub fn note_markdown_dir(session: &str) -> PathBuf {
 #[derive(Clone)]
 pub struct ServerState {
     pub config: RuneConfig,
-    pub token: Option<String>,
+    pub user_token: Option<String>,
     /// Admin token — clients presenting this token get admin role.
     pub admin_token: Option<String>,
     /// Guest token — read-only access, no mutations allowed.
@@ -65,7 +65,7 @@ pub struct ServerState {
 pub struct NotesOptions {
     pub port: u16,
     pub bind: IpAddr,
-    pub token: Option<String>,
+    pub user_token: Option<String>,
     pub admin_token: Option<String>,
     pub guest_token: Option<String>,
 }
@@ -75,7 +75,7 @@ impl Default for NotesOptions {
         Self {
             port: 9527,
             bind: IpAddr::V4(Ipv4Addr::LOCALHOST),
-            token: None,
+            user_token: None,
             admin_token: None,
             guest_token: None,
         }
@@ -127,7 +127,7 @@ pub async fn run(config: RuneConfig, opts: NotesOptions) {
 
     let state = ServerState {
         config: config.clone(),
-        token: opts.token.clone(),
+        user_token: opts.user_token.clone(),
         admin_token: opts.admin_token.clone(),
         guest_token: opts.guest_token.clone(),
         files: Arc::new(RwLock::new(initial_files)),
@@ -151,7 +151,7 @@ pub async fn run(config: RuneConfig, opts: NotesOptions) {
             return next.run(req).await;
         }
         // Check token from header OR query param (EventSource can't set headers)
-        if let Some(ref expected) = state.token {
+        if let Some(ref expected) = state.user_token {
             let from_header = req.headers()
                 .get("authorization")
                 .and_then(|v| v.to_str().ok())
@@ -230,7 +230,7 @@ pub async fn run(config: RuneConfig, opts: NotesOptions) {
     info!("Rune notes starting on http://{}", addr);
 
     println!("  ᚱ Rune Notes → http://{}", addr);
-    if opts.token.is_some() {
+    if opts.user_token.is_some() {
         println!("  🔒 Token auth enabled for non-localhost");
     }
     if opts.admin_token.is_some() {
@@ -447,7 +447,7 @@ mod tests {
         let opts = NotesOptions::default();
         assert_eq!(opts.port, 9527);
         assert_eq!(opts.bind, IpAddr::V4(Ipv4Addr::LOCALHOST));
-        assert!(opts.token.is_none());
+        assert!(opts.user_token.is_none());
         assert!(opts.admin_token.is_none());
     }
 
@@ -518,7 +518,7 @@ mod tests {
             return next.run(req).await;
         }
         // Check token from header OR query param (EventSource can't set headers)
-        if let Some(ref expected) = state.token {
+        if let Some(ref expected) = state.user_token {
             let from_header = req.headers()
                 .get("authorization")
                 .and_then(|v| v.to_str().ok())
@@ -587,7 +587,7 @@ mod tests {
             return next.run(req).await;
         }
         // Check token from header OR query param (EventSource can't set headers)
-        if let Some(ref expected) = state.token {
+        if let Some(ref expected) = state.user_token {
             let from_header = req.headers()
                 .get("authorization")
                 .and_then(|v| v.to_str().ok())
@@ -662,7 +662,7 @@ mod tests {
             return next.run(req).await;
         }
         // Check token from header OR query param (EventSource can't set headers)
-        if let Some(ref expected) = state.token {
+        if let Some(ref expected) = state.user_token {
             let from_header = req.headers()
                 .get("authorization")
                 .and_then(|v| v.to_str().ok())
@@ -737,7 +737,7 @@ mod tests {
             return next.run(req).await;
         }
         // Check token from header OR query param (EventSource can't set headers)
-        if let Some(ref expected) = state.token {
+        if let Some(ref expected) = state.user_token {
             let from_header = req.headers()
                 .get("authorization")
                 .and_then(|v| v.to_str().ok())
@@ -804,7 +804,7 @@ mod tests {
             return next.run(req).await;
         }
         // Check token from header OR query param (EventSource can't set headers)
-        if let Some(ref expected) = state.token {
+        if let Some(ref expected) = state.user_token {
             let from_header = req.headers()
                 .get("authorization")
                 .and_then(|v| v.to_str().ok())
@@ -871,7 +871,7 @@ mod tests {
             return next.run(req).await;
         }
         // Check token from header OR query param (EventSource can't set headers)
-        if let Some(ref expected) = state.token {
+        if let Some(ref expected) = state.user_token {
             let from_header = req.headers()
                 .get("authorization")
                 .and_then(|v| v.to_str().ok())
@@ -938,7 +938,7 @@ mod tests {
             return next.run(req).await;
         }
         // Check token from header OR query param (EventSource can't set headers)
-        if let Some(ref expected) = state.token {
+        if let Some(ref expected) = state.user_token {
             let from_header = req.headers()
                 .get("authorization")
                 .and_then(|v| v.to_str().ok())
@@ -1032,13 +1032,13 @@ mod tests {
         let opts = NotesOptions {
             port: 8080,
             bind: IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)),
-            token: Some("tok".into()),
+            user_token: Some("tok".into()),
             admin_token: Some("admin".into()),
             guest_token: None,
         };
         assert_eq!(opts.port, 8080);
         assert_eq!(opts.bind, IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)));
-        assert_eq!(opts.token.as_deref(), Some("tok"));
+        assert_eq!(opts.user_token.as_deref(), Some("tok"));
         assert_eq!(opts.admin_token.as_deref(), Some("admin"));
     }
 
@@ -1085,7 +1085,7 @@ mod tests {
 
         let state = ServerState {
             config: config.clone(),
-            token: None,
+            user_token: None,
             admin_token: Some("admin".into()),
             guest_token: None,
             files: Arc::new(RwLock::new(std::collections::HashMap::new())),
@@ -1097,7 +1097,7 @@ mod tests {
             chat_db: db,
         };
 
-        assert_eq!(state.token, None);
+        assert_eq!(state.user_token, None);
         assert_eq!(state.admin_token.as_deref(), Some("admin"));
         assert_eq!(*state.active_model.read().await, first_model);
     }
@@ -1114,7 +1114,7 @@ mod tests {
 
         let state = ServerState {
             config: RuneConfig::default(),
-            token: Some("my-secret-token".into()),
+            user_token: Some("my-secret-token".into()),
             admin_token: None,
             guest_token: None,
             files: Arc::new(RwLock::new(std::collections::HashMap::new())),
@@ -1126,7 +1126,7 @@ mod tests {
             chat_db: db,
         };
 
-        assert_eq!(state.token.as_deref(), Some("my-secret-token"));
+        assert_eq!(state.user_token.as_deref(), Some("my-secret-token"));
         assert!(state.admin_token.is_none());
         assert_eq!(*state.active_file.read().await, "main.md");
     }
@@ -1143,7 +1143,7 @@ mod tests {
 
         let state = ServerState {
             config: RuneConfig::default(),
-            token: None,
+            user_token: None,
             admin_token: None,
             guest_token: None,
             files: Arc::new(RwLock::new(std::collections::HashMap::new())),
@@ -1188,7 +1188,7 @@ mod tests {
         let opts = NotesOptions {
             port: 19527, // Use a fixed high port unlikely to conflict
             bind: IpAddr::V4(Ipv4Addr::LOCALHOST),
-            token: Some("test-tok".into()),
+            user_token: Some("test-tok".into()),
             admin_token: Some("test-admin".into()),
             guest_token: None,
         };
@@ -1216,7 +1216,7 @@ mod tests {
         let opts = NotesOptions {
             port: 19528,
             bind: IpAddr::V4(Ipv4Addr::LOCALHOST),
-            token: None,
+            user_token: None,
             admin_token: None,
             guest_token: None,
         };

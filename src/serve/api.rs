@@ -235,7 +235,7 @@ impl ApiResponse {
 // ─── Auth helpers ──────────────────────────────────────────────────────────
 
 pub fn check_token(state: &ServerState, token: Option<&str>) -> bool {
-    match &state.token {
+    match &state.user_token {
         None => true, // no token configured = open
         Some(expected) => token == Some(expected.as_str()),
     }
@@ -1506,7 +1506,7 @@ mod tests {
         let (admin_broadcast_tx, _) = broadcast::channel(16);
         ServerState {
             config: crate::config::RuneConfig::default(),
-            token,
+            user_token: token,
             admin_token,
             guest_token: None,
             files: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
@@ -1576,7 +1576,7 @@ fn test_state(tmp: &TempDir) -> ServerState {
     let db = ChatDb::open(&db_path).unwrap();
     ServerState {
         config: RuneConfig::default(),
-        token: None,
+        user_token: None,
         admin_token: Some("admin123".into()),
         guest_token: None,
         files: Arc::new(RwLock::new(std::collections::HashMap::new())),
@@ -1591,7 +1591,7 @@ fn test_state(tmp: &TempDir) -> ServerState {
 
 fn test_state_with_token(tmp: &TempDir) -> ServerState {
     let mut state = test_state(tmp);
-    state.token = Some("secret".into());
+    state.user_token = Some("secret".into());
     state
 }
 
