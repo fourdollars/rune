@@ -965,7 +965,8 @@ pub async fn public_notes_list_handler(
         any = true;
         html.push_str(&format!("<li><div class='note-header'>&#128193; {}</div><ul>", html_escape(&note.name)));
         for fname in &public_files {
-            let url = format!("/notes/{}/{}", url_encode(&note.id), url_encode(fname));
+            let slug = fname.strip_suffix(".md").unwrap_or(fname);
+            let url = format!("/notes/{}/{}", url_encode(&note.id), url_encode(slug));
             html.push_str(&format!("<li><a class='file-link' href='{}'>{}</a></li>", url, html_escape(fname)));
         }
         html.push_str("</ul></li>");
@@ -977,8 +978,10 @@ pub async fn public_notes_list_handler(
 
 pub async fn public_preview_handler(
     State(state): State<ServerState>,
-    axum::extract::Path((note_id, filename)): axum::extract::Path<(String, String)>,
+    axum::extract::Path((note_id, file_slug)): axum::extract::Path<(String, String)>,
 ) -> impl axum::response::IntoResponse {
+    // Accept both "OpenAI" and "OpenAI.md"
+    let filename = if file_slug.ends_with(".md") { file_slug.clone() } else { format!("{}.md", file_slug) };
     let note_public = state.chat_db.list_notes().unwrap_or_default()
         .iter().find(|n| n.id == note_id).map(|n| n.public).unwrap_or(false);
     let file_public = state.chat_db.is_file_public(&note_id, &filename);
@@ -995,8 +998,9 @@ pub async fn public_preview_handler(
 
 pub async fn public_raw_handler(
     State(state): State<ServerState>,
-    axum::extract::Path((note_id, filename)): axum::extract::Path<(String, String)>,
+    axum::extract::Path((note_id, file_slug)): axum::extract::Path<(String, String)>,
 ) -> impl axum::response::IntoResponse {
+    let filename = if file_slug.ends_with(".md") { file_slug.clone() } else { format!("{}.md", file_slug) };
     let note_public = state.chat_db.list_notes().unwrap_or_default()
         .iter().find(|n| n.id == note_id).map(|n| n.public).unwrap_or(false);
     let file_public = state.chat_db.is_file_public(&note_id, &filename);
