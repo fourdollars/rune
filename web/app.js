@@ -1070,7 +1070,6 @@ function confirmLogout() {
 
 // --- File management ---
 function updateDocTitle(name) {
-    const el = document.getElementById('doc-title');
     if (el && !el.isContentEditable) el.textContent = name;
     updatePageTitle();
 }
@@ -1115,7 +1114,6 @@ function renameCurrentFile(newName) {
 }
 
 function initDocTitle() {
-    const el = document.getElementById('doc-title');
     if (!el) return;
     el.addEventListener('dblclick', () => {
         el.contentEditable = 'true';

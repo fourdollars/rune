@@ -137,20 +137,19 @@
                     <button id="btn-new-collection" class="toolbar-btn hidden" onclick="showNewCollectionDialog()" title="New collection">+</button>
                 </div>
                 <div class="collection-tree" id="collection-tree"></div>
+                <div class="explorer-actions">
+                    <button id="btn-edit" class="explorer-action-btn active" onclick="toggleEdit()" title="Toggle editor">✏️</button>
+                    <button id="btn-preview" class="explorer-action-btn" onclick="togglePreview()" title="Toggle preview">👁</button>
+                    <button id="btn-search" class="explorer-action-btn" onclick="showSearchDialog()" title="Search">🔍</button>
+                    <button id="btn-archive" class="explorer-action-btn" onclick="showArchiveDialog()" title="Archive">📦</button>
+                    <button id="btn-logout" class="explorer-action-btn" onclick="showLogoutDialog()" title="Logout">⏏</button>
+                </div>
             </div>
         </aside>
 
         <!-- Center: Spec Editor -->
         <main id="panel-center">
-            <div class="toolbar">
-                <div class="toolbar-left">
-                    <div class="doc-title-area">
-                        <button class="file-add-btn" onclick="createFile()" title="New markdown file">+</button>
-                        <span id="doc-title" class="doc-title" title="Double-click to rename"></span>
-                        <button class="file-del-btn" id="doc-title-delete" onclick="deleteCurrentFile()" title="Delete this file">−</button>
-                    </div>
-                </div>
-            </div>
+
             <div id="center-body">
                 <div id="editor-container">
                     <pre id="editor-highlight" aria-hidden="true"><code id="editor-highlight-code" class="language-markdown"></code></pre>
@@ -173,13 +172,7 @@
                     <div id="model-indicator" class="model-indicator" style="display:none">
                         <span id="model-name" class="model-name" onclick="showModelDialog()" title="Switch model"></span>
                     </div>
-                    <div class="chat-header-right">
-                        <button id="btn-edit" class="toolbar-btn active" onclick="toggleEdit()" title="Toggle editor">✏️</button>
-                        <button id="btn-preview" class="toolbar-btn" onclick="togglePreview()" title="Toggle preview">👁</button>
-                        <button id="btn-search" class="toolbar-btn" onclick="showSearchDialog()" title="Search chat history">🔍</button>
-                        <button id="btn-archive" class="toolbar-btn" onclick="showArchiveDialog()" title="Archive chat">📦</button>
-                        <button id="btn-logout" class="toolbar-btn logout-btn" onclick="showLogoutDialog()" title="Logout">⏏</button>
-                    </div>
+
                 </div>
                 <div class="chat-body">
                     <div id="chat-messages" class="chat-messages"></div>
