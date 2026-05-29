@@ -1,5 +1,5 @@
 // Rune WebUI — app.js
-// Three-panel layout: Collections | Editor | Chat
+// Three-panel layout: Notes | Editor | Chat
 
 'use strict';
 
@@ -20,11 +20,11 @@ let myToken = '';
 let isAdmin = false;
 let availableModels = [];
 
-// --- Collection state ---
-let collections = [];
-let currentCollectionId = '';
+// --- Note state ---
+let notes = [];
+let currentNoteId = '';
 let dirBrowserTargetInput = null;
-let settingsCollectionId = null;
+let settingsNoteId = null;
 
 let activeModel = '';
 
@@ -137,8 +137,8 @@ function initEditor() {
             // Live preview update
             if (showPreview) renderPreview();
             // Sync to server
-            if (editorDirty && currentCollectionId) {
-                api('file/update', { collection_id: currentCollectionId, filename: currentFilename, content: specContent });
+            if (editorDirty && currentNoteId) {
+                api('file/update', { note_id: currentNoteId, filename: currentFilename, content: specContent });
                 editorDirty = false;
             }
         }, 300);
@@ -287,7 +287,7 @@ function connect() {
 
     // Listen for all event types
     const eventTypes = [
-        'auth_result', 'model_list', 'collection_list', 'collection_switched',
+        'auth_result', 'model_list', 'note_list', 'note_switched',
         'history', 'file_list', 'file_content', 'file_deleted',
         'chat_token', 'chat_done', 'chat_meta', 'chat_message',
         'status', 'system', 'users_update', 'error',
@@ -368,16 +368,16 @@ function handleMessage(msg) {
             fileList = msg.files || [];
             // If current file still exists, re-fetch its content (may have been edited by agent)
             if (currentFilename && fileList.includes(currentFilename)) {
-                api('file/switch', { collection_id: currentCollectionId, name: currentFilename });
+                api('file/switch', { note_id: currentNoteId, name: currentFilename });
             } else if (!currentFilename && fileList.length > 0) {
                 // No file selected yet, pick first
                 currentFilename = fileList[0];
-                api('file/switch', { collection_id: currentCollectionId, name: currentFilename });
+                api('file/switch', { note_id: currentNoteId, name: currentFilename });
             } else if (currentFilename && !fileList.includes(currentFilename)) {
                 // Current file was deleted
                 currentFilename = fileList.length > 0 ? fileList[0] : '';
                 if (currentFilename) {
-                    api('file/switch', { collection_id: currentCollectionId, name: currentFilename });
+                    api('file/switch', { note_id: currentNoteId, name: currentFilename });
                 }
             }
             updateDocTitle(currentFilename);
@@ -418,27 +418,27 @@ function handleMessage(msg) {
             updateModelIndicator();
             addSystemMessage('🔄 Model switched to: ' + activeModel);
             break;
-        case 'collection_list':
-            collections = msg.collections || [];
-            if (currentCollectionId && !collections.find(s => s.id === currentCollectionId)) {
-                currentCollectionId = '';
+        case 'note_list':
+            notes = msg.notes || [];
+            if (currentNoteId && !notes.find(s => s.id === currentNoteId)) {
+                currentNoteId = '';
             }
-            renderCollectionList();
+            renderNoteList();
             updateChatInputState();
-            if (!currentCollectionId) {
-                const saved = localStorage.getItem('rune_collection');
-                const target = (saved && collections.find(s => s.id === saved)) ? saved : (collections.length > 0 ? collections[0].id : '');
-                if (target) switchCollection(target);
+            if (!currentNoteId) {
+                const saved = localStorage.getItem('rune_note');
+                const target = (saved && notes.find(s => s.id === saved)) ? saved : (notes.length > 0 ? notes[0].id : '');
+                if (target) switchNote(target);
             }
             updatePageTitle();
-            const newBtn = document.getElementById('btn-new-collection');
+            const newBtn = document.getElementById('btn-new-note');
             if (newBtn && isAdmin) newBtn.classList.remove('hidden');
             break;
-        case 'collection_switched':
-            currentCollectionId = msg.collection_id;
+        case 'note_switched':
+            currentNoteId = msg.note_id;
             updateChatInputState();
             document.getElementById('chat-messages').innerHTML = '';
-            renderCollectionList();
+            renderNoteList();
             updatePageTitle();
             const overlay2 = document.getElementById('context-overlay');
             if (overlay2) overlay2.classList.add('hidden');
@@ -467,38 +467,38 @@ function handleMessage(msg) {
 // --- Chat ---
 function sendMessage() {
     const text = chatInput.value.trim();
-    if (!text || !isConnected || !currentCollectionId) return;
+    if (!text || !isConnected || !currentNoteId) return;
 
     // Send to server — do NOT optimistic render; wait for broadcast echo
-    api('chat', { collection_id: currentCollectionId, content: text, nickname: myNickname });
+    api('chat', { note_id: currentNoteId, content: text, nickname: myNickname });
     chatInput.value = '';
     chatInput.style.height = 'auto';
 }
 
 function updateChatInputState() {
-    if (!currentCollectionId) {
+    if (!currentNoteId) {
         chatInput.disabled = true;
         chatInput.placeholder = 'Create a session first...';
     } else {
         chatInput.disabled = false;
         chatInput.placeholder = 'Type a message...';
     }
-    applyNoCollectionLayout();
+    applyNoNoteLayout();
 }
 
-function applyNoCollectionLayout() {
+function applyNoNoteLayout() {
     const panelLeft = document.getElementById('panel-left');
     const panelCenter = document.getElementById('panel-center');
     const panelRight = document.getElementById('panel-right');
 
-    if (!currentCollectionId && collections.length === 0) {
-        // Truly no collections: expand collection panel fullscreen
+    if (!currentNoteId && notes.length === 0) {
+        // Truly no notes: expand note panel fullscreen
         panelCenter.classList.add('hidden');
         panelRight.classList.add('hidden');
         panelLeft.classList.remove('collapsed');
         panelLeft.classList.add('fullscreen');
     } else {
-        // Collection exists or active: restore normal layout
+        // Note exists or active: restore normal layout
         panelLeft.classList.remove('fullscreen');
         panelCenter.classList.remove('hidden');
         panelRight.classList.remove('hidden');
@@ -999,7 +999,7 @@ function hideArchiveDialog() {
     document.getElementById('archive-modal').classList.add('hidden');
 }
 function confirmArchive() {
-    api('chat/archive', { collection_id: currentCollectionId });
+    api('chat/archive', { note_id: currentNoteId });
 }
 
 // --- Search ---
@@ -1014,7 +1014,7 @@ function doSearch() {
     const q = document.getElementById('search-input').value.trim();
     if (!q) return;
     document.getElementById('search-results').innerHTML = '<div class="search-loading">Searching…</div>';
-    api('chat/search', { collection_id: currentCollectionId, query: q });
+    api('chat/search', { note_id: currentNoteId, query: q });
 }
 function renderSearchResults(query, results) {
     const el = document.getElementById('search-results');
@@ -1085,12 +1085,12 @@ function updateDocTitle(name) {
 }
 
 function updatePageTitle() {
-    if (!currentCollectionId) {
+    if (!currentNoteId) {
         document.title = 'Rune';
         return;
     }
-    const s = collections.find(x => x.id === currentCollectionId);
-    const sessionName = s ? s.name : currentCollectionId;
+    const s = notes.find(x => x.id === currentNoteId);
+    const sessionName = s ? s.name : currentNoteId;
     const file = (fileList && fileList.length > 0) ? currentFilename : null;
     document.title = file
         ? 'Rune - ' + sessionName + ' - ' + file
@@ -1103,16 +1103,16 @@ function createFile() {
     const clean = name.trim();
     if (!clean.endsWith('.md')) { alert('Filename must end in .md'); return; }
     if (!/^[a-zA-Z0-9_\-\.]+\.md$/.test(clean)) { alert('Invalid filename. Use only letters, numbers, _ - .'); return; }
-    api('file/create', { collection_id: currentCollectionId, name: clean });
+    api('file/create', { note_id: currentNoteId, name: clean });
 }
 
 function deleteCurrentFile() {
     if (!confirm('Delete ' + currentFilename + '?')) return;
-    api('file/delete', { collection_id: currentCollectionId, name: currentFilename });
+    api('file/delete', { note_id: currentNoteId, name: currentFilename });
 }
 
 function switchFile(name) {
-    api('file/switch', { collection_id: currentCollectionId, name });
+    api('file/switch', { note_id: currentNoteId, name });
 }
 
 function renameCurrentFile(newName) {
@@ -1120,7 +1120,7 @@ function renameCurrentFile(newName) {
     if (!clean || clean === currentFilename) return;
     if (!clean.endsWith('.md')) { alert('Filename must end in .md'); return; }
     if (!/^[a-zA-Z0-9_\-\.]+\.md$/.test(clean)) { alert('Invalid filename'); return; }
-    api('file/rename', { collection_id: currentCollectionId, old_name: currentFilename, new_name: clean });
+    api('file/rename', { note_id: currentNoteId, old_name: currentFilename, new_name: clean });
 }
 
 
@@ -1293,23 +1293,23 @@ function setupResizeHandle(handleId, panelId, side) {
     });
 }
 
-// --- Collection Management ---
+// --- Note Management ---
 
-function renderCollectionList() {
-    const tree = document.getElementById('collection-tree');
+function renderNoteList() {
+    const tree = document.getElementById('note-tree');
     if (!tree) return;
     tree.innerHTML = '';
-    if (collections.length === 0) {
-        tree.innerHTML = '<div class="explorer-empty">No collections yet.<br>Click <b>+</b> to create one.</div>';
+    if (notes.length === 0) {
+        tree.innerHTML = '<div class="explorer-empty">No notes yet.<br>Click <b>+</b> to create one.</div>';
         return;
     }
-    collections.forEach(s => {
+    notes.forEach(s => {
         const section = document.createElement('div');
         section.className = 'explorer-section';
 
         // Folder row
         const folderRow = document.createElement('div');
-        folderRow.className = 'explorer-row' + (s.id === currentCollectionId && !(s.files||[]).length ? ' active' : '');
+        folderRow.className = 'explorer-row' + (s.id === currentNoteId && !(s.files||[]).length ? ' active' : '');
         folderRow.onclick = () => {
             const children = section.querySelector('.explorer-children');
             const chev = folderRow.querySelector('.chevron');
@@ -1320,7 +1320,7 @@ function renderCollectionList() {
                 children.classList.add('collapsed');
                 chev.classList.remove('open');
             }
-            switchCollection(s.id);
+            switchNote(s.id);
         };
 
         const chevron = document.createElement('span');
@@ -1329,7 +1329,7 @@ function renderCollectionList() {
 
         const folderIcon = document.createElement('span');
         folderIcon.className = 'icon';
-        folderIcon.textContent = (s.id === currentCollectionId) ? '📂' : '📁';
+        folderIcon.textContent = (s.id === currentNoteId) ? '📂' : '📁';
 
         const folderLabel = document.createElement('span');
         folderLabel.className = 'label';
@@ -1349,7 +1349,7 @@ function renderCollectionList() {
             addBtn.title = 'New file';
             addBtn.onclick = (e) => {
                 e.stopPropagation();
-                if (s.id !== currentCollectionId) switchCollection(s.id);
+                if (s.id !== currentNoteId) switchNote(s.id);
                 createFile();
             };
             actions.appendChild(addBtn);
@@ -1357,7 +1357,7 @@ function renderCollectionList() {
             const gearBtn = document.createElement('button');
             gearBtn.textContent = '⚙';
             gearBtn.title = 'Settings';
-            gearBtn.onclick = (e) => { e.stopPropagation(); showCollectionSettings(s.id); };
+            gearBtn.onclick = (e) => { e.stopPropagation(); showNoteSettings(s.id); };
             actions.appendChild(gearBtn);
 
             folderRow.appendChild(actions);
@@ -1395,7 +1395,7 @@ function renderCollectionList() {
                     e.stopPropagation();
                     const newName = prompt('Rename file:', fname);
                     if (newName && newName.trim() && newName.trim() !== fname) {
-                        api('file/rename', { collection_id: s.id, old_name: fname, new_name: newName.trim() });
+                        api('file/rename', { note_id: s.id, old_name: fname, new_name: newName.trim() });
                     }
                 };
                 fileActions.appendChild(renameBtn);
@@ -1406,7 +1406,7 @@ function renderCollectionList() {
                 delBtn.onclick = (e) => {
                     e.stopPropagation();
                     if (confirm('Delete "' + fname + '"?')) {
-                        api('file/delete', { collection_id: s.id, name: fname });
+                        api('file/delete', { note_id: s.id, name: fname });
                     }
                 };
                 fileActions.appendChild(delBtn);
@@ -1415,8 +1415,8 @@ function renderCollectionList() {
             }
 
             fileRow.onclick = () => {
-                if (s.id !== currentCollectionId) switchCollection(s.id);
-                api('file/switch', { collection_id: s.id, name: fname });
+                if (s.id !== currentNoteId) switchNote(s.id);
+                api('file/switch', { note_id: s.id, name: fname });
                 tree.querySelectorAll('.explorer-row').forEach(r => r.classList.remove('active'));
                 fileRow.classList.add('active');
                 if (!showPreview) {
@@ -1435,15 +1435,15 @@ function renderCollectionList() {
 
 
 
-async function switchCollection(sessionId) {
-    if (sessionId === currentCollectionId) return;
-    currentCollectionId = sessionId;
-    localStorage.setItem('rune_collection', sessionId);
-    renderCollectionList();
+async function switchNote(sessionId) {
+    if (sessionId === currentNoteId) return;
+    currentNoteId = sessionId;
+    localStorage.setItem('rune_note', sessionId);
+    renderNoteList();
     updateChatInputState();
     updatePageTitle();
 
-    const data = await api('collection/switch', { collection_id: sessionId });
+    const data = await api('note/switch', { note_id: sessionId });
     if (!data || !data.ok) return;
 
     // Replay history from response
@@ -1470,61 +1470,61 @@ async function switchCollection(sessionId) {
     }
 }
 
-// --- New Collection Dialog ---
+// --- New Note Dialog ---
 
-function showNewCollectionDialog() {
-    document.getElementById('new-collection-modal').classList.remove('hidden');
-    document.getElementById('new-collection-name').value = '';
-    document.getElementById('new-collection-name').focus();
+function showNewNoteDialog() {
+    document.getElementById('new-note-modal').classList.remove('hidden');
+    document.getElementById('new-note-name').value = '';
+    document.getElementById('new-note-name').focus();
 }
 
-function hideNewCollectionDialog() {
-    document.getElementById('new-collection-modal').classList.add('hidden');
+function hideNewNoteDialog() {
+    document.getElementById('new-note-modal').classList.add('hidden');
 }
 
-function createCollection() {
-    const name = document.getElementById('new-collection-name').value.trim();
+function createNote() {
+    const name = document.getElementById('new-note-name').value.trim();
     if (!name) return;
-    api("collection/create", { name }).then(() => switchCollection(name));
-    hideNewCollectionDialog();
+    api("note/create", { name }).then(() => switchNote(name));
+    hideNewNoteDialog();
 }
 
-// --- Collection Settings Dialog ---
+// --- Note Settings Dialog ---
 
-function showCollectionSettings(sessionId) {
-    const s = collections.find(x => x.id === sessionId);
+function showNoteSettings(sessionId) {
+    const s = notes.find(x => x.id === sessionId);
     if (!s) return;
-    settingsCollectionId = sessionId;
-    document.getElementById('collection-settings-title').textContent = 'Collection: ' + s.name;
-    document.getElementById('collection-settings-name').value = s.name;
+    settingsNoteId = sessionId;
+    document.getElementById('note-settings-title').textContent = 'Note: ' + s.name;
+    document.getElementById('note-settings-name').value = s.name;
     // Hide delete button for default session
-    const delBtn = document.getElementById('btn-delete-collection');
+    const delBtn = document.getElementById('btn-delete-note');
     if (delBtn) delBtn.style.display = sessionId === 'default' ? 'none' : '';
-    document.getElementById('collection-settings-modal').classList.remove('hidden');
+    document.getElementById('note-settings-modal').classList.remove('hidden');
 }
 
-function hideCollectionSettings() {
-    document.getElementById('collection-settings-modal').classList.add('hidden');
-    settingsCollectionId = null;
+function hideNoteSettings() {
+    document.getElementById('note-settings-modal').classList.add('hidden');
+    settingsNoteId = null;
 }
 
-function saveCollectionSettings() {
-    if (!settingsCollectionId) return;
-    const name = document.getElementById('collection-settings-name').value.trim();
-    const s = collections.find(x => x.id === settingsCollectionId);
+function saveNoteSettings() {
+    if (!settingsNoteId) return;
+    const name = document.getElementById('note-settings-name').value.trim();
+    const s = notes.find(x => x.id === settingsNoteId);
     if (s && name && name !== s.name) {
-        api('collection/rename', { collection_id: settingsCollectionId, name });
+        api('note/rename', { note_id: settingsNoteId, name });
     }
-    hideCollectionSettings();
+    hideNoteSettings();
 }
 
-function deleteCurrentCollection() {
-    if (!settingsCollectionId) return;
+function deleteCurrentNote() {
+    if (!settingsNoteId) return;
     if (!confirm('Delete this session? Chat history will be preserved but session metadata will be removed.')) return;
-    api('collection/delete', { collection_id: settingsCollectionId });
-    hideCollectionSettings();
-    if (currentCollectionId === settingsCollectionId) {
-        currentCollectionId = '';
+    api('note/delete', { note_id: settingsNoteId });
+    hideNoteSettings();
+    if (currentNoteId === settingsNoteId) {
+        currentNoteId = '';
         updateChatInputState();
     }
 }

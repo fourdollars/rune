@@ -33,8 +33,8 @@ pub fn data_dir() -> PathBuf {
 }
 
 /// Get the markdown directory for a session: ~/.rune/sessions/<session>/markdown/
-pub fn collection_markdown_dir(session: &str) -> PathBuf {
-    data_dir().join("collections").join(session).join("markdown")
+pub fn note_markdown_dir(session: &str) -> PathBuf {
+    data_dir().join("notes").join(session).join("markdown")
 }
 
 /// Shared server state.
@@ -157,10 +157,10 @@ pub async fn run(config: RuneConfig, opts: NotesOptions) {
         .route("/api/file/rename", post(api::file_rename_handler))
         .route("/api/file/switch", post(api::file_switch_handler))
         .route("/api/file/update", post(api::file_update_handler))
-        .route("/api/collection/create", post(api::collection_create_handler))
-        .route("/api/collection/rename", post(api::collection_rename_handler))
-        .route("/api/collection/delete", post(api::collection_delete_handler))
-        .route("/api/collection/switch", post(api::collection_switch_handler))
+        .route("/api/note/create", post(api::note_create_handler))
+        .route("/api/note/rename", post(api::note_rename_handler))
+        .route("/api/note/delete", post(api::note_delete_handler))
+        .route("/api/note/switch", post(api::note_switch_handler))
         .route("/api/model/switch", post(api::model_switch_handler))
         .route("/api/chat/archive", post(api::archive_handler))
         .route("/api/chat/search", post(api::search_handler))
@@ -291,7 +291,7 @@ mod tests {
     use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
     // ──────────────────────────────────────────────
-    // data_dir / collection_markdown_dir
+    // data_dir / note_markdown_dir
     // ──────────────────────────────────────────────
 
     #[test]
@@ -312,16 +312,16 @@ mod tests {
     }
 
     #[test]
-    fn test_collection_markdown_dir_structure() {
+    fn test_note_markdown_dir_structure() {
         std::env::set_var("HOME", "/tmp/fake_home");
-        let d = collection_markdown_dir("my-session");
-        assert_eq!(d, std::path::PathBuf::from("/tmp/fake_home/.rune/collections/my-session/markdown"));
+        let d = note_markdown_dir("my-session");
+        assert_eq!(d, std::path::PathBuf::from("/tmp/fake_home/.rune/notes/my-session/markdown"));
     }
 
     #[test]
-    fn test_collection_markdown_dir_special_chars() {
+    fn test_note_markdown_dir_special_chars() {
         std::env::set_var("HOME", "/tmp/fake_home");
-        let d = collection_markdown_dir("session-123_abc");
+        let d = note_markdown_dir("session-123_abc");
         assert!(d.to_string_lossy().contains("session-123_abc"));
     }
 
@@ -862,9 +862,9 @@ mod tests {
     }
 
     #[test]
-    fn test_collection_markdown_dir_ends_with_markdown() {
+    fn test_note_markdown_dir_ends_with_markdown() {
         std::env::set_var("HOME", "/tmp");
-        let d = collection_markdown_dir("sess");
+        let d = note_markdown_dir("sess");
         assert_eq!(d.file_name().unwrap(), "markdown");
     }
 

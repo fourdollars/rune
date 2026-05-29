@@ -59,21 +59,21 @@
         </div>
     </div>
 
-    <!-- New Collection dialog -->
-    <div id="new-collection-modal" class="modal-overlay hidden">
+    <!-- New Note dialog -->
+    <div id="new-note-modal" class="modal-overlay hidden">
         <div class="modal">
-            <h2>New Collection</h2>
+            <h2>New Note</h2>
             <div class="form-group">
-                <label>Collection Name</label>
-                <input type="text" id="new-collection-name" placeholder="My Project" maxlength="50" />
+                <label>Note Name</label>
+                <input type="text" id="new-note-name" placeholder="My Project" maxlength="50" />
             </div>
             <div class="form-group">
                 <div class="path-input-row">
                 </div>
             </div>
             <div class="modal-actions">
-                <button class="btn-secondary" onclick="hideNewCollectionDialog()">Cancel</button>
-                <button class="btn-primary" onclick="createCollection()">Create</button>
+                <button class="btn-secondary" onclick="hideNewNoteDialog()">Cancel</button>
+                <button class="btn-primary" onclick="createNote()">Create</button>
             </div>
         </div>
     </div>
@@ -94,23 +94,23 @@
         </div>
     </div>
 
-    <!-- Collection Settings dialog -->
-    <div id="collection-settings-modal" class="modal-overlay hidden">
+    <!-- Note Settings dialog -->
+    <div id="note-settings-modal" class="modal-overlay hidden">
         <div class="modal">
-            <h2 id="collection-settings-title">Collection Settings</h2>
+            <h2 id="note-settings-title">Note Settings</h2>
             <div class="form-group">
                 <label>Name</label>
-                <input type="text" id="collection-settings-name" maxlength="50" />
+                <input type="text" id="note-settings-name" maxlength="50" />
             </div>
             <div class="form-group">
                 <div class="path-input-row">
                 </div>
             </div>
             <div class="modal-actions">
-                <button class="btn-danger" id="btn-delete-collection" onclick="deleteCurrentCollection()">Delete</button>
+                <button class="btn-danger" id="btn-delete-note" onclick="deleteCurrentNote()">Delete</button>
                 <span style="flex:1"></span>
-                <button class="btn-secondary" onclick="hideCollectionSettings()">Cancel</button>
-                <button class="btn-primary" onclick="saveCollectionSettings()">Save</button>
+                <button class="btn-secondary" onclick="hideNoteSettings()">Cancel</button>
+                <button class="btn-primary" onclick="saveNoteSettings()">Save</button>
             </div>
         </div>
     </div>
@@ -126,15 +126,15 @@
     </div>
 
     <div id="app">
-        <!-- Left Panel: Collections -->
+        <!-- Left Panel: Notes -->
         <aside id="panel-left" class="panel panel-left collapsed">
             <div class="resize-handle" id="resize-left">
                 <span class="toggle-icon">›</span>
             </div>
             <div class="panel-content">
-                <div class="collection-tree" id="collection-tree"></div>
+                <div class="note-tree" id="note-tree"></div>
                 <div class="explorer-actions">
-                    <button id="btn-new-collection" class="explorer-action-btn" onclick="showNewCollectionDialog()" title="New collection">+</button>
+                    <button id="btn-new-note" class="explorer-action-btn" onclick="showNewNoteDialog()" title="New note">+</button>
                     <button id="btn-edit" class="explorer-action-btn active" onclick="toggleEdit()" title="Toggle editor">✏️</button>
                     <button id="btn-preview" class="explorer-action-btn" onclick="togglePreview()" title="Toggle preview">👁</button>
                     <button id="btn-logout" class="explorer-action-btn" onclick="showLogoutDialog()" title="Logout">⏏</button>

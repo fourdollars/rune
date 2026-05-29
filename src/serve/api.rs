@@ -60,10 +60,10 @@ pub enum SseMsg {
     FileContent { filename: String, content: String },
     #[serde(rename = "file_deleted")]
     FileDeleted { filename: String },
-    #[serde(rename = "collection_list")]
-    CollectionList { collections: Vec<CollectionListEntry>, active: String },
-    #[serde(rename = "collection_switched")]
-    CollectionSwitched { collection_id: String },
+    #[serde(rename = "note_list")]
+    NoteList { notes: Vec<NoteListEntry>, active: String },
+    #[serde(rename = "note_switched")]
+    NoteSwitched { note_id: String },
     #[serde(rename = "model_list")]
     ModelList { models: Vec<String>, active: String },
     #[serde(rename = "model_changed")]
@@ -79,7 +79,7 @@ pub enum SseMsg {
 }
 
 #[derive(Debug, Serialize, Clone)]
-pub struct CollectionListEntry {
+pub struct NoteListEntry {
     pub id: String,
     pub name: String,
     pub files: Vec<String>,
@@ -101,62 +101,62 @@ pub struct EventsQuery {
 
 #[derive(Debug, Deserialize)]
 pub struct ChatReq {
-    pub collection_id: String,
+    pub note_id: String,
     pub content: String,
     pub nickname: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
 pub struct FileCreateReq {
-    pub collection_id: String,
+    pub note_id: String,
     pub name: String,
 }
 
 #[derive(Debug, Deserialize)]
 pub struct FileDeleteReq {
-    pub collection_id: String,
+    pub note_id: String,
     pub name: String,
 }
 
 #[derive(Debug, Deserialize)]
 pub struct FileRenameReq {
-    pub collection_id: String,
+    pub note_id: String,
     pub old_name: String,
     pub new_name: String,
 }
 
 #[derive(Debug, Deserialize)]
 pub struct FileSwitchReq {
-    pub collection_id: String,
+    pub note_id: String,
     pub name: String,
 }
 
 #[derive(Debug, Deserialize)]
 pub struct FileUpdateReq {
-    pub collection_id: String,
+    pub note_id: String,
     pub filename: Option<String>,
     pub content: String,
 }
 
 #[derive(Debug, Deserialize)]
-pub struct CollectionCreateReq {
+pub struct NoteCreateReq {
     pub name: String,
 }
 
 #[derive(Debug, Deserialize)]
-pub struct CollectionRenameReq {
-    pub collection_id: String,
+pub struct NoteRenameReq {
+    pub note_id: String,
     pub name: String,
 }
 
 #[derive(Debug, Deserialize)]
-pub struct CollectionDeleteReq {
-    pub collection_id: String,
+pub struct NoteDeleteReq {
+    pub note_id: String,
 }
 
 #[derive(Debug, Deserialize)]
-pub struct CollectionSwitchReq {
-    pub collection_id: String,
+pub struct NoteSwitchReq {
+    pub note_id: String,
 }
 
 
@@ -167,12 +167,12 @@ pub struct ModelSwitchReq {
 
 #[derive(Debug, Deserialize)]
 pub struct ArchiveReq {
-    pub collection_id: String,
+    pub note_id: String,
 }
 
 #[derive(Debug, Deserialize)]
 pub struct SearchReq {
-    pub collection_id: String,
+    pub note_id: String,
     pub query: String,
 }
 
@@ -236,11 +236,11 @@ pub fn is_valid_filename(name: &str) -> bool {
 
 // ─── Helper: build session list ────────────────────────────────────────────
 
-pub async fn build_collection_list(state: &ServerState) -> Vec<CollectionListEntry> {
-    let collections = state.chat_db.list_collections().unwrap_or_default();
+pub async fn build_note_list(state: &ServerState) -> Vec<NoteListEntry> {
+    let notes = state.chat_db.list_notes().unwrap_or_default();
     let mut entries = Vec::new();
-    for s in collections {
-        let md_dir = super::collection_markdown_dir(&s.id);
+    for s in notes {
+        let md_dir = super::note_markdown_dir(&s.id);
         let mut files = Vec::new();
         if let Ok(mut rd) = tokio::fs::read_dir(&md_dir).await {
             while let Ok(Some(entry)) = rd.next_entry().await {
@@ -251,7 +251,7 @@ pub async fn build_collection_list(state: &ServerState) -> Vec<CollectionListEnt
             }
         }
         files.sort();
-        entries.push(CollectionListEntry {
+        entries.push(NoteListEntry {
             id: s.id,
             name: s.name,
             files,
@@ -309,8 +309,8 @@ pub async fn events_handler(
     });
 
     // Session list
-    let collections = build_collection_list(&state).await;
-    init_msgs.push(SseMsg::CollectionList { collections, active: String::new() });
+    let notes = build_note_list(&state).await;
+    init_msgs.push(SseMsg::NoteList { notes, active: String::new() });
 
     // Users update
     init_msgs.push(SseMsg::UsersUpdate { count });
@@ -379,8 +379,8 @@ pub async fn chat_handler(
     State(state): State<ServerState>,
     Json(req): Json<ChatReq>,
 ) -> Json<ApiResponse> {
-    if req.collection_id.is_empty() {
-        return Json(ApiResponse::err("No collection selected"));
+    if req.note_id.is_empty() {
+        return Json(ApiResponse::err("No note selected"));
     }
     if req.content.trim().is_empty() {
         return Json(ApiResponse::err("Empty message"));
@@ -399,7 +399,7 @@ pub async fn chat_handler(
 
     // Persist user message
     state.chat_db.insert_async(
-        req.collection_id.clone(),
+        req.note_id.clone(),
         "user".to_string(),
         nickname,
         req.content.clone(),
@@ -411,11 +411,11 @@ pub async fn chat_handler(
 
     // Spawn agent task
     let state_clone = state.clone();
-    let collection_id = req.collection_id.clone();
+    let note_id = req.note_id.clone();
     let content = req.content.clone();
     let nick = req.nickname.clone().unwrap_or_else(|| "user".to_string());
     tokio::spawn(async move {
-        handle_chat_message(content, state_clone, collection_id, nick).await;
+        handle_chat_message(content, state_clone, note_id, nick).await;
     });
 
     Json(ApiResponse::success())
@@ -425,14 +425,14 @@ pub async fn file_create_handler(
     State(state): State<ServerState>,
     Json(req): Json<FileCreateReq>,
 ) -> Json<ApiResponse> {
-    if req.collection_id.is_empty() {
-        return Json(ApiResponse::err("No collection selected"));
+    if req.note_id.is_empty() {
+        return Json(ApiResponse::err("No note selected"));
     }
     if !is_valid_filename(&req.name) {
         return Json(ApiResponse::err(format!("Invalid filename: {}", req.name)));
     }
 
-    let md_dir = super::collection_markdown_dir(&req.collection_id);
+    let md_dir = super::note_markdown_dir(&req.note_id);
     let file_path = md_dir.join(&req.name);
     if file_path.exists() {
         return Json(ApiResponse::err(format!("File already exists: {}", req.name)));
@@ -445,7 +445,7 @@ pub async fn file_create_handler(
     }
 
     // Broadcast updated file list
-    broadcast_file_list(&state, &req.collection_id).await;
+    broadcast_file_list(&state, &req.note_id).await;
 
     // Broadcast file content
     let fc = SseMsg::FileContent { filename: req.name, content: empty };
@@ -458,17 +458,17 @@ pub async fn file_delete_handler(
     State(state): State<ServerState>,
     Json(req): Json<FileDeleteReq>,
 ) -> Json<ApiResponse> {
-    if req.collection_id.is_empty() {
-        return Json(ApiResponse::err("No collection selected"));
+    if req.note_id.is_empty() {
+        return Json(ApiResponse::err("No note selected"));
     }
 
-    let md_dir = super::collection_markdown_dir(&req.collection_id);
+    let md_dir = super::note_markdown_dir(&req.note_id);
     let file_path = md_dir.join(&req.name);
     tokio::fs::remove_file(&file_path).await.ok();
 
     let del = SseMsg::FileDeleted { filename: req.name };
     broadcast(&state, &del);
-    broadcast_file_list(&state, &req.collection_id).await;
+    broadcast_file_list(&state, &req.note_id).await;
 
     Json(ApiResponse::success())
 }
@@ -477,14 +477,14 @@ pub async fn file_rename_handler(
     State(state): State<ServerState>,
     Json(req): Json<FileRenameReq>,
 ) -> Json<ApiResponse> {
-    if req.collection_id.is_empty() {
-        return Json(ApiResponse::err("No collection selected"));
+    if req.note_id.is_empty() {
+        return Json(ApiResponse::err("No note selected"));
     }
     if !is_valid_filename(&req.new_name) {
         return Json(ApiResponse::err(format!("Invalid filename: {}", req.new_name)));
     }
 
-    let md_dir = super::collection_markdown_dir(&req.collection_id);
+    let md_dir = super::note_markdown_dir(&req.note_id);
     let new_path = md_dir.join(&req.new_name);
     if new_path.exists() {
         return Json(ApiResponse::err(format!("File already exists: {}", req.new_name)));
@@ -495,7 +495,7 @@ pub async fn file_rename_handler(
         tokio::fs::rename(&old_path, &new_path).await.ok();
     }
 
-    broadcast_file_list(&state, &req.collection_id).await;
+    broadcast_file_list(&state, &req.note_id).await;
     Json(ApiResponse::success())
 }
 
@@ -503,11 +503,11 @@ pub async fn file_switch_handler(
     State(state): State<ServerState>,
     Json(req): Json<FileSwitchReq>,
 ) -> Json<ApiResponse> {
-    if req.collection_id.is_empty() {
-        return Json(ApiResponse::err("No collection selected"));
+    if req.note_id.is_empty() {
+        return Json(ApiResponse::err("No note selected"));
     }
 
-    let file_path = super::collection_markdown_dir(&req.collection_id).join(&req.name);
+    let file_path = super::note_markdown_dir(&req.note_id).join(&req.name);
     match tokio::fs::read_to_string(&file_path).await {
         Ok(content) => {
             let fc = SseMsg::FileContent { filename: req.name, content };
@@ -522,15 +522,15 @@ pub async fn file_update_handler(
     State(state): State<ServerState>,
     Json(req): Json<FileUpdateReq>,
 ) -> Json<ApiResponse> {
-    if req.collection_id.is_empty() {
-        return Json(ApiResponse::err("No collection selected"));
+    if req.note_id.is_empty() {
+        return Json(ApiResponse::err("No note selected"));
     }
     let fname = req.filename.unwrap_or_default();
     if fname.is_empty() || !is_valid_filename(&fname) {
         return Json(ApiResponse::err("Invalid or missing filename"));
     }
 
-    let file_path = super::collection_markdown_dir(&req.collection_id).join(&fname);
+    let file_path = super::note_markdown_dir(&req.note_id).join(&fname);
     if let Err(e) = tokio::fs::write(&file_path, &req.content).await {
         return Json(ApiResponse::err(format!("Failed to write: {}", e)));
     }
@@ -540,12 +540,12 @@ pub async fn file_update_handler(
     Json(ApiResponse::success())
 }
 
-pub async fn collection_create_handler(
+pub async fn note_create_handler(
     State(state): State<ServerState>,
-    Json(req): Json<CollectionCreateReq>,
+    Json(req): Json<NoteCreateReq>,
 ) -> Json<ApiResponse> {
     if req.name.is_empty() {
-        return Json(ApiResponse::err("Collection name required"));
+        return Json(ApiResponse::err("Note name required"));
     }
 
 
@@ -556,61 +556,61 @@ pub async fn collection_create_handler(
     }
 
     let id = req.name.clone();
-    match state.chat_db.create_collection(&id, &req.name, None) {
+    match state.chat_db.create_note(&id, &req.name, None) {
         Ok(_) => {
-            info!("Collection '{}' created", id);
-            let md_dir = super::collection_markdown_dir(&id);
+            info!("Note '{}' created", id);
+            let md_dir = super::note_markdown_dir(&id);
             let _ = tokio::fs::create_dir_all(&md_dir).await;
-            broadcast_collection_list(&state).await;
+            broadcast_note_list(&state).await;
             Json(ApiResponse::success())
         }
-        Err(e) => Json(ApiResponse::err(format!("Failed to create collection: {}", e))),
+        Err(e) => Json(ApiResponse::err(format!("Failed to create note: {}", e))),
     }
 }
 
-pub async fn collection_rename_handler(
+pub async fn note_rename_handler(
     State(state): State<ServerState>,
-    Json(req): Json<CollectionRenameReq>,
+    Json(req): Json<NoteRenameReq>,
 ) -> Json<ApiResponse> {
-    match state.chat_db.rename_collection(&req.collection_id, &req.name) {
+    match state.chat_db.rename_note(&req.note_id, &req.name) {
         Ok(Some(new_id)) => {
             // Rename directory
-            let old_dir = super::data_dir().join("collections").join(&req.collection_id);
-            let new_dir = super::data_dir().join("collections").join(&new_id);
+            let old_dir = super::data_dir().join("notes").join(&req.note_id);
+            let new_dir = super::data_dir().join("notes").join(&new_id);
             if old_dir.exists() && !new_dir.exists() {
                 let _ = tokio::fs::rename(&old_dir, &new_dir).await;
             }
-            broadcast_collection_list(&state).await;
+            broadcast_note_list(&state).await;
             Json(ApiResponse::success())
         }
-        Ok(None) => Json(ApiResponse::err("Collection not found or name conflict")),
+        Ok(None) => Json(ApiResponse::err("Note not found or name conflict")),
         Err(e) => Json(ApiResponse::err(format!("Failed: {}", e))),
     }
 }
 
-pub async fn collection_delete_handler(
+pub async fn note_delete_handler(
     State(state): State<ServerState>,
-    Json(req): Json<CollectionDeleteReq>,
+    Json(req): Json<NoteDeleteReq>,
 ) -> Json<ApiResponse> {
-    match state.chat_db.delete_collection(&req.collection_id) {
+    match state.chat_db.delete_note(&req.note_id) {
         Ok(true) => {
-            broadcast_collection_list(&state).await;
+            broadcast_note_list(&state).await;
             Json(ApiResponse::success())
         }
-        Ok(false) => Json(ApiResponse::err("Collection not found")),
+        Ok(false) => Json(ApiResponse::err("Note not found")),
         Err(e) => Json(ApiResponse::err(format!("Failed: {}", e))),
     }
 }
 
-pub async fn collection_switch_handler(
+pub async fn note_switch_handler(
     State(state): State<ServerState>,
-    Json(req): Json<CollectionSwitchReq>,
+    Json(req): Json<NoteSwitchReq>,
 ) -> Json<serde_json::Value> {
     // Load history for response (per-client, not broadcast)
-    let history = state.chat_db.load_recent_async(req.collection_id.clone(), 100).await;
+    let history = state.chat_db.load_recent_async(req.note_id.clone(), 100).await;
 
     // Load file list
-    let md_dir = super::collection_markdown_dir(&req.collection_id);
+    let md_dir = super::note_markdown_dir(&req.note_id);
     let mut files = Vec::new();
     if let Ok(mut rd) = tokio::fs::read_dir(&md_dir).await {
         while let Ok(Some(entry)) = rd.next_entry().await {
@@ -631,7 +631,7 @@ pub async fn collection_switch_handler(
     // Return all data in response (no broadcast — switch is per-client)
     Json(serde_json::json!({
         "ok": true,
-        "collection_id": req.collection_id,
+        "note_id": req.note_id,
         "history": history,
         "files": files,
         "current_file": first_file,
@@ -657,10 +657,10 @@ pub async fn archive_handler(
     State(state): State<ServerState>,
     Json(req): Json<ArchiveReq>,
 ) -> Json<ApiResponse> {
-    if req.collection_id.is_empty() {
-        return Json(ApiResponse::err("No collection selected"));
+    if req.note_id.is_empty() {
+        return Json(ApiResponse::err("No note selected"));
     }
-    let archive_dir = super::collection_markdown_dir(&req.collection_id)
+    let archive_dir = super::note_markdown_dir(&req.note_id)
         .parent().unwrap().join("archives");
     let ts = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -670,7 +670,7 @@ pub async fn archive_handler(
     let archive_path = archive_dir.join(&filename);
 
     let db = state.chat_db.clone();
-    match db.archive_async(req.collection_id.clone(), archive_path).await {
+    match db.archive_async(req.note_id.clone(), archive_path).await {
         Ok(count) => {
             let msg = SseMsg::ArchiveDone { filename, count };
             broadcast(&state, &msg);
@@ -690,8 +690,8 @@ pub async fn search_handler(
     if req.query.is_empty() {
         return Json(ApiResponse::err("Empty query"));
     }
-    let archive_dir = super::collection_markdown_dir(&req.collection_id).parent().unwrap().join("archives");
-    let results = state.chat_db.search_async(req.collection_id, req.query.clone(), archive_dir).await;
+    let archive_dir = super::note_markdown_dir(&req.note_id).parent().unwrap().join("archives");
+    let results = state.chat_db.search_async(req.note_id, req.query.clone(), archive_dir).await;
     let msg = SseMsg::SearchResults { query: req.query, results };
     broadcast(&state, &msg);
     Json(ApiResponse::success())
@@ -745,8 +745,8 @@ pub async fn dir_browse_handler(
 
 // ─── Helpers ───────────────────────────────────────────────────────────────
 
-async fn broadcast_file_list(state: &ServerState, collection_id: &str) {
-    let md_dir = super::collection_markdown_dir(collection_id);
+async fn broadcast_file_list(state: &ServerState, note_id: &str) {
+    let md_dir = super::note_markdown_dir(note_id);
     let mut files = Vec::new();
     if let Ok(mut rd) = tokio::fs::read_dir(&md_dir).await {
         while let Ok(Some(entry)) = rd.next_entry().await {
@@ -760,9 +760,9 @@ async fn broadcast_file_list(state: &ServerState, collection_id: &str) {
     broadcast(state, &msg);
 }
 
-async fn broadcast_collection_list(state: &ServerState) {
-    let collections = build_collection_list(state).await;
-    let msg = SseMsg::CollectionList { collections, active: String::new() };
+async fn broadcast_note_list(state: &ServerState) {
+    let notes = build_note_list(state).await;
+    let msg = SseMsg::NoteList { notes, active: String::new() };
     broadcast(state, &msg);
 }
 
@@ -771,7 +771,7 @@ async fn broadcast_collection_list(state: &ServerState) {
 async fn handle_chat_message(
     user_msg: String,
     state: ServerState,
-    collection_id: String,
+    note_id: String,
     nickname: String,
 ) {
     let config = state.config.clone();
@@ -833,10 +833,10 @@ async fn handle_chat_message(
     agent.token_callback = Some(token_callback);
     agent.approval_callback = Some(approval_callback);
     agent.user_name = if !nickname.is_empty() && nickname != "user" { Some(nickname) } else { None };
-    agent.markdown_dir = Some(super::collection_markdown_dir(&collection_id));
+    agent.markdown_dir = Some(super::note_markdown_dir(&note_id));
     agent.chat_db = Some(state.chat_db.clone());
-    agent.chat_collection_id = Some(collection_id.clone());
-    agent.chat_archive_dir = Some(super::collection_markdown_dir(&collection_id)
+    agent.chat_note_id = Some(note_id.clone());
+    agent.chat_archive_dir = Some(super::note_markdown_dir(&note_id)
         .parent().unwrap().join("archives"));
 
     // Set system prompt
@@ -844,7 +844,7 @@ async fn handle_chat_message(
     agent.set_system_prompt(&system_prompt);
 
     // Load chat history into agent context
-    let history = state.chat_db.load_recent_async(collection_id.clone(), 51).await;
+    let history = state.chat_db.load_recent_async(note_id.clone(), 51).await;
     let history_without_current: Vec<_> = history
         .into_iter()
         .filter(|r| !(r.role == "user" && r.content == user_msg))
@@ -868,7 +868,7 @@ async fn handle_chat_message(
         StopReason::FinalAnswer(answer) => {
             // Save assistant response
             state.chat_db.insert_async(
-                collection_id.clone(),
+                note_id.clone(),
                 "assistant".to_string(),
                 "ᚱᚢᚾᛖ".to_string(),
                 answer.clone(),
@@ -890,7 +890,7 @@ async fn handle_chat_message(
     }
 
     // Broadcast updated file list (new files may have been created)
-    broadcast_file_list(&state, &collection_id).await;
+    broadcast_file_list(&state, &note_id).await;
 
     let idle = SseMsg::Status { state: "idle".to_string() };
     broadcast(&state, &idle);
@@ -1056,8 +1056,8 @@ mod tests {
         let json = r#"{"type":"chat_token","content":"hi"}"#;
         assert_eq!(extract_event_type(json), "chat_token");
 
-        let json2 = r#"{"type":"collection_list","sessions":[]}"#;
-        assert_eq!(extract_event_type(json2), "collection_list");
+        let json2 = r#"{"type":"note_list","sessions":[]}"#;
+        assert_eq!(extract_event_type(json2), "note_list");
 
         let no_type = r#"{"content":"hi"}"#;
         assert_eq!(extract_event_type(no_type), "message");
@@ -1080,9 +1080,9 @@ mod tests {
     }
 
     #[test]
-    fn test_sse_msg_collection_list() {
-        let msg = SseMsg::CollectionList {
-            collections: vec![CollectionListEntry {
+    fn test_sse_msg_note_list() {
+        let msg = SseMsg::NoteList {
+            notes: vec![NoteListEntry {
                 id: "test".into(),
                 name: "Test".into(),
                 files: vec!["spec.md".into()],
@@ -1090,7 +1090,7 @@ mod tests {
             active: "test".into(),
         };
         let json = serde_json::to_string(&msg).unwrap();
-        assert!(json.contains(r#""type":"collection_list""#));
+        assert!(json.contains(r#""type":"note_list""#));
         assert!(json.contains(r#""id":"test""#));
     }
 
@@ -1150,8 +1150,8 @@ mod tests {
     }
 
     #[test]
-    fn test_collection_list_entry_serialize() {
-        let entry = CollectionListEntry {
+    fn test_note_list_entry_serialize() {
+        let entry = NoteListEntry {
             id: "s1".into(),
             name: "Session One".into(),
             files: vec!["readme.md".into()],
@@ -1162,23 +1162,23 @@ mod tests {
 
     #[test]
     fn test_request_deserialization() {
-        let json = r#"{"collection_id":"abc","content":"hello"}"#;
+        let json = r#"{"note_id":"abc","content":"hello"}"#;
         let req: ChatReq = serde_json::from_str(json).unwrap();
-        assert_eq!(req.collection_id, "abc");
+        assert_eq!(req.note_id, "abc");
         assert_eq!(req.content, "hello");
     }
 
     #[test]
     fn test_file_create_req() {
-        let json = r#"{"collection_id":"s1","name":"new.md"}"#;
+        let json = r#"{"note_id":"s1","name":"new.md"}"#;
         let req: FileCreateReq = serde_json::from_str(json).unwrap();
-        assert_eq!(req.collection_id, "s1");
+        assert_eq!(req.note_id, "s1");
         assert_eq!(req.name, "new.md");
     }
 
     #[test]
     fn test_file_rename_req() {
-        let json = r#"{"collection_id":"s1","old_name":"a.md","new_name":"b.md"}"#;
+        let json = r#"{"note_id":"s1","old_name":"a.md","new_name":"b.md"}"#;
         let req: FileRenameReq = serde_json::from_str(json).unwrap();
         assert_eq!(req.old_name, "a.md");
         assert_eq!(req.new_name, "b.md");
@@ -1239,10 +1239,10 @@ fn test_app() -> (Router, TempDir) {
         .route("/api/file/rename", post(file_rename_handler))
         .route("/api/file/switch", post(file_switch_handler))
         .route("/api/file/update", post(file_update_handler))
-        .route("/api/session/create", post(collection_create_handler))
-        .route("/api/session/rename", post(collection_rename_handler))
-        .route("/api/session/delete", post(collection_delete_handler))
-        .route("/api/session/switch", post(collection_switch_handler))
+        .route("/api/session/create", post(note_create_handler))
+        .route("/api/session/rename", post(note_rename_handler))
+        .route("/api/session/delete", post(note_delete_handler))
+        .route("/api/session/switch", post(note_switch_handler))
         .route("/api/model/switch", post(model_switch_handler))
         .route("/api/chat/archive", post(archive_handler))
         .route("/api/chat/search", post(search_handler))
@@ -1326,14 +1326,14 @@ async fn test_session_create_duplicate() {
 async fn test_session_delete() {
     let (app, _tmp) = test_app();
     post_json(&app, "/api/session/create", json!({"name": "del-me"})).await;
-    let (_, body) = post_json(&app, "/api/session/delete", json!({"collection_id": "del-me"})).await;
+    let (_, body) = post_json(&app, "/api/session/delete", json!({"note_id": "del-me"})).await;
     assert_eq!(body["ok"], true);
 }
 
 #[tokio::test]
 async fn test_session_delete_nonexistent() {
     let (app, _tmp) = test_app();
-    let (_, body) = post_json(&app, "/api/session/delete", json!({"collection_id": "nope"})).await;
+    let (_, body) = post_json(&app, "/api/session/delete", json!({"note_id": "nope"})).await;
     assert_eq!(body["ok"], false);
 }
 
@@ -1341,7 +1341,7 @@ async fn test_session_delete_nonexistent() {
 async fn test_session_switch() {
     let (app, _tmp) = test_app();
     post_json(&app, "/api/session/create", json!({"name": "s1"})).await;
-    let (_, body) = post_json(&app, "/api/session/switch", json!({"collection_id": "s1"})).await;
+    let (_, body) = post_json(&app, "/api/session/switch", json!({"note_id": "s1"})).await;
     assert_eq!(body["ok"], true);
 }
 
@@ -1350,7 +1350,7 @@ async fn test_session_rename() {
     let (app, _tmp) = test_app();
     post_json(&app, "/api/session/create", json!({"name": "old-name"})).await;
     let (_, body) = post_json(&app, "/api/session/rename", json!({
-        "collection_id": "old-name",
+        "note_id": "old-name",
         "name": "new-name"
     })).await;
     assert_eq!(body["ok"], true);
@@ -1363,7 +1363,7 @@ async fn test_file_create() {
     let (app, _tmp) = test_app();
     post_json(&app, "/api/session/create", json!({"name": "file-test"})).await;
     let (_, body) = post_json(&app, "/api/file/create", json!({
-        "collection_id": "file-test",
+        "note_id": "file-test",
         "name": "notes.md"
     })).await;
     assert_eq!(body["ok"], true);
@@ -1374,7 +1374,7 @@ async fn test_file_create_invalid_name() {
     let (app, _tmp) = test_app();
     post_json(&app, "/api/session/create", json!({"name": "f1"})).await;
     let (_, body) = post_json(&app, "/api/file/create", json!({
-        "collection_id": "f1",
+        "note_id": "f1",
         "name": "bad file.txt"
     })).await;
     assert_eq!(body["ok"], false);
@@ -1385,8 +1385,8 @@ async fn test_file_create_invalid_name() {
 async fn test_file_create_duplicate() {
     let (app, _tmp) = test_app();
     post_json(&app, "/api/session/create", json!({"name": "f2"})).await;
-    post_json(&app, "/api/file/create", json!({"collection_id": "f2", "name": "a.md"})).await;
-    let (_, body) = post_json(&app, "/api/file/create", json!({"collection_id": "f2", "name": "a.md"})).await;
+    post_json(&app, "/api/file/create", json!({"note_id": "f2", "name": "a.md"})).await;
+    let (_, body) = post_json(&app, "/api/file/create", json!({"note_id": "f2", "name": "a.md"})).await;
     assert_eq!(body["ok"], false);
     assert!(body["error"].as_str().unwrap().contains("exists"));
 }
@@ -1395,7 +1395,7 @@ async fn test_file_create_duplicate() {
 async fn test_file_create_no_session() {
     let (app, _tmp) = test_app();
     let (_, body) = post_json(&app, "/api/file/create", json!({
-        "collection_id": "",
+        "note_id": "",
         "name": "x.md"
     })).await;
     assert_eq!(body["ok"], false);
@@ -1405,11 +1405,11 @@ async fn test_file_create_no_session() {
 async fn test_file_update_and_switch() {
     let (app, _tmp) = test_app();
     post_json(&app, "/api/session/create", json!({"name": "f3"})).await;
-    post_json(&app, "/api/file/create", json!({"collection_id": "f3", "name": "doc.md"})).await;
+    post_json(&app, "/api/file/create", json!({"note_id": "f3", "name": "doc.md"})).await;
 
     // Update
     let (_, body) = post_json(&app, "/api/file/update", json!({
-        "collection_id": "f3",
+        "note_id": "f3",
         "filename": "doc.md",
         "content": "# Hello\nWorld"
     })).await;
@@ -1417,7 +1417,7 @@ async fn test_file_update_and_switch() {
 
     // Switch (read back)
     let (_, body) = post_json(&app, "/api/file/switch", json!({
-        "collection_id": "f3",
+        "note_id": "f3",
         "name": "doc.md"
     })).await;
     assert_eq!(body["ok"], true);
@@ -1428,7 +1428,7 @@ async fn test_file_switch_not_found() {
     let (app, _tmp) = test_app();
     post_json(&app, "/api/session/create", json!({"name": "f4"})).await;
     let (_, body) = post_json(&app, "/api/file/switch", json!({
-        "collection_id": "f4",
+        "note_id": "f4",
         "name": "nope.md"
     })).await;
     assert_eq!(body["ok"], false);
@@ -1438,9 +1438,9 @@ async fn test_file_switch_not_found() {
 async fn test_file_rename() {
     let (app, _tmp) = test_app();
     post_json(&app, "/api/session/create", json!({"name": "f5"})).await;
-    post_json(&app, "/api/file/create", json!({"collection_id": "f5", "name": "old.md"})).await;
+    post_json(&app, "/api/file/create", json!({"note_id": "f5", "name": "old.md"})).await;
     let (_, body) = post_json(&app, "/api/file/rename", json!({
-        "collection_id": "f5",
+        "note_id": "f5",
         "old_name": "old.md",
         "new_name": "new.md"
     })).await;
@@ -1451,10 +1451,10 @@ async fn test_file_rename() {
 async fn test_file_rename_conflict() {
     let (app, _tmp) = test_app();
     post_json(&app, "/api/session/create", json!({"name": "f6"})).await;
-    post_json(&app, "/api/file/create", json!({"collection_id": "f6", "name": "a.md"})).await;
-    post_json(&app, "/api/file/create", json!({"collection_id": "f6", "name": "b.md"})).await;
+    post_json(&app, "/api/file/create", json!({"note_id": "f6", "name": "a.md"})).await;
+    post_json(&app, "/api/file/create", json!({"note_id": "f6", "name": "b.md"})).await;
     let (_, body) = post_json(&app, "/api/file/rename", json!({
-        "collection_id": "f6",
+        "note_id": "f6",
         "old_name": "a.md",
         "new_name": "b.md"
     })).await;
@@ -1466,9 +1466,9 @@ async fn test_file_rename_conflict() {
 async fn test_file_delete() {
     let (app, _tmp) = test_app();
     post_json(&app, "/api/session/create", json!({"name": "f7"})).await;
-    post_json(&app, "/api/file/create", json!({"collection_id": "f7", "name": "rm.md"})).await;
+    post_json(&app, "/api/file/create", json!({"note_id": "f7", "name": "rm.md"})).await;
     let (_, body) = post_json(&app, "/api/file/delete", json!({
-        "collection_id": "f7",
+        "note_id": "f7",
         "name": "rm.md"
     })).await;
     assert_eq!(body["ok"], true);
@@ -1479,7 +1479,7 @@ async fn test_file_update_invalid_filename() {
     let (app, _tmp) = test_app();
     post_json(&app, "/api/session/create", json!({"name": "f8"})).await;
     let (_, body) = post_json(&app, "/api/file/update", json!({
-        "collection_id": "f8",
+        "note_id": "f8",
         "filename": "",
         "content": "x"
     })).await;
@@ -1513,18 +1513,18 @@ async fn test_model_switch_unknown() {
 async fn test_chat_no_session() {
     let (app, _tmp) = test_app();
     let (_, body) = post_json(&app, "/api/chat", json!({
-        "collection_id": "",
+        "note_id": "",
         "content": "hello"
     })).await;
     assert_eq!(body["ok"], false);
-    assert!(body["error"].as_str().unwrap().contains("collection"));
+    assert!(body["error"].as_str().unwrap().contains("note"));
 }
 
 #[tokio::test]
 async fn test_chat_empty_content() {
     let (app, _tmp) = test_app();
     let (_, body) = post_json(&app, "/api/chat", json!({
-        "collection_id": "s1",
+        "note_id": "s1",
         "content": "   "
     })).await;
     assert_eq!(body["ok"], false);
@@ -1537,7 +1537,7 @@ async fn test_chat_empty_content() {
 async fn test_archive_no_session() {
     let (app, _tmp) = test_app();
     let (_, body) = post_json(&app, "/api/chat/archive", json!({
-        "collection_id": ""
+        "note_id": ""
     })).await;
     assert_eq!(body["ok"], false);
 }
@@ -1546,7 +1546,7 @@ async fn test_archive_no_session() {
 async fn test_search_empty_query() {
     let (app, _tmp) = test_app();
     let (_, body) = post_json(&app, "/api/chat/search", json!({
-        "collection_id": "s1",
+        "note_id": "s1",
         "query": ""
     })).await;
     assert_eq!(body["ok"], false);
@@ -1558,7 +1558,7 @@ async fn test_search_valid() {
     let (app, _tmp) = test_app();
     post_json(&app, "/api/session/create", json!({"name": "search-test"})).await;
     let (_, body) = post_json(&app, "/api/chat/search", json!({
-        "collection_id": "search-test",
+        "note_id": "search-test",
         "query": "hello"
     })).await;
     assert_eq!(body["ok"], true);
@@ -1639,14 +1639,14 @@ async fn test_full_session_file_flow() {
 
     // Create file
     let (_, body) = post_json(&app, "/api/file/create", json!({
-        "collection_id": "integration",
+        "note_id": "integration",
         "name": "readme.md"
     })).await;
     assert_eq!(body["ok"], true);
 
     // Update file
     let (_, body) = post_json(&app, "/api/file/update", json!({
-        "collection_id": "integration",
+        "note_id": "integration",
         "filename": "readme.md",
         "content": "# Integration Test\n\nThis works!"
     })).await;
@@ -1654,14 +1654,14 @@ async fn test_full_session_file_flow() {
 
     // Switch to file (read back)
     let (_, body) = post_json(&app, "/api/file/switch", json!({
-        "collection_id": "integration",
+        "note_id": "integration",
         "name": "readme.md"
     })).await;
     assert_eq!(body["ok"], true);
 
     // Rename file
     let (_, body) = post_json(&app, "/api/file/rename", json!({
-        "collection_id": "integration",
+        "note_id": "integration",
         "old_name": "readme.md",
         "new_name": "docs.md"
     })).await;
@@ -1669,14 +1669,14 @@ async fn test_full_session_file_flow() {
 
     // Delete file
     let (_, body) = post_json(&app, "/api/file/delete", json!({
-        "collection_id": "integration",
+        "note_id": "integration",
         "name": "docs.md"
     })).await;
     assert_eq!(body["ok"], true);
 
     // Delete session
     let (_, body) = post_json(&app, "/api/session/delete", json!({
-        "collection_id": "integration"
+        "note_id": "integration"
     })).await;
     assert_eq!(body["ok"], true);
 }

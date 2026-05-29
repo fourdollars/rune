@@ -162,23 +162,23 @@ body {
     margin-bottom: 12px;
 }
 
-/* Collection list */
-.collection-list {
+/* Note list */
+.note-list {
     flex: 1;
     overflow-y: auto;
 }
 
 
-.collection-item:hover {
+.note-item:hover {
     background: var(--accent-dim);
 }
 
-.collection-item.active {
+.note-item.active {
     background: var(--accent-dim);
     color: var(--accent);
 }
 
-.collection-dot {
+.note-dot {
     font-size: 8px;
     color: var(--success);
 }
@@ -1120,7 +1120,7 @@ pre.hljs-pre:hover .copy-btn {
     align-items: baseline;
     gap: 6px;
 }
-/* Collection tree */
+/* Note tree */
 }
 
 
@@ -1138,13 +1138,13 @@ pre.hljs-pre:hover .copy-btn {
 
 
 
-.collection-header:hover 
+.note-header:hover 
 
 
 
 
 
-.collection-header:hover 
+.note-header:hover 
 
 
 
@@ -1159,7 +1159,7 @@ pre.hljs-pre:hover .copy-btn {
 
 
 /* ─── VSCode Explorer ─── */
-.collection-tree {
+.note-tree {
     flex: 1;
     overflow-y: auto;
     font-size: 13px;

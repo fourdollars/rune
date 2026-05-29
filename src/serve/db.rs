@@ -1,7 +1,7 @@
 //! SQLite persistence for chat history.
 //!
 //! Schema:
-//!   messages(id, collection_id, role, nickname, content, created_at)
+//!   messages(id, note_id, role, nickname, content, created_at)
 //!
 //! All blocking SQLite calls are wrapped in tokio::task::spawn_blocking.
 
@@ -15,7 +15,7 @@ use tracing::warn;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChatRecord {
     pub id: i64,
-    pub collection_id: String,
+    pub note_id: String,
     pub role: String,    // "user" | "assistant" | "system"
     pub nickname: String, // user nickname, or "ᚱᚢᚾᛖ" for assistant
     pub content: String,
@@ -33,7 +33,7 @@ pub struct ChatRecord {
 
 /// A stored session entry.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CollectionRecord {
+pub struct NoteRecord {
     pub id: String,
     pub name: String,
     pub created_at: i64,
@@ -58,7 +58,7 @@ impl ChatDb {
             PRAGMA synchronous=NORMAL;
             CREATE TABLE IF NOT EXISTS messages (
                 id          INTEGER PRIMARY KEY AUTOINCREMENT,
-                collection_id  TEXT    NOT NULL DEFAULT 'default',
+                note_id  TEXT    NOT NULL DEFAULT 'default',
                 role        TEXT    NOT NULL,
                 nickname    TEXT    NOT NULL,
                 content     TEXT    NOT NULL,
@@ -68,7 +68,7 @@ impl ChatDb {
                 tokens_out  INTEGER
             );
             CREATE INDEX IF NOT EXISTS idx_messages_session
-                ON messages(collection_id, id);
+                ON messages(note_id, id);
             CREATE TABLE IF NOT EXISTS sessions (
                 id          TEXT PRIMARY KEY,
                 name        TEXT NOT NULL,
@@ -86,9 +86,9 @@ impl ChatDb {
         let _ = conn.execute_batch("
             ALTER TABLE sessions DROP COLUMN workspace;
         ");
-        // Migration: rename session_id -> collection_id in messages table
+        // Migration: rename session_id -> note_id in messages table
         let _ = conn.execute_batch("
-            ALTER TABLE messages RENAME COLUMN session_id TO collection_id;
+            ALTER TABLE messages RENAME COLUMN session_id TO note_id;
         ");
         Ok(Self { conn: Arc::new(Mutex::new(conn)), deferred_path: Arc::new(Mutex::new(None)) })
     }
@@ -104,7 +104,7 @@ impl ChatDb {
                 PRAGMA synchronous=NORMAL;
                 CREATE TABLE IF NOT EXISTS messages (
                     id          INTEGER PRIMARY KEY AUTOINCREMENT,
-                    collection_id  TEXT    NOT NULL DEFAULT 'default',
+                    note_id  TEXT    NOT NULL DEFAULT 'default',
                     role        TEXT    NOT NULL,
                     nickname    TEXT    NOT NULL,
                     content     TEXT    NOT NULL,
@@ -114,7 +114,7 @@ impl ChatDb {
                     tokens_out  INTEGER
                 );
                 CREATE INDEX IF NOT EXISTS idx_messages_session
-                    ON messages(collection_id, id);
+                    ON messages(note_id, id);
                 CREATE TABLE IF NOT EXISTS sessions (
                     id          TEXT PRIMARY KEY,
                     name        TEXT NOT NULL,
@@ -170,13 +170,13 @@ impl ChatDb {
     }
 
     /// Insert a message. Returns the new row id.
-    pub fn insert(&self, collection_id: &str, role: &str, nickname: &str, content: &str) -> anyhow::Result<i64> {
-        self.insert_with_meta(collection_id, role, nickname, content, None, None, None)
+    pub fn insert(&self, note_id: &str, role: &str, nickname: &str, content: &str) -> anyhow::Result<i64> {
+        self.insert_with_meta(note_id, role, nickname, content, None, None, None)
     }
 
     /// Insert a message with optional model/token metadata.
     pub fn insert_with_meta(
-        &self, collection_id: &str, role: &str, nickname: &str, content: &str,
+        &self, note_id: &str, role: &str, nickname: &str, content: &str,
         model: Option<&str>, tokens_in: Option<i32>, tokens_out: Option<i32>,
     ) -> anyhow::Result<i64> {
         let conn = self.conn.lock().unwrap();
@@ -185,27 +185,27 @@ impl ChatDb {
             .unwrap_or_default()
             .as_secs() as i64;
         conn.execute(
-            "INSERT INTO messages (collection_id, role, nickname, content, created_at, model, tokens_in, tokens_out)
+            "INSERT INTO messages (note_id, role, nickname, content, created_at, model, tokens_in, tokens_out)
              VALUES (?1,?2,?3,?4,?5,?6,?7,?8)",
-            params![collection_id, role, nickname, content, ts, model, tokens_in, tokens_out],
+            params![note_id, role, nickname, content, ts, model, tokens_in, tokens_out],
         )?;
         Ok(conn.last_insert_rowid())
     }
 
     /// Load the last `limit` messages for a session (ordered oldest first).
-    pub fn load_recent(&self, collection_id: &str, limit: usize) -> anyhow::Result<Vec<ChatRecord>> {
+    pub fn load_recent(&self, note_id: &str, limit: usize) -> anyhow::Result<Vec<ChatRecord>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT id, collection_id, role, nickname, content, created_at, model, tokens_in, tokens_out
+            "SELECT id, note_id, role, nickname, content, created_at, model, tokens_in, tokens_out
              FROM messages
-             WHERE collection_id = ?1
+             WHERE note_id = ?1
              ORDER BY id DESC
              LIMIT ?2"
         )?;
-        let rows: Vec<ChatRecord> = stmt.query_map(params![collection_id, limit as i64], |row| {
+        let rows: Vec<ChatRecord> = stmt.query_map(params![note_id, limit as i64], |row| {
             Ok(ChatRecord {
                 id:         row.get(0)?,
-                collection_id: row.get(1)?,
+                note_id: row.get(1)?,
                 role:       row.get(2)?,
                 nickname:   row.get(3)?,
                 content:    row.get(4)?,
@@ -224,20 +224,20 @@ impl ChatDb {
     }
 
     /// Async wrapper for insert (runs on blocking thread pool).
-    pub async fn insert_async(&self, collection_id: String, role: String, nickname: String, content: String) {
-        self.insert_with_meta_async(collection_id, role, nickname, content, None, None, None).await;
+    pub async fn insert_async(&self, note_id: String, role: String, nickname: String, content: String) {
+        self.insert_with_meta_async(note_id, role, nickname, content, None, None, None).await;
     }
 
     /// Async wrapper for insert_with_meta.
     pub async fn insert_with_meta_async(
         &self,
-        collection_id: String, role: String, nickname: String, content: String,
+        note_id: String, role: String, nickname: String, content: String,
         model: Option<String>, tokens_in: Option<i32>, tokens_out: Option<i32>,
     ) {
         let db = self.clone();
         tokio::task::spawn_blocking(move || {
             if let Err(e) = db.insert_with_meta(
-                &collection_id, &role, &nickname, &content,
+                &note_id, &role, &nickname, &content,
                 model.as_deref(), tokens_in, tokens_out,
             ) {
                 warn!("Failed to persist chat message: {}", e);
@@ -246,17 +246,17 @@ impl ChatDb {
     }
 
     /// Async wrapper for load_recent.
-    pub async fn load_recent_async(&self, collection_id: String, limit: usize) -> Vec<ChatRecord> {
+    pub async fn load_recent_async(&self, note_id: String, limit: usize) -> Vec<ChatRecord> {
         let db = self.clone();
         tokio::task::spawn_blocking(move || {
-            db.load_recent(&collection_id, limit).unwrap_or_default()
+            db.load_recent(&note_id, limit).unwrap_or_default()
         }).await.unwrap_or_default()
     }
 
     // ── Session CRUD ──────────────────────────────────────────────────────
 
     /// Create a new session. Returns Ok(()) or error if id already exists.
-    pub fn create_collection(&self, id: &str, name: &str, created_by: Option<&str>) -> anyhow::Result<()> {
+    pub fn create_note(&self, id: &str, name: &str, created_by: Option<&str>) -> anyhow::Result<()> {
         let conn = self.conn.lock().unwrap();
         let ts = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -270,13 +270,13 @@ impl ChatDb {
     }
 
     /// List all sessions ordered by created_at.
-    pub fn list_collections(&self) -> anyhow::Result<Vec<CollectionRecord>> {
+    pub fn list_notes(&self) -> anyhow::Result<Vec<NoteRecord>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
             "SELECT id, name, created_at, created_by FROM sessions ORDER BY name ASC"
         )?;
         let rows = stmt.query_map([], |row| {
-            Ok(CollectionRecord {
+            Ok(NoteRecord {
                 id:         row.get(0)?,
                 name:       row.get(1)?,
                 created_at: row.get(2)?,
@@ -287,9 +287,9 @@ impl ChatDb {
     }
 
     /// Rename a session (updates both id and name, since id = name).
-    /// Also updates collection_id in messages table.
+    /// Also updates note_id in messages table.
     /// Returns the new id if successful, None if not found or conflict.
-    pub fn rename_collection(&self, id: &str, new_name: &str) -> anyhow::Result<Option<String>> {
+    pub fn rename_note(&self, id: &str, new_name: &str) -> anyhow::Result<Option<String>> {
         let conn = self.conn.lock().unwrap();
         // Check if new id already exists
         let exists: bool = conn.query_row(
@@ -308,9 +308,9 @@ impl ChatDb {
         if changed == 0 {
             return Ok(None);
         }
-        // Update messages to new collection_id
+        // Update messages to new note_id
         conn.execute(
-            "UPDATE messages SET collection_id = ?1 WHERE collection_id = ?2",
+            "UPDATE messages SET note_id = ?1 WHERE note_id = ?2",
             params![new_name, id],
         )?;
         Ok(Some(new_name.to_string()))
@@ -318,7 +318,7 @@ impl ChatDb {
 
 
     /// Delete a session (metadata only; does NOT delete chat messages).
-    pub fn delete_collection(&self, id: &str) -> anyhow::Result<bool> {
+    pub fn delete_note(&self, id: &str) -> anyhow::Result<bool> {
         let conn = self.conn.lock().unwrap();
         let changed = conn.execute(
             "DELETE FROM sessions WHERE id = ?1",
@@ -328,13 +328,13 @@ impl ChatDb {
     }
 
     /// Get a single session by id.
-    pub fn get_session(&self, id: &str) -> anyhow::Result<Option<CollectionRecord>> {
+    pub fn get_session(&self, id: &str) -> anyhow::Result<Option<NoteRecord>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
             "SELECT id, name, created_at, created_by FROM sessions WHERE id = ?1"
         )?;
         let mut rows = stmt.query_map(params![id], |row| {
-            Ok(CollectionRecord {
+            Ok(NoteRecord {
                 id:         row.get(0)?,
                 name:       row.get(1)?,
                 created_at: row.get(2)?,
@@ -347,18 +347,18 @@ impl ChatDb {
 
     /// Dump all messages for a session to JSONL, then delete them from the DB.
     /// Returns the number of messages archived.
-    pub fn archive(&self, collection_id: &str, archive_path: &Path) -> anyhow::Result<usize> {
+    pub fn archive(&self, note_id: &str, archive_path: &Path) -> anyhow::Result<usize> {
         use std::io::Write;
         let conn = self.conn.lock().unwrap();
         // Load all messages for this session
         let mut stmt = conn.prepare(
-            "SELECT id, collection_id, role, nickname, content, created_at, model, tokens_in, tokens_out
-             FROM messages WHERE collection_id = ?1 ORDER BY id ASC"
+            "SELECT id, note_id, role, nickname, content, created_at, model, tokens_in, tokens_out
+             FROM messages WHERE note_id = ?1 ORDER BY id ASC"
         )?;
-        let records: Vec<ChatRecord> = stmt.query_map(params![collection_id], |row| {
+        let records: Vec<ChatRecord> = stmt.query_map(params![note_id], |row| {
             Ok(ChatRecord {
                 id:         row.get(0)?,
-                collection_id: row.get(1)?,
+                note_id: row.get(1)?,
                 role:       row.get(2)?,
                 nickname:   row.get(3)?,
                 content:    row.get(4)?,
@@ -385,8 +385,8 @@ impl ChatDb {
 
         // Delete archived messages from DB
         conn.execute(
-            "DELETE FROM messages WHERE collection_id = ?1",
-            params![collection_id],
+            "DELETE FROM messages WHERE note_id = ?1",
+            params![note_id],
         )?;
 
         Ok(records.len())
@@ -394,7 +394,7 @@ impl ChatDb {
 
     /// Full-text search across current DB + all JSONL archive files in archive_dir.
     /// Returns matching records sorted oldest first (archives first, then live).
-    pub fn search(&self, collection_id: &str, query: &str, archive_dir: &Path) -> anyhow::Result<Vec<ChatRecord>> {
+    pub fn search(&self, note_id: &str, query: &str, archive_dir: &Path) -> anyhow::Result<Vec<ChatRecord>> {
         let query_lower = query.to_lowercase();
         let mut results: Vec<ChatRecord> = Vec::new();
 
@@ -409,7 +409,7 @@ impl ChatDb {
                 if let Ok(text) = std::fs::read_to_string(entry.path()) {
                     for line in text.lines() {
                         if let Ok(rec) = serde_json::from_str::<ChatRecord>(line) {
-                            if rec.collection_id == collection_id
+                            if rec.note_id == note_id
                                 && (rec.content.to_lowercase().contains(&query_lower)
                                     || rec.nickname.to_lowercase().contains(&query_lower))
                             {
@@ -424,13 +424,13 @@ impl ChatDb {
         // 2. Search live DB
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT id, collection_id, role, nickname, content, created_at, model, tokens_in, tokens_out
-             FROM messages WHERE collection_id = ?1 ORDER BY id ASC"
+            "SELECT id, note_id, role, nickname, content, created_at, model, tokens_in, tokens_out
+             FROM messages WHERE note_id = ?1 ORDER BY id ASC"
         )?;
-        let live: Vec<ChatRecord> = stmt.query_map(params![collection_id], |row| {
+        let live: Vec<ChatRecord> = stmt.query_map(params![note_id], |row| {
             Ok(ChatRecord {
                 id:         row.get(0)?,
-                collection_id: row.get(1)?,
+                note_id: row.get(1)?,
                 role:       row.get(2)?,
                 nickname:   row.get(3)?,
                 content:    row.get(4)?,
@@ -449,18 +449,18 @@ impl ChatDb {
     }
 
     /// Async wrapper for archive.
-    pub async fn archive_async(&self, collection_id: String, archive_path: std::path::PathBuf) -> anyhow::Result<usize> {
+    pub async fn archive_async(&self, note_id: String, archive_path: std::path::PathBuf) -> anyhow::Result<usize> {
         let db = self.clone();
         tokio::task::spawn_blocking(move || {
-            db.archive(&collection_id, &archive_path)
+            db.archive(&note_id, &archive_path)
         }).await?
     }
 
     /// Async wrapper for search.
-    pub async fn search_async(&self, collection_id: String, query: String, archive_dir: std::path::PathBuf) -> Vec<ChatRecord> {
+    pub async fn search_async(&self, note_id: String, query: String, archive_dir: std::path::PathBuf) -> Vec<ChatRecord> {
         let db = self.clone();
         tokio::task::spawn_blocking(move || {
-            db.search(&collection_id, &query, &archive_dir).unwrap_or_default()
+            db.search(&note_id, &query, &archive_dir).unwrap_or_default()
         }).await.unwrap_or_default()
     }
 }
@@ -610,7 +610,7 @@ mod tests {
         let arc_dir = dir.path().join("archives");
         std::fs::create_dir_all(&arc_dir).unwrap();
         let arc_path = arc_dir.join("old.jsonl");
-        let old_rec = ChatRecord { id: 1, collection_id: "default".into(), role: "user".into(),
+        let old_rec = ChatRecord { id: 1, note_id: "default".into(), role: "user".into(),
             nickname: "bob".into(), content: "search me".into(), created_at: 1000,
             model: None, tokens_in: None, tokens_out: None };
         let mut f = std::fs::File::create(&arc_path).unwrap();
@@ -673,11 +673,11 @@ mod tests {
     // ── Session CRUD tests ───────────────────────────────────────────────
 
     #[test]
-    fn test_create_and_list_collections() {
+    fn test_create_and_list_notes() {
         let db = in_memory_db();
-        db.create_collection("proj-a", "Project A", Some("admin")).unwrap();
-        db.create_collection("proj-b", "Project B", None).unwrap();
-        let sessions = db.list_collections().unwrap();
+        db.create_note("proj-a", "Project A", Some("admin")).unwrap();
+        db.create_note("proj-b", "Project B", None).unwrap();
+        let sessions = db.list_notes().unwrap();
         assert_eq!(sessions.len(), 2);
         assert_eq!(sessions[0].id, "proj-a");
         assert_eq!(sessions[0].name, "Project A");
@@ -687,10 +687,10 @@ mod tests {
     }
 
     #[test]
-    fn test_rename_collection() {
+    fn test_rename_note() {
         let db = in_memory_db();
-        db.create_collection("s1", "s1", None).unwrap();
-        let result = db.rename_collection("s1", "new-name").unwrap();
+        db.create_note("s1", "s1", None).unwrap();
+        let result = db.rename_note("s1", "new-name").unwrap();
         assert_eq!(result, Some("new-name".to_string()));
         // Old id gone, new id exists
         assert!(db.get_session("s1").unwrap().is_none());
@@ -700,16 +700,16 @@ mod tests {
     }
 
     #[test]
-    fn test_rename_collection_updates_messages() {
+    fn test_rename_note_updates_messages() {
         let db = in_memory_db();
-        db.create_collection("old", "old", None).unwrap();
+        db.create_note("old", "old", None).unwrap();
         db.insert("old", "user", "alice", "hello").unwrap();
-        let _ = db.rename_collection("old", "new").unwrap();
+        let _ = db.rename_note("old", "new").unwrap();
         // Messages should now be under "new"
         let msgs = db.load_recent("new", 10).unwrap();
         assert_eq!(msgs.len(), 1);
         assert_eq!(msgs[0].content, "hello");
-        // Old collection_id has no messages
+        // Old note_id has no messages
         let old_msgs = db.load_recent("old", 10).unwrap();
         assert!(old_msgs.is_empty());
     }
@@ -717,30 +717,30 @@ mod tests {
     #[test]
     fn test_rename_nonexistent_returns_none() {
         let db = in_memory_db();
-        assert_eq!(db.rename_collection("nope", "X").unwrap(), None);
+        assert_eq!(db.rename_note("nope", "X").unwrap(), None);
     }
 
     #[test]
-    fn test_rename_collection_conflict() {
+    fn test_rename_note_conflict() {
         let db = in_memory_db();
-        db.create_collection("a", "a", None).unwrap();
-        db.create_collection("b", "b", None).unwrap();
+        db.create_note("a", "a", None).unwrap();
+        db.create_note("b", "b", None).unwrap();
         // Can't rename a → b (b already exists)
-        assert_eq!(db.rename_collection("a", "b").unwrap(), None);
+        assert_eq!(db.rename_note("a", "b").unwrap(), None);
     }
 
 
     #[test]
     fn test_delete_nonexistent_returns_false() {
         let db = in_memory_db();
-        assert!(!db.delete_collection("nope").unwrap());
+        assert!(!db.delete_note("nope").unwrap());
     }
 
     #[test]
-    fn test_duplicate_collection_id_fails() {
+    fn test_duplicate_note_id_fails() {
         let db = in_memory_db();
-        db.create_collection("dup", "First", None).unwrap();
-        assert!(db.create_collection("dup", "Second", None).is_err());
+        db.create_note("dup", "First", None).unwrap();
+        assert!(db.create_note("dup", "Second", None).is_err());
     }
 
     #[test]
