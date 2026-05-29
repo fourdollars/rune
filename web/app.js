@@ -366,7 +366,20 @@ function handleMessage(msg) {
             break;
         case 'file_list':
             fileList = msg.files || [];
-            currentFilename = msg.active || '';
+            // If current file still exists, re-fetch its content (may have been edited by agent)
+            if (currentFilename && fileList.includes(currentFilename)) {
+                api('file/switch', { session_id: currentSessionId, name: currentFilename });
+            } else if (!currentFilename && fileList.length > 0) {
+                // No file selected yet, pick first
+                currentFilename = fileList[0];
+                api('file/switch', { session_id: currentSessionId, name: currentFilename });
+            } else if (currentFilename && !fileList.includes(currentFilename)) {
+                // Current file was deleted
+                currentFilename = fileList.length > 0 ? fileList[0] : '';
+                if (currentFilename) {
+                    api('file/switch', { session_id: currentSessionId, name: currentFilename });
+                }
+            }
             updateDocTitle(currentFilename);
             updateEditorVisibility(fileList.length);
             break;

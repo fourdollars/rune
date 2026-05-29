@@ -913,19 +913,7 @@ async fn handle_chat_message(
         _ => {}
     }
 
-    // Broadcast updated files (agent may have edited them)
-    let md_dir = super::session_markdown_dir(&session_id);
-    if let Ok(mut rd) = tokio::fs::read_dir(&md_dir).await {
-        while let Ok(Some(entry)) = rd.next_entry().await {
-            let fname = entry.file_name().to_string_lossy().to_string();
-            if fname.ends_with(".md") {
-                if let Ok(c) = tokio::fs::read_to_string(entry.path()).await {
-                    let fc = SseMsg::FileContent { filename: fname, content: c };
-                    broadcast(&state, &fc);
-                }
-            }
-        }
-    }
+    // Broadcast updated file list (new files may have been created)
     broadcast_file_list(&state, &session_id).await;
 
     let idle = SseMsg::Status { state: "idle".to_string() };
