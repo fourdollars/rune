@@ -1441,9 +1441,7 @@ async function switchCollection(sessionId) {
         specContent = data.file_content || '';
         updateDocTitle(currentFilename);
         renderPreview();
-        if (typeof editor !== 'undefined' && editor) {
-            editor.setValue(specContent);
-        }
+        setEditorValue(specContent);
     } else {
         currentFilename = '';
         specContent = '';
