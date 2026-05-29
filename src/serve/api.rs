@@ -421,8 +421,9 @@ pub async fn chat_handler(
     let state_clone = state.clone();
     let session_id = req.session_id.clone();
     let content = req.content.clone();
+    let nick = req.nickname.clone().unwrap_or_else(|| "user".to_string());
     tokio::spawn(async move {
-        handle_chat_message(content, state_clone, session_id).await;
+        handle_chat_message(content, state_clone, session_id, nick).await;
     });
 
     Json(ApiResponse::success())
@@ -795,6 +796,7 @@ async fn handle_chat_message(
     user_msg: String,
     state: ServerState,
     session_id: String,
+    nickname: String,
 ) {
     let config = state.config.clone();
     let active_model = state.active_model.read().await.clone();
@@ -861,7 +863,12 @@ async fn handle_chat_message(
         .parent().unwrap().join("archives"));
 
     // Set system prompt
-    let system_prompt = build_system_prompt(&config).await;
+    let mut system_prompt = build_system_prompt(&config).await;
+    if !nickname.is_empty() && nickname != "user" {
+        system_prompt.push_str(&format!("
+
+The user's name is: {}", nickname));
+    }
     agent.set_system_prompt(&system_prompt);
 
     // Load chat history into agent context
