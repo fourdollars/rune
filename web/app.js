@@ -6,7 +6,6 @@
 // --- State ---
 let showEdit    = true;
 let showPreview = false;
-let panelStateRestored = false;  // restore edit/preview from localStorage only once
 let currentFilename = '';
 let fileList = [];
 let specContent = '';
@@ -367,13 +366,6 @@ function handleMessage(msg) {
             break;
         case 'file_list':
             fileList = msg.files || [];
-            // On first file_list after page load, try to restore saved file
-            if (!panelStateRestored && !currentFilename) {
-                try {
-                    const savedFile = localStorage.getItem('rune_file');
-                    if (savedFile && fileList.includes(savedFile)) currentFilename = savedFile;
-                } catch {}
-            }
             // If current file still exists, re-fetch its content (may have been edited by agent)
             if (currentFilename && fileList.includes(currentFilename)) {
                 api('file/switch', { note_id: currentNoteId, name: currentFilename });
@@ -389,7 +381,6 @@ function handleMessage(msg) {
                 }
             }
             updateDocTitle(currentFilename);
-            try { localStorage.setItem('rune_file', currentFilename); } catch {}
             updateEditorVisibility(fileList.length);
             break;
         case 'file_deleted':
@@ -760,19 +751,15 @@ function updateEditorVisibility(fileCount) {
         showEdit = false;
         showPreview = false;
     } else {
-        // Has files: show buttons
+        // Has files: show buttons, restore from localStorage
         btnEdit.classList.remove('hidden');
         btnPreview.classList.remove('hidden');
-        // Restore from localStorage only on first load; afterwards honour current state
-        if (!panelStateRestored) {
-            panelStateRestored = true;
-            try {
-                const se = localStorage.getItem('rune_show_edit');
-                const sp = localStorage.getItem('rune_show_preview');
-                showEdit    = se !== null ? se === '1' : true;
-                showPreview = sp !== null ? sp === '1' : false;
-            } catch {}
-        }
+        try {
+            const se = localStorage.getItem('rune_show_edit');
+            const sp = localStorage.getItem('rune_show_preview');
+            showEdit    = se !== null ? se === '1' : true;
+            showPreview = sp !== null ? sp === '1' : false;
+        } catch {}
     }
     applyPanelLayout();
 }
