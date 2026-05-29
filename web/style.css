@@ -54,6 +54,7 @@ body {
     max-width: 520px;
     border-right: 1px solid var(--border);
     flex-shrink: 0;
+    flex-direction: column;
 }
 
 .panel-left.fullscreen {
@@ -147,6 +148,7 @@ body {
 
 .panel-content {
     flex: 1;
+    min-height: 0;
     display: flex;
     flex-direction: column;
     overflow: hidden;
@@ -1120,31 +1122,11 @@ pre.hljs-pre:hover .copy-btn {
     align-items: baseline;
     gap: 6px;
 }
-/* Note tree */
-}
 
 
 
 
 
-
-
-
-
-
-
-
-
-
-
-
-.note-header:hover 
-
-
-
-
-
-.note-header:hover 
 
 
 
