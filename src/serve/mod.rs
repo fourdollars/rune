@@ -186,6 +186,8 @@ pub async fn run(config: RuneConfig, opts: NotesOptions) {
         .route("/api/chat/search", post(api::search_handler))
         .route("/api/approval", post(api::approval_handler))
         .route("/api/dir/browse", post(api::dir_browse_handler))
+        .route("/api/note/visibility", post(api::note_visibility_handler))
+        .route("/api/file/visibility", post(api::file_visibility_handler))
         .layer(axum_mw::from_fn_with_state(state.clone(), auth_middleware));
 
     // Static + SSE routes (SSE has its own auth logic inside the handler)
@@ -196,6 +198,11 @@ pub async fn run(config: RuneConfig, opts: NotesOptions) {
         .route("/favicon.svg", get(favicon_handler))
         .route("/assets/{*path}", get(static_handler))
         .route("/assets-bin/{*path}", get(binary_asset_handler))
+        // Public (no-auth) routes
+        .route("/notes", get(api::public_notes_list_handler))
+        .route("/notes/", get(api::public_notes_list_handler))
+        .route("/notes/{note}/{file}", get(api::public_preview_handler))
+        .route("/api/public/raw/{note}/{file}", get(api::public_raw_handler))
         .merge(api_routes)
         .with_state(state);
 

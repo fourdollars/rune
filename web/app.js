@@ -366,7 +366,19 @@ function handleMessage(msg) {
             setStatus(msg.state);
             break;
         case 'file_list':
-            fileList = msg.files || [];
+            // msg.files is now Vec<FileEntry> with {name, public}
+            fileList = (msg.files || []).map(f => typeof f === 'string' ? f : f.name);
+            // Update per-file visibility for current note in notes array
+            {
+                const noteEntry = notes.find(n => n.id === currentNoteId);
+                if (noteEntry) {
+                    noteEntry.fileVisibility = {};
+                    (msg.files || []).forEach(f => {
+                        if (typeof f === 'object') noteEntry.fileVisibility[f.name] = f.public;
+                    });
+                    renderNoteList();
+                }
+            }
             // If current file still exists, re-fetch its content (may have been edited by agent)
             if (currentFilename && fileList.includes(currentFilename)) {
                 api('file/switch', { note_id: currentNoteId, name: currentFilename });
@@ -421,7 +433,11 @@ function handleMessage(msg) {
             addSystemMessage('🔄 Model switched to: ' + activeModel);
             break;
         case 'note_list':
+            // Preserve existing fileVisibility when refreshing notes
+            const prevVisibility = {};
+            notes.forEach(n => { if (n.fileVisibility) prevVisibility[n.id] = n.fileVisibility; });
             notes = msg.notes || [];
+            notes.forEach(n => { if (prevVisibility[n.id]) n.fileVisibility = prevVisibility[n.id]; });
             if (currentNoteId && !notes.find(s => s.id === currentNoteId)) {
                 currentNoteId = '';
             }
@@ -1375,6 +1391,22 @@ function renderNoteList() {
             folderRow.appendChild(actions);
         }
 
+        // Visibility icon for note
+        {
+            const notePublic = !!s.public;
+            const visIcon = document.createElement('span');
+            visIcon.className = 'visibility-icon' + (isAdmin ? '' : ' readonly');
+            visIcon.title = notePublic ? 'Public (click to make private)' : 'Private (click to make public)';
+            visIcon.textContent = notePublic ? '👁' : '🙈';
+            if (isAdmin) {
+                visIcon.onclick = (e) => {
+                    e.stopPropagation();
+                    api('note/visibility', { note_id: s.id, public: !notePublic });
+                };
+            }
+            folderRow.appendChild(visIcon);
+        }
+
         section.appendChild(folderRow);
 
         // Children (files)
@@ -1424,6 +1456,23 @@ function renderNoteList() {
                 fileActions.appendChild(delBtn);
 
                 fileRow.appendChild(fileActions);
+            }
+
+            // Visibility icon for file
+            {
+                const fileVisibility = s.fileVisibility || {};
+                const filePublic = !!fileVisibility[fname];
+                const visIcon = document.createElement('span');
+                visIcon.className = 'visibility-icon' + (isAdmin ? '' : ' readonly');
+                visIcon.title = filePublic ? 'Public (click to make private)' : 'Private (click to make public)';
+                visIcon.textContent = filePublic ? '👁' : '🙈';
+                if (isAdmin) {
+                    visIcon.onclick = (e) => {
+                        e.stopPropagation();
+                        api('file/visibility', { note_id: s.id, filename: fname, public: !filePublic });
+                    };
+                }
+                fileRow.appendChild(visIcon);
             }
 
             fileRow.onclick = () => {

@@ -55,7 +55,7 @@ pub enum SseMsg {
     #[serde(rename = "auth_result")]
     AuthResult { is_admin: bool },
     #[serde(rename = "file_list")]
-    FileList { files: Vec<String>, active: String },
+    FileList { files: Vec<FileEntry>, active: String },
     #[serde(rename = "file_content")]
     FileContent { filename: String, content: String },
     #[serde(rename = "file_deleted")]
@@ -83,6 +83,13 @@ pub struct NoteListEntry {
     pub id: String,
     pub name: String,
     pub files: Vec<String>,
+    pub public: bool,
+}
+
+#[derive(Debug, Serialize, Clone)]
+pub struct FileEntry {
+    pub name: String,
+    pub public: bool,
 }
 
 #[derive(Debug, Serialize, Clone)]
@@ -183,6 +190,19 @@ pub struct ApprovalReq {
 }
 
 #[derive(Debug, Deserialize)]
+pub struct NoteVisibilityReq {
+    pub note_id: String,
+    pub public: bool,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct FileVisibilityReq {
+    pub note_id: String,
+    pub filename: String,
+    pub public: bool,
+}
+
+#[derive(Debug, Deserialize)]
 pub struct DirBrowseReq {
     pub path: String,
 }
@@ -252,9 +272,10 @@ pub async fn build_note_list(state: &ServerState) -> Vec<NoteListEntry> {
         }
         files.sort();
         entries.push(NoteListEntry {
-            id: s.id,
-            name: s.name,
+            id: s.id.clone(),
+            name: s.name.clone(),
             files,
+            public: s.public,
         });
     }
     entries
@@ -804,17 +825,219 @@ pub async fn dir_browse_handler(
 
 // ─── Helpers ───────────────────────────────────────────────────────────────
 
+pub async fn note_visibility_handler(
+    State(state): State<ServerState>,
+    Json(req): Json<NoteVisibilityReq>,
+) -> Json<ApiResponse> {
+    match state.chat_db.set_note_public(&req.note_id, req.public) {
+        Ok(_) => {
+            broadcast_note_list(&state).await;
+            Json(ApiResponse::success())
+        }
+        Err(e) => Json(ApiResponse::err(format!("Failed: {}", e))),
+    }
+}
+
+pub async fn file_visibility_handler(
+    State(state): State<ServerState>,
+    Json(req): Json<FileVisibilityReq>,
+) -> Json<ApiResponse> {
+    match state.chat_db.set_file_public(&req.note_id, &req.filename, req.public) {
+        Ok(_) => {
+            broadcast_file_list(&state, &req.note_id).await;
+            Json(ApiResponse::success())
+        }
+        Err(e) => Json(ApiResponse::err(format!("Failed: {}", e))),
+    }
+}
+
+// ─── Public (no-auth) handlers ──────────────────────────────────────────────
+
+const PUBLIC_PREVIEW_HTML: &str = r#"<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>{{TITLE}}</title>
+<link rel="stylesheet" href="/assets/highlight-dark.min.css" id="hl-style">
+<style>
+  :root { color-scheme: light dark; }
+  @media (prefers-color-scheme: dark) {
+    body { background: #1e1e2e; color: #cdd6f4; }
+    .container { background: #181825; border: 1px solid #313244; }
+    a { color: #89b4fa; }
+    code { background: #313244; color: #cdd6f4; }
+    pre { background: #181825; border: 1px solid #313244; }
+    h1,h2,h3,h4 { color: #cba6f7; border-bottom-color: #313244; }
+    blockquote { border-left: 4px solid #585b70; color: #a6adc8; background: #181825; }
+  }
+  @media (prefers-color-scheme: light) {
+    body { background: #f6f8fa; color: #24292e; }
+    .container { background: #fff; border: 1px solid #e1e4e8; }
+    a { color: #0366d6; }
+    code { background: #f6f8fa; color: #24292e; }
+    pre { background: #f6f8fa; border: 1px solid #e1e4e8; }
+    h1,h2,h3,h4 { color: #24292e; border-bottom: 1px solid #eaecef; }
+    blockquote { border-left: 4px solid #dfe2e5; color: #6a737d; background: #f6f8fa; }
+  }
+  * { box-sizing: border-box; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif; margin: 0; padding: 20px; }
+  .container { max-width: 860px; margin: 0 auto; padding: 32px 40px; border-radius: 8px; }
+  h1,h2,h3,h4,h5,h6 { margin-top: 24px; margin-bottom: 16px; font-weight: 600; line-height: 1.25; padding-bottom: .3em; }
+  h1 { font-size: 2em; } h2 { font-size: 1.5em; } h3 { font-size: 1.25em; }
+  p { margin: 0 0 16px; line-height: 1.6; }
+  pre { padding: 16px; overflow: auto; border-radius: 6px; font-size: 85%; }
+  code { padding: .2em .4em; border-radius: 3px; font-size: 85%; }
+  pre code { padding: 0; background: transparent; }
+  blockquote { margin: 0 0 16px; padding: 0 1em; }
+  ul,ol { padding-left: 2em; margin: 0 0 16px; }
+  table { border-collapse: collapse; width: 100%; margin-bottom: 16px; }
+  th,td { border: 1px solid #dfe2e5; padding: 6px 13px; }
+  th { font-weight: 600; }
+  img { max-width: 100%; }
+  .meta { font-size: 12px; opacity: 0.5; margin-bottom: 24px; }
+  #loading { text-align: center; padding: 40px; opacity: 0.5; }
+</style>
+</head>
+<body>
+<div class="container">
+  <div class="meta">{{NOTE}} / {{FILE}}</div>
+  <div id="loading">Loading…</div>
+  <div id="content" style="display:none"></div>
+</div>
+<script src="/assets/marked.min.js"></script>
+<script src="/assets/highlight.min.js"></script>
+<script src="/assets-bin/mermaid.min.js"></script>
+<script>
+(async function() {
+  const rawUrl = '/api/public/raw/{{NOTE}}/{{FILE}}';
+  try {
+    const resp = await fetch(rawUrl);
+    if (!resp.ok) { document.getElementById('loading').textContent = 'Not found or not public.'; return; }
+    const md = await resp.text();
+    const renderer = new marked.Renderer();
+    renderer.code = function({text, lang}) {
+      if (lang && lang.toLowerCase() === 'mermaid') {
+        const id = 'mermaid-' + Math.random().toString(36).slice(2);
+        return '<div class="mermaid" id="' + id + '">' + text.replace(/</g,'&lt;') + '</div>';
+      }
+      if (typeof hljs !== 'undefined') {
+        const language = lang && hljs.getLanguage(lang) ? lang : null;
+        const highlighted = language ? hljs.highlight(text, {language}).value : hljs.highlightAuto(text).value;
+        return '<pre><code class="hljs">' + highlighted + '</code></pre>';
+      }
+      return '<pre><code>' + text.replace(/</g,'&lt;') + '</code></pre>';
+    };
+    marked.use({ renderer });
+    const html = marked.parse(md);
+    const content = document.getElementById('content');
+    content.innerHTML = html;
+    document.getElementById('loading').style.display = 'none';
+    content.style.display = '';
+    if (typeof mermaid !== 'undefined') {
+      mermaid.initialize({ startOnLoad: false, theme: window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'default' });
+      document.querySelectorAll('.mermaid').forEach(async (el) => {
+        try { const {svg} = await mermaid.render('mg'+el.id, el.textContent); el.innerHTML = svg; } catch(e) {}
+      });
+    }
+  } catch(e) {
+    document.getElementById('loading').textContent = 'Error: ' + e.message;
+  }
+})();
+</script>
+</body>
+</html>"#;
+
+pub async fn public_notes_list_handler(
+    State(state): State<ServerState>,
+) -> impl axum::response::IntoResponse {
+    let notes = state.chat_db.list_notes().unwrap_or_default();
+    let mut html = String::from("<!DOCTYPE html><html><head><meta charset='UTF-8'><title>Public Notes</title>");
+    html.push_str("<style>body{font-family:sans-serif;max-width:860px;margin:40px auto;padding:0 20px;background:#f6f8fa;color:#24292e}");
+    html.push_str("h1{margin-bottom:24px}ul{list-style:none;padding:0}li{margin:8px 0}a{color:#0366d6;text-decoration:none}a:hover{text-decoration:underline}");
+    html.push_str(".note-header{font-weight:600;margin-top:16px;margin-bottom:4px}.file-link{padding-left:16px;display:block}</style></head><body>");
+    html.push_str("<h1>Public Notes</h1><ul>");
+    let mut any = false;
+    for note in &notes {
+        if !note.public { continue; }
+        let public_files = state.chat_db.list_public_files(&note.id);
+        if public_files.is_empty() { continue; }
+        any = true;
+        html.push_str(&format!("<li><div class='note-header'>&#128193; {}</div><ul>", html_escape(&note.name)));
+        for fname in &public_files {
+            let url = format!("/notes/{}/{}", url_encode(&note.id), url_encode(fname));
+            html.push_str(&format!("<li><a class='file-link' href='{}'>{}</a></li>", url, html_escape(fname)));
+        }
+        html.push_str("</ul></li>");
+    }
+    if !any { html.push_str("<li><em>No public notes available.</em></li>"); }
+    html.push_str("</ul></body></html>");
+    axum::response::Html(html)
+}
+
+pub async fn public_preview_handler(
+    State(state): State<ServerState>,
+    axum::extract::Path((note_id, filename)): axum::extract::Path<(String, String)>,
+) -> impl axum::response::IntoResponse {
+    let note_public = state.chat_db.list_notes().unwrap_or_default()
+        .iter().find(|n| n.id == note_id).map(|n| n.public).unwrap_or(false);
+    let file_public = state.chat_db.is_file_public(&note_id, &filename);
+    if !note_public || !file_public {
+        return (StatusCode::NOT_FOUND, axum::response::Html("<h1>404 Not Found</h1>".to_string())).into_response();
+    }
+    let title = format!("{} / {}", note_id, filename);
+    let page = PUBLIC_PREVIEW_HTML
+        .replace("{{TITLE}}", &html_escape(&title))
+        .replace("{{NOTE}}", &url_encode(&note_id))
+        .replace("{{FILE}}", &url_encode(&filename));
+    (StatusCode::OK, axum::response::Html(page)).into_response()
+}
+
+pub async fn public_raw_handler(
+    State(state): State<ServerState>,
+    axum::extract::Path((note_id, filename)): axum::extract::Path<(String, String)>,
+) -> impl axum::response::IntoResponse {
+    let note_public = state.chat_db.list_notes().unwrap_or_default()
+        .iter().find(|n| n.id == note_id).map(|n| n.public).unwrap_or(false);
+    let file_public = state.chat_db.is_file_public(&note_id, &filename);
+    if !note_public || !file_public {
+        return (StatusCode::NOT_FOUND, [(axum::http::header::CONTENT_TYPE, "text/plain")], "".to_string()).into_response();
+    }
+    let file_path = super::note_markdown_dir(&note_id).join(&filename);
+    match tokio::fs::read_to_string(&file_path).await {
+        Ok(content) => (StatusCode::OK, [(axum::http::header::CONTENT_TYPE, "text/markdown; charset=utf-8")], content).into_response(),
+        Err(_) => (StatusCode::NOT_FOUND, [(axum::http::header::CONTENT_TYPE, "text/plain")], "".to_string()).into_response(),
+    }
+}
+
+fn html_escape(s: &str) -> String {
+    s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;").replace('"', "&quot;")
+}
+
+fn url_encode(s: &str) -> String {
+    s.chars().map(|c| match c {
+        'A'..='Z' | 'a'..='z' | '0'..='9' | '-' | '_' | '.' | '~' => c.to_string(),
+        _ => format!("%{:02X}", c as u32),
+    }).collect()
+}
+
+
 async fn broadcast_file_list(state: &ServerState, note_id: &str) {
     let md_dir = super::note_markdown_dir(note_id);
-    let mut files = Vec::new();
+    let mut file_names = Vec::new();
     if let Ok(mut rd) = tokio::fs::read_dir(&md_dir).await {
         while let Ok(Some(entry)) = rd.next_entry().await {
             let name = entry.file_name().to_string_lossy().to_string();
-            if name.ends_with(".md") { files.push(name); }
+            if name.ends_with(".md") { file_names.push(name); }
         }
     }
-    files.sort();
-    let active = files.first().cloned().unwrap_or_default();
+    file_names.sort();
+    let visibility = state.chat_db.get_file_visibility(note_id);
+    let files: Vec<FileEntry> = file_names.iter().map(|name| {
+        let public = visibility.iter().find(|(f, _)| f == name).map(|(_, p)| *p).unwrap_or(false);
+        FileEntry { name: name.clone(), public }
+    }).collect();
+    let active = files.first().map(|f| f.name.clone()).unwrap_or_default();
     let msg = SseMsg::FileList { files, active };
     broadcast(state, &msg);
 }
@@ -1153,6 +1376,7 @@ mod tests {
                 id: "test".into(),
                 name: "Test".into(),
                 files: vec!["spec.md".into()],
+                public: false,
             }],
             active: "test".into(),
         };
@@ -1178,7 +1402,7 @@ mod tests {
     #[test]
     fn test_sse_msg_file_list() {
         let msg = SseMsg::FileList {
-            files: vec!["a.md".into(), "b.md".into()],
+            files: vec![FileEntry { name: "a.md".into(), public: false }, FileEntry { name: "b.md".into(), public: false }],
             active: "a.md".into(),
         };
         let json = serde_json::to_string(&msg).unwrap();
@@ -1222,6 +1446,7 @@ mod tests {
             id: "s1".into(),
             name: "Session One".into(),
             files: vec!["readme.md".into()],
+            public: false,
         };
         let json = serde_json::to_string(&entry).unwrap();
         assert!(json.contains(r#""id":"s1""#));

@@ -1499,3 +1499,8 @@ pre.hljs-pre:hover .copy-btn {
     opacity: 1;
     background: var(--bg-hover, rgba(255,255,255,0.08));
 }
+
+/* ─── Visibility Icons ─── */
+.visibility-icon { cursor: pointer; opacity: 0.8; font-size: 12px; margin-left: auto; padding: 2px 4px; }
+.visibility-icon:hover { opacity: 1; }
+.visibility-icon.readonly { cursor: not-allowed; opacity: 0.4; }

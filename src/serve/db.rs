@@ -39,6 +39,7 @@ pub struct NoteRecord {
     pub created_at: i64,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub created_by: Option<String>,
+    pub public: bool,
 }
 
 /// Thread-safe SQLite connection wrapper.
@@ -82,6 +83,15 @@ impl ChatDb {
             ALTER TABLE messages ADD COLUMN tokens_in  INTEGER;
             ALTER TABLE messages ADD COLUMN tokens_out INTEGER;
         ");
+        let _ = conn.execute_batch("ALTER TABLE sessions ADD COLUMN public INTEGER DEFAULT 0;");
+        let _ = conn.execute_batch("
+            CREATE TABLE IF NOT EXISTS file_visibility (
+                note_id  TEXT NOT NULL,
+                filename TEXT NOT NULL,
+                public   INTEGER NOT NULL DEFAULT 0,
+                PRIMARY KEY (note_id, filename)
+            );
+        ");
         Ok(Self { conn: Arc::new(Mutex::new(conn)), deferred_path: Arc::new(Mutex::new(None)) })
     }
 
@@ -111,7 +121,14 @@ impl ChatDb {
                     id          TEXT PRIMARY KEY,
                     name        TEXT NOT NULL,
                         created_at  INTEGER NOT NULL,
-                    created_by  TEXT
+                    created_by  TEXT,
+                    public      INTEGER DEFAULT 0
+                );
+                CREATE TABLE IF NOT EXISTS file_visibility (
+                    note_id  TEXT NOT NULL,
+                    filename TEXT NOT NULL,
+                    public   INTEGER NOT NULL DEFAULT 0,
+                    PRIMARY KEY (note_id, filename)
                 );
             ")?;
             Ok(ChatDb {
@@ -265,7 +282,7 @@ impl ChatDb {
     pub fn list_notes(&self) -> anyhow::Result<Vec<NoteRecord>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT id, name, created_at, created_by FROM sessions ORDER BY name ASC"
+            "SELECT id, name, created_at, created_by, COALESCE(public, 0) FROM sessions ORDER BY name ASC"
         )?;
         let rows = stmt.query_map([], |row| {
             Ok(NoteRecord {
@@ -273,6 +290,7 @@ impl ChatDb {
                 name:       row.get(1)?,
                 created_at: row.get(2)?,
                 created_by: row.get(3)?,
+                public:     row.get::<_, i32>(4).unwrap_or(0) != 0,
             })
         })?.filter_map(|r| r.ok()).collect();
         Ok(rows)
@@ -342,7 +360,7 @@ impl ChatDb {
     pub fn get_session(&self, id: &str) -> anyhow::Result<Option<NoteRecord>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT id, name, created_at, created_by FROM sessions WHERE id = ?1"
+            "SELECT id, name, created_at, created_by, COALESCE(public, 0) FROM sessions WHERE id = ?1"
         )?;
         let mut rows = stmt.query_map(params![id], |row| {
             Ok(NoteRecord {
@@ -350,11 +368,75 @@ impl ChatDb {
                 name:       row.get(1)?,
                 created_at: row.get(2)?,
                 created_by: row.get(3)?,
+                public:     row.get::<_, i32>(4).unwrap_or(0) != 0,
             })
         })?;
         Ok(rows.next().and_then(|r| r.ok()))
     }
     // ── End Session CRUD ─────────────────────────────────────────────────
+
+    // ── Visibility ────────────────────────────────────────────────────────────
+
+    /// Set note-level public flag. Returns new state.
+    pub fn set_note_public(&self, id: &str, public: bool) -> anyhow::Result<bool> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE sessions SET public = ?1 WHERE id = ?2",
+            params![public as i32, id],
+        )?;
+        Ok(public)
+    }
+
+    /// Set file-level public flag.
+    pub fn set_file_public(&self, note_id: &str, filename: &str, public: bool) -> anyhow::Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "INSERT INTO file_visibility (note_id, filename, public) VALUES (?1,?2,?3)
+             ON CONFLICT(note_id, filename) DO UPDATE SET public = ?3",
+            params![note_id, filename, public as i32],
+        )?;
+        Ok(())
+    }
+
+    /// Check if a specific file is public.
+    pub fn is_file_public(&self, note_id: &str, filename: &str) -> bool {
+        let conn = self.conn.lock().unwrap();
+        conn.query_row(
+            "SELECT public FROM file_visibility WHERE note_id = ?1 AND filename = ?2",
+            params![note_id, filename],
+            |row| row.get::<_, i32>(0),
+        ).unwrap_or(0) != 0
+    }
+
+    /// List all public files for a note.
+    pub fn list_public_files(&self, note_id: &str) -> Vec<String> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = match conn.prepare(
+            "SELECT filename FROM file_visibility WHERE note_id = ?1 AND public = 1 ORDER BY filename ASC"
+        ) {
+            Ok(s) => s,
+            Err(_) => return vec![],
+        };
+        stmt.query_map(params![note_id], |row| row.get::<_, String>(0))
+            .map(|rows| rows.filter_map(|r| r.ok()).collect())
+            .unwrap_or_default()
+    }
+
+    /// Get all files for a note with their public state.
+    pub fn get_file_visibility(&self, note_id: &str) -> Vec<(String, bool)> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = match conn.prepare(
+            "SELECT filename, public FROM file_visibility WHERE note_id = ?1 ORDER BY filename ASC"
+        ) {
+            Ok(s) => s,
+            Err(_) => return vec![],
+        };
+        stmt.query_map(params![note_id], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, i32>(1)? != 0))
+        })
+        .map(|rows| rows.filter_map(|r| r.ok()).collect())
+        .unwrap_or_default()
+    }
 
     /// Dump all messages for a session to JSONL, then delete them from the DB.
     /// Returns the number of messages archived.
