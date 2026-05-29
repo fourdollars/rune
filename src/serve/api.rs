@@ -236,7 +236,7 @@ impl ApiResponse {
 
 pub fn check_token(state: &ServerState, token: Option<&str>) -> bool {
     match &state.user_token {
-        None => true, // no token configured = open
+        None => false, // no user_token configured = no user access
         Some(expected) => token == Some(expected.as_str()),
     }
 }
@@ -1308,9 +1308,10 @@ mod tests {
 
     #[test]
     fn test_check_token_no_config() {
+        // With no user_token configured, check_token always returns false (strict mode)
         let state = mock_state(None, None);
-        assert!(check_token(&state, None));
-        assert!(check_token(&state, Some("anything")));
+        assert!(!check_token(&state, None));
+        assert!(!check_token(&state, Some("anything")));
     }
 
     #[test]
@@ -1340,6 +1341,73 @@ mod tests {
         let state = mock_state(None, None);
         assert!(!check_admin(&state, Some("anything")));
     }
+
+    #[test]
+    fn test_strict_auth_no_tokens_configured_rejects_all() {
+        // When no tokens are configured, nothing should pass
+        let state = mock_state(None, None);
+        assert!(!check_token(&state, None));
+        assert!(!check_token(&state, Some("random")));
+        assert!(!check_admin(&state, None));
+        assert!(!check_admin(&state, Some("random")));
+        assert!(!check_guest(&state, None));
+        assert!(!check_guest(&state, Some("random")));
+    }
+
+    #[test]
+    fn test_strict_auth_guest_cannot_impersonate_user() {
+        let mut state = mock_state(Some("user-secret".into()), None);
+        state.guest_token = Some("guest-secret".into());
+        // Guest token does not pass check_token
+        assert!(!check_token(&state, Some("guest-secret")));
+        // But does pass check_guest
+        assert!(check_guest(&state, Some("guest-secret")));
+    }
+
+    #[test]
+    fn test_strict_auth_guest_cannot_impersonate_admin() {
+        let mut state = mock_state(None, Some("admin-secret".into()));
+        state.guest_token = Some("guest-secret".into());
+        // Guest token does not pass check_admin
+        assert!(!check_admin(&state, Some("guest-secret")));
+    }
+
+    #[test]
+    fn test_strict_auth_empty_token_rejected() {
+        let state = mock_state(Some("secret".into()), None);
+        assert!(!check_token(&state, Some("")));
+        assert!(!check_token(&state, None));
+    }
+
+    #[test]
+    fn test_strict_auth_empty_guest_token_rejected() {
+        let mut state = mock_state(Some("user".into()), None);
+        state.guest_token = Some("".into());
+        // Empty guest_token should never match
+        assert!(!check_guest(&state, Some("")));
+        assert!(!check_guest(&state, None));
+    }
+
+    #[test]
+    fn test_strict_auth_wrong_token_rejected() {
+        let mut state = mock_state(Some("correct-user".into()), Some("correct-admin".into()));
+        state.guest_token = Some("correct-guest".into());
+        assert!(!check_token(&state, Some("wrong")));
+        assert!(!check_admin(&state, Some("wrong")));
+        assert!(!check_guest(&state, Some("wrong")));
+    }
+
+    #[test]
+    fn test_strict_auth_no_localhost_bypass() {
+        // This test documents the security invariant:
+        // There is no localhost bypass in auth middleware.
+        // All connections must present a valid token.
+        let state = mock_state(Some("secret".into()), None);
+        // Even with correct token, no special treatment for any IP
+        assert!(check_token(&state, Some("secret")));
+        assert!(!check_token(&state, None));
+    }
+
 
     #[test]
     fn test_api_response_success() {

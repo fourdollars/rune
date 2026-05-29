@@ -98,7 +98,7 @@ async fn async_main() {
                 .as_deref()
                 .and_then(|b| b.parse().ok())
                 .unwrap_or(IpAddr::V4(Ipv4Addr::LOCALHOST)),
-            user_token: notes_cfg.user_token.clone().or_else(|| notes_cfg.token.clone()),
+            user_token: notes_cfg.user_token.clone(),
             admin_token: notes_cfg.admin_token.clone(),
             guest_token: notes_cfg.guest_token.clone(),
         };

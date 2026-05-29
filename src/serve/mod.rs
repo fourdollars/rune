@@ -158,7 +158,10 @@ pub async fn run(config: RuneConfig, opts: NotesOptions) {
                 .map(|p| p.trim_start_matches("token=").to_string()));
         let provided = from_header.or(from_query);
 
-        // Check roles
+        // Strict auth: token must match one of user_token / admin_token / guest_token
+        let user_ok = state.user_token.as_deref()
+            .map(|ut| provided.as_deref() == Some(ut))
+            .unwrap_or(false);
         let admin_ok = state.admin_token.as_deref()
             .map(|at| provided.as_deref() == Some(at))
             .unwrap_or(false);
@@ -166,15 +169,13 @@ pub async fn run(config: RuneConfig, opts: NotesOptions) {
             .map(|gt| !gt.is_empty() && provided.as_deref() == Some(gt))
             .unwrap_or(false);
 
-        // Token auth (if user_token is configured)
-        if let Some(ref expected) = state.user_token {
-            if provided.as_deref() != Some(expected.as_str()) && !admin_ok && !guest_ok {
-                let body = axum::Json(serde_json::json!({"ok": false, "error": "Authentication failed"}));
-                return (StatusCode::UNAUTHORIZED, body).into_response();
-            }
+        // Reject if none match
+        if !user_ok && !admin_ok && !guest_ok {
+            let body = axum::Json(serde_json::json!({"ok": false, "error": "Authentication failed"}));
+            return (StatusCode::UNAUTHORIZED, body).into_response();
         }
 
-        // Guest: block all mutations regardless of user_token config
+        // Guest: block all mutations (only allow read-only endpoints)
         if guest_ok {
             let path = req.uri().path().to_string();
             let allowed_guest_paths = [
@@ -229,9 +230,16 @@ pub async fn run(config: RuneConfig, opts: NotesOptions) {
     let addr = SocketAddr::new(opts.bind, opts.port);
     info!("Rune notes starting on http://{}", addr);
 
+    // Refuse to start without at least one token configured
+    if opts.user_token.is_none() && opts.admin_token.is_none() && opts.guest_token.is_none() {
+        eprintln!("  ✗ ERROR: No tokens configured. At least one of user_token, admin_token, or guest_token must be set in [notes] config.");
+        eprintln!("    Without tokens, no one can access the server.");
+        std::process::exit(1);
+    }
+
     println!("  ᚱ Rune Notes → http://{}", addr);
     if opts.user_token.is_some() {
-        println!("  🔒 Token auth enabled for non-localhost");
+        println!("  🔒 User token configured");
     }
     if opts.admin_token.is_some() {
         println!("  👑 Admin token configured");
@@ -525,7 +533,10 @@ mod tests {
                 .map(|p| p.trim_start_matches("token=").to_string()));
         let provided = from_header.or(from_query);
 
-        // Check roles
+        // Strict auth: token must match one of user_token / admin_token / guest_token
+        let user_ok = state.user_token.as_deref()
+            .map(|ut| provided.as_deref() == Some(ut))
+            .unwrap_or(false);
         let admin_ok = state.admin_token.as_deref()
             .map(|at| provided.as_deref() == Some(at))
             .unwrap_or(false);
@@ -533,15 +544,13 @@ mod tests {
             .map(|gt| !gt.is_empty() && provided.as_deref() == Some(gt))
             .unwrap_or(false);
 
-        // Token auth (if user_token is configured)
-        if let Some(ref expected) = state.user_token {
-            if provided.as_deref() != Some(expected.as_str()) && !admin_ok && !guest_ok {
-                let body = axum::Json(serde_json::json!({"ok": false, "error": "Authentication failed"}));
-                return (StatusCode::UNAUTHORIZED, body).into_response();
-            }
+        // Reject if none match
+        if !user_ok && !admin_ok && !guest_ok {
+            let body = axum::Json(serde_json::json!({"ok": false, "error": "Authentication failed"}));
+            return (StatusCode::UNAUTHORIZED, body).into_response();
         }
 
-        // Guest: block all mutations regardless of user_token config
+        // Guest: block all mutations (only allow read-only endpoints)
         if guest_ok {
             let path = req.uri().path().to_string();
             let allowed_guest_paths = [
@@ -594,7 +603,10 @@ mod tests {
                 .map(|p| p.trim_start_matches("token=").to_string()));
         let provided = from_header.or(from_query);
 
-        // Check roles
+        // Strict auth: token must match one of user_token / admin_token / guest_token
+        let user_ok = state.user_token.as_deref()
+            .map(|ut| provided.as_deref() == Some(ut))
+            .unwrap_or(false);
         let admin_ok = state.admin_token.as_deref()
             .map(|at| provided.as_deref() == Some(at))
             .unwrap_or(false);
@@ -602,15 +614,13 @@ mod tests {
             .map(|gt| !gt.is_empty() && provided.as_deref() == Some(gt))
             .unwrap_or(false);
 
-        // Token auth (if user_token is configured)
-        if let Some(ref expected) = state.user_token {
-            if provided.as_deref() != Some(expected.as_str()) && !admin_ok && !guest_ok {
-                let body = axum::Json(serde_json::json!({"ok": false, "error": "Authentication failed"}));
-                return (StatusCode::UNAUTHORIZED, body).into_response();
-            }
+        // Reject if none match
+        if !user_ok && !admin_ok && !guest_ok {
+            let body = axum::Json(serde_json::json!({"ok": false, "error": "Authentication failed"}));
+            return (StatusCode::UNAUTHORIZED, body).into_response();
         }
 
-        // Guest: block all mutations regardless of user_token config
+        // Guest: block all mutations (only allow read-only endpoints)
         if guest_ok {
             let path = req.uri().path().to_string();
             let allowed_guest_paths = [
@@ -669,7 +679,10 @@ mod tests {
                 .map(|p| p.trim_start_matches("token=").to_string()));
         let provided = from_header.or(from_query);
 
-        // Check roles
+        // Strict auth: token must match one of user_token / admin_token / guest_token
+        let user_ok = state.user_token.as_deref()
+            .map(|ut| provided.as_deref() == Some(ut))
+            .unwrap_or(false);
         let admin_ok = state.admin_token.as_deref()
             .map(|at| provided.as_deref() == Some(at))
             .unwrap_or(false);
@@ -677,15 +690,13 @@ mod tests {
             .map(|gt| !gt.is_empty() && provided.as_deref() == Some(gt))
             .unwrap_or(false);
 
-        // Token auth (if user_token is configured)
-        if let Some(ref expected) = state.user_token {
-            if provided.as_deref() != Some(expected.as_str()) && !admin_ok && !guest_ok {
-                let body = axum::Json(serde_json::json!({"ok": false, "error": "Authentication failed"}));
-                return (StatusCode::UNAUTHORIZED, body).into_response();
-            }
+        // Reject if none match
+        if !user_ok && !admin_ok && !guest_ok {
+            let body = axum::Json(serde_json::json!({"ok": false, "error": "Authentication failed"}));
+            return (StatusCode::UNAUTHORIZED, body).into_response();
         }
 
-        // Guest: block all mutations regardless of user_token config
+        // Guest: block all mutations (only allow read-only endpoints)
         if guest_ok {
             let path = req.uri().path().to_string();
             let allowed_guest_paths = [
@@ -744,7 +755,10 @@ mod tests {
                 .map(|p| p.trim_start_matches("token=").to_string()));
         let provided = from_header.or(from_query);
 
-        // Check roles
+        // Strict auth: token must match one of user_token / admin_token / guest_token
+        let user_ok = state.user_token.as_deref()
+            .map(|ut| provided.as_deref() == Some(ut))
+            .unwrap_or(false);
         let admin_ok = state.admin_token.as_deref()
             .map(|at| provided.as_deref() == Some(at))
             .unwrap_or(false);
@@ -752,15 +766,13 @@ mod tests {
             .map(|gt| !gt.is_empty() && provided.as_deref() == Some(gt))
             .unwrap_or(false);
 
-        // Token auth (if user_token is configured)
-        if let Some(ref expected) = state.user_token {
-            if provided.as_deref() != Some(expected.as_str()) && !admin_ok && !guest_ok {
-                let body = axum::Json(serde_json::json!({"ok": false, "error": "Authentication failed"}));
-                return (StatusCode::UNAUTHORIZED, body).into_response();
-            }
+        // Reject if none match
+        if !user_ok && !admin_ok && !guest_ok {
+            let body = axum::Json(serde_json::json!({"ok": false, "error": "Authentication failed"}));
+            return (StatusCode::UNAUTHORIZED, body).into_response();
         }
 
-        // Guest: block all mutations regardless of user_token config
+        // Guest: block all mutations (only allow read-only endpoints)
         if guest_ok {
             let path = req.uri().path().to_string();
             let allowed_guest_paths = [
@@ -811,7 +823,10 @@ mod tests {
                 .map(|p| p.trim_start_matches("token=").to_string()));
         let provided = from_header.or(from_query);
 
-        // Check roles
+        // Strict auth: token must match one of user_token / admin_token / guest_token
+        let user_ok = state.user_token.as_deref()
+            .map(|ut| provided.as_deref() == Some(ut))
+            .unwrap_or(false);
         let admin_ok = state.admin_token.as_deref()
             .map(|at| provided.as_deref() == Some(at))
             .unwrap_or(false);
@@ -819,15 +834,13 @@ mod tests {
             .map(|gt| !gt.is_empty() && provided.as_deref() == Some(gt))
             .unwrap_or(false);
 
-        // Token auth (if user_token is configured)
-        if let Some(ref expected) = state.user_token {
-            if provided.as_deref() != Some(expected.as_str()) && !admin_ok && !guest_ok {
-                let body = axum::Json(serde_json::json!({"ok": false, "error": "Authentication failed"}));
-                return (StatusCode::UNAUTHORIZED, body).into_response();
-            }
+        // Reject if none match
+        if !user_ok && !admin_ok && !guest_ok {
+            let body = axum::Json(serde_json::json!({"ok": false, "error": "Authentication failed"}));
+            return (StatusCode::UNAUTHORIZED, body).into_response();
         }
 
-        // Guest: block all mutations regardless of user_token config
+        // Guest: block all mutations (only allow read-only endpoints)
         if guest_ok {
             let path = req.uri().path().to_string();
             let allowed_guest_paths = [
@@ -878,7 +891,10 @@ mod tests {
                 .map(|p| p.trim_start_matches("token=").to_string()));
         let provided = from_header.or(from_query);
 
-        // Check roles
+        // Strict auth: token must match one of user_token / admin_token / guest_token
+        let user_ok = state.user_token.as_deref()
+            .map(|ut| provided.as_deref() == Some(ut))
+            .unwrap_or(false);
         let admin_ok = state.admin_token.as_deref()
             .map(|at| provided.as_deref() == Some(at))
             .unwrap_or(false);
@@ -886,15 +902,13 @@ mod tests {
             .map(|gt| !gt.is_empty() && provided.as_deref() == Some(gt))
             .unwrap_or(false);
 
-        // Token auth (if user_token is configured)
-        if let Some(ref expected) = state.user_token {
-            if provided.as_deref() != Some(expected.as_str()) && !admin_ok && !guest_ok {
-                let body = axum::Json(serde_json::json!({"ok": false, "error": "Authentication failed"}));
-                return (StatusCode::UNAUTHORIZED, body).into_response();
-            }
+        // Reject if none match
+        if !user_ok && !admin_ok && !guest_ok {
+            let body = axum::Json(serde_json::json!({"ok": false, "error": "Authentication failed"}));
+            return (StatusCode::UNAUTHORIZED, body).into_response();
         }
 
-        // Guest: block all mutations regardless of user_token config
+        // Guest: block all mutations (only allow read-only endpoints)
         if guest_ok {
             let path = req.uri().path().to_string();
             let allowed_guest_paths = [
@@ -945,7 +959,10 @@ mod tests {
                 .map(|p| p.trim_start_matches("token=").to_string()));
         let provided = from_header.or(from_query);
 
-        // Check roles
+        // Strict auth: token must match one of user_token / admin_token / guest_token
+        let user_ok = state.user_token.as_deref()
+            .map(|ut| provided.as_deref() == Some(ut))
+            .unwrap_or(false);
         let admin_ok = state.admin_token.as_deref()
             .map(|at| provided.as_deref() == Some(at))
             .unwrap_or(false);
@@ -953,15 +970,13 @@ mod tests {
             .map(|gt| !gt.is_empty() && provided.as_deref() == Some(gt))
             .unwrap_or(false);
 
-        // Token auth (if user_token is configured)
-        if let Some(ref expected) = state.user_token {
-            if provided.as_deref() != Some(expected.as_str()) && !admin_ok && !guest_ok {
-                let body = axum::Json(serde_json::json!({"ok": false, "error": "Authentication failed"}));
-                return (StatusCode::UNAUTHORIZED, body).into_response();
-            }
+        // Reject if none match
+        if !user_ok && !admin_ok && !guest_ok {
+            let body = axum::Json(serde_json::json!({"ok": false, "error": "Authentication failed"}));
+            return (StatusCode::UNAUTHORIZED, body).into_response();
         }
 
-        // Guest: block all mutations regardless of user_token config
+        // Guest: block all mutations (only allow read-only endpoints)
         if guest_ok {
             let path = req.uri().path().to_string();
             let allowed_guest_paths = [
