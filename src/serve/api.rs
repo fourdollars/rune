@@ -564,7 +564,7 @@ pub async fn collection_create_handler(
             broadcast_collection_list(&state).await;
             Json(ApiResponse::success())
         }
-        Err(e) => Json(ApiResponse::err(format!("Failed to create session: {}", e))),
+        Err(e) => Json(ApiResponse::err(format!("Failed to create collection: {}", e))),
     }
 }
 

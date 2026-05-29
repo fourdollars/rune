@@ -1384,6 +1384,36 @@ function renderCollectionList() {
             fileRow.appendChild(fileIcon);
             fileRow.appendChild(fileLabel);
 
+            if (isAdmin) {
+                const fileActions = document.createElement('span');
+                fileActions.className = 'actions';
+
+                const renameBtn = document.createElement('button');
+                renameBtn.textContent = '✏️';
+                renameBtn.title = 'Rename';
+                renameBtn.onclick = (e) => {
+                    e.stopPropagation();
+                    const newName = prompt('Rename file:', fname);
+                    if (newName && newName.trim() && newName.trim() !== fname) {
+                        api('file/rename', { collection_id: s.id, old_name: fname, new_name: newName.trim() });
+                    }
+                };
+                fileActions.appendChild(renameBtn);
+
+                const delBtn = document.createElement('button');
+                delBtn.textContent = '🗑';
+                delBtn.title = 'Delete';
+                delBtn.onclick = (e) => {
+                    e.stopPropagation();
+                    if (confirm('Delete "' + fname + '"?')) {
+                        api('file/delete', { collection_id: s.id, name: fname });
+                    }
+                };
+                fileActions.appendChild(delBtn);
+
+                fileRow.appendChild(fileActions);
+            }
+
             fileRow.onclick = () => {
                 if (s.id !== currentCollectionId) switchCollection(s.id);
                 api('file/switch', { collection_id: s.id, name: fname });
@@ -1456,7 +1486,7 @@ function hideNewCollectionDialog() {
 function createCollection() {
     const name = document.getElementById('new-collection-name').value.trim();
     if (!name) return;
-    api('collection/create', { name });
+    api("collection/create", { name }).then(() => switchCollection(name));
     hideNewCollectionDialog();
 }
 
@@ -1466,22 +1496,22 @@ function showCollectionSettings(sessionId) {
     const s = collections.find(x => x.id === sessionId);
     if (!s) return;
     settingsCollectionId = sessionId;
-    document.getElementById('session-settings-title').textContent = 'Collection: ' + s.name;
-    document.getElementById('session-settings-name').value = s.name;
+    document.getElementById('collection-settings-title').textContent = 'Collection: ' + s.name;
+    document.getElementById('collection-settings-name').value = s.name;
     // Hide delete button for default session
-    const delBtn = document.getElementById('btn-delete-session');
+    const delBtn = document.getElementById('btn-delete-collection');
     if (delBtn) delBtn.style.display = sessionId === 'default' ? 'none' : '';
-    document.getElementById('session-settings-modal').classList.remove('hidden');
+    document.getElementById('collection-settings-modal').classList.remove('hidden');
 }
 
 function hideCollectionSettings() {
-    document.getElementById('session-settings-modal').classList.add('hidden');
+    document.getElementById('collection-settings-modal').classList.add('hidden');
     settingsCollectionId = null;
 }
 
 function saveCollectionSettings() {
     if (!settingsCollectionId) return;
-    const name = document.getElementById('session-settings-name').value.trim();
+    const name = document.getElementById('collection-settings-name').value.trim();
     const s = collections.find(x => x.id === settingsCollectionId);
     if (s && name && name !== s.name) {
         api('collection/rename', { collection_id: settingsCollectionId, name });
