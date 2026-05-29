@@ -1022,7 +1022,7 @@ function renderSearchResults(query, results) {
         el.innerHTML = `<div class="search-empty">No results for "${escapeHtml(query)}"</div>`;
         return;
     }
-    const html = results.map(r => {
+    const html = results.map((r, i) => {
         const ts = new Date(r.created_at * 1000).toLocaleString('zh-TW');
         const role = r.role === 'assistant' ? '🤖' : '🧑';
         const highlighted = escapeHtml(r.content).replace(
@@ -1030,11 +1030,22 @@ function renderSearchResults(query, results) {
             m => `<mark>${m}</mark>`
         );
         return `<div class="search-item">
-            <div class="search-meta">${role} <strong>${escapeHtml(r.nickname)}</strong> <span class="search-time">${ts}</span></div>
+            <div class="search-meta">${role} <strong>${escapeHtml(r.nickname)}</strong> <span class="search-time">${ts}</span><button class="search-copy-btn" data-idx="${i}" title="Copy">📋</button></div>
             <div class="search-content">${highlighted}</div>
         </div>`;
     }).join('');
     el.innerHTML = `<div class="search-count">${results.length} result(s)</div>` + html;
+    // Bind copy buttons
+    el.querySelectorAll('.search-copy-btn').forEach(btn => {
+        btn.onclick = () => {
+            const idx = parseInt(btn.dataset.idx);
+            const text = results[idx].content;
+            navigator.clipboard.writeText(text).then(() => {
+                btn.textContent = '✓';
+                setTimeout(() => btn.textContent = '📋', 1500);
+            });
+        };
+    });
 }
 function escapeHtml(str) {
     return str.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
