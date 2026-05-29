@@ -46,6 +46,7 @@ body {
     border-color: var(--border);
     transition: width 0.2s ease;
     position: relative;
+    overflow: hidden;        /* bound height so children can scroll */
 }
 
 .panel-left {
@@ -54,8 +55,6 @@ body {
     max-width: 520px;
     border-right: 1px solid var(--border);
     flex-shrink: 0;
-    height: 100%;
-    overflow: hidden;
 }
 
 .panel-left.fullscreen {
