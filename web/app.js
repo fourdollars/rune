@@ -1108,31 +1108,6 @@ function renameCurrentFile(newName) {
     api('file/rename', { collection_id: currentCollectionId, old_name: currentFilename, new_name: clean });
 }
 
-function initDocTitle() {
-    if (!el) return;
-    el.addEventListener('dblclick', () => {
-        el.contentEditable = 'true';
-        el.focus();
-        // Select all
-        const range = document.createRange();
-        range.selectNodeContents(el);
-        window.getSelection().removeAllRanges();
-        window.getSelection().addRange(range);
-    });
-    el.addEventListener('keydown', e => {
-        if (e.key === 'Enter') { e.preventDefault(); el.blur(); }
-        if (e.key === 'Escape') { el.textContent = currentFilename; el.blur(); }
-    });
-    el.addEventListener('blur', () => {
-        el.contentEditable = 'false';
-        const newName = el.textContent.trim();
-        if (newName && newName !== currentFilename) {
-            renameCurrentFile(newName);
-        } else {
-            el.textContent = currentFilename; // revert if unchanged
-        }
-    });
-}
 
 const STATUS_EMOJI = {
     idle:         '🟢',
@@ -1553,7 +1528,6 @@ function selectDir() {
 // --- Init ---
 initEditor();
 initPreviewScrollSync();
-initDocTitle();
 initPanelResize();
 // Restore edit/preview state
 try {
