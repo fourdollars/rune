@@ -94,6 +94,9 @@ pub struct Agent {
     pub markdown_dir: Option<std::path::PathBuf>,
     /// Display name of the current user (for multi-user chat).
     pub user_name: Option<String>,
+    /// Callback fired after a markdown file is written/created (for serve mode).
+    /// Lets the caller (chat_handler) push a fresh file-list SSE event to the UI.
+    pub file_list_callback: Option<Arc<dyn Fn() + Send + Sync>>,
 }
 
 impl Agent {
@@ -207,6 +210,7 @@ impl Agent {
             chat_note_id: None,
             markdown_dir: None,
             user_name: None,
+            file_list_callback: None,
         }
     }
 
@@ -1126,6 +1130,7 @@ impl Agent {
                     if let Err(e) = tokio::fs::write(&file_path, full_content).await {
                         return Some(format!("Error writing {}: {}", fname, e));
                     }
+                    if let Some(cb) = &self.file_list_callback { cb(); }
                     Some(format!("{} updated (full replace)", fname))
                 } else if let (Some(search_str), Some(replace_str)) = (search, replace) {
                     match tokio::fs::read_to_string(&file_path).await {
@@ -1135,6 +1140,7 @@ impl Agent {
                                 if let Err(e) = tokio::fs::write(&file_path, &updated).await {
                                     return Some(format!("Error writing {}: {}", fname, e));
                                 }
+                                if let Some(cb) = &self.file_list_callback { cb(); }
                                 Some(format!("{} updated: replaced '{}...'", fname, char_preview(search_str, 40)))
                             } else {
                                 Some(format!("Error: search text not found in {}", fname))

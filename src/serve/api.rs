@@ -881,6 +881,14 @@ async fn handle_chat_message(
     agent.chat_note_id = Some(note_id.clone());
     agent.chat_archive_dir = Some(super::note_markdown_dir(&note_id)
         .parent().unwrap().join("archives"));
+    // Notify UI whenever AI writes/creates a markdown file
+    let state_for_filelist = state.clone();
+    let note_id_for_filelist = note_id.clone();
+    agent.file_list_callback = Some(Arc::new(move || {
+        let s = state_for_filelist.clone();
+        let n = note_id_for_filelist.clone();
+        tokio::spawn(async move { broadcast_file_list(&s, &n).await; });
+    }));
 
     // Set system prompt
     let system_prompt = build_system_prompt(&config).await;
