@@ -82,6 +82,10 @@ impl ChatDb {
             ALTER TABLE messages ADD COLUMN tokens_in  INTEGER;
             ALTER TABLE messages ADD COLUMN tokens_out INTEGER;
         ");
+        // Migration: drop workspace column if it exists
+        let _ = conn.execute_batch("
+            ALTER TABLE sessions DROP COLUMN workspace;
+        ");
         Ok(Self { conn: Arc::new(Mutex::new(conn)), deferred_path: Arc::new(Mutex::new(None)) })
     }
 

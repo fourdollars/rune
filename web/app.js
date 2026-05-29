@@ -395,6 +395,11 @@ function handleMessage(msg) {
             break;
         case 'auth_result':
             isAdmin = msg.is_admin;
+            // Rainbow title for admin
+            const runeTitle = document.getElementById('rune-title');
+            if (runeTitle && isAdmin) {
+                runeTitle.classList.add('rune-title-rainbow');
+            }
             if (isAdmin) addSystemMessage('👑 You are connected as admin');
             break;
         case 'model_list':

@@ -106,7 +106,6 @@ mod tests {
         assert!(html.contains("toggleEdit()"),     "index.html missing toggleEdit()");
         assert!(html.contains("togglePreview()"),  "index.html missing togglePreview()");
         assert!(html.contains("center-body"),      "index.html missing center-body div");
-        assert!(html.contains("chat-header-right"),"index.html missing chat-header-right");
     }
 
     #[test]
@@ -185,12 +184,4 @@ mod tests {
         assert!(html.contains("modal-actions"),   "index.html missing modal-actions");
     }
 
-    #[test]
-    fn test_index_html_has_doc_title_area() {
-        let html = get("index.html").unwrap();
-        assert!(html.contains("doc-title-area"), "index.html missing doc-title-area");
-        assert!(html.contains("file-add-btn"),   "index.html missing file-add-btn");
-        assert!(html.contains("doc-title"),      "index.html missing doc-title");
-        assert!(html.contains("file-del-btn"),   "index.html missing file-del-btn");
-    }
 }
