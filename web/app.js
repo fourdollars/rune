@@ -491,14 +491,14 @@ function applyNoCollectionLayout() {
     const panelCenter = document.getElementById('panel-center');
     const panelRight = document.getElementById('panel-right');
 
-    if (!currentCollectionId) {
-        // No session: expand session panel, hide everything else
+    if (!currentCollectionId && collections.length === 0) {
+        // Truly no collections: expand collection panel fullscreen
         panelCenter.classList.add('hidden');
         panelRight.classList.add('hidden');
         panelLeft.classList.remove('collapsed');
         panelLeft.classList.add('fullscreen');
     } else {
-        // Collection active: restore normal layout
+        // Collection exists or active: restore normal layout
         panelLeft.classList.remove('fullscreen');
         panelCenter.classList.remove('hidden');
         panelRight.classList.remove('hidden');
