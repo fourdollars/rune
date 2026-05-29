@@ -49,6 +49,7 @@ body {
 }
 
 .panel-left {
+    display: flex;
     width: var(--panel-width);
     min-width: 160px;
     max-width: 520px;

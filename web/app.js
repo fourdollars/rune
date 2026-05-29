@@ -437,7 +437,16 @@ function handleMessage(msg) {
             const prevVisibility = {};
             notes.forEach(n => { if (n.fileVisibility) prevVisibility[n.id] = n.fileVisibility; });
             notes = msg.notes || [];
-            notes.forEach(n => { if (prevVisibility[n.id]) n.fileVisibility = prevVisibility[n.id]; });
+            notes.forEach(n => {
+                if (prevVisibility[n.id]) {
+                    n.fileVisibility = prevVisibility[n.id];
+                } else {
+                    // Initialize from public_files in note_list SSE
+                    n.fileVisibility = {};
+                    (n.files || []).forEach(f => { n.fileVisibility[f] = false; });
+                    (n.public_files || []).forEach(f => { n.fileVisibility[f] = true; });
+                }
+            });
             if (currentNoteId && !notes.find(s => s.id === currentNoteId)) {
                 currentNoteId = '';
             }

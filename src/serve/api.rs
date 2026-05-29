@@ -84,6 +84,8 @@ pub struct NoteListEntry {
     pub name: String,
     pub files: Vec<String>,
     pub public: bool,
+    /// Which files are publicly visible (only names that are public=true)
+    pub public_files: Vec<String>,
 }
 
 #[derive(Debug, Serialize, Clone)]
@@ -271,11 +273,13 @@ pub async fn build_note_list(state: &ServerState) -> Vec<NoteListEntry> {
             }
         }
         files.sort();
+        let public_files = state.chat_db.list_public_files(&s.id);
         entries.push(NoteListEntry {
             id: s.id.clone(),
             name: s.name.clone(),
             files,
             public: s.public,
+            public_files,
         });
     }
     entries
@@ -535,7 +539,10 @@ pub async fn file_switch_handler(
             broadcast(&state, &fc);
             Json(ApiResponse::success())
         }
-        Err(_) => Json(ApiResponse::err(format!("File not found: {}", req.name))),
+        Err(e) => {
+            tracing::warn!("file/switch failed: note_id={:?} name={:?} path={:?} err={}", req.note_id, req.name, file_path, e);
+            Json(ApiResponse::err(format!("File not found: {}", req.name)))
+        }
     }
 }
 
