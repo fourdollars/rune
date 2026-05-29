@@ -952,6 +952,9 @@ const PUBLIC_PREVIEW_HTML: &str = r#"<!DOCTYPE html>
   }
 })();
 </script>
+<footer style="max-width:860px;margin:32px auto 16px;padding-top:16px;border-top:1px solid currentColor;opacity:0.3;text-align:center;font-size:12px">
+  Powered by <a href="https://fourdollars.github.io/rune/" style="color:inherit;text-decoration:underline">Rune</a> &#x1FAB6;
+</footer>
 </body>
 </html>"#;
 
@@ -960,7 +963,7 @@ pub async fn public_notes_list_handler(
 ) -> impl axum::response::IntoResponse {
     let notes = state.chat_db.list_notes().unwrap_or_default();
     let mut html = String::from("<!DOCTYPE html><html><head><meta charset='UTF-8'><title>Public Notes</title>");
-    html.push_str("<style>body{font-family:sans-serif;max-width:860px;margin:40px auto;padding:0 20px;background:#f6f8fa;color:#24292e}");
+    html.push_str("<style>:root{color-scheme:light dark}@media(prefers-color-scheme:dark){body{background:#1e1e2e;color:#cdd6f4}a{color:#89b4fa}footer{border-color:#585b70 !important}}body{font-family:sans-serif;max-width:860px;margin:40px auto;padding:0 20px;background:#f6f8fa;color:#24292e}");
     html.push_str("h1{margin-bottom:24px}ul{list-style:none;padding:0}li{margin:8px 0}a{color:#0366d6;text-decoration:none}a:hover{text-decoration:underline}");
     html.push_str(".note-header{font-weight:600;margin-top:16px;margin-bottom:4px}.file-link{padding-left:16px;display:block}</style></head><body>");
     html.push_str("<h1>Public Notes</h1><ul>");
@@ -979,7 +982,7 @@ pub async fn public_notes_list_handler(
         html.push_str("</ul></li>");
     }
     if !any { html.push_str("<li><em>No public notes available.</em></li>"); }
-    html.push_str("</ul></body></html>");
+    html.push_str("</ul><footer style='margin-top:40px;padding-top:16px;border-top:1px solid #ccc;opacity:0.4;text-align:center;font-size:12px'>Powered by <a href='https://fourdollars.github.io/rune/' style='color:inherit;text-decoration:underline'>Rune</a> &#x1FAB6;</footer></body></html>");
     axum::response::Html(html)
 }
 
