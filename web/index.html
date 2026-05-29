@@ -140,8 +140,6 @@
                 <div class="explorer-actions">
                     <button id="btn-edit" class="explorer-action-btn active" onclick="toggleEdit()" title="Toggle editor">✏️</button>
                     <button id="btn-preview" class="explorer-action-btn" onclick="togglePreview()" title="Toggle preview">👁</button>
-                    <button id="btn-search" class="explorer-action-btn" onclick="showSearchDialog()" title="Search">🔍</button>
-                    <button id="btn-archive" class="explorer-action-btn" onclick="showArchiveDialog()" title="Archive">📦</button>
                     <button id="btn-logout" class="explorer-action-btn" onclick="showLogoutDialog()" title="Logout">⏏</button>
                 </div>
             </div>
@@ -171,6 +169,10 @@
                     <h3><a href="https://fourdollars.github.io/rune/" target="_blank" rel="noopener" class="title-link">ᚱᚢᚾᛖ</a><span id="status-indicator" class="status idle">● idle</span></h3>
                     <div id="model-indicator" class="model-indicator" style="display:none">
                         <span id="model-name" class="model-name" onclick="showModelDialog()" title="Switch model"></span>
+                    </div>
+                    <div class="chat-header-actions">
+                        <button id="btn-search" class="chat-action-btn" onclick="showSearchDialog()" title="Search chat history">🔍</button>
+                        <button id="btn-archive" class="chat-action-btn" onclick="showArchiveDialog()" title="Archive chat">📦</button>
                     </div>
 
                 </div>
