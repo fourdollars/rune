@@ -1321,7 +1321,6 @@ toggleCollectionFiles(s.id); };
         const name = document.createElement('span');
         name.className = 'collection-name';
         name.textContent = s.name;
-        name.title = s.workspace;
         name.onclick = () => switchCollection(s.id);
 
                 header.appendChild(name);
@@ -1391,9 +1390,6 @@ function switchCollection(sessionId) {
 function showNewCollectionDialog() {
     document.getElementById('new-collection-modal').classList.remove('hidden');
     document.getElementById('new-collection-name').value = '';
-    const wsInput = document.getElementById('new-collection-workspace');
-    // Default to first session's workspace or empty
-    const defaultWs = collections.length > 0 ? collections[0].workspace : '';
     wsInput.value = defaultWs;
     document.getElementById('new-collection-name').focus();
 }
@@ -1404,9 +1400,8 @@ function hideNewCollectionDialog() {
 
 function createCollection() {
     const name = document.getElementById('new-collection-name').value.trim();
-    const workspace = document.getElementById('new-collection-workspace').value.trim();
     if (!name) return;
-    api('collection/create', { name, workspace: workspace || undefined });
+    api('collection/create', { name });
     hideNewCollectionDialog();
 }
 
@@ -1418,7 +1413,6 @@ function showCollectionSettings(sessionId) {
     settingsCollectionId = sessionId;
     document.getElementById('session-settings-title').textContent = 'Collection: ' + s.name;
     document.getElementById('session-settings-name').value = s.name;
-    document.getElementById('session-settings-workspace').value = s.workspace;
     // Hide delete button for default session
     const delBtn = document.getElementById('btn-delete-session');
     if (delBtn) delBtn.style.display = sessionId === 'default' ? 'none' : '';
@@ -1433,13 +1427,9 @@ function hideCollectionSettings() {
 function saveCollectionSettings() {
     if (!settingsCollectionId) return;
     const name = document.getElementById('session-settings-name').value.trim();
-    const workspace = document.getElementById('session-settings-workspace').value.trim();
     const s = collections.find(x => x.id === settingsCollectionId);
     if (s && name && name !== s.name) {
         api('collection/rename', { collection_id: settingsCollectionId, name });
-    }
-    if (s && workspace && workspace !== s.workspace) {
-        api('collection/set-workspace', { collection_id: settingsCollectionId, workspace });
     }
     hideCollectionSettings();
 }

@@ -82,7 +82,6 @@ pub enum SseMsg {
 pub struct CollectionListEntry {
     pub id: String,
     pub name: String,
-    pub workspace: String,
     pub files: Vec<String>,
 }
 
@@ -142,7 +141,6 @@ pub struct FileUpdateReq {
 #[derive(Debug, Deserialize)]
 pub struct CollectionCreateReq {
     pub name: String,
-    pub workspace: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -161,11 +159,6 @@ pub struct CollectionSwitchReq {
     pub collection_id: String,
 }
 
-#[derive(Debug, Deserialize)]
-pub struct CollectionSetWorkspaceReq {
-    pub collection_id: String,
-    pub workspace: String,
-}
 
 #[derive(Debug, Deserialize)]
 pub struct ModelSwitchReq {
@@ -261,7 +254,6 @@ pub async fn build_collection_list(state: &ServerState) -> Vec<CollectionListEnt
         entries.push(CollectionListEntry {
             id: s.id,
             name: s.name,
-            workspace: s.workspace,
             files,
         });
     }
@@ -556,11 +548,7 @@ pub async fn collection_create_handler(
         return Json(ApiResponse::err("Collection name required"));
     }
 
-    let ws = req.workspace.unwrap_or_else(|| {
-        std::env::current_dir()
-            .map(|p| p.to_string_lossy().to_string())
-            .unwrap_or_else(|_| "/tmp".to_string())
-    });
+
 
     // Persist DB on first session creation
     if let Err(e) = state.chat_db.ensure_persistent() {
@@ -568,7 +556,7 @@ pub async fn collection_create_handler(
     }
 
     let id = req.name.clone();
-    match state.chat_db.create_collection(&id, &req.name, &ws, None) {
+    match state.chat_db.create_collection(&id, &req.name, None) {
         Ok(_) => {
             info!("Collection '{}' created", id);
             let md_dir = super::collection_markdown_dir(&id);
@@ -650,19 +638,6 @@ pub async fn collection_switch_handler(
     Json(ApiResponse::success())
 }
 
-pub async fn collection_set_workspace_handler(
-    State(state): State<ServerState>,
-    Json(req): Json<CollectionSetWorkspaceReq>,
-) -> Json<ApiResponse> {
-    match state.chat_db.update_collection_workspace(&req.collection_id, &req.workspace) {
-        Ok(true) => {
-            broadcast_collection_list(&state).await;
-            Json(ApiResponse::success())
-        }
-        Ok(false) => Json(ApiResponse::err("Collection not found")),
-        Err(e) => Json(ApiResponse::err(format!("Failed: {}", e))),
-    }
-}
 
 pub async fn model_switch_handler(
     State(state): State<ServerState>,
@@ -1109,7 +1084,6 @@ mod tests {
             collections: vec![CollectionListEntry {
                 id: "test".into(),
                 name: "Test".into(),
-                workspace: "/tmp".into(),
                 files: vec!["spec.md".into()],
             }],
             active: "test".into(),
@@ -1179,12 +1153,10 @@ mod tests {
         let entry = CollectionListEntry {
             id: "s1".into(),
             name: "Session One".into(),
-            workspace: "/work".into(),
             files: vec!["readme.md".into()],
         };
         let json = serde_json::to_string(&entry).unwrap();
         assert!(json.contains(r#""id":"s1""#));
-        assert!(json.contains(r#""workspace":"/work""#));
     }
 
     #[test]
@@ -1270,7 +1242,6 @@ fn test_app() -> (Router, TempDir) {
         .route("/api/session/rename", post(collection_rename_handler))
         .route("/api/session/delete", post(collection_delete_handler))
         .route("/api/session/switch", post(collection_switch_handler))
-        .route("/api/session/set-workspace", post(collection_set_workspace_handler))
         .route("/api/model/switch", post(model_switch_handler))
         .route("/api/chat/archive", post(archive_handler))
         .route("/api/chat/search", post(search_handler))
@@ -1326,7 +1297,6 @@ async fn test_session_create() {
     let (app, _tmp) = test_app();
     let (status, body) = post_json(&app, "/api/session/create", json!({
         "name": "test-session",
-        "workspace": "/tmp"
     })).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["ok"], true);
@@ -1381,17 +1351,6 @@ async fn test_session_rename() {
     let (_, body) = post_json(&app, "/api/session/rename", json!({
         "collection_id": "old-name",
         "name": "new-name"
-    })).await;
-    assert_eq!(body["ok"], true);
-}
-
-#[tokio::test]
-async fn test_session_set_workspace() {
-    let (app, _tmp) = test_app();
-    post_json(&app, "/api/session/create", json!({"name": "ws-test"})).await;
-    let (_, body) = post_json(&app, "/api/session/set-workspace", json!({
-        "collection_id": "ws-test",
-        "workspace": "/home/user/project"
     })).await;
     assert_eq!(body["ok"], true);
 }
@@ -1674,7 +1633,6 @@ async fn test_full_session_file_flow() {
     // Create session
     let (_, body) = post_json(&app, "/api/session/create", json!({
         "name": "integration",
-        "workspace": "/tmp"
     })).await;
     assert_eq!(body["ok"], true);
 

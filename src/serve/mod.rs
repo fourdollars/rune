@@ -161,7 +161,6 @@ pub async fn run(config: RuneConfig, opts: NotesOptions) {
         .route("/api/collection/rename", post(api::collection_rename_handler))
         .route("/api/collection/delete", post(api::collection_delete_handler))
         .route("/api/collection/switch", post(api::collection_switch_handler))
-        .route("/api/collection/set-workspace", post(api::collection_set_workspace_handler))
         .route("/api/model/switch", post(api::model_switch_handler))
         .route("/api/chat/archive", post(api::archive_handler))
         .route("/api/chat/search", post(api::search_handler))

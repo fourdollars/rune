@@ -36,7 +36,6 @@ pub struct ChatRecord {
 pub struct CollectionRecord {
     pub id: String,
     pub name: String,
-    pub workspace: String,
     pub created_at: i64,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub created_by: Option<String>,
@@ -73,7 +72,6 @@ impl ChatDb {
             CREATE TABLE IF NOT EXISTS sessions (
                 id          TEXT PRIMARY KEY,
                 name        TEXT NOT NULL,
-                workspace   TEXT NOT NULL,
                 created_at  INTEGER NOT NULL,
                 created_by  TEXT
             );
@@ -112,8 +110,7 @@ impl ChatDb {
                 CREATE TABLE IF NOT EXISTS sessions (
                     id          TEXT PRIMARY KEY,
                     name        TEXT NOT NULL,
-                    workspace   TEXT NOT NULL,
-                    created_at  INTEGER NOT NULL,
+                        created_at  INTEGER NOT NULL,
                     created_by  TEXT
                 );
             ")?;
@@ -251,15 +248,15 @@ impl ChatDb {
     // ── Session CRUD ──────────────────────────────────────────────────────
 
     /// Create a new session. Returns Ok(()) or error if id already exists.
-    pub fn create_collection(&self, id: &str, name: &str, workspace: &str, created_by: Option<&str>) -> anyhow::Result<()> {
+    pub fn create_collection(&self, id: &str, name: &str, created_by: Option<&str>) -> anyhow::Result<()> {
         let conn = self.conn.lock().unwrap();
         let ts = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
             .as_secs() as i64;
         conn.execute(
-            "INSERT INTO sessions (id, name, workspace, created_at, created_by) VALUES (?1,?2,?3,?4,?5)",
-            params![id, name, workspace, ts, created_by],
+            "INSERT INTO sessions (id, name, created_at, created_by) VALUES (?1,?2,?3,?4)",
+            params![id, name, ts, created_by],
         )?;
         Ok(())
     }
@@ -268,15 +265,14 @@ impl ChatDb {
     pub fn list_collections(&self) -> anyhow::Result<Vec<CollectionRecord>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT id, name, workspace, created_at, created_by FROM sessions ORDER BY name ASC"
+            "SELECT id, name, created_at, created_by FROM sessions ORDER BY name ASC"
         )?;
         let rows = stmt.query_map([], |row| {
             Ok(CollectionRecord {
                 id:         row.get(0)?,
                 name:       row.get(1)?,
-                workspace:  row.get(2)?,
-                created_at: row.get(3)?,
-                created_by: row.get(4)?,
+                created_at: row.get(2)?,
+                created_by: row.get(3)?,
             })
         })?.filter_map(|r| r.ok()).collect();
         Ok(rows)
@@ -312,15 +308,6 @@ impl ChatDb {
         Ok(Some(new_name.to_string()))
     }
 
-    /// Update session workspace path. Returns true if session exists.
-    pub fn update_collection_workspace(&self, id: &str, workspace: &str) -> anyhow::Result<bool> {
-        let conn = self.conn.lock().unwrap();
-        let changed = conn.execute(
-            "UPDATE sessions SET workspace = ?1 WHERE id = ?2",
-            params![workspace, id],
-        )?;
-        Ok(changed > 0)
-    }
 
     /// Delete a session (metadata only; does NOT delete chat messages).
     pub fn delete_collection(&self, id: &str) -> anyhow::Result<bool> {
@@ -336,34 +323,18 @@ impl ChatDb {
     pub fn get_session(&self, id: &str) -> anyhow::Result<Option<CollectionRecord>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT id, name, workspace, created_at, created_by FROM sessions WHERE id = ?1"
+            "SELECT id, name, created_at, created_by FROM sessions WHERE id = ?1"
         )?;
         let mut rows = stmt.query_map(params![id], |row| {
             Ok(CollectionRecord {
                 id:         row.get(0)?,
                 name:       row.get(1)?,
-                workspace:  row.get(2)?,
-                created_at: row.get(3)?,
-                created_by: row.get(4)?,
+                created_at: row.get(2)?,
+                created_by: row.get(3)?,
             })
         })?;
         Ok(rows.next().and_then(|r| r.ok()))
     }
-
-    /// Ensure the default session exists (idempotent).
-    pub fn ensure_default_session(&self, workspace: &str) -> anyhow::Result<()> {
-        let conn = self.conn.lock().unwrap();
-        let ts = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs() as i64;
-        conn.execute(
-            "INSERT OR IGNORE INTO sessions (id, name, workspace, created_at) VALUES ('default', 'General', ?1, ?2)",
-            params![workspace, ts],
-        )?;
-        Ok(())
-    }
-
     // ── End Session CRUD ─────────────────────────────────────────────────
 
     /// Dump all messages for a session to JSONL, then delete them from the DB.
@@ -696,13 +667,12 @@ mod tests {
     #[test]
     fn test_create_and_list_collections() {
         let db = in_memory_db();
-        db.create_collection("proj-a", "Project A", "/home/u/proj-a", Some("admin")).unwrap();
-        db.create_collection("proj-b", "Project B", "/home/u/proj-b", None).unwrap();
+        db.create_collection("proj-a", "Project A", Some("admin")).unwrap();
+        db.create_collection("proj-b", "Project B", None).unwrap();
         let sessions = db.list_collections().unwrap();
         assert_eq!(sessions.len(), 2);
         assert_eq!(sessions[0].id, "proj-a");
         assert_eq!(sessions[0].name, "Project A");
-        assert_eq!(sessions[0].workspace, "/home/u/proj-a");
         assert_eq!(sessions[0].created_by.as_deref(), Some("admin"));
         assert_eq!(sessions[1].id, "proj-b");
         assert!(sessions[1].created_by.is_none());
@@ -711,7 +681,7 @@ mod tests {
     #[test]
     fn test_rename_collection() {
         let db = in_memory_db();
-        db.create_collection("s1", "s1", "/tmp", None).unwrap();
+        db.create_collection("s1", "s1", None).unwrap();
         let result = db.rename_collection("s1", "new-name").unwrap();
         assert_eq!(result, Some("new-name".to_string()));
         // Old id gone, new id exists
@@ -724,7 +694,7 @@ mod tests {
     #[test]
     fn test_rename_collection_updates_messages() {
         let db = in_memory_db();
-        db.create_collection("old", "old", "/tmp", None).unwrap();
+        db.create_collection("old", "old", None).unwrap();
         db.insert("old", "user", "alice", "hello").unwrap();
         let _ = db.rename_collection("old", "new").unwrap();
         // Messages should now be under "new"
@@ -745,29 +715,12 @@ mod tests {
     #[test]
     fn test_rename_collection_conflict() {
         let db = in_memory_db();
-        db.create_collection("a", "a", "/tmp", None).unwrap();
-        db.create_collection("b", "b", "/tmp", None).unwrap();
+        db.create_collection("a", "a", None).unwrap();
+        db.create_collection("b", "b", None).unwrap();
         // Can't rename a → b (b already exists)
         assert_eq!(db.rename_collection("a", "b").unwrap(), None);
     }
 
-    #[test]
-    fn test_update_collection_workspace() {
-        let db = in_memory_db();
-        db.create_collection("s1", "Test", "/old/path", None).unwrap();
-        assert!(db.update_collection_workspace("s1", "/new/path").unwrap());
-        let s = db.get_session("s1").unwrap().unwrap();
-        assert_eq!(s.workspace, "/new/path");
-    }
-
-    #[test]
-    fn test_delete_collection() {
-        let db = in_memory_db();
-        db.create_collection("s1", "Test", "/tmp", None).unwrap();
-        assert!(db.delete_collection("s1").unwrap());
-        assert!(db.get_session("s1").unwrap().is_none());
-        assert!(db.list_collections().unwrap().is_empty());
-    }
 
     #[test]
     fn test_delete_nonexistent_returns_false() {
@@ -776,21 +729,10 @@ mod tests {
     }
 
     #[test]
-    fn test_ensure_default_collection_idempotent() {
-        let db = in_memory_db();
-        db.ensure_default_session("/home/u").unwrap();
-        db.ensure_default_session("/home/u").unwrap(); // should not fail
-        let sessions = db.list_collections().unwrap();
-        assert_eq!(sessions.len(), 1);
-        assert_eq!(sessions[0].id, "default");
-        assert_eq!(sessions[0].name, "General");
-    }
-
-    #[test]
     fn test_duplicate_collection_id_fails() {
         let db = in_memory_db();
-        db.create_collection("dup", "First", "/tmp", None).unwrap();
-        assert!(db.create_collection("dup", "Second", "/tmp", None).is_err());
+        db.create_collection("dup", "First", None).unwrap();
+        assert!(db.create_collection("dup", "Second", None).is_err());
     }
 
     #[test]
