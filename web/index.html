@@ -59,24 +59,24 @@
         </div>
     </div>
 
-    <!-- New Session dialog -->
-    <div id="new-session-modal" class="modal-overlay hidden">
+    <!-- New Collection dialog -->
+    <div id="new-collection-modal" class="modal-overlay hidden">
         <div class="modal">
-            <h2>New Session</h2>
+            <h2>New Collection</h2>
             <div class="form-group">
-                <label>Session Name</label>
-                <input type="text" id="new-session-name" placeholder="My Project" maxlength="50" />
+                <label>Collection Name</label>
+                <input type="text" id="new-collection-name" placeholder="My Project" maxlength="50" />
             </div>
             <div class="form-group">
                 <label>Workspace Folder</label>
                 <div class="path-input-row">
-                    <input type="text" id="new-session-workspace" placeholder="/home/u/project" readonly />
-                    <button class="btn-secondary" onclick="openDirBrowser('new-session-workspace')">📁</button>
+                    <input type="text" id="new-collection-workspace" placeholder="/home/u/project" readonly />
+                    <button class="btn-secondary" onclick="openDirBrowser('new-collection-workspace')">📁</button>
                 </div>
             </div>
             <div class="modal-actions">
-                <button class="btn-secondary" onclick="hideNewSessionDialog()">Cancel</button>
-                <button class="btn-primary" onclick="createSession()">Create</button>
+                <button class="btn-secondary" onclick="hideNewCollectionDialog()">Cancel</button>
+                <button class="btn-primary" onclick="createCollection()">Create</button>
             </div>
         </div>
     </div>
@@ -97,26 +97,26 @@
         </div>
     </div>
 
-    <!-- Session Settings dialog -->
-    <div id="session-settings-modal" class="modal-overlay hidden">
+    <!-- Collection Settings dialog -->
+    <div id="collection-settings-modal" class="modal-overlay hidden">
         <div class="modal">
-            <h2 id="session-settings-title">Session Settings</h2>
+            <h2 id="collection-settings-title">Collection Settings</h2>
             <div class="form-group">
                 <label>Name</label>
-                <input type="text" id="session-settings-name" maxlength="50" />
+                <input type="text" id="collection-settings-name" maxlength="50" />
             </div>
             <div class="form-group">
                 <label>Workspace</label>
                 <div class="path-input-row">
-                    <input type="text" id="session-settings-workspace" readonly />
-                    <button class="btn-secondary" onclick="openDirBrowser('session-settings-workspace')">📁</button>
+                    <input type="text" id="collection-settings-workspace" readonly />
+                    <button class="btn-secondary" onclick="openDirBrowser('collection-settings-workspace')">📁</button>
                 </div>
             </div>
             <div class="modal-actions">
-                <button class="btn-danger" id="btn-delete-session" onclick="deleteCurrentSession()">Delete</button>
+                <button class="btn-danger" id="btn-delete-collection" onclick="deleteCurrentCollection()">Delete</button>
                 <span style="flex:1"></span>
-                <button class="btn-secondary" onclick="hideSessionSettings()">Cancel</button>
-                <button class="btn-primary" onclick="saveSessionSettings()">Save</button>
+                <button class="btn-secondary" onclick="hideCollectionSettings()">Cancel</button>
+                <button class="btn-primary" onclick="saveCollectionSettings()">Save</button>
             </div>
         </div>
     </div>
@@ -132,17 +132,17 @@
     </div>
 
     <div id="app">
-        <!-- Left Panel: Sessions -->
+        <!-- Left Panel: Collections -->
         <aside id="panel-left" class="panel panel-left collapsed">
             <div class="resize-handle" id="resize-left">
                 <span class="toggle-icon">›</span>
             </div>
             <div class="panel-content">
-                <div class="sessions-header">
-                    <h3>Sessions <span id="online-count" style="color:var(--success)">0</span></h3>
-                    <button id="btn-new-session" class="toolbar-btn hidden" onclick="showNewSessionDialog()" title="New session">+</button>
+                <div class="collections-header">
+                    <h3>Collections <span id="online-count" style="color:var(--success)">0</span></h3>
+                    <button id="btn-new-collection" class="toolbar-btn hidden" onclick="showNewCollectionDialog()" title="New collection">+</button>
                 </div>
-                <div class="session-tree" id="session-tree"></div>
+                <div class="collection-tree" id="collection-tree"></div>
             </div>
         </aside>
 

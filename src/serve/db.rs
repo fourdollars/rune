@@ -1,7 +1,7 @@
 //! SQLite persistence for chat history.
 //!
 //! Schema:
-//!   messages(id, session_id, role, nickname, content, created_at)
+//!   messages(id, collection_id, role, nickname, content, created_at)
 //!
 //! All blocking SQLite calls are wrapped in tokio::task::spawn_blocking.
 
@@ -15,7 +15,7 @@ use tracing::warn;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChatRecord {
     pub id: i64,
-    pub session_id: String,
+    pub collection_id: String,
     pub role: String,    // "user" | "assistant" | "system"
     pub nickname: String, // user nickname, or "ᚱᚢᚾᛖ" for assistant
     pub content: String,
@@ -33,7 +33,7 @@ pub struct ChatRecord {
 
 /// A stored session entry.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SessionRecord {
+pub struct CollectionRecord {
     pub id: String,
     pub name: String,
     pub workspace: String,
@@ -59,7 +59,7 @@ impl ChatDb {
             PRAGMA synchronous=NORMAL;
             CREATE TABLE IF NOT EXISTS messages (
                 id          INTEGER PRIMARY KEY AUTOINCREMENT,
-                session_id  TEXT    NOT NULL DEFAULT 'default',
+                collection_id  TEXT    NOT NULL DEFAULT 'default',
                 role        TEXT    NOT NULL,
                 nickname    TEXT    NOT NULL,
                 content     TEXT    NOT NULL,
@@ -69,7 +69,7 @@ impl ChatDb {
                 tokens_out  INTEGER
             );
             CREATE INDEX IF NOT EXISTS idx_messages_session
-                ON messages(session_id, id);
+                ON messages(collection_id, id);
             CREATE TABLE IF NOT EXISTS sessions (
                 id          TEXT PRIMARY KEY,
                 name        TEXT NOT NULL,
@@ -98,7 +98,7 @@ impl ChatDb {
                 PRAGMA synchronous=NORMAL;
                 CREATE TABLE IF NOT EXISTS messages (
                     id          INTEGER PRIMARY KEY AUTOINCREMENT,
-                    session_id  TEXT    NOT NULL DEFAULT 'default',
+                    collection_id  TEXT    NOT NULL DEFAULT 'default',
                     role        TEXT    NOT NULL,
                     nickname    TEXT    NOT NULL,
                     content     TEXT    NOT NULL,
@@ -108,7 +108,7 @@ impl ChatDb {
                     tokens_out  INTEGER
                 );
                 CREATE INDEX IF NOT EXISTS idx_messages_session
-                    ON messages(session_id, id);
+                    ON messages(collection_id, id);
                 CREATE TABLE IF NOT EXISTS sessions (
                     id          TEXT PRIMARY KEY,
                     name        TEXT NOT NULL,
@@ -165,13 +165,13 @@ impl ChatDb {
     }
 
     /// Insert a message. Returns the new row id.
-    pub fn insert(&self, session_id: &str, role: &str, nickname: &str, content: &str) -> anyhow::Result<i64> {
-        self.insert_with_meta(session_id, role, nickname, content, None, None, None)
+    pub fn insert(&self, collection_id: &str, role: &str, nickname: &str, content: &str) -> anyhow::Result<i64> {
+        self.insert_with_meta(collection_id, role, nickname, content, None, None, None)
     }
 
     /// Insert a message with optional model/token metadata.
     pub fn insert_with_meta(
-        &self, session_id: &str, role: &str, nickname: &str, content: &str,
+        &self, collection_id: &str, role: &str, nickname: &str, content: &str,
         model: Option<&str>, tokens_in: Option<i32>, tokens_out: Option<i32>,
     ) -> anyhow::Result<i64> {
         let conn = self.conn.lock().unwrap();
@@ -180,27 +180,27 @@ impl ChatDb {
             .unwrap_or_default()
             .as_secs() as i64;
         conn.execute(
-            "INSERT INTO messages (session_id, role, nickname, content, created_at, model, tokens_in, tokens_out)
+            "INSERT INTO messages (collection_id, role, nickname, content, created_at, model, tokens_in, tokens_out)
              VALUES (?1,?2,?3,?4,?5,?6,?7,?8)",
-            params![session_id, role, nickname, content, ts, model, tokens_in, tokens_out],
+            params![collection_id, role, nickname, content, ts, model, tokens_in, tokens_out],
         )?;
         Ok(conn.last_insert_rowid())
     }
 
     /// Load the last `limit` messages for a session (ordered oldest first).
-    pub fn load_recent(&self, session_id: &str, limit: usize) -> anyhow::Result<Vec<ChatRecord>> {
+    pub fn load_recent(&self, collection_id: &str, limit: usize) -> anyhow::Result<Vec<ChatRecord>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT id, session_id, role, nickname, content, created_at, model, tokens_in, tokens_out
+            "SELECT id, collection_id, role, nickname, content, created_at, model, tokens_in, tokens_out
              FROM messages
-             WHERE session_id = ?1
+             WHERE collection_id = ?1
              ORDER BY id DESC
              LIMIT ?2"
         )?;
-        let rows: Vec<ChatRecord> = stmt.query_map(params![session_id, limit as i64], |row| {
+        let rows: Vec<ChatRecord> = stmt.query_map(params![collection_id, limit as i64], |row| {
             Ok(ChatRecord {
                 id:         row.get(0)?,
-                session_id: row.get(1)?,
+                collection_id: row.get(1)?,
                 role:       row.get(2)?,
                 nickname:   row.get(3)?,
                 content:    row.get(4)?,
@@ -219,20 +219,20 @@ impl ChatDb {
     }
 
     /// Async wrapper for insert (runs on blocking thread pool).
-    pub async fn insert_async(&self, session_id: String, role: String, nickname: String, content: String) {
-        self.insert_with_meta_async(session_id, role, nickname, content, None, None, None).await;
+    pub async fn insert_async(&self, collection_id: String, role: String, nickname: String, content: String) {
+        self.insert_with_meta_async(collection_id, role, nickname, content, None, None, None).await;
     }
 
     /// Async wrapper for insert_with_meta.
     pub async fn insert_with_meta_async(
         &self,
-        session_id: String, role: String, nickname: String, content: String,
+        collection_id: String, role: String, nickname: String, content: String,
         model: Option<String>, tokens_in: Option<i32>, tokens_out: Option<i32>,
     ) {
         let db = self.clone();
         tokio::task::spawn_blocking(move || {
             if let Err(e) = db.insert_with_meta(
-                &session_id, &role, &nickname, &content,
+                &collection_id, &role, &nickname, &content,
                 model.as_deref(), tokens_in, tokens_out,
             ) {
                 warn!("Failed to persist chat message: {}", e);
@@ -241,17 +241,17 @@ impl ChatDb {
     }
 
     /// Async wrapper for load_recent.
-    pub async fn load_recent_async(&self, session_id: String, limit: usize) -> Vec<ChatRecord> {
+    pub async fn load_recent_async(&self, collection_id: String, limit: usize) -> Vec<ChatRecord> {
         let db = self.clone();
         tokio::task::spawn_blocking(move || {
-            db.load_recent(&session_id, limit).unwrap_or_default()
+            db.load_recent(&collection_id, limit).unwrap_or_default()
         }).await.unwrap_or_default()
     }
 
     // ── Session CRUD ──────────────────────────────────────────────────────
 
     /// Create a new session. Returns Ok(()) or error if id already exists.
-    pub fn create_session(&self, id: &str, name: &str, workspace: &str, created_by: Option<&str>) -> anyhow::Result<()> {
+    pub fn create_collection(&self, id: &str, name: &str, workspace: &str, created_by: Option<&str>) -> anyhow::Result<()> {
         let conn = self.conn.lock().unwrap();
         let ts = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -265,13 +265,13 @@ impl ChatDb {
     }
 
     /// List all sessions ordered by created_at.
-    pub fn list_sessions(&self) -> anyhow::Result<Vec<SessionRecord>> {
+    pub fn list_collections(&self) -> anyhow::Result<Vec<CollectionRecord>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
             "SELECT id, name, workspace, created_at, created_by FROM sessions ORDER BY name ASC"
         )?;
         let rows = stmt.query_map([], |row| {
-            Ok(SessionRecord {
+            Ok(CollectionRecord {
                 id:         row.get(0)?,
                 name:       row.get(1)?,
                 workspace:  row.get(2)?,
@@ -283,9 +283,9 @@ impl ChatDb {
     }
 
     /// Rename a session (updates both id and name, since id = name).
-    /// Also updates session_id in messages table.
+    /// Also updates collection_id in messages table.
     /// Returns the new id if successful, None if not found or conflict.
-    pub fn rename_session(&self, id: &str, new_name: &str) -> anyhow::Result<Option<String>> {
+    pub fn rename_collection(&self, id: &str, new_name: &str) -> anyhow::Result<Option<String>> {
         let conn = self.conn.lock().unwrap();
         // Check if new id already exists
         let exists: bool = conn.query_row(
@@ -304,16 +304,16 @@ impl ChatDb {
         if changed == 0 {
             return Ok(None);
         }
-        // Update messages to new session_id
+        // Update messages to new collection_id
         conn.execute(
-            "UPDATE messages SET session_id = ?1 WHERE session_id = ?2",
+            "UPDATE messages SET collection_id = ?1 WHERE collection_id = ?2",
             params![new_name, id],
         )?;
         Ok(Some(new_name.to_string()))
     }
 
     /// Update session workspace path. Returns true if session exists.
-    pub fn update_session_workspace(&self, id: &str, workspace: &str) -> anyhow::Result<bool> {
+    pub fn update_collection_workspace(&self, id: &str, workspace: &str) -> anyhow::Result<bool> {
         let conn = self.conn.lock().unwrap();
         let changed = conn.execute(
             "UPDATE sessions SET workspace = ?1 WHERE id = ?2",
@@ -323,7 +323,7 @@ impl ChatDb {
     }
 
     /// Delete a session (metadata only; does NOT delete chat messages).
-    pub fn delete_session(&self, id: &str) -> anyhow::Result<bool> {
+    pub fn delete_collection(&self, id: &str) -> anyhow::Result<bool> {
         let conn = self.conn.lock().unwrap();
         let changed = conn.execute(
             "DELETE FROM sessions WHERE id = ?1",
@@ -333,13 +333,13 @@ impl ChatDb {
     }
 
     /// Get a single session by id.
-    pub fn get_session(&self, id: &str) -> anyhow::Result<Option<SessionRecord>> {
+    pub fn get_session(&self, id: &str) -> anyhow::Result<Option<CollectionRecord>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
             "SELECT id, name, workspace, created_at, created_by FROM sessions WHERE id = ?1"
         )?;
         let mut rows = stmt.query_map(params![id], |row| {
-            Ok(SessionRecord {
+            Ok(CollectionRecord {
                 id:         row.get(0)?,
                 name:       row.get(1)?,
                 workspace:  row.get(2)?,
@@ -368,18 +368,18 @@ impl ChatDb {
 
     /// Dump all messages for a session to JSONL, then delete them from the DB.
     /// Returns the number of messages archived.
-    pub fn archive(&self, session_id: &str, archive_path: &Path) -> anyhow::Result<usize> {
+    pub fn archive(&self, collection_id: &str, archive_path: &Path) -> anyhow::Result<usize> {
         use std::io::Write;
         let conn = self.conn.lock().unwrap();
         // Load all messages for this session
         let mut stmt = conn.prepare(
-            "SELECT id, session_id, role, nickname, content, created_at, model, tokens_in, tokens_out
-             FROM messages WHERE session_id = ?1 ORDER BY id ASC"
+            "SELECT id, collection_id, role, nickname, content, created_at, model, tokens_in, tokens_out
+             FROM messages WHERE collection_id = ?1 ORDER BY id ASC"
         )?;
-        let records: Vec<ChatRecord> = stmt.query_map(params![session_id], |row| {
+        let records: Vec<ChatRecord> = stmt.query_map(params![collection_id], |row| {
             Ok(ChatRecord {
                 id:         row.get(0)?,
-                session_id: row.get(1)?,
+                collection_id: row.get(1)?,
                 role:       row.get(2)?,
                 nickname:   row.get(3)?,
                 content:    row.get(4)?,
@@ -406,8 +406,8 @@ impl ChatDb {
 
         // Delete archived messages from DB
         conn.execute(
-            "DELETE FROM messages WHERE session_id = ?1",
-            params![session_id],
+            "DELETE FROM messages WHERE collection_id = ?1",
+            params![collection_id],
         )?;
 
         Ok(records.len())
@@ -415,7 +415,7 @@ impl ChatDb {
 
     /// Full-text search across current DB + all JSONL archive files in archive_dir.
     /// Returns matching records sorted oldest first (archives first, then live).
-    pub fn search(&self, session_id: &str, query: &str, archive_dir: &Path) -> anyhow::Result<Vec<ChatRecord>> {
+    pub fn search(&self, collection_id: &str, query: &str, archive_dir: &Path) -> anyhow::Result<Vec<ChatRecord>> {
         let query_lower = query.to_lowercase();
         let mut results: Vec<ChatRecord> = Vec::new();
 
@@ -430,7 +430,7 @@ impl ChatDb {
                 if let Ok(text) = std::fs::read_to_string(entry.path()) {
                     for line in text.lines() {
                         if let Ok(rec) = serde_json::from_str::<ChatRecord>(line) {
-                            if rec.session_id == session_id
+                            if rec.collection_id == collection_id
                                 && (rec.content.to_lowercase().contains(&query_lower)
                                     || rec.nickname.to_lowercase().contains(&query_lower))
                             {
@@ -445,13 +445,13 @@ impl ChatDb {
         // 2. Search live DB
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT id, session_id, role, nickname, content, created_at, model, tokens_in, tokens_out
-             FROM messages WHERE session_id = ?1 ORDER BY id ASC"
+            "SELECT id, collection_id, role, nickname, content, created_at, model, tokens_in, tokens_out
+             FROM messages WHERE collection_id = ?1 ORDER BY id ASC"
         )?;
-        let live: Vec<ChatRecord> = stmt.query_map(params![session_id], |row| {
+        let live: Vec<ChatRecord> = stmt.query_map(params![collection_id], |row| {
             Ok(ChatRecord {
                 id:         row.get(0)?,
-                session_id: row.get(1)?,
+                collection_id: row.get(1)?,
                 role:       row.get(2)?,
                 nickname:   row.get(3)?,
                 content:    row.get(4)?,
@@ -470,18 +470,18 @@ impl ChatDb {
     }
 
     /// Async wrapper for archive.
-    pub async fn archive_async(&self, session_id: String, archive_path: std::path::PathBuf) -> anyhow::Result<usize> {
+    pub async fn archive_async(&self, collection_id: String, archive_path: std::path::PathBuf) -> anyhow::Result<usize> {
         let db = self.clone();
         tokio::task::spawn_blocking(move || {
-            db.archive(&session_id, &archive_path)
+            db.archive(&collection_id, &archive_path)
         }).await?
     }
 
     /// Async wrapper for search.
-    pub async fn search_async(&self, session_id: String, query: String, archive_dir: std::path::PathBuf) -> Vec<ChatRecord> {
+    pub async fn search_async(&self, collection_id: String, query: String, archive_dir: std::path::PathBuf) -> Vec<ChatRecord> {
         let db = self.clone();
         tokio::task::spawn_blocking(move || {
-            db.search(&session_id, &query, &archive_dir).unwrap_or_default()
+            db.search(&collection_id, &query, &archive_dir).unwrap_or_default()
         }).await.unwrap_or_default()
     }
 }
@@ -631,7 +631,7 @@ mod tests {
         let arc_dir = dir.path().join("archives");
         std::fs::create_dir_all(&arc_dir).unwrap();
         let arc_path = arc_dir.join("old.jsonl");
-        let old_rec = ChatRecord { id: 1, session_id: "default".into(), role: "user".into(),
+        let old_rec = ChatRecord { id: 1, collection_id: "default".into(), role: "user".into(),
             nickname: "bob".into(), content: "search me".into(), created_at: 1000,
             model: None, tokens_in: None, tokens_out: None };
         let mut f = std::fs::File::create(&arc_path).unwrap();
@@ -694,11 +694,11 @@ mod tests {
     // ── Session CRUD tests ───────────────────────────────────────────────
 
     #[test]
-    fn test_create_and_list_sessions() {
+    fn test_create_and_list_collections() {
         let db = in_memory_db();
-        db.create_session("proj-a", "Project A", "/home/u/proj-a", Some("admin")).unwrap();
-        db.create_session("proj-b", "Project B", "/home/u/proj-b", None).unwrap();
-        let sessions = db.list_sessions().unwrap();
+        db.create_collection("proj-a", "Project A", "/home/u/proj-a", Some("admin")).unwrap();
+        db.create_collection("proj-b", "Project B", "/home/u/proj-b", None).unwrap();
+        let sessions = db.list_collections().unwrap();
         assert_eq!(sessions.len(), 2);
         assert_eq!(sessions[0].id, "proj-a");
         assert_eq!(sessions[0].name, "Project A");
@@ -709,10 +709,10 @@ mod tests {
     }
 
     #[test]
-    fn test_rename_session() {
+    fn test_rename_collection() {
         let db = in_memory_db();
-        db.create_session("s1", "s1", "/tmp", None).unwrap();
-        let result = db.rename_session("s1", "new-name").unwrap();
+        db.create_collection("s1", "s1", "/tmp", None).unwrap();
+        let result = db.rename_collection("s1", "new-name").unwrap();
         assert_eq!(result, Some("new-name".to_string()));
         // Old id gone, new id exists
         assert!(db.get_session("s1").unwrap().is_none());
@@ -722,16 +722,16 @@ mod tests {
     }
 
     #[test]
-    fn test_rename_session_updates_messages() {
+    fn test_rename_collection_updates_messages() {
         let db = in_memory_db();
-        db.create_session("old", "old", "/tmp", None).unwrap();
+        db.create_collection("old", "old", "/tmp", None).unwrap();
         db.insert("old", "user", "alice", "hello").unwrap();
-        let _ = db.rename_session("old", "new").unwrap();
+        let _ = db.rename_collection("old", "new").unwrap();
         // Messages should now be under "new"
         let msgs = db.load_recent("new", 10).unwrap();
         assert_eq!(msgs.len(), 1);
         assert_eq!(msgs[0].content, "hello");
-        // Old session_id has no messages
+        // Old collection_id has no messages
         let old_msgs = db.load_recent("old", 10).unwrap();
         assert!(old_msgs.is_empty());
     }
@@ -739,58 +739,58 @@ mod tests {
     #[test]
     fn test_rename_nonexistent_returns_none() {
         let db = in_memory_db();
-        assert_eq!(db.rename_session("nope", "X").unwrap(), None);
+        assert_eq!(db.rename_collection("nope", "X").unwrap(), None);
     }
 
     #[test]
-    fn test_rename_session_conflict() {
+    fn test_rename_collection_conflict() {
         let db = in_memory_db();
-        db.create_session("a", "a", "/tmp", None).unwrap();
-        db.create_session("b", "b", "/tmp", None).unwrap();
+        db.create_collection("a", "a", "/tmp", None).unwrap();
+        db.create_collection("b", "b", "/tmp", None).unwrap();
         // Can't rename a → b (b already exists)
-        assert_eq!(db.rename_session("a", "b").unwrap(), None);
+        assert_eq!(db.rename_collection("a", "b").unwrap(), None);
     }
 
     #[test]
-    fn test_update_session_workspace() {
+    fn test_update_collection_workspace() {
         let db = in_memory_db();
-        db.create_session("s1", "Test", "/old/path", None).unwrap();
-        assert!(db.update_session_workspace("s1", "/new/path").unwrap());
+        db.create_collection("s1", "Test", "/old/path", None).unwrap();
+        assert!(db.update_collection_workspace("s1", "/new/path").unwrap());
         let s = db.get_session("s1").unwrap().unwrap();
         assert_eq!(s.workspace, "/new/path");
     }
 
     #[test]
-    fn test_delete_session() {
+    fn test_delete_collection() {
         let db = in_memory_db();
-        db.create_session("s1", "Test", "/tmp", None).unwrap();
-        assert!(db.delete_session("s1").unwrap());
+        db.create_collection("s1", "Test", "/tmp", None).unwrap();
+        assert!(db.delete_collection("s1").unwrap());
         assert!(db.get_session("s1").unwrap().is_none());
-        assert!(db.list_sessions().unwrap().is_empty());
+        assert!(db.list_collections().unwrap().is_empty());
     }
 
     #[test]
     fn test_delete_nonexistent_returns_false() {
         let db = in_memory_db();
-        assert!(!db.delete_session("nope").unwrap());
+        assert!(!db.delete_collection("nope").unwrap());
     }
 
     #[test]
-    fn test_ensure_default_session_idempotent() {
+    fn test_ensure_default_collection_idempotent() {
         let db = in_memory_db();
         db.ensure_default_session("/home/u").unwrap();
         db.ensure_default_session("/home/u").unwrap(); // should not fail
-        let sessions = db.list_sessions().unwrap();
+        let sessions = db.list_collections().unwrap();
         assert_eq!(sessions.len(), 1);
         assert_eq!(sessions[0].id, "default");
         assert_eq!(sessions[0].name, "General");
     }
 
     #[test]
-    fn test_duplicate_session_id_fails() {
+    fn test_duplicate_collection_id_fails() {
         let db = in_memory_db();
-        db.create_session("dup", "First", "/tmp", None).unwrap();
-        assert!(db.create_session("dup", "Second", "/tmp", None).is_err());
+        db.create_collection("dup", "First", "/tmp", None).unwrap();
+        assert!(db.create_collection("dup", "Second", "/tmp", None).is_err());
     }
 
     #[test]

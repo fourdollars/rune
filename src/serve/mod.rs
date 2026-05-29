@@ -33,8 +33,8 @@ pub fn data_dir() -> PathBuf {
 }
 
 /// Get the markdown directory for a session: ~/.rune/sessions/<session>/markdown/
-pub fn session_markdown_dir(session: &str) -> PathBuf {
-    data_dir().join("sessions").join(session).join("markdown")
+pub fn collection_markdown_dir(session: &str) -> PathBuf {
+    data_dir().join("collections").join(session).join("markdown")
 }
 
 /// Shared server state.
@@ -60,14 +60,14 @@ pub struct ServerState {
 }
 
 /// Options for `rune serve`.
-pub struct ServeOptions {
+pub struct NotesOptions {
     pub port: u16,
     pub bind: IpAddr,
     pub token: Option<String>,
     pub admin_token: Option<String>,
 }
 
-impl Default for ServeOptions {
+impl Default for NotesOptions {
     fn default() -> Self {
         Self {
             port: 9527,
@@ -79,7 +79,7 @@ impl Default for ServeOptions {
 }
 
 /// Start the serve mode.
-pub async fn run(config: RuneConfig, opts: ServeOptions) {
+pub async fn run(config: RuneConfig, opts: NotesOptions) {
     // Files are loaded per-session on client connect/switch; start empty
     let initial_files = std::collections::HashMap::new();
 
@@ -157,11 +157,11 @@ pub async fn run(config: RuneConfig, opts: ServeOptions) {
         .route("/api/file/rename", post(api::file_rename_handler))
         .route("/api/file/switch", post(api::file_switch_handler))
         .route("/api/file/update", post(api::file_update_handler))
-        .route("/api/session/create", post(api::session_create_handler))
-        .route("/api/session/rename", post(api::session_rename_handler))
-        .route("/api/session/delete", post(api::session_delete_handler))
-        .route("/api/session/switch", post(api::session_switch_handler))
-        .route("/api/session/set-workspace", post(api::session_set_workspace_handler))
+        .route("/api/collection/create", post(api::collection_create_handler))
+        .route("/api/collection/rename", post(api::collection_rename_handler))
+        .route("/api/collection/delete", post(api::collection_delete_handler))
+        .route("/api/collection/switch", post(api::collection_switch_handler))
+        .route("/api/collection/set-workspace", post(api::collection_set_workspace_handler))
         .route("/api/model/switch", post(api::model_switch_handler))
         .route("/api/chat/archive", post(api::archive_handler))
         .route("/api/chat/search", post(api::search_handler))
@@ -181,9 +181,9 @@ pub async fn run(config: RuneConfig, opts: ServeOptions) {
         .with_state(state);
 
     let addr = SocketAddr::new(opts.bind, opts.port);
-    info!("Rune serve starting on http://{}", addr);
+    info!("Rune notes starting on http://{}", addr);
 
-    println!("  ᚱ Rune WebUI → http://{}", addr);
+    println!("  ᚱ Rune Notes → http://{}", addr);
     if opts.token.is_some() {
         println!("  🔒 Token auth enabled for non-localhost");
     }
@@ -292,7 +292,7 @@ mod tests {
     use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
     // ──────────────────────────────────────────────
-    // data_dir / session_markdown_dir
+    // data_dir / collection_markdown_dir
     // ──────────────────────────────────────────────
 
     #[test]
@@ -313,16 +313,16 @@ mod tests {
     }
 
     #[test]
-    fn test_session_markdown_dir_structure() {
+    fn test_collection_markdown_dir_structure() {
         std::env::set_var("HOME", "/tmp/fake_home");
-        let d = session_markdown_dir("my-session");
-        assert_eq!(d, std::path::PathBuf::from("/tmp/fake_home/.rune/sessions/my-session/markdown"));
+        let d = collection_markdown_dir("my-session");
+        assert_eq!(d, std::path::PathBuf::from("/tmp/fake_home/.rune/collections/my-session/markdown"));
     }
 
     #[test]
-    fn test_session_markdown_dir_special_chars() {
+    fn test_collection_markdown_dir_special_chars() {
         std::env::set_var("HOME", "/tmp/fake_home");
-        let d = session_markdown_dir("session-123_abc");
+        let d = collection_markdown_dir("session-123_abc");
         assert!(d.to_string_lossy().contains("session-123_abc"));
     }
 
@@ -390,12 +390,12 @@ mod tests {
     }
 
     // ──────────────────────────────────────────────
-    // ServeOptions defaults
+    // NotesOptions defaults
     // ──────────────────────────────────────────────
 
     #[test]
     fn test_serve_options_default() {
-        let opts = ServeOptions::default();
+        let opts = NotesOptions::default();
         assert_eq!(opts.port, 9527);
         assert_eq!(opts.bind, IpAddr::V4(Ipv4Addr::LOCALHOST));
         assert!(opts.token.is_none());
@@ -863,19 +863,19 @@ mod tests {
     }
 
     #[test]
-    fn test_session_markdown_dir_ends_with_markdown() {
+    fn test_collection_markdown_dir_ends_with_markdown() {
         std::env::set_var("HOME", "/tmp");
-        let d = session_markdown_dir("sess");
+        let d = collection_markdown_dir("sess");
         assert_eq!(d.file_name().unwrap(), "markdown");
     }
 
     // ──────────────────────────────────────────────
-    // ServeOptions — custom construction
+    // NotesOptions — custom construction
     // ──────────────────────────────────────────────
 
     #[test]
     fn test_serve_options_custom_port() {
-        let opts = ServeOptions {
+        let opts = NotesOptions {
             port: 8080,
             bind: IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)),
             token: Some("tok".into()),
@@ -1027,7 +1027,7 @@ mod tests {
         std::env::set_var("HOME", "/tmp/test_run_home");
 
         let config = RuneConfig::default();
-        let opts = ServeOptions {
+        let opts = NotesOptions {
             port: 19527, // Use a fixed high port unlikely to conflict
             bind: IpAddr::V4(Ipv4Addr::LOCALHOST),
             token: Some("test-tok".into()),
@@ -1054,7 +1054,7 @@ mod tests {
         std::env::set_var("HOME", "/tmp/test_run_home2");
 
         let config = RuneConfig::default();
-        let opts = ServeOptions {
+        let opts = NotesOptions {
             port: 19528,
             bind: IpAddr::V4(Ipv4Addr::LOCALHOST),
             token: None,

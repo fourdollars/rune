@@ -163,13 +163,13 @@ body {
     margin-bottom: 12px;
 }
 
-/* Session list */
-.session-list {
+/* Collection list */
+.collection-list {
     flex: 1;
     overflow-y: auto;
 }
 
-.session-item {
+.collection-item {
     padding: 8px 10px;
     border-radius: 6px;
     cursor: pointer;
@@ -179,16 +179,16 @@ body {
     gap: 8px;
 }
 
-.session-item:hover {
+.collection-item:hover {
     background: var(--accent-dim);
 }
 
-.session-item.active {
+.collection-item.active {
     background: var(--accent-dim);
     color: var(--accent);
 }
 
-.session-dot {
+.collection-dot {
     font-size: 8px;
     color: var(--success);
 }
@@ -1148,29 +1148,29 @@ pre.hljs-pre:hover .copy-btn {
     align-items: baseline;
     gap: 6px;
 }
-/* Session tree */
-.sessions-header {
+/* Collection tree */
+.collections-header {
     display: flex;
     align-items: center;
     justify-content: space-between;
     margin-bottom: 8px;
 }
 
-.sessions-header h3 {
+.collections-header h3 {
     margin-bottom: 0;
 }
 
-.session-tree {
+.collection-tree {
     flex: 1;
     overflow-y: auto;
     font-size: 12px;
 }
 
-.session-item {
+.collection-item {
     margin-bottom: 2px;
 }
 
-.session-header {
+.collection-header {
     display: flex;
     align-items: center;
     gap: 4px;
@@ -1180,17 +1180,17 @@ pre.hljs-pre:hover .copy-btn {
     transition: background 0.1s;
 }
 
-.session-header:hover {
+.collection-header:hover {
     background: var(--bg-hover, rgba(255,255,255,0.05));
 }
 
-.session-header.active {
+.collection-header.active {
     background: var(--accent-dim, rgba(99,102,241,0.15));
     border-left: 2px solid var(--accent, #6366f1);
     padding-left: 6px;
 }
 
-.session-toggle {
+.collection-toggle {
     width: 14px;
     font-size: 10px;
     color: var(--text-muted);
@@ -1198,7 +1198,7 @@ pre.hljs-pre:hover .copy-btn {
     user-select: none;
 }
 
-.session-name {
+.collection-name {
     flex: 1;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -1206,7 +1206,7 @@ pre.hljs-pre:hover .copy-btn {
     font-weight: 500;
 }
 
-.session-add-file {
+.collection-add-file {
     opacity: 0;
     font-size: 14px;
     font-weight: bold;
@@ -1217,16 +1217,16 @@ pre.hljs-pre:hover .copy-btn {
     color: var(--accent);
 }
 
-.session-header:hover .session-add-file {
+.collection-header:hover .collection-add-file {
     opacity: 0.7;
 }
 
-.session-add-file:hover {
+.collection-add-file:hover {
     opacity: 1 !important;
     background: rgba(255,255,255,0.1);
 }
 
-.session-gear {
+.collection-gear {
     opacity: 0;
     font-size: 11px;
     cursor: pointer;
@@ -1235,26 +1235,23 @@ pre.hljs-pre:hover .copy-btn {
     border-radius: 3px;
 }
 
-.session-header:hover .session-gear {
+.collection-header:hover .collection-gear {
     opacity: 0.6;
 }
 
-.session-gear:hover {
+.collection-gear:hover {
     opacity: 1 !important;
     background: rgba(255,255,255,0.1);
 }
 
-.session-files {
+.collection-files {
     padding-left: 22px;
     overflow: hidden;
     transition: max-height 0.2s ease;
 }
 
-.session-files.collapsed {
-    max-height: 0;
-}
 
-.session-file {
+.collection-file {
     padding: 3px 8px;
     border-radius: 4px;
     cursor: pointer;
@@ -1265,12 +1262,12 @@ pre.hljs-pre:hover .copy-btn {
     transition: background 0.1s;
 }
 
-.session-file:hover {
+.collection-file:hover {
     background: var(--bg-hover, rgba(255,255,255,0.05));
     color: var(--text-primary);
 }
 
-.session-file.active {
+.collection-file.active {
     color: var(--accent);
     font-weight: 500;
 }

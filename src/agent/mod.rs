@@ -89,7 +89,7 @@ pub struct Agent {
     /// Archive directory for search_chat tool.
     pub chat_archive_dir: Option<std::path::PathBuf>,
     /// Session ID used by search_chat.
-    pub chat_session_id: Option<String>,
+    pub chat_collection_id: Option<String>,
     /// Per-session markdown directory for file operations.
     pub markdown_dir: Option<std::path::PathBuf>,
     /// Display name of the current user (for multi-user chat).
@@ -204,7 +204,7 @@ impl Agent {
             active_file: None,
             chat_db: None,
             chat_archive_dir: None,
-            chat_session_id: None,
+            chat_collection_id: None,
             markdown_dir: None,
             user_name: None,
         }
@@ -1050,7 +1050,7 @@ impl Agent {
     async fn handle_search_chat_tool(&self, args: &serde_json::Value) -> Option<String> {
         let db = self.chat_db.as_ref()?;
         let query = args.get("query").and_then(|v| v.as_str())?;
-        let session_id = self.chat_session_id.as_deref().unwrap_or("default");
+        let session_id = self.chat_collection_id.as_deref().unwrap_or("default");
         let archive_dir = self.chat_archive_dir.clone()
             .unwrap_or_else(|| std::path::PathBuf::from("."));
         let results = db.search_async(
@@ -2639,10 +2639,10 @@ read(3, "root:x:0:0:...", 4096) = 1234"#;
         // We need a provider — skip if unavailable in test env
         // Instead, test load_history logic via a minimal agent construction:
         let records = vec![
-            ChatRecord { id: 1, session_id: "default".into(), role: "user".into(),
+            ChatRecord { id: 1, collection_id: "default".into(), role: "user".into(),
                 nickname: "alice".into(), content: "hello".into(), created_at: 0,
             model: None, tokens_in: None, tokens_out: None },
-            ChatRecord { id: 2, session_id: "default".into(), role: "assistant".into(),
+            ChatRecord { id: 2, collection_id: "default".into(), role: "assistant".into(),
                 nickname: "rune".into(), content: "hi there".into(), created_at: 1,
             model: None, tokens_in: None, tokens_out: None },
         ];
@@ -3485,7 +3485,7 @@ read(3, "root:x:0:0:...", 4096) = 1234"#;
         assert!(agent.active_file.is_none());
         assert!(agent.chat_db.is_none());
         assert!(agent.chat_archive_dir.is_none());
-        assert!(agent.chat_session_id.is_none());
+        assert!(agent.chat_collection_id.is_none());
         assert!(agent.markdown_dir.is_none());
     }
 

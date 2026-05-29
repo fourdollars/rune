@@ -75,7 +75,7 @@ fn default_policy_mode() -> String {
 
 /// Configuration for `rune serve` mode.
 #[derive(Debug, Clone, Deserialize, Default)]
-pub struct ServeConfig {
+pub struct NotesConfig {
     /// Port to listen on (default: 9527).
     pub port: Option<u16>,
     /// Bind address (default: 127.0.0.1).
@@ -147,9 +147,9 @@ pub struct RuneConfig {
     /// When set, only these skills are available; semantic/@ discovery is skipped.
     #[serde(skip)]
     pub preload_skills: Vec<String>,
-    /// Serve mode configuration ([serve] section in rune.toml).
+    /// Notes mode configuration ([notes] section in rune.toml).
     #[serde(default)]
-    pub serve: ServeConfig,
+    pub notes: NotesConfig,
 }
 
 impl Default for RuneConfig {
@@ -176,7 +176,7 @@ impl Default for RuneConfig {
             thinking: None,
             system_prompt: None,
             preload_skills: Vec::new(),
-            serve: ServeConfig::default(),
+            notes: NotesConfig::default(),
         }
     }
 }
@@ -202,7 +202,7 @@ struct PartialConfig {
     embedding: Option<crate::embedding::EmbeddingConfig>,
     system_prompt: Option<String>,
     thinking: Option<String>,
-    serve: Option<ServeConfig>,
+    notes: Option<NotesConfig>,
 }
 
 /// CLI argument overrides.
@@ -397,7 +397,7 @@ pub fn load() -> anyhow::Result<RuneConfig> {
         embedding: None,
         thinking: env::var("RUNE_THINKING").ok(),
         system_prompt: env::var("RUNE_SYSTEM_PROMPT").ok(),
-        serve: None,
+        notes: None,
     };
     let env_json_output = env::var("RUNE_JSON_OUTPUT")
         .ok()
@@ -623,11 +623,11 @@ pub fn load() -> anyhow::Result<RuneConfig> {
                     .filter(|v| !v.is_empty())
             })
             .collect(),
-        serve: ec
-            .and_then(|c| c.serve.clone())
-            .or_else(|| cwdc.and_then(|c| c.serve.clone()))
-            .or_else(|| lc.and_then(|c| c.serve.clone()))
-            .or_else(|| uc.and_then(|c| c.serve.clone()))
+        notes: ec
+            .and_then(|c| c.notes.clone())
+            .or_else(|| cwdc.and_then(|c| c.notes.clone()))
+            .or_else(|| lc.and_then(|c| c.notes.clone()))
+            .or_else(|| uc.and_then(|c| c.notes.clone()))
             .unwrap_or_default(),
     };
 
@@ -680,7 +680,7 @@ pub fn load_without_clap() -> anyhow::Result<RuneConfig> {
         embedding: None,
         thinking: env::var("RUNE_THINKING").ok(),
         system_prompt: env::var("RUNE_SYSTEM_PROMPT").ok(),
-        serve: None,
+        notes: None,
     };
 
     // Load TOML files
@@ -816,10 +816,10 @@ pub fn load_without_clap() -> anyhow::Result<RuneConfig> {
             .or_else(|| lc.and_then(|c| c.system_prompt.clone()))
             .or_else(|| uc.and_then(|c| c.system_prompt.clone())),
         preload_skills: Vec::new(),
-        serve: cwdc
-            .and_then(|c| c.serve.clone())
-            .or_else(|| lc.and_then(|c| c.serve.clone()))
-            .or_else(|| uc.and_then(|c| c.serve.clone()))
+        notes: cwdc
+            .and_then(|c| c.notes.clone())
+            .or_else(|| lc.and_then(|c| c.notes.clone()))
+            .or_else(|| uc.and_then(|c| c.notes.clone()))
             .unwrap_or_default(),
     };
 
@@ -1332,7 +1332,7 @@ log_level = "info"
 
     #[test]
     fn test_serve_config_default() {
-        let s = ServeConfig::default();
+        let s = NotesConfig::default();
         assert!(s.port.is_none());
         assert!(s.bind.is_none());
         assert!(s.token.is_none());
@@ -1346,14 +1346,14 @@ model = "gpt-4"
 skills_dir = "./skills"
 log_level = "info"
 
-[serve]
+[notes]
 port = 9527
 bind = "0.0.0.0"
 token = "secret"
 admin_token = "admin_secret"
 "#;
         let cfg: PartialConfig = toml::from_str(toml_str).unwrap();
-        let serve = cfg.serve.unwrap();
+        let serve = cfg.notes.unwrap();
         assert_eq!(serve.port, Some(9527));
         assert_eq!(serve.bind.as_deref(), Some("0.0.0.0"));
         assert_eq!(serve.token.as_deref(), Some("secret"));
@@ -1460,12 +1460,12 @@ max_pids = 128
         let path = dir.join("rune.toml");
         fs::write(&path, r#"
 model = "gpt-4"
-[serve]
+[notes]
 port = 8080
 bind = "127.0.0.1"
 "#).unwrap();
         let partial = load_toml(&path).expect("should parse");
-        let serve = partial.serve.unwrap();
+        let serve = partial.notes.unwrap();
         assert_eq!(serve.port, Some(8080));
         assert_eq!(serve.bind.as_deref(), Some("127.0.0.1"));
         let _ = fs::remove_dir_all(&dir);
@@ -1940,8 +1940,8 @@ allowed_syscalls = ["ptrace", "bpf"]
     #[test]
     fn test_rune_config_default_serve() {
         let c = RuneConfig::default();
-        assert!(c.serve.port.is_none());
-        assert!(c.serve.token.is_none());
+        assert!(c.notes.port.is_none());
+        assert!(c.notes.token.is_none());
     }
 
     #[test]
@@ -1973,7 +1973,7 @@ allowed_syscalls = ["ptrace", "bpf"]
         assert!(cfg.embedding.is_none());
         assert!(cfg.thinking.is_none());
         assert!(cfg.system_prompt.is_none());
-        assert!(cfg.serve.is_none());
+        assert!(cfg.notes.is_none());
     }
 
 

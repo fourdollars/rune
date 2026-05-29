@@ -73,8 +73,8 @@ async fn async_main() {
         return;
     }
 
-    // Handle `rune serve` subcommand
-    if args.len() > 1 && args[1] == "serve" {
+    // Handle `rune notes` subcommand
+    if args.len() > 1 && args[1] == "notes" {
         let cfg = config::load_without_clap().unwrap_or_else(|e| {
             eprintln!("warning: config load failed: {}", e);
             config::RuneConfig::default()
@@ -88,18 +88,18 @@ async fn async_main() {
             .with_target(false)
             .init();
 
-        // Parse serve-specific args
+        // Parse notes-specific args
         // Priority: CLI flags > env vars > [serve] section in rune.toml
-        let serve_cfg = &cfg.serve;
-        let mut opts = serve::ServeOptions {
-            port: serve_cfg.port.unwrap_or(9527),
-            bind: serve_cfg
+        let notes_cfg = &cfg.notes;
+        let mut opts = serve::NotesOptions {
+            port: notes_cfg.port.unwrap_or(9527),
+            bind: notes_cfg
                 .bind
                 .as_deref()
                 .and_then(|b| b.parse().ok())
                 .unwrap_or(IpAddr::V4(Ipv4Addr::LOCALHOST)),
-            token: serve_cfg.token.clone(),
-            admin_token: serve_cfg.admin_token.clone(),
+            token: notes_cfg.token.clone(),
+            admin_token: notes_cfg.admin_token.clone(),
         };
 
         // CLI flags override config file
@@ -139,14 +139,14 @@ async fn async_main() {
 
         // Env var override (higher than config, lower than CLI flags)
         if opts.token.is_none() {
-            if let Ok(t) = env::var("RUNE_SERVE_TOKEN") {
+            if let Ok(t) = env::var("RUNE_NOTES_TOKEN") {
                 if !t.is_empty() {
                     opts.token = Some(t);
                 }
             }
         }
         if opts.admin_token.is_none() {
-            if let Ok(t) = env::var("RUNE_SERVE_ADMIN_TOKEN") {
+            if let Ok(t) = env::var("RUNE_NOTES_ADMIN_TOKEN") {
                 if !t.is_empty() {
                     opts.admin_token = Some(t);
                 }

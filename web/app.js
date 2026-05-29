@@ -1,5 +1,5 @@
 // Rune WebUI — app.js
-// Three-panel layout: Sessions | Editor | Chat
+// Three-panel layout: Collections | Editor | Chat
 
 'use strict';
 
@@ -20,11 +20,11 @@ let myToken = '';
 let isAdmin = false;
 let availableModels = [];
 
-// --- Session state ---
-let sessions = [];
-let currentSessionId = '';
+// --- Collection state ---
+let collections = [];
+let currentCollectionId = '';
 let dirBrowserTargetInput = null;
-let settingsSessionId = null;
+let settingsCollectionId = null;
 
 let activeModel = '';
 
@@ -137,8 +137,8 @@ function initEditor() {
             // Live preview update
             if (showPreview) renderPreview();
             // Sync to server
-            if (editorDirty && currentSessionId) {
-                api('file/update', { session_id: currentSessionId, filename: currentFilename, content: specContent });
+            if (editorDirty && currentCollectionId) {
+                api('file/update', { collection_id: currentCollectionId, filename: currentFilename, content: specContent });
                 editorDirty = false;
             }
         }, 300);
@@ -287,7 +287,7 @@ function connect() {
 
     // Listen for all event types
     const eventTypes = [
-        'auth_result', 'model_list', 'session_list', 'session_switched',
+        'auth_result', 'model_list', 'collection_list', 'collection_switched',
         'history', 'file_list', 'file_content', 'file_deleted',
         'chat_token', 'chat_done', 'chat_meta', 'chat_message',
         'status', 'system', 'users_update', 'error',
@@ -368,16 +368,16 @@ function handleMessage(msg) {
             fileList = msg.files || [];
             // If current file still exists, re-fetch its content (may have been edited by agent)
             if (currentFilename && fileList.includes(currentFilename)) {
-                api('file/switch', { session_id: currentSessionId, name: currentFilename });
+                api('file/switch', { collection_id: currentCollectionId, name: currentFilename });
             } else if (!currentFilename && fileList.length > 0) {
                 // No file selected yet, pick first
                 currentFilename = fileList[0];
-                api('file/switch', { session_id: currentSessionId, name: currentFilename });
+                api('file/switch', { collection_id: currentCollectionId, name: currentFilename });
             } else if (currentFilename && !fileList.includes(currentFilename)) {
                 // Current file was deleted
                 currentFilename = fileList.length > 0 ? fileList[0] : '';
                 if (currentFilename) {
-                    api('file/switch', { session_id: currentSessionId, name: currentFilename });
+                    api('file/switch', { collection_id: currentCollectionId, name: currentFilename });
                 }
             }
             updateDocTitle(currentFilename);
@@ -413,25 +413,25 @@ function handleMessage(msg) {
             updateModelIndicator();
             addSystemMessage('🔄 Model switched to: ' + activeModel);
             break;
-        case 'session_list':
-            sessions = msg.sessions || [];
-            if (currentSessionId && !sessions.find(s => s.id === currentSessionId)) {
-                currentSessionId = '';
+        case 'collection_list':
+            collections = msg.collections || [];
+            if (currentCollectionId && !collections.find(s => s.id === currentCollectionId)) {
+                currentCollectionId = '';
             }
-            renderSessionTree();
+            renderCollectionList();
             updateChatInputState();
-            if (!currentSessionId && sessions.length > 0) {
-                switchSession(sessions[0].id);
+            if (!currentCollectionId && collections.length > 0) {
+                switchCollection(collections[0].id);
             }
             updatePageTitle();
-            const newBtn = document.getElementById('btn-new-session');
+            const newBtn = document.getElementById('btn-new-collection');
             if (newBtn && isAdmin) newBtn.classList.remove('hidden');
             break;
-        case 'session_switched':
-            currentSessionId = msg.session_id;
+        case 'collection_switched':
+            currentCollectionId = msg.collection_id;
             updateChatInputState();
             document.getElementById('chat-messages').innerHTML = '';
-            renderSessionTree();
+            renderCollectionList();
             updatePageTitle();
             const overlay2 = document.getElementById('context-overlay');
             if (overlay2) overlay2.classList.add('hidden');
@@ -460,38 +460,38 @@ function handleMessage(msg) {
 // --- Chat ---
 function sendMessage() {
     const text = chatInput.value.trim();
-    if (!text || !isConnected || !currentSessionId) return;
+    if (!text || !isConnected || !currentCollectionId) return;
 
     // Send to server — do NOT optimistic render; wait for broadcast echo
-    api('chat', { session_id: currentSessionId, content: text, nickname: myNickname });
+    api('chat', { collection_id: currentCollectionId, content: text, nickname: myNickname });
     chatInput.value = '';
     chatInput.style.height = 'auto';
 }
 
 function updateChatInputState() {
-    if (!currentSessionId) {
+    if (!currentCollectionId) {
         chatInput.disabled = true;
         chatInput.placeholder = 'Create a session first...';
     } else {
         chatInput.disabled = false;
         chatInput.placeholder = 'Type a message...';
     }
-    applyNoSessionLayout();
+    applyNoCollectionLayout();
 }
 
-function applyNoSessionLayout() {
+function applyNoCollectionLayout() {
     const panelLeft = document.getElementById('panel-left');
     const panelCenter = document.getElementById('panel-center');
     const panelRight = document.getElementById('panel-right');
 
-    if (!currentSessionId) {
+    if (!currentCollectionId) {
         // No session: expand session panel, hide everything else
         panelCenter.classList.add('hidden');
         panelRight.classList.add('hidden');
         panelLeft.classList.remove('collapsed');
         panelLeft.classList.add('fullscreen');
     } else {
-        // Session active: restore normal layout
+        // Collection active: restore normal layout
         panelLeft.classList.remove('fullscreen');
         panelCenter.classList.remove('hidden');
         panelRight.classList.remove('hidden');
@@ -997,7 +997,7 @@ function hideArchiveDialog() {
     document.getElementById('archive-modal').classList.add('hidden');
 }
 function confirmArchive() {
-    api('chat/archive', { session_id: currentSessionId });
+    api('chat/archive', { collection_id: currentCollectionId });
 }
 
 // --- Search ---
@@ -1012,7 +1012,7 @@ function doSearch() {
     const q = document.getElementById('search-input').value.trim();
     if (!q) return;
     document.getElementById('search-results').innerHTML = '<div class="search-loading">Searching…</div>';
-    api('chat/search', { session_id: currentSessionId, query: q });
+    api('chat/search', { collection_id: currentCollectionId, query: q });
 }
 function renderSearchResults(query, results) {
     const el = document.getElementById('search-results');
@@ -1074,12 +1074,12 @@ function updateDocTitle(name) {
 }
 
 function updatePageTitle() {
-    if (!currentSessionId) {
+    if (!currentCollectionId) {
         document.title = 'Rune';
         return;
     }
-    const s = sessions.find(x => x.id === currentSessionId);
-    const sessionName = s ? s.name : currentSessionId;
+    const s = collections.find(x => x.id === currentCollectionId);
+    const sessionName = s ? s.name : currentCollectionId;
     const file = (fileList && fileList.length > 0) ? currentFilename : null;
     document.title = file
         ? 'Rune - ' + sessionName + ' - ' + file
@@ -1092,16 +1092,16 @@ function createFile() {
     const clean = name.trim();
     if (!clean.endsWith('.md')) { alert('Filename must end in .md'); return; }
     if (!/^[a-zA-Z0-9_\-\.]+\.md$/.test(clean)) { alert('Invalid filename. Use only letters, numbers, _ - .'); return; }
-    api('file/create', { session_id: currentSessionId, name: clean });
+    api('file/create', { collection_id: currentCollectionId, name: clean });
 }
 
 function deleteCurrentFile() {
     if (!confirm('Delete ' + currentFilename + '?')) return;
-    api('file/delete', { session_id: currentSessionId, name: currentFilename });
+    api('file/delete', { collection_id: currentCollectionId, name: currentFilename });
 }
 
 function switchFile(name) {
-    api('file/switch', { session_id: currentSessionId, name });
+    api('file/switch', { collection_id: currentCollectionId, name });
 }
 
 function renameCurrentFile(newName) {
@@ -1109,7 +1109,7 @@ function renameCurrentFile(newName) {
     if (!clean || clean === currentFilename) return;
     if (!clean.endsWith('.md')) { alert('Filename must end in .md'); return; }
     if (!/^[a-zA-Z0-9_\-\.]+\.md$/.test(clean)) { alert('Invalid filename'); return; }
-    api('file/rename', { session_id: currentSessionId, old_name: currentFilename, new_name: clean });
+    api('file/rename', { collection_id: currentCollectionId, old_name: currentFilename, new_name: clean });
 }
 
 function initDocTitle() {
@@ -1299,54 +1299,49 @@ function setupResizeHandle(handleId, panelId, side) {
     });
 }
 
-// --- Session Management ---
+// --- Collection Management ---
 
-function renderSessionTree() {
-    const tree = document.getElementById('session-tree');
+function renderCollectionList() {
+    const tree = document.getElementById('collection-tree');
     if (!tree) return;
     tree.innerHTML = '';
-    if (sessions.length === 0) {
-        tree.innerHTML = '<div style="padding:12px;color:var(--text-muted);font-size:11px;text-align:center">No sessions yet.<br>Click + to create one.</div>';
+    if (collections.length === 0) {
+        tree.innerHTML = '<div style="padding:12px;color:var(--text-muted);font-size:11px;text-align:center">No collections yet.<br>Click + to create one.</div>';
         return;
     }
-    sessions.forEach(s => {
+    collections.forEach(s => {
         const item = document.createElement('div');
-        item.className = 'session-item';
+        item.className = 'collection-item';
         item.dataset.sessionId = s.id;
 
         const header = document.createElement('div');
-        header.className = 'session-header' + (s.id === currentSessionId ? ' active' : '');
-
-        const toggle = document.createElement('span');
-        toggle.className = 'session-toggle';
-        toggle.textContent = s.id === currentSessionId ? '▼' : '▶';
-        toggle.onclick = (e) => { e.stopPropagation(); toggleSessionFiles(s.id); };
+        header.className = 'collection-header' + (s.id === currentCollectionId ? ' active' : '');
+toggleCollectionFiles(s.id); };
 
         const name = document.createElement('span');
-        name.className = 'session-name';
+        name.className = 'collection-name';
         name.textContent = s.name;
         name.title = s.workspace;
-        name.onclick = () => switchSession(s.id);
+        name.onclick = () => switchCollection(s.id);
 
-        header.appendChild(toggle);
-        header.appendChild(name);
+                header.appendChild(name);
 
         if (isAdmin) {
             const addFileBtn = document.createElement('span');
-            addFileBtn.className = 'session-add-file';
+            addFileBtn.className = 'collection-add-file';
             addFileBtn.textContent = '+';
             addFileBtn.title = 'New markdown file';
             addFileBtn.onclick = (e) => {
                 e.stopPropagation();
-                if (s.id !== currentSessionId) switchSession(s.id);
+                if (s.id !== currentCollectionId) switchCollection(s.id);
                 createFile();
             };
             header.appendChild(addFileBtn);
 
             const gear = document.createElement('span');
-            gear.className = 'session-gear';
+            gear.className = 'collection-gear';
             gear.textContent = '⚙';
-            gear.onclick = (e) => { e.stopPropagation(); showSessionSettings(s.id); };
+            gear.onclick = (e) => { e.stopPropagation(); showCollectionSettings(s.id); };
             header.appendChild(gear);
         }
 
@@ -1354,19 +1349,19 @@ function renderSessionTree() {
 
         // File list
         const filesDiv = document.createElement('div');
-        filesDiv.className = 'session-files' + (s.id !== currentSessionId ? ' collapsed' : '');
-        filesDiv.id = 'session-files-' + s.id;
+        filesDiv.className = 'collection-files' ;
+        filesDiv.id = 'collection-files-' + s.id;
         (s.files || []).forEach(fname => {
             const fileEl = document.createElement('div');
-            fileEl.className = 'session-file';
+            fileEl.className = 'collection-file';
             fileEl.textContent = fname;
             fileEl.title = fname;
             fileEl.onclick = () => {
-                if (s.id !== currentSessionId) switchSession(s.id);
+                if (s.id !== currentCollectionId) switchCollection(s.id);
                 // Switch file
-                api('file/switch', { session_id: currentSessionId, name: fname });
+                api('file/switch', { collection_id: currentCollectionId, name: fname });
                 // Highlight
-                tree.querySelectorAll('.session-file').forEach(f => f.classList.remove('active'));
+                tree.querySelectorAll('.collection-file').forEach(f => f.classList.remove('active'));
                 fileEl.classList.add('active');
                 // Show preview (and editor if both hidden)
                 if (!showPreview) {
@@ -1382,54 +1377,46 @@ function renderSessionTree() {
     });
 }
 
-function toggleSessionFiles(sessionId) {
-    const filesDiv = document.getElementById('session-files-' + sessionId);
-    if (!filesDiv) return;
-    filesDiv.classList.toggle('collapsed');
-    // Update toggle icon
-    const item = filesDiv.parentElement;
-    const toggle = item.querySelector('.session-toggle');
-    if (toggle) toggle.textContent = filesDiv.classList.contains('collapsed') ? '▶' : '▼';
+
+
+function switchCollection(sessionId) {
+    if (sessionId === currentCollectionId) return;
+    currentCollectionId = sessionId;
+    api('collection/switch', { collection_id: sessionId });
+    renderCollectionList();
 }
 
-function switchSession(sessionId) {
-    if (sessionId === currentSessionId) return;
-    currentSessionId = sessionId;
-    api('session/switch', { session_id: sessionId });
-    renderSessionTree();
-}
+// --- New Collection Dialog ---
 
-// --- New Session Dialog ---
-
-function showNewSessionDialog() {
-    document.getElementById('new-session-modal').classList.remove('hidden');
-    document.getElementById('new-session-name').value = '';
-    const wsInput = document.getElementById('new-session-workspace');
+function showNewCollectionDialog() {
+    document.getElementById('new-collection-modal').classList.remove('hidden');
+    document.getElementById('new-collection-name').value = '';
+    const wsInput = document.getElementById('new-collection-workspace');
     // Default to first session's workspace or empty
-    const defaultWs = sessions.length > 0 ? sessions[0].workspace : '';
+    const defaultWs = collections.length > 0 ? collections[0].workspace : '';
     wsInput.value = defaultWs;
-    document.getElementById('new-session-name').focus();
+    document.getElementById('new-collection-name').focus();
 }
 
-function hideNewSessionDialog() {
-    document.getElementById('new-session-modal').classList.add('hidden');
+function hideNewCollectionDialog() {
+    document.getElementById('new-collection-modal').classList.add('hidden');
 }
 
-function createSession() {
-    const name = document.getElementById('new-session-name').value.trim();
-    const workspace = document.getElementById('new-session-workspace').value.trim();
+function createCollection() {
+    const name = document.getElementById('new-collection-name').value.trim();
+    const workspace = document.getElementById('new-collection-workspace').value.trim();
     if (!name) return;
-    api('session/create', { name, workspace: workspace || undefined });
-    hideNewSessionDialog();
+    api('collection/create', { name, workspace: workspace || undefined });
+    hideNewCollectionDialog();
 }
 
-// --- Session Settings Dialog ---
+// --- Collection Settings Dialog ---
 
-function showSessionSettings(sessionId) {
-    const s = sessions.find(x => x.id === sessionId);
+function showCollectionSettings(sessionId) {
+    const s = collections.find(x => x.id === sessionId);
     if (!s) return;
-    settingsSessionId = sessionId;
-    document.getElementById('session-settings-title').textContent = 'Session: ' + s.name;
+    settingsCollectionId = sessionId;
+    document.getElementById('session-settings-title').textContent = 'Collection: ' + s.name;
     document.getElementById('session-settings-name').value = s.name;
     document.getElementById('session-settings-workspace').value = s.workspace;
     // Hide delete button for default session
@@ -1438,32 +1425,32 @@ function showSessionSettings(sessionId) {
     document.getElementById('session-settings-modal').classList.remove('hidden');
 }
 
-function hideSessionSettings() {
+function hideCollectionSettings() {
     document.getElementById('session-settings-modal').classList.add('hidden');
-    settingsSessionId = null;
+    settingsCollectionId = null;
 }
 
-function saveSessionSettings() {
-    if (!settingsSessionId) return;
+function saveCollectionSettings() {
+    if (!settingsCollectionId) return;
     const name = document.getElementById('session-settings-name').value.trim();
     const workspace = document.getElementById('session-settings-workspace').value.trim();
-    const s = sessions.find(x => x.id === settingsSessionId);
+    const s = collections.find(x => x.id === settingsCollectionId);
     if (s && name && name !== s.name) {
-        api('session/rename', { session_id: settingsSessionId, name });
+        api('collection/rename', { collection_id: settingsCollectionId, name });
     }
     if (s && workspace && workspace !== s.workspace) {
-        api('session/set-workspace', { session_id: settingsSessionId, workspace });
+        api('collection/set-workspace', { collection_id: settingsCollectionId, workspace });
     }
-    hideSessionSettings();
+    hideCollectionSettings();
 }
 
-function deleteCurrentSession() {
-    if (!settingsSessionId) return;
+function deleteCurrentCollection() {
+    if (!settingsCollectionId) return;
     if (!confirm('Delete this session? Chat history will be preserved but session metadata will be removed.')) return;
-    api('session/delete', { session_id: settingsSessionId });
-    hideSessionSettings();
-    if (currentSessionId === settingsSessionId) {
-        currentSessionId = '';
+    api('collection/delete', { collection_id: settingsCollectionId });
+    hideCollectionSettings();
+    if (currentCollectionId === settingsCollectionId) {
+        currentCollectionId = '';
         updateChatInputState();
     }
 }
