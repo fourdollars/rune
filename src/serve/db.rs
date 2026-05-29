@@ -76,19 +76,11 @@ impl ChatDb {
                 created_by  TEXT
             );
         ")?;
-        // Migrate existing DBs that lack the new columns (idempotent)
+        // Add new columns to existing DBs (idempotent — errors ignored)
         let _ = conn.execute_batch("
             ALTER TABLE messages ADD COLUMN model      TEXT;
             ALTER TABLE messages ADD COLUMN tokens_in  INTEGER;
             ALTER TABLE messages ADD COLUMN tokens_out INTEGER;
-        ");
-        // Migration: drop workspace column if it exists
-        let _ = conn.execute_batch("
-            ALTER TABLE sessions DROP COLUMN workspace;
-        ");
-        // Migration: rename session_id -> note_id in messages table
-        let _ = conn.execute_batch("
-            ALTER TABLE messages RENAME COLUMN session_id TO note_id;
         ");
         Ok(Self { conn: Arc::new(Mutex::new(conn)), deferred_path: Arc::new(Mutex::new(None)) })
     }
@@ -287,32 +279,51 @@ impl ChatDb {
     }
 
     /// Rename a session (updates both id and name, since id = name).
-    /// Also updates note_id in messages table.
-    /// Returns the new id if successful, None if not found or conflict.
+    /// If new_name already exists, merges: old messages are re-tagged to new_name,
+    /// old session row is deleted. Filesystem merge is handled by the caller.
+    /// Returns Ok(Some(new_id)) on success, Ok(None) if source not found.
     pub fn rename_note(&self, id: &str, new_name: &str) -> anyhow::Result<Option<String>> {
         let conn = self.conn.lock().unwrap();
-        // Check if new id already exists
-        let exists: bool = conn.query_row(
+        // Check source exists
+        let src_exists: bool = conn.query_row(
+            "SELECT COUNT(*) FROM sessions WHERE id = ?1",
+            params![id],
+            |row| row.get::<_, i64>(0),
+        )? > 0;
+        if !src_exists {
+            return Ok(None);
+        }
+        // no-op: same name
+        if id == new_name {
+            return Ok(Some(new_name.to_string()));
+        }
+        let target_exists: bool = conn.query_row(
             "SELECT COUNT(*) FROM sessions WHERE id = ?1",
             params![new_name],
             |row| row.get::<_, i64>(0),
         )? > 0;
-        if exists && new_name != id {
-            return Ok(None); // conflict
+
+        if target_exists {
+            // Merge: re-tag old messages to new_name, delete old session row
+            conn.execute(
+                "UPDATE messages SET note_id = ?1 WHERE note_id = ?2",
+                params![new_name, id],
+            )?;
+            conn.execute(
+                "DELETE FROM sessions WHERE id = ?1",
+                params![id],
+            )?;
+        } else {
+            // Simple rename: update session row + re-tag messages
+            conn.execute(
+                "UPDATE sessions SET id = ?1, name = ?1 WHERE id = ?2",
+                params![new_name, id],
+            )?;
+            conn.execute(
+                "UPDATE messages SET note_id = ?1 WHERE note_id = ?2",
+                params![new_name, id],
+            )?;
         }
-        // Update session row (id + name)
-        let changed = conn.execute(
-            "UPDATE sessions SET id = ?1, name = ?1 WHERE id = ?2",
-            params![new_name, id],
-        )?;
-        if changed == 0 {
-            return Ok(None);
-        }
-        // Update messages to new note_id
-        conn.execute(
-            "UPDATE messages SET note_id = ?1 WHERE note_id = ?2",
-            params![new_name, id],
-        )?;
         Ok(Some(new_name.to_string()))
     }
 
@@ -721,12 +732,29 @@ mod tests {
     }
 
     #[test]
-    fn test_rename_note_conflict() {
+    fn test_rename_note_merge() {
         let db = in_memory_db();
         db.create_note("a", "a", None).unwrap();
         db.create_note("b", "b", None).unwrap();
-        // Can't rename a → b (b already exists)
-        assert_eq!(db.rename_note("a", "b").unwrap(), None);
+        // Insert a message under "a"
+        db.insert("a", "user", "nick", "hello from a").unwrap();
+        // Rename a -> b: target exists, so merge
+        assert_eq!(db.rename_note("a", "b").unwrap(), Some("b".into()));
+        // "a" session should be gone
+        assert!(db.get_session("a").unwrap().is_none());
+        // "b" session still exists
+        assert!(db.get_session("b").unwrap().is_some());
+        // The message originally under "a" should now be under "b"
+        let msgs = db.load_recent("b", 10).unwrap();
+        assert_eq!(msgs.len(), 1);
+        assert_eq!(msgs[0].content, "hello from a");
+    }
+
+    #[test]
+    fn test_rename_note_source_not_found() {
+        let db = in_memory_db();
+        // Renaming non-existent source returns None
+        assert_eq!(db.rename_note("ghost", "anything").unwrap(), None);
     }
 
 

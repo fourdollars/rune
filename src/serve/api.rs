@@ -574,17 +574,60 @@ pub async fn note_rename_handler(
 ) -> Json<ApiResponse> {
     match state.chat_db.rename_note(&req.note_id, &req.name) {
         Ok(Some(new_id)) => {
-            // Rename directory
             let old_dir = super::data_dir().join("notes").join(&req.note_id);
             let new_dir = super::data_dir().join("notes").join(&new_id);
-            if old_dir.exists() && !new_dir.exists() {
-                let _ = tokio::fs::rename(&old_dir, &new_dir).await;
+            if old_dir.exists() {
+                if !new_dir.exists() {
+                    // Simple rename: no target directory, just mv
+                    let _ = tokio::fs::rename(&old_dir, &new_dir).await;
+                } else {
+                    // Merge: move archives and markdown files into existing target directory
+                    merge_note_dirs(&old_dir, &new_dir).await;
+                    let _ = tokio::fs::remove_dir_all(&old_dir).await;
+                }
             }
             broadcast_note_list(&state).await;
             Json(ApiResponse::success())
         }
-        Ok(None) => Json(ApiResponse::err("Note not found or name conflict")),
+        Ok(None) => Json(ApiResponse::err("Note not found")),
         Err(e) => Json(ApiResponse::err(format!("Failed: {}", e))),
+    }
+}
+
+/// Merge contents of `src` note directory into `dst`.
+/// - archives/*.jsonl  → moved as-is (no filename collision expected, named by timestamp)
+/// - markdown/*        → moved; on name collision, src file renamed to <stem>.from-<src_note>.md
+async fn merge_note_dirs(src: &std::path::Path, dst: &std::path::Path) {
+    let src_note = src.file_name().unwrap_or_default().to_string_lossy().to_string();
+    for subdir in &["archives", "markdown"] {
+        let src_sub = src.join(subdir);
+        let dst_sub = dst.join(subdir);
+        if !src_sub.exists() {
+            continue;
+        }
+        let _ = tokio::fs::create_dir_all(&dst_sub).await;
+        let mut rd = match tokio::fs::read_dir(&src_sub).await {
+            Ok(rd) => rd,
+            Err(_) => continue,
+        };
+        while let Ok(Some(entry)) = rd.next_entry().await {
+            let fname = entry.file_name();
+            let dst_path = dst_sub.join(&fname);
+            let src_path = src_sub.join(&fname);
+            if dst_path.exists() {
+                // Conflict: rename src file to <stem>.from-<src_note>.<ext>
+                let fname_str = fname.to_string_lossy();
+                let (stem, ext) = if let Some(dot) = fname_str.rfind('.') {
+                    (&fname_str[..dot], &fname_str[dot..])
+                } else {
+                    (fname_str.as_ref(), "")
+                };
+                let new_name = format!("{}.from-{}{}", stem, src_note, ext);
+                let _ = tokio::fs::rename(&src_path, dst_sub.join(&new_name)).await;
+            } else {
+                let _ = tokio::fs::rename(&src_path, &dst_path).await;
+            }
+        }
     }
 }
 
@@ -1360,7 +1403,8 @@ async fn test_session_rename() {
 
 #[tokio::test]
 async fn test_file_create() {
-    let (app, _tmp) = test_app();
+    let (app, tmp) = test_app();
+    std::env::set_var("HOME", tmp.path());
     post_json(&app, "/api/session/create", json!({"name": "file-test"})).await;
     let (_, body) = post_json(&app, "/api/file/create", json!({
         "note_id": "file-test",
@@ -1383,7 +1427,8 @@ async fn test_file_create_invalid_name() {
 
 #[tokio::test]
 async fn test_file_create_duplicate() {
-    let (app, _tmp) = test_app();
+    let (app, tmp) = test_app();
+    std::env::set_var("HOME", tmp.path());
     post_json(&app, "/api/session/create", json!({"name": "f2"})).await;
     post_json(&app, "/api/file/create", json!({"note_id": "f2", "name": "a.md"})).await;
     let (_, body) = post_json(&app, "/api/file/create", json!({"note_id": "f2", "name": "a.md"})).await;
@@ -1436,7 +1481,8 @@ async fn test_file_switch_not_found() {
 
 #[tokio::test]
 async fn test_file_rename() {
-    let (app, _tmp) = test_app();
+    let (app, tmp) = test_app();
+    std::env::set_var("HOME", tmp.path());
     post_json(&app, "/api/session/create", json!({"name": "f5"})).await;
     post_json(&app, "/api/file/create", json!({"note_id": "f5", "name": "old.md"})).await;
     let (_, body) = post_json(&app, "/api/file/rename", json!({

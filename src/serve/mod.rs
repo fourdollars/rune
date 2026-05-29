@@ -93,6 +93,19 @@ pub async fn run(config: RuneConfig, opts: NotesOptions) {
         ChatDb::open(std::path::Path::new(":memory:")).expect("in-memory db failed")
     });
 
+    // Auto-discover notes: scan ~/.rune/notes/ and register any missing sessions
+    {
+        let notes_root = data_dir().join("notes");
+        if let Ok(entries) = std::fs::read_dir(&notes_root) {
+            for entry in entries.flatten() {
+                if entry.file_type().map(|t| t.is_dir()).unwrap_or(false) {
+                    let note_id = entry.file_name().to_string_lossy().to_string();
+                    let _ = chat_db.create_note(&note_id, &note_id, None);
+                }
+            }
+        }
+    }
+
     // Parse comma-separated model list from config
     let models: Vec<String> = config.model
         .split(',')
