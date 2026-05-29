@@ -191,21 +191,7 @@ body {
     min-width: 0;
 }
 
-.toolbar {
-    height: var(--toolbar-height);
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 0 16px;
-    background: var(--bg-surface);
-    border-bottom: 1px solid var(--border);
-}
 
-.toolbar-left {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-}
 
 .doc-title {
     font-family: var(--font-mono);
@@ -213,32 +199,9 @@ body {
     color: var(--text-secondary);
 }
 
-.toolbar-right {
-    display: flex;
-    gap: 4px;
-}
 
-.toolbar-btn {
-    background: transparent;
-    border: 1px solid transparent;
-    color: var(--text-muted);
-    padding: 4px 12px;
-    border-radius: 4px;
-    cursor: pointer;
-    font-size: 12px;
-    transition: all 0.15s;
-}
 
-.toolbar-btn:hover {
-    color: var(--text-primary);
-    background: var(--accent-dim);
-}
 
-.toolbar-btn.active {
-    color: var(--accent);
-    border-color: var(--accent);
-    background: var(--accent-dim);
-}
 
 /* Editor — textarea + highlight.js overlay */
 #editor-container {
@@ -487,9 +450,6 @@ body {
 /* Phase 3 additions — append to style.css */
 
 /* Spec updated flash */
-.toolbar.spec-updated {
-    animation: spec-flash 1.2s ease;
-}
 
 @keyframes spec-flash {
     0% { background: var(--bg-surface); }
@@ -835,7 +795,7 @@ pre.hljs-pre:hover .copy-btn {
     border: none !important;
 }
 
-/* --- center-body: flex container below toolbar --- */
+/* --- center-body --- */
 #center-body {
     flex: 1;
     display: flex;
@@ -874,11 +834,7 @@ pre.hljs-pre:hover .copy-btn {
     align-items: center;
     gap: 4px;
 }
-.chat-header-right .toolbar-btn {
-    padding: 2px 6px;
-    font-size: 13px;
-}
-
+.chat-header-right 
 /* --- Multi-file markdown manager --- */
 .doc-title-area {
     display: flex;

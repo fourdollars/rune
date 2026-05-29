@@ -946,10 +946,10 @@ function renderPreview() {
     }
 }
 
-function flashSpecIndicator() {
-    const toolbar = document.querySelector('.toolbar');
-    toolbar.classList.add('spec-updated');
-    setTimeout(() => toolbar.classList.remove('spec-updated'), 1200);
+
+
+
+
 }
 
 // --- Status ---
