@@ -419,11 +419,13 @@ function handleMessage(msg) {
             if (isAdmin) addSystemMessage('👑 You are connected as admin');
             if (isGuest) {
                 addSystemMessage('👁 Read-only guest mode');
-                // Hide chat input and action buttons
+                // Hide chat input, new-note button, and edit button
                 const chatInput = document.getElementById('chat-input');
                 if (chatInput) chatInput.closest('.chat-input-area').style.display = 'none';
-                const explorerActions = document.querySelector('.explorer-actions');
-                if (explorerActions) explorerActions.style.display = 'none';
+                const newNoteBtn = document.getElementById('btn-new-note');
+                if (newNoteBtn) newNoteBtn.style.display = 'none';
+                const editBtn = document.getElementById('btn-edit');
+                if (editBtn) editBtn.style.display = 'none';
             }
             break;
         case 'model_list':
