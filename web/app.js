@@ -1421,7 +1421,6 @@ async function switchCollection(sessionId) {
 function showNewCollectionDialog() {
     document.getElementById('new-collection-modal').classList.remove('hidden');
     document.getElementById('new-collection-name').value = '';
-    wsInput.value = defaultWs;
     document.getElementById('new-collection-name').focus();
 }
 
