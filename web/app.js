@@ -1421,7 +1421,6 @@ function renderCollectionList() {
                 fileRow.classList.add('active');
                 if (!showPreview) {
                     showPreview = true;
-                    if (!showEdit) showEdit = true;
                     applyPanelLayout();
                 }
             };
