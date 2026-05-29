@@ -55,8 +55,6 @@ body {
     max-width: 520px;
     border-right: 1px solid var(--border);
     flex-shrink: 0;
-    display: flex;
-    flex-direction: column;
 }
 
 .panel-left.fullscreen {
@@ -154,7 +152,6 @@ body {
     flex-direction: column;
     overflow: hidden;
     min-height: 0;
-    height: 0;          /* flex:1 + height:0 = fill parent without overflowing */
     padding: 12px;
 }
 
