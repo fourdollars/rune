@@ -6,6 +6,7 @@
 // --- State ---
 let showEdit    = true;
 let showPreview = false;
+let _editorStateRestored = false;
 let currentFilename = '';
 let fileList = [];
 let specContent = '';
@@ -381,6 +382,7 @@ function handleMessage(msg) {
                 }
             }
             updateDocTitle(currentFilename);
+            try { localStorage.setItem('rune_file', currentFilename); } catch {}
             updateEditorVisibility(fileList.length);
             break;
         case 'file_deleted':
@@ -751,15 +753,18 @@ function updateEditorVisibility(fileCount) {
         showEdit = false;
         showPreview = false;
     } else {
-        // Has files: show buttons, restore from localStorage
+        // Has files: show buttons; restore from localStorage only on first call
         btnEdit.classList.remove('hidden');
         btnPreview.classList.remove('hidden');
-        try {
-            const se = localStorage.getItem('rune_show_edit');
-            const sp = localStorage.getItem('rune_show_preview');
-            showEdit    = se !== null ? se === '1' : true;
-            showPreview = sp !== null ? sp === '1' : false;
-        } catch {}
+        if (!_editorStateRestored) {
+            _editorStateRestored = true;
+            try {
+                const se = localStorage.getItem('rune_show_edit');
+                const sp = localStorage.getItem('rune_show_preview');
+                showEdit    = se !== null ? se === '1' : true;
+                showPreview = sp !== null ? sp === '1' : false;
+            } catch {}
+        }
     }
     applyPanelLayout();
 }
@@ -827,11 +832,13 @@ function applyPanelLayout() {
         if (icon) icon.style.display = '';
     }
 
-    // Persist
-    try {
-        localStorage.setItem('rune_show_edit',    showEdit    ? '1' : '0');
-        localStorage.setItem('rune_show_preview', showPreview ? '1' : '0');
-    } catch {}
+    // Persist (only after initial state has been restored from localStorage)
+    if (_editorStateRestored) {
+        try {
+            localStorage.setItem('rune_show_edit',    showEdit    ? '1' : '0');
+            localStorage.setItem('rune_show_preview', showPreview ? '1' : '0');
+        } catch {}
+    }
 }
 
 function toggleEdit() {
@@ -1461,10 +1468,20 @@ async function switchNote(sessionId) {
     fileList = data.files || [];
     updateEditorVisibility(fileList.length);
 
-    // Load first file content
-    if (data.current_file && data.file_content !== undefined) {
-        currentFilename = data.current_file;
-        specContent = data.file_content || '';
+    // Restore saved file for this note, or use server default
+    const savedFile = localStorage.getItem('rune_file');
+    const preferredFile = (savedFile && fileList.includes(savedFile)) ? savedFile : null;
+    const targetFile = preferredFile || data.current_file;
+
+    if (targetFile && fileList.includes(targetFile)) {
+        currentFilename = targetFile;
+        // If not the one server sent, fetch it
+        if (targetFile !== data.current_file || data.file_content === undefined) {
+            const fileData = await api('file/switch', { note_id: sessionId, name: targetFile });
+            specContent = (fileData && fileData.content) || '';
+        } else {
+            specContent = data.file_content || '';
+        }
         updateDocTitle(currentFilename);
         renderPreview();
         setEditorValue(specContent);
@@ -1473,6 +1490,7 @@ async function switchNote(sessionId) {
         specContent = '';
         updateDocTitle('');
     }
+    try { localStorage.setItem('rune_file', currentFilename); } catch {}
 }
 
 // --- New Note Dialog ---
