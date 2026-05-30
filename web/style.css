@@ -1553,10 +1553,14 @@ pre.hljs-pre:hover .copy-btn {
     /* ─── Accordion sections ─── */
     .mobile-section {
         display: flex; flex-direction: column;
-        min-height: 0; overflow: hidden;
+        overflow: hidden;
         border-bottom: 1px solid var(--border);
+        flex: 0 0 36px; /* collapsed: just the header */
     }
-    .mobile-section.expanded { flex: 1; min-height: 80px; }
+    .mobile-section.expanded {
+        flex: 1 1 0; /* expanded: share remaining space equally */
+        min-height: 80px;
+    }
 
     .mobile-section-header {
         display: flex !important;

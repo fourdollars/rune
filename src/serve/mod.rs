@@ -329,7 +329,13 @@ async fn static_handler(
     };
 
     match static_files::get(&path) {
-        Some(content) => ([(header::CONTENT_TYPE, mime)], content).into_response(),
+        Some(content) => (
+            [
+                (header::CONTENT_TYPE, mime),
+                (header::CACHE_CONTROL, "no-cache, must-revalidate"),
+            ],
+            content,
+        ).into_response(),
         None => StatusCode::NOT_FOUND.into_response(),
     }
 }
