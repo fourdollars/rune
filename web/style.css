@@ -1543,7 +1543,17 @@ pre.hljs-pre:hover .copy-btn {
         cursor: pointer; padding: 4px 8px; border-radius: 4px;
     }
     #mobile-drawer-btn:active { background: var(--accent-dim); }
-    #mobile-title { font-weight: 600; font-size: 14px; color: var(--accent); }
+    #mobile-rune-title {
+        font-weight: 600; font-size: 14px;
+        text-decoration: none; color: var(--accent);
+        display: flex; gap: 1px;
+    }
+    .mobile-model-name {
+        font-size: 11px; color: var(--text-muted);
+        cursor: pointer; max-width: 80px;
+        overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    .mobile-model-name:active { color: var(--accent); }
     #mobile-filename {
         flex: 1; font-size: 13px; color: var(--text-secondary);
         overflow: hidden; text-overflow: ellipsis; white-space: nowrap;

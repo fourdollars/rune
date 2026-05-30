@@ -424,6 +424,11 @@ function handleMessage(msg) {
             if (runeTitle && isAdmin) {
                 runeTitle.classList.add('rune-title-rainbow');
             }
+            // Mobile title rainbow
+            const mobileRuneTitle = document.getElementById('mobile-rune-title');
+            if (mobileRuneTitle && isAdmin) {
+                mobileRuneTitle.classList.add('rune-title-rainbow');
+            }
             if (isAdmin) addSystemMessage('👑 You are connected as admin');
             if (isGuest) {
                 addSystemMessage('👁 Read-only guest mode');
@@ -1018,6 +1023,9 @@ function updateModelIndicator() {
     if (!indicator || !nameEl) return;
     if (!activeModel) { indicator.style.display = 'none'; return; }
     nameEl.textContent = activeModel;
+    // Sync mobile model name
+    const mobileModelEl = document.getElementById("mobile-model-name");
+    if (mobileModelEl) mobileModelEl.textContent = activeModel;
     indicator.style.display = 'flex';
     // Admin can click the name to switch; show pointer cursor
     nameEl.style.cursor = (isAdmin && availableModels.length > 1) ? 'pointer' : 'default';
@@ -1200,6 +1208,12 @@ function setStatus(state) {
     statusIndicator.className = `status ${state}`;
     statusIndicator.textContent = STATUS_EMOJI[state] || '⚪';
     statusIndicator.title = state;
+    // Sync mobile status
+    const mobileStatus = document.getElementById('mobile-status');
+    if (mobileStatus) {
+        mobileStatus.className = `status ${state}`;
+        mobileStatus.textContent = STATUS_EMOJI[state] || '⚪';
+    }
 }
 
 // --- Panel Toggle ---
