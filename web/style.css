@@ -1519,6 +1519,12 @@ pre.hljs-pre:hover .copy-btn {
 #mobile-header { display: none; }
 .mobile-drawer { display: none; }
 .mobile-section-header { display: none; }
+/* Desktop: mobile section/body wrappers are transparent to flex layout,
+   so #editor-container and #preview-container participate directly in #center-body.
+   Chat section is hidden on desktop entirely. */
+.mobile-section                     { display: contents; }
+.mobile-section-body                { display: contents; }
+#mobile-section-chat                { display: none; }
 
 @media (max-width: 768px) {
     /* ─── Hide desktop panels ─── */
@@ -1591,7 +1597,8 @@ pre.hljs-pre:hover .copy-btn {
     #center-body { flex: 1; display: flex !important; flex-direction: column; overflow: hidden; }
 
     /* ─── Accordion sections ─── */
-    .mobile-section {
+    .mobile-section,
+    #mobile-section-chat {
         display: flex; flex-direction: column;
         overflow: hidden;
         border-bottom: 1px solid var(--border);
