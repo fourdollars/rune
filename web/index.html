@@ -125,6 +125,26 @@
         </div>
     </div>
 
+    <!-- Mobile Header (hidden on desktop) -->
+    <div id="mobile-header">
+        <button id="mobile-drawer-btn" onclick="openNotesDrawer()">☰</button>
+        <span id="mobile-title">ᚱᚢᚾᛖ</span>
+        <span id="mobile-filename"></span>
+        <span id="mobile-status" class="status idle">●</span>
+    </div>
+
+    <!-- Mobile Notes Drawer (hidden by default) -->
+    <div id="mobile-drawer" class="mobile-drawer hidden">
+        <div class="mobile-drawer-header">
+            <span class="mobile-drawer-title">Notes</span>
+            <button onclick="closeNotesDrawer()">✕</button>
+        </div>
+        <div class="mobile-drawer-body" id="mobile-drawer-body"></div>
+        <div class="mobile-drawer-actions">
+            <button onclick="showNewNoteDialog(); closeNotesDrawer();">+ New Note</button>
+        </div>
+    </div>
+
     <div id="app">
         <!-- Left Panel: Notes -->
         <aside id="panel-left" class="panel panel-left collapsed">
@@ -146,12 +166,32 @@
         <main id="panel-center">
 
             <div id="center-body">
-                <div id="editor-container">
-                    <pre id="editor-highlight" aria-hidden="true"><code id="editor-highlight-code" class="language-markdown"></code></pre>
-                    <textarea id="editor" spellcheck="false" autocomplete="off" autocorrect="off" autocapitalize="off"></textarea>
+                <div class="mobile-section" id="mobile-section-preview">
+                    <div class="mobile-section-header" onclick="toggleMobileSection('preview')">
+                        <span class="mobile-section-chevron">▼</span> Preview
+                    </div>
+                    <div class="mobile-section-body">
+                        <div id="preview-container" class="hidden">
+                            <div id="preview"></div>
+                        </div>
+                    </div>
                 </div>
-                <div id="preview-container" class="hidden">
-                    <div id="preview"></div>
+                <div class="mobile-section" id="mobile-section-editor">
+                    <div class="mobile-section-header" onclick="toggleMobileSection('editor')">
+                        <span class="mobile-section-chevron">▼</span> Editor
+                    </div>
+                    <div class="mobile-section-body">
+                        <div id="editor-container">
+                            <pre id="editor-highlight" aria-hidden="true"><code id="editor-highlight-code" class="language-markdown"></code></pre>
+                            <textarea id="editor" spellcheck="false" autocomplete="off" autocorrect="off" autocapitalize="off"></textarea>
+                        </div>
+                    </div>
+                </div>
+                <div class="mobile-section" id="mobile-section-chat">
+                    <div class="mobile-section-header" onclick="toggleMobileSection('chat')">
+                        <span class="mobile-section-chevron">▼</span> Chat <span id="mobile-chat-status" class="status idle">●</span>
+                    </div>
+                    <div class="mobile-section-body"></div>
                 </div>
             </div>
         </main>

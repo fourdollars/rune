@@ -1137,6 +1137,8 @@ function confirmLogout() {
 // --- File management ---
 function updateDocTitle(name) {
     updatePageTitle();
+    const mfn = document.getElementById('mobile-filename');
+    if (mfn) mfn.textContent = name || '';
 }
 
 function updatePageTitle() {
@@ -1703,3 +1705,136 @@ try {
 } catch {}
 applyPanelLayout();
 loadStoredCredentials();
+
+
+// ═══════════════════════════════════════════════════════════════════════════
+// MOBILE UI — Accordion + Drawer
+// ═══════════════════════════════════════════════════════════════════════════
+
+const mobileQuery = window.matchMedia('(max-width: 768px)');
+let isMobile = mobileQuery.matches;
+
+function setupMobileUI() {
+    if (!isMobile) return;
+
+    // Restore accordion states from localStorage
+    ['preview', 'editor', 'chat'].forEach(section => {
+        const key = 'rune_mobile_' + section;
+        const saved = localStorage.getItem(key);
+        const el = document.getElementById('mobile-section-' + section);
+        if (!el) return;
+        // Default: preview + chat expanded, editor collapsed
+        const defaultExpanded = (section !== 'editor');
+        const expanded = saved !== null ? saved === '1' : defaultExpanded;
+        if (expanded) {
+            el.classList.add('expanded');
+        } else {
+            el.classList.remove('expanded');
+        }
+    });
+
+    // Move chat content into mobile chat section
+    moveChatToMobile();
+
+    // Update mobile filename
+    updateMobileFilename();
+}
+
+function teardownMobileUI() {
+    // Move chat content back to desktop panel
+    moveChatToDesktop();
+}
+
+function toggleMobileSection(section) {
+    const el = document.getElementById('mobile-section-' + section);
+    if (!el) return;
+    el.classList.toggle('expanded');
+    const expanded = el.classList.contains('expanded');
+    localStorage.setItem('rune_mobile_' + section, expanded ? '1' : '0');
+
+    // If preview just expanded, render it
+    if (section === 'preview' && expanded) {
+        renderPreview();
+    }
+}
+
+function openNotesDrawer() {
+    const drawer = document.getElementById('mobile-drawer');
+    if (!drawer) return;
+    drawer.classList.remove('hidden');
+
+    // Clone note-tree content into drawer body
+    const src = document.getElementById('note-tree');
+    const dest = document.getElementById('mobile-drawer-body');
+    if (src && dest) {
+        dest.innerHTML = src.innerHTML;
+        // Re-bind click handlers on file rows
+        dest.querySelectorAll('.explorer-row').forEach(row => {
+            const origOnclick = row.onclick;
+            row.onclick = function(e) {
+                if (origOnclick) origOnclick.call(this, e);
+                closeNotesDrawer();
+            };
+        });
+    }
+}
+
+function closeNotesDrawer() {
+    const drawer = document.getElementById('mobile-drawer');
+    if (drawer) drawer.classList.add('hidden');
+}
+
+function moveChatToMobile() {
+    const chatBody = document.getElementById('mobile-section-chat');
+    if (!chatBody) return;
+    const sectionBody = chatBody.querySelector('.mobile-section-body');
+    if (!sectionBody) return;
+
+    const messages = document.getElementById('chat-messages');
+    const inputArea = document.querySelector('.chat-input-area');
+    if (messages && inputArea) {
+        sectionBody.appendChild(messages);
+        sectionBody.appendChild(inputArea);
+    }
+}
+
+function moveChatToDesktop() {
+    const panelRight = document.getElementById('panel-right');
+    if (!panelRight) return;
+    const chatBodyDiv = panelRight.querySelector('.chat-body');
+    const panelContent = panelRight.querySelector('.panel-content');
+
+    const messages = document.getElementById('chat-messages');
+    const inputArea = document.querySelector('.chat-input-area');
+
+    if (chatBodyDiv && messages) {
+        chatBodyDiv.appendChild(messages);
+    }
+    if (panelContent && inputArea) {
+        panelContent.appendChild(inputArea);
+    }
+}
+
+function updateMobileFilename() {
+    const el = document.getElementById('mobile-filename');
+    if (el) {
+        el.textContent = currentFilename || '';
+    }
+}
+
+// Listen for viewport changes
+mobileQuery.addEventListener('change', (e) => {
+    isMobile = e.matches;
+    if (isMobile) {
+        setupMobileUI();
+    } else {
+        teardownMobileUI();
+    }
+});
+
+// Initialize on load
+document.addEventListener('DOMContentLoaded', () => {
+    setTimeout(() => {
+        if (isMobile) setupMobileUI();
+    }, 100);
+});
