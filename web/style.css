@@ -1590,15 +1590,25 @@ pre.hljs-pre:hover .copy-btn {
     }
     #mobile-section-preview.expanded #preview-container #preview { max-width: 100%; }
 
-    /* Editor in mobile */
+    /* Editor in mobile: single-layer textarea (no overlay highlight) */
     #mobile-section-editor.expanded #editor-container {
         flex: 1; display: flex; flex-direction: column;
+        position: relative;
     }
+    #mobile-section-editor.expanded #editor-highlight { display: none !important; }
     #mobile-section-editor.expanded #editor {
-        flex: 1; min-height: 80px; font-size: 14px;
-        padding: 8px; border: none; resize: none;
+        position: static !important;
+        flex: 1; min-height: 80px;
+        font-size: 14px; line-height: 1.5;
+        padding: 12px;
+        border: none; resize: none;
+        background: var(--bg-primary) !important;
+        color: var(--text-primary) !important;
+        -webkit-text-fill-color: var(--text-primary) !important;
+        caret-color: var(--text-primary);
+        font-family: var(--font-mono);
+        overflow-y: auto;
     }
-    #mobile-section-editor.expanded #editor-highlight { display: none; }
 
     /* Chat in mobile */
     #mobile-section-chat .mobile-section-body {
