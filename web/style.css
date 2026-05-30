@@ -1603,6 +1603,7 @@ pre.hljs-pre:hover .copy-btn {
     }
 
     .mobile-section-header {
+        display: flex;
         align-items: center;
         height: 36px; min-height: 36px;
         padding: 0 12px;
@@ -1698,6 +1699,7 @@ pre.hljs-pre:hover .copy-btn {
     /* ─── Notes Drawer ─── */
     .mobile-drawer.hidden { display: none !important; }
     .mobile-drawer:not(.hidden) {
+        display: flex;
         position: fixed; inset: 0; z-index: 1000;
         background: var(--bg-primary);
         flex-direction: column;
