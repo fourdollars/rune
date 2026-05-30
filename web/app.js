@@ -375,6 +375,7 @@ function handleMessage(msg) {
             {
                 const noteEntry = notes.find(n => n.id === currentNoteId);
                 if (noteEntry) {
+                    noteEntry.files = fileList;
                     noteEntry.fileVisibility = {};
                     (msg.files || []).forEach(f => {
                         if (typeof f === 'object') noteEntry.fileVisibility[f.name] = f.public;
