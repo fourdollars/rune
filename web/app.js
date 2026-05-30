@@ -1497,8 +1497,13 @@ function renderNoteList() {
             }
 
             fileRow.onclick = () => {
-                if (s.id !== currentNoteId) switchNote(s.id);
-                api('file/switch', { note_id: s.id, name: fname });
+                if (s.id !== currentNoteId) {
+                    // Switching notes: pass fname so switchNote opens the right file directly
+                    switchNote(s.id, fname);
+                } else {
+                    // Already on this note: just switch file
+                    api('file/switch', { note_id: s.id, name: fname });
+                }
                 tree.querySelectorAll('.explorer-row').forEach(r => r.classList.remove('active'));
                 fileRow.classList.add('active');
                 if (!showPreview) {
@@ -1517,7 +1522,7 @@ function renderNoteList() {
 
 
 
-async function switchNote(sessionId) {
+async function switchNote(sessionId, forceFile = null) {
     if (sessionId === currentNoteId) return;
     currentNoteId = sessionId;
     localStorage.setItem('rune_note', sessionId);
@@ -1538,10 +1543,12 @@ async function switchNote(sessionId) {
     fileList = data.files || [];
     updateEditorVisibility(fileList.length);
 
-    // Restore saved file for this note, or use server default
+    // File priority: forceFile (from direct click) > savedFile > server default
     const savedFile = localStorage.getItem('rune_file');
     const preferredFile = (savedFile && fileList.includes(savedFile)) ? savedFile : null;
-    const targetFile = preferredFile || data.current_file;
+    const targetFile = (forceFile && fileList.includes(forceFile))
+        ? forceFile
+        : (preferredFile || data.current_file);
 
     if (targetFile && fileList.includes(targetFile)) {
         currentFilename = targetFile;
