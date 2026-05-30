@@ -7,7 +7,7 @@ use std::collections::BTreeMap;
 use std::future::Future;
 use std::pin::Pin;
 use tokio::sync::mpsc::Sender;
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
 
 /// LLM request payload.
 #[derive(Debug, Clone, Serialize)]
@@ -169,17 +169,33 @@ fn estimate_usage(content: Option<&str>, tool_calls: &[LlmToolCall]) -> TokenUsa
 fn finalize_tool_calls(states: BTreeMap<usize, StreamingToolCallState>) -> Vec<LlmToolCall> {
     states
         .into_iter()
-        .map(|(index, state)| LlmToolCall {
-            id: state.id.unwrap_or_else(|| format!("stream-{}", index)),
-            call_type: if state.call_type.is_empty() {
-                default_tool_type()
-            } else {
-                state.call_type
-            },
-            function: LlmFunction {
-                name: state.name,
-                arguments: state.arguments,
-            },
+        .filter_map(|(index, state)| {
+            // Validate that arguments is valid JSON (or empty).
+            // LLM streaming can produce malformed arguments (e.g., two JSON objects
+            // concatenated: {"cmd":"ls"}{"path":"."}) which would cause 400 errors
+            // on subsequent API calls.
+            if !state.arguments.is_empty() {
+                if let Err(e) = serde_json::from_str::<serde_json::Value>(&state.arguments) {
+                    warn!(
+                        "dropping tool_call with invalid JSON arguments: tool={}, index={}, error={}, args={}",
+                        state.name, index, e,
+                        &state.arguments[..state.arguments.len().min(200)]
+                    );
+                    return None;
+                }
+            }
+            Some(LlmToolCall {
+                id: state.id.unwrap_or_else(|| format!("stream-{}", index)),
+                call_type: if state.call_type.is_empty() {
+                    default_tool_type()
+                } else {
+                    state.call_type
+                },
+                function: LlmFunction {
+                    name: state.name,
+                    arguments: state.arguments,
+                },
+            })
         })
         .collect()
 }
@@ -2862,4 +2878,84 @@ mod tests {
         assert_eq!(content, Some("   ".to_string()));
     }
 
+}
+
+
+#[cfg(test)]
+mod provider_tests {
+    use super::*;
+    use std::collections::BTreeMap;
+
+    fn make_state(name: &str, args: &str) -> StreamingToolCallState {
+        StreamingToolCallState {
+            id: Some(format!("call_{}", name)),
+            name: name.to_string(),
+            call_type: "function".to_string(),
+            arguments: args.to_string(),
+        }
+    }
+
+    #[test]
+    fn test_finalize_tool_calls_valid_json_kept() {
+        let mut states = BTreeMap::new();
+        states.insert(0, make_state("execute_cmd", r#"{"cmd":"ls"}"#));
+        states.insert(1, make_state("read_file", r#"{"path":"/tmp/x.txt"}"#));
+
+        let result = finalize_tool_calls(states);
+        assert_eq!(result.len(), 2);
+        assert_eq!(result[0].function.name, "execute_cmd");
+        assert_eq!(result[1].function.name, "read_file");
+    }
+
+    #[test]
+    fn test_finalize_tool_calls_invalid_json_dropped() {
+        let mut states = BTreeMap::new();
+        // Two JSON objects concatenated — the known bug pattern
+        states.insert(0, make_state("execute_cmd", r#"{"cmd":"ls"}{"path":"."}"#));
+
+        let result = finalize_tool_calls(states);
+        assert_eq!(result.len(), 0, "malformed tool_call should be dropped");
+    }
+
+    #[test]
+    fn test_finalize_tool_calls_empty_arguments_kept() {
+        let mut states = BTreeMap::new();
+        states.insert(0, make_state("no_args_tool", ""));
+
+        let result = finalize_tool_calls(states);
+        assert_eq!(result.len(), 1, "empty arguments should be allowed");
+        assert_eq!(result[0].function.name, "no_args_tool");
+    }
+
+    #[test]
+    fn test_finalize_tool_calls_mixed_valid_invalid() {
+        let mut states = BTreeMap::new();
+        states.insert(0, make_state("good_tool", r#"{"x": 1}"#));
+        states.insert(1, make_state("bad_tool", r#"{"x": 1}{"y": 2}"#));
+        states.insert(2, make_state("another_good", r#"{"z": "hello"}"#));
+
+        let result = finalize_tool_calls(states);
+        assert_eq!(result.len(), 2, "only valid tool_calls should survive");
+        assert_eq!(result[0].function.name, "good_tool");
+        assert_eq!(result[1].function.name, "another_good");
+    }
+
+    #[test]
+    fn test_finalize_tool_calls_truncated_json_dropped() {
+        let mut states = BTreeMap::new();
+        // Incomplete JSON from interrupted streaming
+        states.insert(0, make_state("execute_cmd", r#"{"cmd":"ls -la /tmp"#));
+
+        let result = finalize_tool_calls(states);
+        assert_eq!(result.len(), 0, "truncated JSON should be dropped");
+    }
+
+    #[test]
+    fn test_finalize_tool_calls_nested_valid_json() {
+        let mut states = BTreeMap::new();
+        states.insert(0, make_state("complex_tool", r#"{"a":{"b":[1,2,3]},"c":"d"}"#));
+
+        let result = finalize_tool_calls(states);
+        assert_eq!(result.len(), 1, "valid nested JSON should be kept");
+    }
 }

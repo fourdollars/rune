@@ -255,6 +255,19 @@ impl Agent {
             })
             .collect();
         // Insert history before any in-progress messages
+        // Sanitize: trim trailing consecutive user messages to just the last one.
+        // Orphan user messages (no assistant reply) can confuse LLMs into generating
+        // malformed tool calls when they try to respond to stale requests.
+        let mut history_msgs = history_msgs;
+        while history_msgs.len() >= 2 {
+            let len = history_msgs.len();
+            if history_msgs[len - 1].role == "user" && history_msgs[len - 2].role == "user" {
+                history_msgs.remove(len - 2);
+            } else {
+                break;
+            }
+        }
+
         for (i, msg) in history_msgs.into_iter().enumerate() {
             self.messages.insert(insert_at + i, msg);
         }
@@ -715,7 +728,7 @@ impl Agent {
             );
 
             // Call LLM
-            let response = match self.call_llm().await {
+            let mut response = match self.call_llm().await {
                 Ok(r) => r,
                 Err(e) => {
                     let r = StopReason::Error(format!("LLM call failed: {}", e));
@@ -745,7 +758,38 @@ impl Agent {
                 return r;
             }
 
-            // We have tool calls
+            // We have tool calls — validate arguments JSON before adding to history
+            let valid_tool_calls: Vec<_> = response.tool_calls
+                .iter()
+                .filter(|tc| {
+                    if tc.function.arguments.is_empty() {
+                        return true;
+                    }
+                    match serde_json::from_str::<serde_json::Value>(&tc.function.arguments) {
+                        Ok(_) => true,
+                        Err(e) => {
+                            eprintln!(
+                                "  {} skipping tool_call with invalid JSON: {} ({})",
+                                "✗".red(),
+                                tc.function.name,
+                                e
+                            );
+                            false
+                        }
+                    }
+                })
+                .cloned()
+                .collect();
+
+            if valid_tool_calls.is_empty() {
+                // All tool_calls were malformed — treat as if LLM returned no answer
+                let err = "LLM produced tool calls with invalid JSON arguments".to_string();
+                let r = StopReason::Error(err);
+                self.finish_trace(&r);
+                return r;
+            }
+            response.tool_calls = valid_tool_calls;
+
             self.messages.push(LlmMessage {
                 role: "assistant".to_string(),
                 name: None,
@@ -3528,6 +3572,76 @@ read(3, "root:x:0:0:...", 4096) = 1234"#;
             agent.messages[0].content.as_deref(),
             Some("prompt #4")
         );
+    }
+
+    #[test]
+    fn test_sanitize_trailing_user_messages() {
+        // Simulates what load_history does: trim consecutive trailing user messages
+        let mut msgs: Vec<LlmMessage> = vec![
+            LlmMessage { role: "user".into(), name: None, content: Some("q1".into()), tool_calls: None, tool_call_id: None, content_parts: None },
+            LlmMessage { role: "assistant".into(), name: None, content: Some("a1".into()), tool_calls: None, tool_call_id: None, content_parts: None },
+            LlmMessage { role: "user".into(), name: None, content: Some("orphan1".into()), tool_calls: None, tool_call_id: None, content_parts: None },
+            LlmMessage { role: "user".into(), name: None, content: Some("orphan2".into()), tool_calls: None, tool_call_id: None, content_parts: None },
+            LlmMessage { role: "user".into(), name: None, content: Some("latest".into()), tool_calls: None, tool_call_id: None, content_parts: None },
+        ];
+
+        // Apply same logic as load_history
+        while msgs.len() >= 2 {
+            let len = msgs.len();
+            if msgs[len - 1].role == "user" && msgs[len - 2].role == "user" {
+                msgs.remove(len - 2);
+            } else {
+                break;
+            }
+        }
+
+        assert_eq!(msgs.len(), 3); // user, assistant, user(latest)
+        assert_eq!(msgs[0].content.as_deref(), Some("q1"));
+        assert_eq!(msgs[1].content.as_deref(), Some("a1"));
+        assert_eq!(msgs[2].content.as_deref(), Some("latest"));
+    }
+
+    #[test]
+    fn test_sanitize_no_orphans_unchanged() {
+        let mut msgs: Vec<LlmMessage> = vec![
+            LlmMessage { role: "user".into(), name: None, content: Some("q1".into()), tool_calls: None, tool_call_id: None, content_parts: None },
+            LlmMessage { role: "assistant".into(), name: None, content: Some("a1".into()), tool_calls: None, tool_call_id: None, content_parts: None },
+            LlmMessage { role: "user".into(), name: None, content: Some("q2".into()), tool_calls: None, tool_call_id: None, content_parts: None },
+        ];
+
+        while msgs.len() >= 2 {
+            let len = msgs.len();
+            if msgs[len - 1].role == "user" && msgs[len - 2].role == "user" {
+                msgs.remove(len - 2);
+            } else {
+                break;
+            }
+        }
+
+        assert_eq!(msgs.len(), 3); // unchanged — no consecutive users at tail
+        assert_eq!(msgs[2].content.as_deref(), Some("q2"));
+    }
+
+    #[test]
+    fn test_sanitize_all_user_messages() {
+        let mut msgs: Vec<LlmMessage> = vec![
+            LlmMessage { role: "user".into(), name: None, content: Some("m1".into()), tool_calls: None, tool_call_id: None, content_parts: None },
+            LlmMessage { role: "user".into(), name: None, content: Some("m2".into()), tool_calls: None, tool_call_id: None, content_parts: None },
+            LlmMessage { role: "user".into(), name: None, content: Some("m3".into()), tool_calls: None, tool_call_id: None, content_parts: None },
+        ];
+
+        while msgs.len() >= 2 {
+            let len = msgs.len();
+            if msgs[len - 1].role == "user" && msgs[len - 2].role == "user" {
+                msgs.remove(len - 2);
+            } else {
+                break;
+            }
+        }
+
+        // Should keep only the last user message
+        assert_eq!(msgs.len(), 1);
+        assert_eq!(msgs[0].content.as_deref(), Some("m3"));
     }
 
 }
