@@ -1713,9 +1713,11 @@ loadStoredCredentials();
 
 const mobileQuery = window.matchMedia('(max-width: 768px)');
 let isMobile = mobileQuery.matches;
+let mobileInitDone = false;
 
 function setupMobileUI() {
     if (!isMobile) return;
+    mobileInitDone = true;
 
     // Restore accordion states from localStorage
     ['preview', 'editor', 'chat'].forEach(section => {
@@ -1723,7 +1725,6 @@ function setupMobileUI() {
         const saved = localStorage.getItem(key);
         const el = document.getElementById('mobile-section-' + section);
         if (!el) return;
-        // Default: preview + chat expanded, editor collapsed
         const defaultExpanded = (section !== 'editor');
         const expanded = saved !== null ? saved === '1' : defaultExpanded;
         if (expanded) {
@@ -1733,16 +1734,30 @@ function setupMobileUI() {
         }
     });
 
-    // Move chat content into mobile chat section
+    // Move chat DOM into mobile chat section
     moveChatToMobile();
 
-    // Update mobile filename
+    // Force preview to render if expanded
+    const previewSection = document.getElementById('mobile-section-preview');
+    if (previewSection && previewSection.classList.contains('expanded')) {
+        const pc = document.getElementById('preview-container');
+        if (pc) pc.classList.remove('hidden');
+        renderPreview();
+    }
+
+    // Force editor content sync
+    const editor = document.getElementById('editor');
+    if (editor && !editor.value && specContent) {
+        editor.value = specContent;
+    }
+
     updateMobileFilename();
 }
 
 function teardownMobileUI() {
-    // Move chat content back to desktop panel
+    if (!mobileInitDone) return;
     moveChatToDesktop();
+    mobileInitDone = false;
 }
 
 function toggleMobileSection(section) {
@@ -1752,8 +1767,9 @@ function toggleMobileSection(section) {
     const expanded = el.classList.contains('expanded');
     localStorage.setItem('rune_mobile_' + section, expanded ? '1' : '0');
 
-    // If preview just expanded, render it
     if (section === 'preview' && expanded) {
+        const pc = document.getElementById('preview-container');
+        if (pc) pc.classList.remove('hidden');
         renderPreview();
     }
 }
@@ -1762,21 +1778,7 @@ function openNotesDrawer() {
     const drawer = document.getElementById('mobile-drawer');
     if (!drawer) return;
     drawer.classList.remove('hidden');
-
-    // Clone note-tree content into drawer body
-    const src = document.getElementById('note-tree');
-    const dest = document.getElementById('mobile-drawer-body');
-    if (src && dest) {
-        dest.innerHTML = src.innerHTML;
-        // Re-bind click handlers on file rows
-        dest.querySelectorAll('.explorer-row').forEach(row => {
-            const origOnclick = row.onclick;
-            row.onclick = function(e) {
-                if (origOnclick) origOnclick.call(this, e);
-                closeNotesDrawer();
-            };
-        });
-    }
+    renderMobileNoteTree();
 }
 
 function closeNotesDrawer() {
@@ -1784,42 +1786,74 @@ function closeNotesDrawer() {
     if (drawer) drawer.classList.add('hidden');
 }
 
+function renderMobileNoteTree() {
+    const dest = document.getElementById('mobile-drawer-body');
+    if (!dest) return;
+    dest.innerHTML = '';
+
+    notes.forEach(s => {
+        const noteSection = document.createElement('div');
+        noteSection.className = 'mobile-note-section';
+
+        // Note header (folder)
+        const noteHeader = document.createElement('div');
+        noteHeader.className = 'mobile-note-header' + (s.id === currentNoteId ? ' active' : '');
+        noteHeader.innerHTML = '<span class="mobile-note-icon">' + (s.id === currentNoteId ? '📂' : '📁') + '</span><span class="mobile-note-name">' + (s.name || s.id) + '</span>';
+        noteHeader.onclick = () => {
+            if (s.id !== currentNoteId) {
+                switchNote(s.id);
+                closeNotesDrawer();
+            }
+        };
+        noteSection.appendChild(noteHeader);
+
+        // Files list
+        const files = s.files || [];
+        files.forEach(fname => {
+            const fileRow = document.createElement('div');
+            fileRow.className = 'mobile-file-row' + (s.id === currentNoteId && fname === currentFilename ? ' active' : '');
+            fileRow.innerHTML = '<span class="mobile-file-icon">📄</span><span class="mobile-file-name">' + fname + '</span>';
+            fileRow.onclick = () => {
+                if (s.id !== currentNoteId) {
+                    switchNote(s.id, fname);
+                } else {
+                    switchFile(fname);
+                }
+                closeNotesDrawer();
+            };
+            noteSection.appendChild(fileRow);
+        });
+
+        dest.appendChild(noteSection);
+    });
+}
+
 function moveChatToMobile() {
-    const chatBody = document.getElementById('mobile-section-chat');
-    if (!chatBody) return;
-    const sectionBody = chatBody.querySelector('.mobile-section-body');
+    const sectionBody = document.querySelector('#mobile-section-chat .mobile-section-body');
     if (!sectionBody) return;
 
     const messages = document.getElementById('chat-messages');
-    const inputArea = document.querySelector('.chat-input-area');
-    if (messages && inputArea) {
-        sectionBody.appendChild(messages);
-        sectionBody.appendChild(inputArea);
-    }
+    const inputArea = document.querySelector('#panel-right .chat-input-area');
+    if (messages) sectionBody.appendChild(messages);
+    if (inputArea) sectionBody.appendChild(inputArea);
 }
 
 function moveChatToDesktop() {
     const panelRight = document.getElementById('panel-right');
     if (!panelRight) return;
-    const chatBodyDiv = panelRight.querySelector('.chat-body');
+    const chatBody = panelRight.querySelector('.chat-body');
     const panelContent = panelRight.querySelector('.panel-content');
 
     const messages = document.getElementById('chat-messages');
     const inputArea = document.querySelector('.chat-input-area');
 
-    if (chatBodyDiv && messages) {
-        chatBodyDiv.appendChild(messages);
-    }
-    if (panelContent && inputArea) {
-        panelContent.appendChild(inputArea);
-    }
+    if (chatBody && messages) chatBody.appendChild(messages);
+    if (panelContent && inputArea) panelContent.appendChild(inputArea);
 }
 
 function updateMobileFilename() {
     const el = document.getElementById('mobile-filename');
-    if (el) {
-        el.textContent = currentFilename || '';
-    }
+    if (el) el.textContent = currentFilename || '';
 }
 
 // Listen for viewport changes
@@ -1832,9 +1866,5 @@ mobileQuery.addEventListener('change', (e) => {
     }
 });
 
-// Initialize on load
-document.addEventListener('DOMContentLoaded', () => {
-    setTimeout(() => {
-        if (isMobile) setupMobileUI();
-    }, 100);
-});
+// Init mobile immediately (script runs at end of body, DOM is ready)
+if (isMobile) setupMobileUI();
