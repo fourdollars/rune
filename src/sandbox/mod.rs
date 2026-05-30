@@ -299,7 +299,8 @@ impl SandboxExecutor {
                     " true; }}",
                     " && mount --bind /tmp/.etc /etc",
                     " && mount -t tmpfs -o size=0 tmpfs /proc",
-                    " && unset INVOCATION_ID JOURNAL_STREAM SYSTEMD_EXEC_PID MANAGERPID && exec {cmd}",
+                    " && mount -t tmpfs -o size=0 tmpfs /var/run",
+                    " && unset INVOCATION_ID JOURNAL_STREAM SYSTEMD_EXEC_PID MANAGERPID DBUS_SESSION_BUS_ADDRESS XDG_RUNTIME_DIR PWD && export PWD=/tmp HOME=/tmp && exec {cmd}",
                 ),
                 size = self.config.tmp_size_mb,
                 cmd = inner_cmd,
@@ -341,6 +342,8 @@ impl SandboxExecutor {
             command.env("DBUS_SESSION_BUS_ADDRESS", v);
         }
 
+        // Default cwd to /tmp to prevent PWD leaking real working dir (P2)
+        command.current_dir("/tmp");
         if let Some(dir) = cwd {
             command.current_dir(dir);
         }
@@ -796,6 +799,69 @@ mod tests {
         assert!(
             !result.stdout.contains("systemd-private"),
             "P4 VULN: /tmp leaks systemd service names! got: {}",
+            result.stdout
+        );
+    }
+
+
+    #[tokio::test]
+    async fn test_sandbox_blocks_docker_socket() {
+        // P0: Docker socket must not be accessible inside sandbox
+        let executor = SandboxExecutor::with_defaults();
+        let result = executor
+            .run_shell_command(
+                "curl --unix-socket /var/run/docker.sock http://localhost/version 2>&1; echo EXIT:$?",
+                None, None,
+            )
+            .await
+            .expect("should succeed");
+        assert!(
+            !result.stdout.contains("\"Version\"") && !result.stdout.contains("\"ApiVersion\""),
+            "P0 VULN: Docker socket accessible inside sandbox! stdout={}",
+            result.stdout
+        );
+    }
+
+    #[tokio::test]
+    async fn test_sandbox_blocks_dbus_socket() {
+        // P3: D-Bus socket must not be reachable inside sandbox
+        let executor = SandboxExecutor::with_defaults();
+        let result = executor
+            .run_shell_command(
+                "curl --unix-socket /var/run/dbus/system_bus_socket http://localhost/ 2>&1; echo EXIT:$?",
+                None, None,
+            )
+            .await
+            .expect("should succeed");
+        // exit 7 = socket not found; exit 56 = reachable (bad)
+        assert!(
+            result.stdout.contains("EXIT:7") || result.stdout.contains("No such file"),
+            "P3 VULN: D-Bus socket reachable inside sandbox! stdout={}",
+            result.stdout
+        );
+    }
+
+    #[tokio::test]
+    async fn test_sandbox_env_no_dbus_leak() {
+        // P2: DBUS_SESSION_BUS_ADDRESS and XDG_RUNTIME_DIR must not leak into sandbox
+        let executor = SandboxExecutor::with_defaults();
+        let result = executor
+            .run_shell_command("env", None, None)
+            .await
+            .expect("should succeed");
+        assert!(
+            !result.stdout.contains("DBUS_SESSION_BUS_ADDRESS"),
+            "P2 VULN: DBUS_SESSION_BUS_ADDRESS leaked into sandbox! env={}",
+            result.stdout
+        );
+        assert!(
+            !result.stdout.contains("XDG_RUNTIME_DIR"),
+            "P2 VULN: XDG_RUNTIME_DIR leaked into sandbox! env={}",
+            result.stdout
+        );
+        assert!(
+            !result.stdout.contains("PWD=/home"),
+            "P2 VULN: PWD leaks home dir! env={}",
             result.stdout
         );
     }
