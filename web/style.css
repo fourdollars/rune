@@ -29,12 +29,14 @@ body {
     color: var(--text-primary);
     font-family: var(--font-sans);
     height: 100vh;
+    height: 100dvh; /* mobile: excludes browser chrome */
     overflow: hidden;
 }
 
 #app {
     display: flex;
     height: 100vh;
+    height: 100dvh; /* mobile: excludes browser chrome */
     width: 100vw;
 }
 
@@ -1549,7 +1551,7 @@ pre.hljs-pre:hover .copy-btn {
     #mobile-status { font-size: 10px; }
 
     /* ─── App vertical layout ─── */
-    #app { flex-direction: column; padding-top: 44px; }
+    #app { flex-direction: column; padding-top: 44px; height: var(--mobile-vh, 100dvh); }
     #panel-center { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
     #center-body { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
 

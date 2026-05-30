@@ -1850,6 +1850,7 @@ let mobileInitDone = false;
 function setupMobileUI() {
     if (!isMobile) return;
     mobileInitDone = true;
+// Fix mobile viewport height (iOS Safari/Android Chrome address bar)    function setMobileVh() {        const vh = window.innerHeight;        document.documentElement.style.setProperty("--mobile-vh", vh + "px");    }    setMobileVh();    window.addEventListener("resize", setMobileVh);    if (window.visualViewport) window.visualViewport.addEventListener("resize", setMobileVh);
 
     // Restore accordion states from localStorage
     ['preview', 'editor', 'chat'].forEach(section => {
