@@ -37,6 +37,8 @@ pub struct SandboxConfig {
     pub max_pids: u32,
     /// Dangerous syscalls to allow through (empty = block all dangerous).
     pub allowed_syscalls: Vec<String>,
+    /// Tmpfs size for isolated /tmp in MB (0 = use host /tmp without isolation).
+    pub tmp_size_mb: u64,
 }
 
 impl Default for SandboxConfig {
@@ -64,6 +66,7 @@ impl Default for SandboxConfig {
             cpu_limit_secs: 0,
             max_pids: 64,
             allowed_syscalls: Vec::new(),
+            tmp_size_mb: 100,
         }
     }
 }
@@ -151,19 +154,18 @@ impl SandboxExecutor {
             }
         }
 
+        // Layer 2: Tmpfs isolation + Network isolation (combined in one unshare call)
+        let use_tmpfs = self.config.tmp_size_mb > 0 && has_unshare;
         let mut use_net_guard_empty = false;
+        let mut use_unshare_net = false;
 
-        // Layer 2: Network isolation strategy
-        //  - allowed_domains contains "*" → no restriction
-        //  - allowed_domains non-empty (specific domains) → net-guard subcommand (seccomp user notification)
-        //  - allowed_domains empty → full network isolation (unshare --net)
+        // Determine network strategy
         if !self.config.allowed_domains.is_empty() {
             if self.config.allowed_domains.iter().any(|d| d == "*") {
-                // Wildcard: no network restriction at all
                 active_layers.push("network(unrestricted)".to_string());
                 info!("sandbox: network unrestricted (wildcard domain)");
             } else {
-                // Domain allowlist via net-guard subcommand (Seccomp USER_NOTIF)
+                // net-guard handles network filtering (no unshare --net needed)
                 active_layers.push(format!(
                     "net-guard({})",
                     self.config.allowed_domains.join(",")
@@ -171,17 +173,30 @@ impl SandboxExecutor {
                 info!(domains = ?self.config.allowed_domains, "sandbox: net-guard active");
             }
         } else if has_unshare {
-            // Full isolation via network namespace
-            wrapper_parts.push("unshare --user --net --".to_string());
+            use_unshare_net = true;
             active_layers.push("netns(isolated)".to_string());
             info!("sandbox: network namespace fully isolated");
         } else {
-            // Fallback: use net-guard with empty allowlist (blocks all non-loopback)
-            {
-                use_net_guard_empty = true;
-                active_layers.push("net-guard(none)".to_string());
-                info!("sandbox: net-guard blocking all (empty allowlist, unshare unavailable)");
+            use_net_guard_empty = true;
+            active_layers.push("net-guard(none)".to_string());
+            info!("sandbox: net-guard blocking all (empty allowlist, unshare unavailable)");
+        }
+
+        // Build combined unshare command (mount + optional net)
+        if has_unshare && (use_tmpfs || use_unshare_net) {
+            let mut flags = vec!["unshare"];
+            flags.push("--user");
+            if use_tmpfs {
+                flags.push("--map-root-user");
+                flags.push("--mount");
+                active_layers.push(format!("tmpfs(/tmp,{}MB)", self.config.tmp_size_mb));
+                info!(size_mb = self.config.tmp_size_mb, "sandbox: isolated tmpfs enabled");
             }
+            if use_unshare_net {
+                flags.push("--net");
+            }
+            flags.push("--");
+            wrapper_parts.push(flags.join(" "));
         }
 
         // Layer 3: Seccomp filter via _seccomp subcommand
@@ -248,6 +263,18 @@ impl SandboxExecutor {
         inner_cmd_parts.push(format!("sh -c {}", shell_escape(cmd)));
 
         let inner_cmd = inner_cmd_parts.join(" ");
+
+        // If tmpfs isolation is active, wrap everything in sh -c "mount ... && <inner>"
+        let inner_cmd = if use_tmpfs {
+            let escaped = inner_cmd.replace('\'', "'\\''");
+            format!(
+                "sh -c 'mount -t tmpfs -o size={}M,mode=1777 tmpfs /tmp && exec {}'",
+                self.config.tmp_size_mb,
+                escaped
+            )
+        } else {
+            inner_cmd
+        };
 
         let final_cmd = if wrapper_parts.is_empty() {
             if !degraded {
@@ -504,4 +531,81 @@ mod tests {
         assert!(!executor.is_domain_allowed("example.com"));
         assert!(!executor.is_domain_allowed("anything.com"));
     }
+
+    #[tokio::test]
+    async fn test_sandbox_tmpfs_isolation() {
+        // Test that /tmp is isolated when tmp_size_mb > 0
+        let config = SandboxConfig {
+            tmp_size_mb: 10, // 10MB tmpfs
+            ..SandboxConfig::default()
+        };
+        let executor = SandboxExecutor::new(config);
+        
+        // Write a marker file to host /tmp first
+        let _ = std::fs::write("/tmp/rune_host_marker_test", "host");
+        
+        // Inside sandbox, /tmp should be empty (isolated tmpfs)
+        let result = executor
+            .run_shell_command("ls /tmp/rune_host_marker_test 2>&1; echo EXIT=$?; id; df /tmp 2>&1", None, None)
+            .await
+            .expect("should succeed");
+        
+        // Clean up
+        let _ = std::fs::remove_file("/tmp/rune_host_marker_test");
+        
+        eprintln!("DEBUG stdout: {}", result.stdout);
+        eprintln!("DEBUG stderr: {}", result.stderr);
+        eprintln!("DEBUG layers: {:?}", result.active_layers);
+        eprintln!("DEBUG degraded: {}", result.degraded);
+        
+        // If tmpfs is working, the file should not exist inside the sandbox
+        assert!(
+            result.stdout.contains("No such file") || result.stdout.contains("EXIT=2"),
+            "Expected /tmp isolation but got: {}\nLayers: {:?}\nDegraded: {}",
+            result.stdout, result.active_layers, result.degraded
+        );
+    }
+
+    #[tokio::test]
+    async fn test_sandbox_tmpfs_size_limit() {
+        // Test that tmpfs size limit is enforced
+        let config = SandboxConfig {
+            tmp_size_mb: 5, // 5MB limit
+            ..SandboxConfig::default()
+        };
+        let executor = SandboxExecutor::new(config);
+        
+        // Try to write 10MB — should fail with ENOSPC
+        let result = executor
+            .run_shell_command("dd if=/dev/zero of=/tmp/bigfile bs=1M count=10 2>&1", None, None)
+            .await
+            .expect("should succeed");
+        
+        assert!(
+            result.stdout.contains("No space left") || result.stderr.contains("No space left"),
+            "Expected space limit error but got stdout={} stderr={}",
+            result.stdout, result.stderr
+        );
+    }
+
+    #[tokio::test]
+    async fn test_sandbox_tmpfs_disabled() {
+        // When tmp_size_mb = 0, no tmpfs isolation
+        let config = SandboxConfig {
+            tmp_size_mb: 0,
+            ..SandboxConfig::default()
+        };
+        let executor = SandboxExecutor::new(config);
+        
+        let result = executor
+            .run_shell_command("echo ok", None, None)
+            .await
+            .expect("should succeed");
+        
+        assert!(!result.active_layers.iter().any(|l| l.contains("tmpfs")),
+            "tmpfs layer should not be present when disabled: {:?}",
+            result.active_layers
+        );
+    }
+
 }

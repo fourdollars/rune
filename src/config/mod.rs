@@ -67,10 +67,17 @@ pub struct PolicyConfig {
     /// Max child processes (0 = no limit).
     #[serde(default)]
     pub max_pids: u32,
+    /// Tmpfs size limit in MB for sandbox /tmp (default 100, 0 = use host /tmp).
+    #[serde(default = "default_max_tmp_mb")]
+    pub max_tmp_mb: u64,
 }
 
 fn default_policy_mode() -> String {
     "confirm".to_string()
+}
+
+fn default_max_tmp_mb() -> u64 {
+    100
 }
 
 /// Configuration for `rune serve` mode.
@@ -103,6 +110,7 @@ impl Default for PolicyConfig {
             denied_paths: vec!["/root".to_string(), "/etc/shadow".to_string()],
             max_memory_mb: 512,
             max_pids: 64,
+            max_tmp_mb: 100,
         }
     }
 }

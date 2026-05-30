@@ -53,6 +53,7 @@ pub struct ToolRegistry {
     policy_allowed_files_rw: Vec<String>,
     allowed_dirs: Vec<PathBuf>,
     allowed_domains: Vec<String>,
+    tmp_size_mb: u64,
 }
 
 impl ToolRegistry {
@@ -68,6 +69,7 @@ impl ToolRegistry {
             policy_allowed_paths_ro: Vec::new(),
             policy_allowed_files_ro: Vec::new(),
             policy_allowed_files_rw: Vec::new(),
+            tmp_size_mb: 100,
         }
     }
 
@@ -129,6 +131,7 @@ impl ToolRegistry {
         self.policy_allowed_files_ro = policy.allowed_files_ro.clone();
         self.policy_allowed_files_rw = policy.allowed_files_rw.clone();
         self.allowed_domains = policy.allowed_domains.clone();
+        self.tmp_size_mb = policy.max_tmp_mb;
     }
 
     /// Create a sandbox executor with the registry's config.
@@ -141,6 +144,7 @@ impl ToolRegistry {
                 read_only_paths: vec![],
                 denied_paths: vec![],
                 allowed_domains: vec!["*".to_string()],
+                tmp_size_mb: 0, // no tmpfs isolation in unrestricted mode
                 ..SandboxConfig::default()
             };
             return SandboxExecutor::new(config);
@@ -227,6 +231,7 @@ impl ToolRegistry {
             traverse_paths,
             allowed_domains: self.allowed_domains.clone(),
             allowed_syscalls: self.policy_allowed_syscalls.clone(),
+            tmp_size_mb: self.tmp_size_mb,
 
             ..SandboxConfig::default()
         };

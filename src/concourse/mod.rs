@@ -241,6 +241,7 @@ fn build_sandbox_config(source: &ResourceSource) -> SandboxConfig {
             cpu_limit_secs: 0,
             max_pids: 0,
             allowed_syscalls: vec!["*".to_string()],
+            tmp_size_mb: 0,
         };
     }
 
@@ -262,6 +263,7 @@ fn build_sandbox_config(source: &ResourceSource) -> SandboxConfig {
         memory_limit: policy.max_memory_mb.saturating_mul(1024 * 1024),
         cpu_limit_secs: 0,
         max_pids: policy.max_pids,
+        tmp_size_mb: policy.max_tmp_mb,
     }
 }
 
