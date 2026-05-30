@@ -159,7 +159,9 @@ impl ToolRegistry {
                 .collect()
         };
         // Always ensure essential system paths are accessible (required for exec)
-        for p in &["/bin", "/usr", "/lib", "/lib64", "/etc", "/run"] {
+        // Note: /etc is NOT included wholesale — only specific files via SandboxConfig defaults.
+        // /proc and /sys are denied. /run is traverse-only (for systemd-run scope).
+        for p in &["/bin", "/usr", "/lib", "/lib64"] {
             let pb = PathBuf::from(p);
             if !read_only.contains(&pb) {
                 read_only.push(pb);

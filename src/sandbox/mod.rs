@@ -55,10 +55,25 @@ impl Default for SandboxConfig {
                 PathBuf::from("/usr"),
                 PathBuf::from("/lib"),
                 PathBuf::from("/lib64"),
-                PathBuf::from("/etc"),
+                // Only essential /etc files (not entire /etc — prevents passwd/hostname leaks)
+                PathBuf::from("/etc/ld.so.cache"),
+                PathBuf::from("/etc/ld.so.conf"),
+                PathBuf::from("/etc/ld.so.conf.d"),
+                PathBuf::from("/etc/nsswitch.conf"),
+                PathBuf::from("/etc/resolv.conf"),
+                PathBuf::from("/etc/ssl"),
+                PathBuf::from("/etc/ca-certificates"),
+                PathBuf::from("/etc/alternatives"),
+                PathBuf::from("/etc/locale.alias"),
             ],
-            denied_paths: vec![PathBuf::from("/root"), PathBuf::from("/etc/shadow")],
-            traverse_paths: vec![PathBuf::from("/dev")],
+            denied_paths: vec![
+                PathBuf::from("/root"),
+                PathBuf::from("/proc"),
+                PathBuf::from("/sys"),
+            ],
+            traverse_paths: vec![
+                PathBuf::from("/dev"),
+            ],
             timeout_secs: 30,
             uid: 0,
             gid: 0,
@@ -264,14 +279,33 @@ impl SandboxExecutor {
 
         let inner_cmd = inner_cmd_parts.join(" ");
 
-        // If tmpfs isolation is active, wrap everything in sh -c "mount ... && <inner>"
+        // If tmpfs isolation is active, mount tmpfs + isolate /etc and /proc
         let inner_cmd = if use_tmpfs {
-            let escaped = inner_cmd.replace('\'', "'\\''");
-            format!(
-                "sh -c 'mount -t tmpfs -o size={}M,mode=1777 tmpfs /tmp && exec {}'",
-                self.config.tmp_size_mb,
-                escaped
-            )
+            // Build the full script that runs inside the mount namespace.
+            // unshare -- needs a single command, so wrap in sh -c "script"
+            let mount_setup = format!(
+                concat!(
+                    "mount -t tmpfs -o size={size}M,mode=1777 tmpfs /tmp",
+                    " && mkdir -p /tmp/.etc",
+                    " && {{ cp /etc/ld.so.cache /tmp/.etc/ 2>/dev/null;",
+                    " cp /etc/ld.so.conf /tmp/.etc/ 2>/dev/null;",
+                    " cp -a /etc/ld.so.conf.d /tmp/.etc/ 2>/dev/null;",
+                    " cp /etc/nsswitch.conf /tmp/.etc/ 2>/dev/null;",
+                    " cp /etc/resolv.conf /tmp/.etc/ 2>/dev/null;",
+                    " cp -a /etc/ssl /tmp/.etc/ 2>/dev/null;",
+                    " cp -a /etc/ca-certificates /tmp/.etc/ 2>/dev/null;",
+                    " cp -a /etc/alternatives /tmp/.etc/ 2>/dev/null;",
+                    " cp /etc/locale.alias /tmp/.etc/ 2>/dev/null;",
+                    " true; }}",
+                    " && mount --bind /tmp/.etc /etc",
+                    " && mount -t tmpfs -o size=0 tmpfs /proc",
+                    " && unset INVOCATION_ID JOURNAL_STREAM SYSTEMD_EXEC_PID MANAGERPID && exec {cmd}",
+                ),
+                size = self.config.tmp_size_mb,
+                cmd = inner_cmd,
+            );
+            // The mount_setup becomes the single arg to "sh -c" under unshare
+            format!("sh -c {}", shell_escape(&mount_setup))
         } else {
             inner_cmd
         };
@@ -291,6 +325,21 @@ impl SandboxExecutor {
 
         let mut command = Command::new("sh");
         command.arg("-c").arg(&final_cmd);
+
+        // Clear environment to prevent info leaks (P2: env disclosure)
+        // Only pass minimal safe set + user-provided overrides
+        command.env_clear();
+        command.env("PATH", "/usr/local/bin:/usr/bin:/bin");
+        command.env("HOME", "/tmp");
+        command.env("LANG", "C.UTF-8");
+        command.env("TERM", "dumb");
+        // systemd-run --user needs XDG_RUNTIME_DIR and DBUS_SESSION_BUS_ADDRESS
+        if let Ok(v) = std::env::var("XDG_RUNTIME_DIR") {
+            command.env("XDG_RUNTIME_DIR", v);
+        }
+        if let Ok(v) = std::env::var("DBUS_SESSION_BUS_ADDRESS") {
+            command.env("DBUS_SESSION_BUS_ADDRESS", v);
+        }
 
         if let Some(dir) = cwd {
             command.current_dir(dir);
@@ -553,10 +602,6 @@ mod tests {
         // Clean up
         let _ = std::fs::remove_file("/tmp/rune_host_marker_test");
         
-        eprintln!("DEBUG stdout: {}", result.stdout);
-        eprintln!("DEBUG stderr: {}", result.stderr);
-        eprintln!("DEBUG layers: {:?}", result.active_layers);
-        eprintln!("DEBUG degraded: {}", result.degraded);
         
         // If tmpfs is working, the file should not exist inside the sandbox
         assert!(
@@ -605,6 +650,153 @@ mod tests {
         assert!(!result.active_layers.iter().any(|l| l.contains("tmpfs")),
             "tmpfs layer should not be present when disabled: {:?}",
             result.active_layers
+        );
+    }
+
+    #[tokio::test]
+    async fn test_sandbox_blocks_proc_self_root() {
+        // P1: /proc/self/root should NOT allow reading system files
+        let executor = SandboxExecutor::with_defaults();
+        let result = executor
+            .run_shell_command("cat /proc/self/root/etc/passwd 2>&1", None, None)
+            .await
+            .expect("should succeed");
+        assert!(
+            result.stdout.contains("Permission denied") || result.stdout.contains("No such file")
+                || result.exit_code != 0,
+            "P1 VULN: /proc/self/root escape succeeded! stdout={}",
+            result.stdout
+        );
+    }
+
+    #[tokio::test]
+    async fn test_sandbox_blocks_proc_self_cwd_traversal() {
+        // P1: /proc/self/cwd/../../../etc/passwd should be blocked
+        let executor = SandboxExecutor::with_defaults();
+        let result = executor
+            .run_shell_command("cat /proc/self/cwd/../../../etc/passwd 2>&1", None, None)
+            .await
+            .expect("should succeed");
+        assert!(
+            result.stdout.contains("Permission denied") || result.stdout.contains("No such file")
+                || result.exit_code != 0,
+            "P1 VULN: /proc/self/cwd traversal escape succeeded! stdout={}",
+            result.stdout
+        );
+    }
+
+    #[tokio::test]
+    async fn test_sandbox_blocks_dotdot_traversal() {
+        // P1: ./../../../../etc/passwd should be blocked
+        let executor = SandboxExecutor::with_defaults();
+        let result = executor
+            .run_shell_command("cat ./../../../../etc/passwd 2>&1", None, None)
+            .await
+            .expect("should succeed");
+        assert!(
+            result.stdout.contains("Permission denied") || result.stdout.contains("No such file")
+                || result.exit_code != 0,
+            "P1 VULN: ../ traversal escape succeeded! stdout={}",
+            result.stdout
+        );
+    }
+
+    #[tokio::test]
+    async fn test_sandbox_blocks_etc_passwd() {
+        // P1: Direct /etc/passwd read should be blocked (no longer in read_only_paths)
+        let executor = SandboxExecutor::with_defaults();
+        let result = executor
+            .run_shell_command("cat /etc/passwd 2>&1", None, None)
+            .await
+            .expect("should succeed");
+        assert!(
+            result.stdout.contains("Permission denied") || result.stdout.contains("No such file")
+                || result.exit_code != 0,
+            "P1 VULN: /etc/passwd directly readable! stdout={}",
+            result.stdout
+        );
+    }
+
+    #[tokio::test]
+    async fn test_sandbox_blocks_etc_hostname() {
+        // P1: /etc/hostname should be blocked
+        let executor = SandboxExecutor::with_defaults();
+        let result = executor
+            .run_shell_command("cat /etc/hostname 2>&1", None, None)
+            .await
+            .expect("should succeed");
+        assert!(
+            result.stdout.contains("Permission denied") || result.stdout.contains("No such file")
+                || result.exit_code != 0,
+            "P1 VULN: /etc/hostname readable! stdout={}",
+            result.stdout
+        );
+    }
+
+    #[tokio::test]
+    async fn test_sandbox_allows_etc_ld_so_cache() {
+        // P1: /etc/ld.so.cache must be readable (dynamic linker needs it)
+        let executor = SandboxExecutor::with_defaults();
+        let result = executor
+            .run_shell_command("test -r /etc/ld.so.cache && echo READABLE || echo DENIED", None, None)
+            .await
+            .expect("should succeed");
+        assert!(
+            result.stdout.contains("READABLE"),
+            "ld.so.cache should be readable for dynamic linking, got: {}",
+            result.stdout
+        );
+    }
+
+    #[tokio::test]
+    async fn test_sandbox_env_minimal() {
+        // P2: env should only show minimal safe variables
+        let executor = SandboxExecutor::with_defaults();
+        let result = executor
+            .run_shell_command("env", None, None)
+            .await
+            .expect("should succeed");
+        
+        // Should have PATH, HOME, LANG, TERM
+        assert!(result.stdout.contains("PATH="), "missing PATH");
+        assert!(result.stdout.contains("HOME=/tmp"), "HOME should be /tmp");
+        assert!(result.stdout.contains("LANG="), "missing LANG");
+        
+        // Should NOT leak sensitive vars
+        assert!(!result.stdout.contains("MANAGERPID"), "P2 VULN: MANAGERPID leaked");
+        assert!(!result.stdout.contains("INVOCATION_ID"), "P2 VULN: INVOCATION_ID leaked");
+        assert!(!result.stdout.contains("JOURNAL_STREAM"), "P2 VULN: JOURNAL_STREAM leaked");
+        assert!(!result.stdout.contains("SYSTEMD_EXEC_PID"), "P2 VULN: SYSTEMD_EXEC_PID leaked");
+    }
+
+    #[tokio::test]
+    async fn test_sandbox_env_no_user_leak() {
+        // P2: USER should not reveal actual system user
+        let executor = SandboxExecutor::with_defaults();
+        let result = executor
+            .run_shell_command("echo USER=$USER", None, None)
+            .await
+            .expect("should succeed");
+        // USER should be empty or not set (env_clear removes it)
+        assert!(
+            result.stdout.contains("USER=\n") || result.stdout.trim() == "USER=",
+            "P2 VULN: USER env leaked: {}",
+            result.stdout
+        );
+    }
+
+    #[tokio::test]
+    async fn test_sandbox_tmp_service_names_hidden() {
+        // P4: ls /tmp should not show systemd-private dirs from host
+        let executor = SandboxExecutor::with_defaults();
+        let result = executor
+            .run_shell_command("ls /tmp/ 2>&1", None, None)
+            .await
+            .expect("should succeed");
+        assert!(
+            !result.stdout.contains("systemd-private"),
+            "P4 VULN: /tmp leaks systemd service names! got: {}",
+            result.stdout
         );
     }
 
