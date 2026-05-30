@@ -37,6 +37,10 @@ const previewContainer = document.getElementById('preview-container');
 const chatMessages = document.getElementById('chat-messages');
 const chatInput = document.getElementById('chat-input');
 const statusIndicator = document.getElementById('status-indicator');
+// Initial state: disconnected (before SSE connects)
+if (statusIndicator) { statusIndicator.className = 'status disconnected'; statusIndicator.textContent = '🔴'; }
+const mobileStatusInit = document.getElementById('mobile-status');
+if (mobileStatusInit) { mobileStatusInit.className = 'status disconnected'; mobileStatusInit.textContent = '🔴'; }
 const btnEdit = document.getElementById('btn-edit');
 const btnPreview = document.getElementById('btn-preview');
 
@@ -274,11 +278,13 @@ function connect() {
 
     evtSource.onopen = () => {
         isConnected = true;
+        setStatus('idle');
         addSystemMessage('Connected');
     };
 
     evtSource.onerror = (e) => {
         isConnected = false;
+        setStatus('disconnected');
         if (authFailed) {
             // Don't reconnect on auth failure — show login
             evtSource.close();
