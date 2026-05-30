@@ -176,6 +176,8 @@ function setEditorValue(text) {
         const t = text.endsWith('\n') ? text : text + '\n';
         hlCode.innerHTML = highlightMarkdownEditor(t);
     }
+    // Also update mobile editor if present
+    if (isMobile) setMobileEditorContent(text);
 }
 
 
@@ -1707,6 +1709,136 @@ applyPanelLayout();
 loadStoredCredentials();
 
 
+
+// ═══════════════════════════════════════════════════════════════════════════
+// MOBILE EDITOR — contenteditable + highlight.js
+// ═══════════════════════════════════════════════════════════════════════════
+
+let mobileEditorInitialized = false;
+
+function initMobileEditor() {
+    const mobileEd = document.getElementById('mobile-editor');
+    if (!mobileEd || mobileEditorInitialized) return;
+    mobileEditorInitialized = true;
+
+    // Set initial content
+    if (specContent) {
+        mobileEditorHighlight(mobileEd, specContent);
+    }
+
+    // Input handler — debounced highlight + save
+    let mobileDebounce = null;
+    mobileEd.addEventListener('input', () => {
+        const text = getMobileEditorText(mobileEd);
+        specContent = text;
+        editorDirty = true;
+
+        // Sync to hidden textarea (for desktop compatibility)
+        const textarea = document.getElementById('editor');
+        if (textarea) textarea.value = text;
+
+        clearTimeout(mobileDebounce);
+        mobileDebounce = setTimeout(() => {
+            // Re-highlight (preserving cursor)
+            mobileEditorHighlight(mobileEd, text);
+            // Live preview
+            if (showPreview) renderPreview();
+            // Save to server
+            if (editorDirty && currentNoteId) {
+                api('file/update', { note_id: currentNoteId, filename: currentFilename, content: specContent });
+                editorDirty = false;
+            }
+        }, 400);
+    });
+
+    // Paste: plain text only
+    mobileEd.addEventListener('paste', (e) => {
+        e.preventDefault();
+        const text = e.clipboardData.getData('text/plain');
+        document.execCommand('insertText', false, text);
+    });
+
+    // Tab key support
+    mobileEd.addEventListener('keydown', (e) => {
+        if (e.key === 'Tab') {
+            e.preventDefault();
+            document.execCommand('insertText', false, '    ');
+        }
+    });
+}
+
+function getMobileEditorText(el) {
+    // Extract plain text from contenteditable
+    // Use innerText which respects line breaks
+    return el.innerText || '';
+}
+
+function setMobileEditorContent(text) {
+    const mobileEd = document.getElementById('mobile-editor');
+    if (!mobileEd) return;
+    mobileEditorHighlight(mobileEd, text);
+}
+
+function mobileEditorHighlight(el, text) {
+    // Save cursor position
+    const sel = window.getSelection();
+    let cursorOffset = 0;
+    if (sel.rangeCount > 0 && el.contains(sel.anchorNode)) {
+        cursorOffset = getTextOffset(el, sel.anchorNode, sel.anchorOffset);
+    }
+
+    // Render highlighted HTML
+    if (typeof highlightMarkdownEditor === 'function' && text.length > 0) {
+        el.innerHTML = highlightMarkdownEditor(text.endsWith('\n') ? text : text + '\n');
+    } else {
+        el.textContent = text;
+    }
+
+    // Restore cursor
+    if (document.activeElement === el || el.contains(document.activeElement)) {
+        restoreCursor(el, cursorOffset);
+    }
+}
+
+function getTextOffset(root, node, offset) {
+    // Calculate total text offset from start of root to (node, offset)
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, null, false);
+    let total = 0;
+    let current;
+    while ((current = walker.nextNode())) {
+        if (current === node) {
+            return total + offset;
+        }
+        total += current.textContent.length;
+    }
+    return total + offset;
+}
+
+function restoreCursor(el, offset) {
+    const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT, null, false);
+    let remaining = offset;
+    let current;
+    while ((current = walker.nextNode())) {
+        if (remaining <= current.textContent.length) {
+            const range = document.createRange();
+            range.setStart(current, remaining);
+            range.collapse(true);
+            const sel = window.getSelection();
+            sel.removeAllRanges();
+            sel.addRange(range);
+            return;
+        }
+        remaining -= current.textContent.length;
+    }
+    // If we couldn't place cursor, put it at end
+    const range = document.createRange();
+    range.selectNodeContents(el);
+    range.collapse(false);
+    const sel = window.getSelection();
+    sel.removeAllRanges();
+    sel.addRange(range);
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 // MOBILE UI — Accordion + Drawer
 // ═══════════════════════════════════════════════════════════════════════════
@@ -1752,6 +1884,7 @@ function setupMobileUI() {
     }
 
     updateMobileFilename();
+    initMobileEditor();
 }
 
 function teardownMobileUI() {

@@ -1507,6 +1507,9 @@ pre.hljs-pre:hover .copy-btn {
 .visibility-icon.readonly { cursor: not-allowed; opacity: 0.4; }
 
 
+/* Mobile editor (contenteditable) — hidden on desktop */
+#mobile-editor { display: none; }
+
 /* ═══════════════════════════════════════════════════════════════════════════
    MOBILE RESPONSIVE UI (≤ 768px)
    ═══════════════════════════════════════════════════════════════════════════ */
@@ -1590,24 +1593,37 @@ pre.hljs-pre:hover .copy-btn {
     }
     #mobile-section-preview.expanded #preview-container #preview { max-width: 100%; }
 
-    /* Editor in mobile: single-layer textarea (no overlay highlight) */
+    /* Editor in mobile: contenteditable with highlight.js */
     #mobile-section-editor.expanded #editor-container {
         flex: 1; display: flex; flex-direction: column;
-        position: relative;
+        position: relative; overflow: hidden;
     }
     #mobile-section-editor.expanded #editor-highlight { display: none !important; }
-    #mobile-section-editor.expanded #editor {
-        position: static !important;
-        flex: 1; min-height: 80px;
-        font-size: 14px; line-height: 1.5;
-        padding: 12px;
-        border: none; resize: none;
-        background: var(--bg-primary) !important;
-        color: var(--text-primary) !important;
-        -webkit-text-fill-color: var(--text-primary) !important;
-        caret-color: var(--text-primary);
+    #mobile-section-editor.expanded #editor { display: none !important; }
+    #mobile-section-editor.expanded #mobile-editor {
+        display: block !important;
+        flex: 1;
+        min-height: 80px;
         font-family: var(--font-mono);
+        font-size: 14px;
+        line-height: 1.6;
+        padding: 12px;
+        background: var(--bg-primary);
+        color: var(--text-primary);
+        caret-color: var(--accent);
         overflow-y: auto;
+        white-space: pre-wrap;
+        word-wrap: break-word;
+        overflow-wrap: break-word;
+        outline: none;
+        tab-size: 4;
+        -moz-tab-size: 4;
+        -webkit-user-modify: read-write-plaintext-only;
+    }
+    #mobile-section-editor.expanded #mobile-editor:empty::before {
+        content: "Start typing...";
+        color: var(--text-muted);
+        font-style: italic;
     }
 
     /* Chat in mobile — input always visible at bottom */
