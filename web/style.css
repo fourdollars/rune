@@ -1610,29 +1610,38 @@ pre.hljs-pre:hover .copy-btn {
         overflow-y: auto;
     }
 
-    /* Chat in mobile */
+    /* Chat in mobile — input always visible at bottom */
     #mobile-section-chat .mobile-section-body {
         display: flex; flex-direction: column;
+        overflow: hidden !important;
     }
     #mobile-section-chat.expanded .mobile-section-body { display: flex; }
     #mobile-section-chat .chat-messages {
-        flex: 1; overflow-y: auto; padding: 8px;
+        flex: 1 1 0;
+        min-height: 0;
+        overflow-y: auto;
+        padding: 8px;
     }
     #mobile-section-chat .chat-input-area {
-        display: flex; padding: 6px 8px;
+        display: flex !important;
+        flex-shrink: 0;
+        padding: 8px;
         border-top: 1px solid var(--border);
         background: var(--bg-secondary);
         gap: 6px;
+        align-items: flex-end;
     }
     #mobile-section-chat .chat-input-area textarea {
         flex: 1; resize: none; font-size: 14px; padding: 8px;
         border-radius: 6px; border: 1px solid var(--border);
         background: var(--bg-primary); color: var(--text-primary);
         min-height: 36px; max-height: 80px;
+        font-family: var(--font-sans);
     }
     #mobile-section-chat .chat-input-area button {
-        padding: 0 12px; background: var(--accent); color: var(--bg-primary);
+        padding: 8px 14px; background: var(--accent); color: var(--bg-primary);
         border: none; border-radius: 6px; font-size: 16px; cursor: pointer;
+        flex-shrink: 0; height: 36px;
     }
 
     /* ─── Notes Drawer ─── */
