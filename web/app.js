@@ -1514,7 +1514,7 @@ function renderNoteList() {
                     switchNote(s.id, fname);
                 } else {
                     // Already on this note: just switch file
-                    api('file/switch', { note_id: s.id, name: fname });
+                    switchFile(fname);
                 }
                 tree.querySelectorAll('.explorer-row').forEach(r => r.classList.remove('active'));
                 fileRow.classList.add('active');
