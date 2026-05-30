@@ -535,21 +535,23 @@ pub async fn file_rename_handler(
 pub async fn file_switch_handler(
     State(state): State<ServerState>,
     Json(req): Json<FileSwitchReq>,
-) -> Json<ApiResponse> {
+) -> Json<serde_json::Value> {
     if req.note_id.is_empty() {
-        return Json(ApiResponse::err("No note selected"));
+        return Json(serde_json::json!({ "ok": false, "error": "No note selected" }));
     }
 
     let file_path = super::note_markdown_dir(&req.note_id).join(&req.name);
     match tokio::fs::read_to_string(&file_path).await {
         Ok(content) => {
-            let fc = SseMsg::FileContent { filename: req.name, content };
+            let fc = SseMsg::FileContent { filename: req.name.clone(), content: content.clone() };
             broadcast(&state, &fc);
-            Json(ApiResponse::success())
+            // Also return content in HTTP response so callers can use it directly
+            // without waiting for the SSE broadcast to arrive.
+            Json(serde_json::json!({ "ok": true, "content": content, "filename": req.name }))
         }
         Err(e) => {
             tracing::warn!("file/switch failed: note_id={:?} name={:?} path={:?} err={}", req.note_id, req.name, file_path, e);
-            Json(ApiResponse::err(format!("File not found: {}", req.name)))
+            Json(serde_json::json!({ "ok": false, "error": format!("File not found: {}", req.name) }))
         }
     }
 }
