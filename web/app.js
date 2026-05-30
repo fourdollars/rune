@@ -557,8 +557,8 @@ function applyNoNoteLayout() {
         updateEditorVisibility(0);
     }
 
-    if (!currentNoteId && notes.length === 0) {
-        // Truly no notes: expand note panel fullscreen
+    if (!currentNoteId && notes.length === 0 && !isMobile) {
+        // Truly no notes: expand note panel fullscreen (desktop only)
         panelCenter.classList.add('hidden');
         panelRight.classList.add('hidden');
         panelLeft.classList.remove('collapsed');

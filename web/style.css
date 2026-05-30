@@ -1563,7 +1563,6 @@ pre.hljs-pre:hover .copy-btn {
     .mobile-header-action:active { background: var(--bg-tertiary); }
     /* Chat banner: flex row with left (toggle) + right (status/actions) */
     .mobile-chat-banner {
-        display: flex !important;
         align-items: center;
         justify-content: space-between;
     }
@@ -1588,8 +1587,8 @@ pre.hljs-pre:hover .copy-btn {
 
     /* ─── App vertical layout ─── */
     #app { flex-direction: column; padding-top: 44px; height: var(--mobile-vh, 100dvh); }
-    #panel-center { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
-    #center-body { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+    #panel-center, #panel-center.hidden { flex: 1 !important; display: flex !important; flex-direction: column; overflow: hidden; width: auto !important; min-width: auto !important; height: auto !important; padding: 0 !important; }
+    #center-body { flex: 1; display: flex !important; flex-direction: column; overflow: hidden; }
 
     /* ─── Accordion sections ─── */
     .mobile-section {
@@ -1604,7 +1603,6 @@ pre.hljs-pre:hover .copy-btn {
     }
 
     .mobile-section-header {
-        display: flex !important;
         align-items: center;
         height: 36px; min-height: 36px;
         padding: 0 12px;
@@ -1625,15 +1623,15 @@ pre.hljs-pre:hover .copy-btn {
     .mobile-section:not(.expanded) .mobile-section-body { display: none; }
 
     /* Preview in mobile */
-    #mobile-section-preview.expanded #preview-container {
+    #mobile-section-preview.expanded #preview-container, #mobile-section-preview.expanded #preview-container.hidden {
         display: block !important;
         flex: 1; overflow-y: auto; padding: 12px;
     }
     #mobile-section-preview.expanded #preview-container #preview { max-width: 100%; }
 
     /* Editor in mobile: contenteditable with highlight.js */
-    #mobile-section-editor.expanded #editor-container {
-        flex: 1; display: flex; flex-direction: column;
+    #mobile-section-editor.expanded #editor-container, #mobile-section-editor.expanded #editor-container.hidden {
+        flex: 1; display: flex !important; flex-direction: column;
         position: relative; overflow: hidden;
     }
     #mobile-section-editor.expanded #editor-highlight { display: none !important; }
@@ -1677,7 +1675,6 @@ pre.hljs-pre:hover .copy-btn {
         padding: 8px;
     }
     #mobile-section-chat .chat-input-area {
-        display: flex !important;
         flex-shrink: 0;
         padding: 8px;
         border-top: 1px solid var(--border);
@@ -1701,7 +1698,6 @@ pre.hljs-pre:hover .copy-btn {
     /* ─── Notes Drawer ─── */
     .mobile-drawer.hidden { display: none !important; }
     .mobile-drawer:not(.hidden) {
-        display: flex !important;
         position: fixed; inset: 0; z-index: 1000;
         background: var(--bg-primary);
         flex-direction: column;
