@@ -187,6 +187,20 @@ pub async fn run(config: RuneConfig, opts: NotesOptions) {
                 return (StatusCode::FORBIDDEN, body).into_response();
             }
         }
+
+        // Admin-only endpoints: note create/rename/delete
+        if !admin_ok {
+            let path = req.uri().path().to_string();
+            let admin_only_paths = [
+                "/api/note/create",
+                "/api/note/rename",
+                "/api/note/delete",
+            ];
+            if admin_only_paths.iter().any(|p| path == *p) {
+                let body = axum::Json(serde_json::json!({"ok": false, "error": "Admin privileges required"}));
+                return (StatusCode::FORBIDDEN, body).into_response();
+            }
+        }
         next.run(req).await
     }
 
@@ -568,6 +582,20 @@ mod tests {
                 return (StatusCode::FORBIDDEN, body).into_response();
             }
         }
+
+        // Admin-only endpoints: note create/rename/delete
+        if !admin_ok {
+            let path = req.uri().path().to_string();
+            let admin_only_paths = [
+                "/api/note/create",
+                "/api/note/rename",
+                "/api/note/delete",
+            ];
+            if admin_only_paths.iter().any(|p| path == *p) {
+                let body = axum::Json(serde_json::json!({"ok": false, "error": "Admin privileges required"}));
+                return (StatusCode::FORBIDDEN, body).into_response();
+            }
+        }
         next.run(req).await
     }
 
@@ -635,6 +663,20 @@ mod tests {
             ];
             if !allowed_guest_paths.iter().any(|p| path == *p) {
                 let body = axum::Json(serde_json::json!({"ok": false, "error": "Guest access is read-only"}));
+                return (StatusCode::FORBIDDEN, body).into_response();
+            }
+        }
+
+        // Admin-only endpoints: note create/rename/delete
+        if !admin_ok {
+            let path = req.uri().path().to_string();
+            let admin_only_paths = [
+                "/api/note/create",
+                "/api/note/rename",
+                "/api/note/delete",
+            ];
+            if admin_only_paths.iter().any(|p| path == *p) {
+                let body = axum::Json(serde_json::json!({"ok": false, "error": "Admin privileges required"}));
                 return (StatusCode::FORBIDDEN, body).into_response();
             }
         }
@@ -714,6 +756,20 @@ mod tests {
                 return (StatusCode::FORBIDDEN, body).into_response();
             }
         }
+
+        // Admin-only endpoints: note create/rename/delete
+        if !admin_ok {
+            let path = req.uri().path().to_string();
+            let admin_only_paths = [
+                "/api/note/create",
+                "/api/note/rename",
+                "/api/note/delete",
+            ];
+            if admin_only_paths.iter().any(|p| path == *p) {
+                let body = axum::Json(serde_json::json!({"ok": false, "error": "Admin privileges required"}));
+                return (StatusCode::FORBIDDEN, body).into_response();
+            }
+        }
         next.run(req).await
     }
 
@@ -790,6 +846,20 @@ mod tests {
                 return (StatusCode::FORBIDDEN, body).into_response();
             }
         }
+
+        // Admin-only endpoints: note create/rename/delete
+        if !admin_ok {
+            let path = req.uri().path().to_string();
+            let admin_only_paths = [
+                "/api/note/create",
+                "/api/note/rename",
+                "/api/note/delete",
+            ];
+            if admin_only_paths.iter().any(|p| path == *p) {
+                let body = axum::Json(serde_json::json!({"ok": false, "error": "Admin privileges required"}));
+                return (StatusCode::FORBIDDEN, body).into_response();
+            }
+        }
         next.run(req).await
     }
 
@@ -855,6 +925,20 @@ mod tests {
             ];
             if !allowed_guest_paths.iter().any(|p| path == *p) {
                 let body = axum::Json(serde_json::json!({"ok": false, "error": "Guest access is read-only"}));
+                return (StatusCode::FORBIDDEN, body).into_response();
+            }
+        }
+
+        // Admin-only endpoints: note create/rename/delete
+        if !admin_ok {
+            let path = req.uri().path().to_string();
+            let admin_only_paths = [
+                "/api/note/create",
+                "/api/note/rename",
+                "/api/note/delete",
+            ];
+            if admin_only_paths.iter().any(|p| path == *p) {
+                let body = axum::Json(serde_json::json!({"ok": false, "error": "Admin privileges required"}));
                 return (StatusCode::FORBIDDEN, body).into_response();
             }
         }
@@ -926,6 +1010,20 @@ mod tests {
                 return (StatusCode::FORBIDDEN, body).into_response();
             }
         }
+
+        // Admin-only endpoints: note create/rename/delete
+        if !admin_ok {
+            let path = req.uri().path().to_string();
+            let admin_only_paths = [
+                "/api/note/create",
+                "/api/note/rename",
+                "/api/note/delete",
+            ];
+            if admin_only_paths.iter().any(|p| path == *p) {
+                let body = axum::Json(serde_json::json!({"ok": false, "error": "Admin privileges required"}));
+                return (StatusCode::FORBIDDEN, body).into_response();
+            }
+        }
         next.run(req).await
     }
 
@@ -991,6 +1089,20 @@ mod tests {
             ];
             if !allowed_guest_paths.iter().any(|p| path == *p) {
                 let body = axum::Json(serde_json::json!({"ok": false, "error": "Guest access is read-only"}));
+                return (StatusCode::FORBIDDEN, body).into_response();
+            }
+        }
+
+        // Admin-only endpoints: note create/rename/delete
+        if !admin_ok {
+            let path = req.uri().path().to_string();
+            let admin_only_paths = [
+                "/api/note/create",
+                "/api/note/rename",
+                "/api/note/delete",
+            ];
+            if admin_only_paths.iter().any(|p| path == *p) {
+                let body = axum::Json(serde_json::json!({"ok": false, "error": "Admin privileges required"}));
                 return (StatusCode::FORBIDDEN, body).into_response();
             }
         }

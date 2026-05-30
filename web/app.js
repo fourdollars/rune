@@ -435,6 +435,9 @@ function handleMessage(msg) {
             if (mobileRuneTitle && isAdmin) {
                 mobileRuneTitle.classList.add('rune-title-rainbow');
             }
+            // Show mobile new-note button for admin
+            const mobileDrawerActions = document.getElementById('mobile-drawer-actions');
+            if (mobileDrawerActions && isAdmin) mobileDrawerActions.style.display = '';
             if (isAdmin) addSystemMessage('👑 You are connected as admin');
             if (isGuest) {
                 addSystemMessage('👁 Read-only guest mode');
