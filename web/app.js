@@ -344,11 +344,13 @@ async function api(endpoint, body) {
 function handleMessage(msg) {
     switch (msg.type) {
         case 'file_content':
-            currentFilename = msg.filename;
+            // Only accept file_content SSE for current note + current file
+            // (these come from file mutations like AI edits, not from file/switch)
+            if (msg.note_id && msg.note_id !== currentNoteId) break;
+            if (msg.filename !== currentFilename) break;
             specContent = msg.content;
             setEditorValue(msg.content);
             if (showPreview) renderPreview();
-            updateDocTitle(msg.filename);
             break;
         case 'chat_message':
             addChatMessage(msg.nickname, msg.content);
@@ -380,20 +382,23 @@ function handleMessage(msg) {
                     renderNoteList();
                 }
             }
-            // If current file still exists, re-fetch its content (may have been edited by agent)
-            if (currentFilename && fileList.includes(currentFilename)) {
-                api('file/switch', { note_id: currentNoteId, name: currentFilename });
-            } else if (!currentFilename && fileList.length > 0) {
+            // Don't re-fetch current file on every file_list update — that causes SSE race.
+            // Only act when file selection state needs to change.
+            if (!currentFilename && fileList.length > 0) {
                 // No file selected yet, pick first
-                currentFilename = fileList[0];
-                api('file/switch', { note_id: currentNoteId, name: currentFilename });
+                switchFile(fileList[0]);
             } else if (currentFilename && !fileList.includes(currentFilename)) {
-                // Current file was deleted
-                currentFilename = fileList.length > 0 ? fileList[0] : '';
-                if (currentFilename) {
-                    api('file/switch', { note_id: currentNoteId, name: currentFilename });
+                // Current file was deleted — fall back
+                if (fileList.length > 0) {
+                    switchFile(fileList[0]);
+                } else {
+                    currentFilename = '';
+                    specContent = '';
+                    setEditorValue('');
                 }
             }
+            // If current file still exists, keep showing it (content updates
+            // arrive via file_content SSE from actual mutations).
             updateDocTitle(currentFilename);
             try { localStorage.setItem('rune_file', currentFilename); } catch {}
             updateEditorVisibility(fileList.length);
@@ -1160,8 +1165,15 @@ function deleteCurrentFile() {
     api('file/delete', { note_id: currentNoteId, name: currentFilename });
 }
 
-function switchFile(name) {
-    api('file/switch', { note_id: currentNoteId, name });
+async function switchFile(name) {
+    const data = await api('file/switch', { note_id: currentNoteId, name });
+    if (!data || !data.ok) return;
+    currentFilename = data.filename || name;
+    specContent = data.content || '';
+    setEditorValue(specContent);
+    if (showPreview) renderPreview();
+    updateDocTitle(currentFilename);
+    try { localStorage.setItem('rune_file', currentFilename); } catch {}
 }
 
 function renameCurrentFile(newName) {

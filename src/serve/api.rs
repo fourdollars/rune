@@ -57,7 +57,7 @@ pub enum SseMsg {
     #[serde(rename = "file_list")]
     FileList { files: Vec<FileEntry>, active: String },
     #[serde(rename = "file_content")]
-    FileContent { filename: String, content: String },
+    FileContent { note_id: String, filename: String, content: String },
     #[serde(rename = "file_deleted")]
     FileDeleted { filename: String },
     #[serde(rename = "note_list")]
@@ -480,8 +480,8 @@ pub async fn file_create_handler(
     // Broadcast updated file list
     broadcast_file_list(&state, &req.note_id).await;
 
-    // Broadcast file content
-    let fc = SseMsg::FileContent { filename: req.name, content: empty };
+    // Broadcast file content (with note_id for client-side filtering)
+    let fc = SseMsg::FileContent { note_id: req.note_id.clone(), filename: req.name, content: empty };
     broadcast(&state, &fc);
 
     Json(ApiResponse::success())
@@ -543,10 +543,8 @@ pub async fn file_switch_handler(
     let file_path = super::note_markdown_dir(&req.note_id).join(&req.name);
     match tokio::fs::read_to_string(&file_path).await {
         Ok(content) => {
-            let fc = SseMsg::FileContent { filename: req.name.clone(), content: content.clone() };
-            broadcast(&state, &fc);
-            // Also return content in HTTP response so callers can use it directly
-            // without waiting for the SSE broadcast to arrive.
+            // Per-client action: return content via HTTP only, no broadcast.
+            // SSE file_content is reserved for actual file mutations (update/create).
             Json(serde_json::json!({ "ok": true, "content": content, "filename": req.name }))
         }
         Err(e) => {
@@ -573,7 +571,7 @@ pub async fn file_update_handler(
         return Json(ApiResponse::err(format!("Failed to write: {}", e)));
     }
 
-    let fc = SseMsg::FileContent { filename: fname, content: req.content };
+    let fc = SseMsg::FileContent { note_id: req.note_id.clone(), filename: fname, content: req.content };
     broadcast(&state, &fc);
     Json(ApiResponse::success())
 }
