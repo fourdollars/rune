@@ -5,7 +5,7 @@
     <link rel="icon" type="image/svg+xml" href="/favicon.svg">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>ᚱᚢᚾᛖ</title>
-    <link rel="stylesheet" href="/assets/style.css?v=589e218">
+    <link rel="stylesheet" href="/assets/style.css?v=1b50ecd">
     <link rel="stylesheet" href="/assets/highlight-dark.min.css">
 </head>
 <body>
@@ -131,7 +131,7 @@
         <a href="/notes/" target="_blank" rel="noopener" id="mobile-rune-title" class="title-link"><span class="rune-char">ᚱ</span><span class="rune-char">ᚢ</span><span class="rune-char">ᚾ</span><span class="rune-char">ᛖ</span></a>
         <span id="mobile-model-name" class="mobile-model-name" onclick="showModelDialog()"></span>
         <span id="mobile-filename"></span>
-        <span id="mobile-status" class="status idle">🟢</span>
+        <button id="mobile-logout-btn" class="mobile-header-action" onclick="showLogoutDialog()" title="Logout">⏏</button>
     </div>
 
     <!-- Mobile Notes Drawer (hidden by default) -->
@@ -190,8 +190,13 @@
                     </div>
                 </div>
                 <div class="mobile-section" id="mobile-section-chat">
-                    <div class="mobile-section-header" onclick="toggleMobileSection('chat')">
-                        <span class="mobile-section-chevron">▼</span> Chat <span id="mobile-chat-status" class="status idle">●</span>
+                    <div class="mobile-section-header mobile-chat-banner">
+                        <span class="mobile-chat-banner-left" onclick="toggleMobileSection('chat')"><span class="mobile-section-chevron">▼</span> Chat</span>
+                        <span class="mobile-chat-banner-right">
+                            <span id="mobile-status" class="status idle">🟢</span>
+                            <button class="mobile-chat-action" onclick="event.stopPropagation(); showSearchDialog()" title="Search">🔍</button>
+                            <button class="mobile-chat-action" onclick="event.stopPropagation(); showArchiveDialog()" title="Archive">📦</button>
+                        </span>
                     </div>
                     <div class="mobile-section-body"></div>
                 </div>
@@ -245,6 +250,6 @@
     </script>
     <script src="/assets/marked.min.js"></script>
     <script src="/assets/highlight.min.js"></script>
-    <script src="/assets/app.js?v=589e218"></script>
+    <script src="/assets/app.js?v=1b50ecd"></script>
 </body>
 </html>
