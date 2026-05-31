@@ -1593,8 +1593,9 @@ pre.hljs-pre:hover .copy-btn {
     }
     .mobile-model-name {
         font-size: 11px; color: var(--text-muted);
-        cursor: pointer; max-width: 80px;
+        cursor: pointer;
         overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+        max-width: 120px; text-align: center;
     }
     .mobile-model-name:active { color: var(--accent); }
     .mobile-header-action {
@@ -1604,7 +1605,7 @@ pre.hljs-pre:hover .copy-btn {
         border-radius: 4px;
     }
     .mobile-header-action:active { background: var(--bg-tertiary); }
-    /* Chat banner: flex row with left (toggle) + right (status/actions) */
+    /* Chat banner: flex row with left (toggle) + center (model) + right (actions) */
     .mobile-chat-banner {
         align-items: center;
         justify-content: space-between;
@@ -1613,8 +1614,12 @@ pre.hljs-pre:hover .copy-btn {
         display: flex; align-items: center; gap: 6px;
         cursor: pointer; flex: 1;
     }
+    .mobile-chat-banner-center {
+        display: flex; align-items: center; justify-content: center;
+        flex: 1; cursor: pointer;
+    }
     .mobile-chat-banner-right {
-        display: flex; align-items: center; gap: 4px;
+        display: flex; align-items: center; gap: 4px; flex: 1; justify-content: flex-end;
     }
     .mobile-chat-action {
         background: none; border: none;

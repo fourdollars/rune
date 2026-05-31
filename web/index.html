@@ -129,7 +129,6 @@
     <div id="mobile-header">
         <button id="mobile-drawer-btn" onclick="openNotesDrawer()">☰</button>
         <a href="/notes/" target="_blank" rel="noopener" id="mobile-rune-title" class="title-link"><span class="rune-char">ᚱ</span><span class="rune-char">ᚢ</span><span class="rune-char">ᚾ</span><span class="rune-char">ᛖ</span></a>
-        <span id="mobile-model-name" class="mobile-model-name" onclick="showModelDialog()"></span>
         <span id="mobile-filename"></span>
         <button id="mobile-logout-btn" class="mobile-header-action" onclick="showLogoutDialog()" title="Logout">⏏</button>
     </div>
@@ -194,6 +193,9 @@
                 <div class="mobile-section" id="mobile-section-chat">
                     <div class="mobile-section-header mobile-chat-banner">
                         <span class="mobile-chat-banner-left" onclick="toggleMobileSection('chat')"><span class="mobile-section-chevron">▼</span> Chat <span id="mobile-status" class="status idle">🟢</span></span>
+                        <span class="mobile-chat-banner-center" onclick="event.stopPropagation(); showModelDialog()">
+                            <span id="mobile-model-name" class="mobile-model-name"></span>
+                        </span>
                         <span class="mobile-chat-banner-right">
                             <button class="mobile-chat-action" onclick="event.stopPropagation(); showSearchDialog()" title="Search">🔍</button>
                             <button class="mobile-chat-action" onclick="event.stopPropagation(); showArchiveDialog()" title="Archive">📦</button>
