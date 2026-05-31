@@ -346,6 +346,16 @@ function connect(noteId) {
                     document.getElementById('nickname-modal').classList.remove('hidden');
                     return;
                 }
+                // Handle note not found: stop reconnect, switch to another note
+                if (msg.type === 'error' && msg.message && (msg.message.includes('Note not found') || msg.message.includes('note_id is required'))) {
+                    if (evtSource) { evtSource.close(); evtSource = null; }
+                    isConnected = false;
+                    currentNoteId = '';
+                    localStorage.removeItem('rune_note');
+                    addSystemMessage('Note was deleted. Switching...');
+                    fetchNoteListAndConnect();
+                    return;
+                }
                 handleMessage(msg);
             } catch(err) {
                 console.error('Parse error:', err, e.data);
@@ -1760,11 +1770,18 @@ async function deleteCurrentNote() {
     if (!settingsNoteId) return;
     const ok = await showDialog({ title: 'Delete Note', message: 'Delete this note? Chat history will be preserved.', danger: true, okLabel: 'Delete Note' });
     if (!ok) return;
-    api('note/delete', { note_id: settingsNoteId });
+    const deletedId = settingsNoteId;
+    api('note/delete', { note_id: deletedId });
     hideNoteSettings();
-    if (currentNoteId === settingsNoteId) {
+    if (currentNoteId === deletedId) {
+        // Close current SSE to prevent reconnect loop to deleted note
+        if (evtSource) { evtSource.close(); evtSource = null; }
+        isConnected = false;
         currentNoteId = '';
+        localStorage.removeItem('rune_note');
         updateChatInputState();
+        // Switch to another available note
+        fetchNoteListAndConnect();
     }
 }
 
