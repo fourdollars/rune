@@ -5,7 +5,7 @@
 
 // --- State ---
 let showEdit    = true;
-let showPreview = false;
+let showPreview = true;
 let _editorStateRestored = false;
 let currentFilename = '';
 let fileList = [];
@@ -821,7 +821,7 @@ function updateEditorVisibility(fileCount) {
                 const se = localStorage.getItem('rune_show_edit');
                 const sp = localStorage.getItem('rune_show_preview');
                 showEdit    = se !== null ? se === '1' : true;
-                showPreview = sp !== null ? sp === '1' : false;
+                showPreview = sp !== null ? sp === '1' : true;
             } catch {}
         }
     }

@@ -814,10 +814,12 @@ pre.hljs-pre:hover .copy-btn {
 #center-body.split-view #editor-container {
     border-right: 1px solid var(--border);
     flex: 1;
+    order: 1;
 }
 #center-body.split-view #preview-container {
     flex: 1;
     overflow-y: auto;
+    order: 2;
 }
 
 /* --- Chat header with toggle buttons --- */
@@ -1598,6 +1600,7 @@ pre.hljs-pre:hover .copy-btn {
     #app { flex-direction: column; padding-top: 44px; height: var(--mobile-vh, 100dvh); }
     #panel-center, #panel-center.hidden { flex: 1 !important; display: flex !important; flex-direction: column; overflow: hidden; width: auto !important; min-width: auto !important; height: auto !important; padding: 0 !important; }
     #center-body { flex: 1; display: flex !important; flex-direction: column; overflow: hidden; }
+    #center-body.split-view { flex-direction: column !important; }
 
     /* ─── Accordion sections ─── */
     .mobile-section,
