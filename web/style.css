@@ -800,6 +800,29 @@ pre.hljs-pre:hover .copy-btn {
     border: none !important;
 }
 
+/* --- split-title bar (desktop split-view only) --- */
+#split-title {
+    display: none;
+    height: 36px;
+    min-height: 36px;
+    flex-shrink: 0;
+    align-items: center;
+    justify-content: center;
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--text-secondary);
+    background: var(--bg-secondary);
+    border-bottom: 1px solid var(--border);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    padding: 0 12px;
+    order: 0;
+}
+#center-body.split-view #split-title {
+    display: flex;
+}
+
 /* --- center-body --- */
 #center-body {
     flex: 1;
@@ -1601,6 +1624,7 @@ pre.hljs-pre:hover .copy-btn {
     #panel-center, #panel-center.hidden { flex: 1 !important; display: flex !important; flex-direction: column; overflow: hidden; width: auto !important; min-width: auto !important; height: auto !important; padding: 0 !important; }
     #center-body { flex: 1; display: flex !important; flex-direction: column; overflow: hidden; }
     #center-body.split-view { flex-direction: column !important; }
+    #split-title { display: none !important; }
 
     /* ─── Accordion sections ─── */
     .mobile-section,

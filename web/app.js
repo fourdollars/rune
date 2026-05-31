@@ -491,7 +491,7 @@ function handleMessage(msg) {
                 const target = (saved && notes.find(s => s.id === saved)) ? saved : (notes.length > 0 ? notes[0].id : '');
                 if (target) switchNote(target);
             }
-            updatePageTitle();
+            updateDocTitle(currentFilename);
             const newBtn = document.getElementById('btn-new-note');
             if (newBtn && isAdmin) newBtn.classList.remove('hidden');
             break;
@@ -500,7 +500,7 @@ function handleMessage(msg) {
             updateChatInputState();
             document.getElementById('chat-messages').innerHTML = '';
             renderNoteList();
-            updatePageTitle();
+            updateDocTitle(currentFilename);
             const overlay2 = document.getElementById('context-overlay');
             if (overlay2) overlay2.classList.add('hidden');
             break;
@@ -898,6 +898,8 @@ function applyPanelLayout() {
             localStorage.setItem('rune_show_preview', showPreview ? '1' : '0');
         } catch {}
     }
+    // Update split-title bar and mobile filename
+    updateDocTitle(currentFilename);
 }
 
 function toggleEdit() {
@@ -1156,8 +1158,23 @@ function confirmLogout() {
 // --- File management ---
 function updateDocTitle(name) {
     updatePageTitle();
+    const s = notes.find(x => x.id === currentNoteId);
+    const noteName = s ? s.name : '';
+    const file = (fileList && fileList.length > 0) ? currentFilename : null;
+    // Mobile header: show "{note name} - {filename}" (or just note name if no file)
     const mfn = document.getElementById('mobile-filename');
-    if (mfn) mfn.textContent = name || '';
+    if (mfn) {
+        if (noteName && file) mfn.textContent = noteName + ' - ' + file;
+        else if (noteName) mfn.textContent = noteName;
+        else mfn.textContent = file || '';
+    }
+    // Desktop split-view title bar
+    const splitTitle = document.getElementById('split-title');
+    if (splitTitle) {
+        if (noteName && file) splitTitle.textContent = noteName + ' - ' + file;
+        else if (noteName) splitTitle.textContent = noteName;
+        else splitTitle.textContent = file || '';
+    }
 }
 
 function updatePageTitle() {
