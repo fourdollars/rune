@@ -236,6 +236,7 @@ pub async fn run(config: RuneConfig, opts: NotesOptions) {
             let allowed_guest_paths = [
                 "/api/note/switch",
                 "/api/file/switch",
+                "/api/system-prompt",
             ];
             if !allowed_guest_paths.iter().any(|p| path == *p) {
                 let body = axum::Json(serde_json::json!({"ok": false, "error": "Guest access is read-only"}));
@@ -254,7 +255,10 @@ pub async fn run(config: RuneConfig, opts: NotesOptions) {
                 "/api/note/visibility",
                 "/api/file/visibility",
             ];
-            if admin_only_paths.iter().any(|p| path == *p) {
+            // system-prompt POST is admin-only (GET is open to all authenticated)
+            let is_admin_only = admin_only_paths.iter().any(|p| path == *p)
+                || (path == "/api/system-prompt" && req.method() == axum::http::Method::POST);
+            if is_admin_only {
                 let body = axum::Json(serde_json::json!({"ok": false, "error": "Admin privileges required"}));
                 return (StatusCode::FORBIDDEN, body).into_response();
             }
@@ -636,6 +640,7 @@ mod tests {
             let allowed_guest_paths = [
                 "/api/note/switch",
                 "/api/file/switch",
+                "/api/system-prompt",
             ];
             if !allowed_guest_paths.iter().any(|p| path == *p) {
                 let body = axum::Json(serde_json::json!({"ok": false, "error": "Guest access is read-only"}));
@@ -654,7 +659,10 @@ mod tests {
                 "/api/note/visibility",
                 "/api/file/visibility",
             ];
-            if admin_only_paths.iter().any(|p| path == *p) {
+            // system-prompt POST is admin-only (GET is open to all authenticated)
+            let is_admin_only = admin_only_paths.iter().any(|p| path == *p)
+                || (path == "/api/system-prompt" && req.method() == axum::http::Method::POST);
+            if is_admin_only {
                 let body = axum::Json(serde_json::json!({"ok": false, "error": "Admin privileges required"}));
                 return (StatusCode::FORBIDDEN, body).into_response();
             }
@@ -723,6 +731,7 @@ mod tests {
             let allowed_guest_paths = [
                 "/api/note/switch",
                 "/api/file/switch",
+                "/api/system-prompt",
             ];
             if !allowed_guest_paths.iter().any(|p| path == *p) {
                 let body = axum::Json(serde_json::json!({"ok": false, "error": "Guest access is read-only"}));
@@ -741,7 +750,10 @@ mod tests {
                 "/api/note/visibility",
                 "/api/file/visibility",
             ];
-            if admin_only_paths.iter().any(|p| path == *p) {
+            // system-prompt POST is admin-only (GET is open to all authenticated)
+            let is_admin_only = admin_only_paths.iter().any(|p| path == *p)
+                || (path == "/api/system-prompt" && req.method() == axum::http::Method::POST);
+            if is_admin_only {
                 let body = axum::Json(serde_json::json!({"ok": false, "error": "Admin privileges required"}));
                 return (StatusCode::FORBIDDEN, body).into_response();
             }
@@ -816,6 +828,7 @@ mod tests {
             let allowed_guest_paths = [
                 "/api/note/switch",
                 "/api/file/switch",
+                "/api/system-prompt",
             ];
             if !allowed_guest_paths.iter().any(|p| path == *p) {
                 let body = axum::Json(serde_json::json!({"ok": false, "error": "Guest access is read-only"}));
@@ -834,7 +847,10 @@ mod tests {
                 "/api/note/visibility",
                 "/api/file/visibility",
             ];
-            if admin_only_paths.iter().any(|p| path == *p) {
+            // system-prompt POST is admin-only (GET is open to all authenticated)
+            let is_admin_only = admin_only_paths.iter().any(|p| path == *p)
+                || (path == "/api/system-prompt" && req.method() == axum::http::Method::POST);
+            if is_admin_only {
                 let body = axum::Json(serde_json::json!({"ok": false, "error": "Admin privileges required"}));
                 return (StatusCode::FORBIDDEN, body).into_response();
             }
@@ -909,6 +925,7 @@ mod tests {
             let allowed_guest_paths = [
                 "/api/note/switch",
                 "/api/file/switch",
+                "/api/system-prompt",
             ];
             if !allowed_guest_paths.iter().any(|p| path == *p) {
                 let body = axum::Json(serde_json::json!({"ok": false, "error": "Guest access is read-only"}));
@@ -927,7 +944,10 @@ mod tests {
                 "/api/note/visibility",
                 "/api/file/visibility",
             ];
-            if admin_only_paths.iter().any(|p| path == *p) {
+            // system-prompt POST is admin-only (GET is open to all authenticated)
+            let is_admin_only = admin_only_paths.iter().any(|p| path == *p)
+                || (path == "/api/system-prompt" && req.method() == axum::http::Method::POST);
+            if is_admin_only {
                 let body = axum::Json(serde_json::json!({"ok": false, "error": "Admin privileges required"}));
                 return (StatusCode::FORBIDDEN, body).into_response();
             }
@@ -994,6 +1014,7 @@ mod tests {
             let allowed_guest_paths = [
                 "/api/note/switch",
                 "/api/file/switch",
+                "/api/system-prompt",
             ];
             if !allowed_guest_paths.iter().any(|p| path == *p) {
                 let body = axum::Json(serde_json::json!({"ok": false, "error": "Guest access is read-only"}));
@@ -1012,7 +1033,10 @@ mod tests {
                 "/api/note/visibility",
                 "/api/file/visibility",
             ];
-            if admin_only_paths.iter().any(|p| path == *p) {
+            // system-prompt POST is admin-only (GET is open to all authenticated)
+            let is_admin_only = admin_only_paths.iter().any(|p| path == *p)
+                || (path == "/api/system-prompt" && req.method() == axum::http::Method::POST);
+            if is_admin_only {
                 let body = axum::Json(serde_json::json!({"ok": false, "error": "Admin privileges required"}));
                 return (StatusCode::FORBIDDEN, body).into_response();
             }
@@ -1079,6 +1103,7 @@ mod tests {
             let allowed_guest_paths = [
                 "/api/note/switch",
                 "/api/file/switch",
+                "/api/system-prompt",
             ];
             if !allowed_guest_paths.iter().any(|p| path == *p) {
                 let body = axum::Json(serde_json::json!({"ok": false, "error": "Guest access is read-only"}));
@@ -1097,7 +1122,10 @@ mod tests {
                 "/api/note/visibility",
                 "/api/file/visibility",
             ];
-            if admin_only_paths.iter().any(|p| path == *p) {
+            // system-prompt POST is admin-only (GET is open to all authenticated)
+            let is_admin_only = admin_only_paths.iter().any(|p| path == *p)
+                || (path == "/api/system-prompt" && req.method() == axum::http::Method::POST);
+            if is_admin_only {
                 let body = axum::Json(serde_json::json!({"ok": false, "error": "Admin privileges required"}));
                 return (StatusCode::FORBIDDEN, body).into_response();
             }
@@ -1164,6 +1192,7 @@ mod tests {
             let allowed_guest_paths = [
                 "/api/note/switch",
                 "/api/file/switch",
+                "/api/system-prompt",
             ];
             if !allowed_guest_paths.iter().any(|p| path == *p) {
                 let body = axum::Json(serde_json::json!({"ok": false, "error": "Guest access is read-only"}));
@@ -1182,7 +1211,10 @@ mod tests {
                 "/api/note/visibility",
                 "/api/file/visibility",
             ];
-            if admin_only_paths.iter().any(|p| path == *p) {
+            // system-prompt POST is admin-only (GET is open to all authenticated)
+            let is_admin_only = admin_only_paths.iter().any(|p| path == *p)
+                || (path == "/api/system-prompt" && req.method() == axum::http::Method::POST);
+            if is_admin_only {
                 let body = axum::Json(serde_json::json!({"ok": false, "error": "Admin privileges required"}));
                 return (StatusCode::FORBIDDEN, body).into_response();
             }
