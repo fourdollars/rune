@@ -817,10 +817,19 @@ pre.hljs-pre:hover .copy-btn {
     text-overflow: ellipsis;
     white-space: nowrap;
     padding: 0 12px;
-    order: 0;
+    width: 100%;
 }
 #center-body.split-view #split-title {
     display: flex;
+}
+
+/* --- split-body: contains editor + preview side-by-side --- */
+#split-body {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    overflow: hidden;
 }
 
 /* --- center-body --- */
@@ -831,7 +840,7 @@ pre.hljs-pre:hover .copy-btn {
     min-height: 0;
     overflow: hidden;
 }
-#center-body.split-view {
+#center-body.split-view #split-body {
     flex-direction: row;
 }
 #center-body.split-view #editor-container {
@@ -1623,8 +1632,9 @@ pre.hljs-pre:hover .copy-btn {
     #app { flex-direction: column; padding-top: 44px; height: var(--mobile-vh, 100dvh); }
     #panel-center, #panel-center.hidden { flex: 1 !important; display: flex !important; flex-direction: column; overflow: hidden; width: auto !important; min-width: auto !important; height: auto !important; padding: 0 !important; }
     #center-body { flex: 1; display: flex !important; flex-direction: column; overflow: hidden; }
-    #center-body.split-view { flex-direction: column !important; }
+    #center-body.split-view #split-body { flex-direction: column !important; }
     #split-title { display: none !important; }
+    #split-body { flex: 1; min-height: 0; overflow: hidden; }
 
     /* ─── Accordion sections ─── */
     .mobile-section,
