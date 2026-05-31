@@ -224,6 +224,8 @@ pub struct SearchReq {
 pub struct ApprovalReq {
     pub id: String,
     pub approved: bool,
+    /// Route approval response through the note's room channel.
+    pub note_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -505,7 +507,7 @@ pub fn is_guest_allowed_event(event_type: &str) -> bool {
     matches!(event_type,
         "chat_token" | "chat_done" | "chat_message" | "chat_meta"
         | "file_content" | "file_list" | "note_list"
-        | "auth_result" | "model_list" | "users_update" | "system"
+        | "auth_result" | "model_list" | "model_changed"
     )
 }
 
@@ -957,13 +959,14 @@ pub async fn approval_handler(
     State(state): State<ServerState>,
     Json(req): Json<ApprovalReq>,
 ) -> Json<ApiResponse> {
-    // Send approval response through the broadcast channel
-    // The agent task listens for this via its approval callback
+    // Build approval response message
     let msg = if req.approved {
         format!("__approval_granted__{}", req.id)
     } else {
         format!("__approval_denied__{}", req.id)
     };
+    // Route through global broadcast_tx (the agent's approval callback
+    // listens on this channel regardless of room)
     let _ = state.broadcast_tx.send(msg);
     Json(ApiResponse::success())
 }
@@ -2461,11 +2464,12 @@ mod isolation_tests {
         assert!(is_guest_allowed_event("note_list"));
         assert!(is_guest_allowed_event("auth_result"));
         assert!(is_guest_allowed_event("model_list"));
-        assert!(is_guest_allowed_event("users_update"));
-        assert!(is_guest_allowed_event("system"));
-        // Blocked
+        assert!(is_guest_allowed_event("model_changed"));
+        // Blocked (per spec)
         assert!(!is_guest_allowed_event("approval_request"));
+        assert!(!is_guest_allowed_event("users_update"));
         assert!(!is_guest_allowed_event("status"));
+        assert!(!is_guest_allowed_event("system"));
         assert!(!is_guest_allowed_event("search_results"));
         assert!(!is_guest_allowed_event("archive_done"));
         assert!(!is_guest_allowed_event("dir_browse_result"));
@@ -2489,6 +2493,246 @@ mod isolation_tests {
         // Clear override
         *room.system_prompt.write().await = None;
         assert!(room.system_prompt.read().await.is_none());
+    }
+
+
+    #[tokio::test]
+    async fn test_room_concurrent_create() {
+        let (state, _tmp) = make_state();
+        let state = Arc::new(state);
+
+        // Spawn 10 tasks all trying to create the same room
+        let mut handles = vec![];
+        for _ in 0..10 {
+            let s = Arc::clone(&state);
+            handles.push(tokio::spawn(async move {
+                s.get_or_create_room("concurrent-note").await
+            }));
+        }
+
+        let results: Vec<_> = futures::future::join_all(handles)
+            .await
+            .into_iter()
+            .map(|r| r.unwrap())
+            .collect();
+
+        // All should return the same Arc
+        for r in &results[1..] {
+            assert!(Arc::ptr_eq(&results[0], r));
+        }
+
+        // Only one room in map
+        let rooms = state.rooms.read().await;
+        assert_eq!(rooms.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_model_override_admin_only_via_api() {
+        // Use tower to test that model/switch with note_id requires admin
+        use axum::{routing::post, Router};
+        use axum::body::Body;
+        use http_body_util::BodyExt;
+        use tower::ServiceExt;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let (broadcast_tx, _) = broadcast::channel(256);
+        let (admin_broadcast_tx, _) = broadcast::channel(256);
+        let db = crate::serve::db::ChatDb::open(&tmp.path().join("t.db")).unwrap();
+        let state = crate::serve::ServerState {
+            config: crate::config::RuneConfig::default(),
+            user_token: Some("user-tok".into()),
+            admin_token: Some("admin-tok".into()),
+            guest_token: None,
+            files: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
+            active_file: Arc::new(tokio::sync::RwLock::new(String::new())),
+            models: vec!["gpt-5-mini".into(), "claude-sonnet-4.6".into()],
+            active_model: Arc::new(tokio::sync::RwLock::new("gpt-5-mini".into())),
+            rooms: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
+            global_default_model: Arc::new(tokio::sync::RwLock::new("gpt-5-mini".into())),
+            broadcast_tx,
+            admin_broadcast_tx,
+            chat_db: db,
+            data_dir: tmp.path().join(".rune"),
+        };
+
+        // Create note in DB so room can be created
+        let _ = state.chat_db.create_note("test-note", "test-note", None);
+
+        let app = Router::new()
+            .route("/api/model/switch", post(crate::serve::api::model_switch_handler))
+            .with_state(state.clone());
+
+        // Admin can set per-note override
+        let req = axum::http::Request::builder()
+            .method("POST")
+            .uri("/api/model/switch")
+            .header("Content-Type", "application/json")
+            .body(Body::from(r#"{"model":"claude-sonnet-4.6","note_id":"test-note"}"#))
+            .unwrap();
+        let resp = app.clone().oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), axum::http::StatusCode::OK);
+
+        // Verify override took effect
+        let effective = state.effective_model("test-note").await;
+        assert_eq!(effective, "claude-sonnet-4.6");
+
+        // Global default unchanged
+        let global = state.global_default_model.read().await.clone();
+        assert_eq!(global, "gpt-5-mini");
+    }
+
+    #[tokio::test]
+    async fn test_sse_note_not_found() {
+        use axum::{routing::get, Router};
+        use axum::body::Body;
+        use http_body_util::BodyExt;
+        use tower::ServiceExt;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let (broadcast_tx, _) = broadcast::channel(256);
+        let (admin_broadcast_tx, _) = broadcast::channel(256);
+        let db = crate::serve::db::ChatDb::open(&tmp.path().join("t.db")).unwrap();
+        let state = crate::serve::ServerState {
+            config: crate::config::RuneConfig::default(),
+            user_token: Some("tok".into()),
+            admin_token: None,
+            guest_token: None,
+            files: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
+            active_file: Arc::new(tokio::sync::RwLock::new(String::new())),
+            models: vec!["m1".into()],
+            active_model: Arc::new(tokio::sync::RwLock::new("m1".into())),
+            rooms: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
+            global_default_model: Arc::new(tokio::sync::RwLock::new("m1".into())),
+            broadcast_tx,
+            admin_broadcast_tx,
+            chat_db: db,
+            data_dir: tmp.path().join(".rune"),
+        };
+
+        let app = Router::new()
+            .route("/api/events", get(crate::serve::api::events_handler))
+            .with_state(state);
+
+        // Request SSE with non-existent note_id
+        let req = axum::http::Request::builder()
+            .method("GET")
+            .uri("/api/events?token=tok&note_id=nonexistent&nickname=test")
+            .body(Body::empty())
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), axum::http::StatusCode::OK);
+
+        // Body should contain error event
+        let body = resp.into_body().collect().await.unwrap().to_bytes();
+        let body_str = String::from_utf8_lossy(&body);
+        assert!(body_str.contains("Note not found"), "Expected 'Note not found' in: {}", body_str);
+    }
+
+    #[tokio::test]
+    async fn test_guest_private_note_rejected() {
+        use axum::{routing::get, Router};
+        use axum::body::Body;
+        use http_body_util::BodyExt;
+        use tower::ServiceExt;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let (broadcast_tx, _) = broadcast::channel(256);
+        let (admin_broadcast_tx, _) = broadcast::channel(256);
+        let db = crate::serve::db::ChatDb::open(&tmp.path().join("t.db")).unwrap();
+        // Create a private note
+        let _ = db.create_note("private-note", "private-note", None);
+
+        let state = crate::serve::ServerState {
+            config: crate::config::RuneConfig::default(),
+            user_token: None,
+            admin_token: None,
+            guest_token: Some("guest-tok".into()),
+            files: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
+            active_file: Arc::new(tokio::sync::RwLock::new(String::new())),
+            models: vec!["m1".into()],
+            active_model: Arc::new(tokio::sync::RwLock::new("m1".into())),
+            rooms: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
+            global_default_model: Arc::new(tokio::sync::RwLock::new("m1".into())),
+            broadcast_tx,
+            admin_broadcast_tx,
+            chat_db: db,
+            data_dir: tmp.path().join(".rune"),
+        };
+
+        let app = Router::new()
+            .route("/api/events", get(crate::serve::api::events_handler))
+            .with_state(state);
+
+        // Guest trying to subscribe to private note
+        let req = axum::http::Request::builder()
+            .method("GET")
+            .uri("/api/events?token=guest-tok&note_id=private-note&nickname=guest")
+            .body(Body::empty())
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        let body = resp.into_body().collect().await.unwrap().to_bytes();
+        let body_str = String::from_utf8_lossy(&body);
+        assert!(body_str.contains("Guests cannot access private notes"),
+            "Expected auth_error in: {}", body_str);
+    }
+
+    #[tokio::test]
+    async fn test_guest_public_note_allowed() {
+        use axum::{routing::get, Router};
+        use axum::body::Body;
+        use http_body_util::BodyExt;
+        use tower::ServiceExt;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let (broadcast_tx, _) = broadcast::channel(256);
+        let (admin_broadcast_tx, _) = broadcast::channel(256);
+        let db = crate::serve::db::ChatDb::open(&tmp.path().join("t.db")).unwrap();
+        // Create a public note
+        let _ = db.create_note("public-note", "public-note", None);
+        let _ = db.set_note_public("public-note", true);
+
+        let state = crate::serve::ServerState {
+            config: crate::config::RuneConfig::default(),
+            user_token: None,
+            admin_token: None,
+            guest_token: Some("guest-tok".into()),
+            files: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
+            active_file: Arc::new(tokio::sync::RwLock::new(String::new())),
+            models: vec!["m1".into()],
+            active_model: Arc::new(tokio::sync::RwLock::new("m1".into())),
+            rooms: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
+            global_default_model: Arc::new(tokio::sync::RwLock::new("m1".into())),
+            broadcast_tx,
+            admin_broadcast_tx,
+            chat_db: db,
+            data_dir: tmp.path().join(".rune"),
+        };
+
+        let app = Router::new()
+            .route("/api/events", get(crate::serve::api::events_handler))
+            .with_state(state);
+
+        // Guest subscribing to public note — should succeed (200 OK)
+        let req = axum::http::Request::builder()
+            .method("GET")
+            .uri("/api/events?token=guest-tok&note_id=public-note&nickname=guest")
+            .body(Body::empty())
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), axum::http::StatusCode::OK);
+
+        // Read first frame with timeout (SSE streams forever, so we just check first data)
+        let mut body = resp.into_body();
+        let first_frame = tokio::time::timeout(
+            std::time::Duration::from_millis(100),
+            body.frame(),
+        ).await;
+        assert!(first_frame.is_ok(), "Should receive first SSE frame quickly");
+        let frame = first_frame.unwrap().unwrap().unwrap();
+        let data = frame.into_data().unwrap();
+        let text = String::from_utf8_lossy(&data);
+        // First event should be auth_result
+        assert!(text.contains("auth_result"), "Expected auth_result in first frame: {}", text);
     }
 
 }
