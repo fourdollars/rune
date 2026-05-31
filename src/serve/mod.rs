@@ -93,6 +93,13 @@ impl Default for NotesOptions {
 
 /// Start the serve mode.
 pub async fn run(config: RuneConfig, opts: NotesOptions) {
+    // Refuse to start without at least one token configured (early return; safe in tests)
+    if opts.user_token.is_none() && opts.admin_token.is_none() && opts.guest_token.is_none() {
+        eprintln!("  ✗ ERROR: No tokens configured. At least one of user_token, admin_token, or guest_token must be set in [notes] config.");
+        eprintln!("    Without tokens, no one can access the server.");
+        return;
+    }
+
     // Files are loaded per-session on client connect/switch; start empty
     let initial_files = std::collections::HashMap::new();
 
@@ -257,13 +264,6 @@ pub async fn run(config: RuneConfig, opts: NotesOptions) {
     let addr = SocketAddr::new(opts.bind, opts.port);
     info!("Rune notes starting on http://{}", addr);
 
-    // Refuse to start without at least one token configured
-    if opts.user_token.is_none() && opts.admin_token.is_none() && opts.guest_token.is_none() {
-        eprintln!("  ✗ ERROR: No tokens configured. At least one of user_token, admin_token, or guest_token must be set in [notes] config.");
-        eprintln!("    Without tokens, no one can access the server.");
-        std::process::exit(1);
-    }
-
     println!("  ᚱ Rune Notes → http://{}", addr);
     if opts.user_token.is_some() {
         println!("  🔒 User token configured");
@@ -381,12 +381,17 @@ mod tests {
     use super::*;
     use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
+    // Serialise all tests that mutate HOME env to avoid race conditions.
+    // Any test touching std::env::{set_var,remove_var}("HOME") must hold this lock.
+    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
     // ──────────────────────────────────────────────
     // data_dir / note_markdown_dir
     // ──────────────────────────────────────────────
 
     #[test]
     fn test_data_dir_uses_home_env() {
+        let _lock = ENV_LOCK.lock().unwrap();
         std::env::set_var("HOME", "/tmp/fake_home");
         let d = data_dir();
         assert_eq!(d, std::path::PathBuf::from("/tmp/fake_home/.rune"));
@@ -394,6 +399,7 @@ mod tests {
 
     #[test]
     fn test_data_dir_fallback_when_no_home() {
+        let _lock = ENV_LOCK.lock().unwrap();
         // Temporarily remove HOME
         let orig = std::env::var("HOME").ok();
         std::env::remove_var("HOME");
@@ -404,6 +410,7 @@ mod tests {
 
     #[test]
     fn test_note_markdown_dir_structure() {
+        let _lock = ENV_LOCK.lock().unwrap();
         std::env::set_var("HOME", "/tmp/fake_home");
         let d = note_markdown_dir("my-session");
         assert_eq!(d, std::path::PathBuf::from("/tmp/fake_home/.rune/notes/my-session/markdown"));
@@ -411,6 +418,7 @@ mod tests {
 
     #[test]
     fn test_note_markdown_dir_special_chars() {
+        let _lock = ENV_LOCK.lock().unwrap();
         std::env::set_var("HOME", "/tmp/fake_home");
         let d = note_markdown_dir("session-123_abc");
         assert!(d.to_string_lossy().contains("session-123_abc"));
@@ -1178,6 +1186,7 @@ mod tests {
 
     #[test]
     fn test_data_dir_ends_with_rune() {
+        let _lock = ENV_LOCK.lock().unwrap();
         std::env::set_var("HOME", "/some/path");
         let d = data_dir();
         assert_eq!(d.file_name().unwrap(), ".rune");
@@ -1185,6 +1194,7 @@ mod tests {
 
     #[test]
     fn test_note_markdown_dir_ends_with_markdown() {
+        let _lock = ENV_LOCK.lock().unwrap();
         std::env::set_var("HOME", "/tmp");
         let d = note_markdown_dir("sess");
         assert_eq!(d.file_name().unwrap(), "markdown");
@@ -1333,6 +1343,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_data_dir_db_path() {
+        let _lock = ENV_LOCK.lock().unwrap();
         std::env::set_var("HOME", "/tmp/testrun");
         let db_path = data_dir().join("chat.db");
         assert_eq!(db_path, std::path::PathBuf::from("/tmp/testrun/.rune/chat.db"));
@@ -1352,6 +1363,7 @@ mod tests {
         use std::net::{IpAddr, Ipv4Addr};
         use tokio::time::{timeout, Duration};
 
+        let _lock = ENV_LOCK.lock().unwrap();
         std::env::set_var("HOME", "/tmp/test_run_home");
 
         let config = RuneConfig::default();
@@ -1380,6 +1392,7 @@ mod tests {
         use std::net::{IpAddr, Ipv4Addr};
         use tokio::time::{timeout, Duration};
 
+        let _lock = ENV_LOCK.lock().unwrap();
         std::env::set_var("HOME", "/tmp/test_run_home2");
 
         let config = RuneConfig::default();
@@ -1391,10 +1404,12 @@ mod tests {
             guest_token: None,
         };
 
+        // run() now returns early (instead of process::exit) when no tokens configured.
+        // We expect it to complete immediately (Ok) rather than timeout (Err).
         let result = timeout(
-            Duration::from_millis(100),
+            Duration::from_millis(200),
             run(config, opts),
         ).await;
-        assert!(result.is_err());
+        assert!(result.is_ok(), "expected early return when no tokens, got timeout");
     }
 }
