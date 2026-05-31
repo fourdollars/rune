@@ -43,6 +43,8 @@ pub struct NoteRoom {
     pub cancel_token: Mutex<Option<CancellationToken>>,
     /// Per-note model override; None = fall back to global default
     pub model_override: TokioRwLock<Option<String>>,
+    /// Per-note system prompt override; None = fall back to global default
+    pub system_prompt: TokioRwLock<Option<String>>,
 }
 
 impl NoteRoom {
@@ -53,6 +55,7 @@ impl NoteRoom {
             broadcast_tx,
             cancel_token: Mutex::new(None),
             model_override: TokioRwLock::new(None),
+            system_prompt: TokioRwLock::new(None),
         }
     }
 }
@@ -221,6 +224,13 @@ pub struct SearchReq {
 pub struct ApprovalReq {
     pub id: String,
     pub approved: bool,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct SystemPromptReq {
+    pub note_id: String,
+    /// If None/empty, clears the per-note override (falls back to global).
+    pub prompt: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -958,6 +968,60 @@ pub async fn approval_handler(
     Json(ApiResponse::success())
 }
 
+pub async fn system_prompt_handler(
+    State(state): State<ServerState>,
+    Json(req): Json<SystemPromptReq>,
+) -> Json<serde_json::Value> {
+    if req.note_id.is_empty() {
+        return Json(serde_json::json!({ "ok": false, "error": "note_id required" }));
+    }
+    let room = state.get_or_create_room(&req.note_id).await;
+    match req.prompt {
+        Some(ref p) if !p.is_empty() => {
+            *room.system_prompt.write().await = Some(p.clone());
+        }
+        _ => {
+            *room.system_prompt.write().await = None;
+        }
+    }
+    let current = room.system_prompt.read().await.clone();
+    Json(serde_json::json!({
+        "ok": true,
+        "note_id": req.note_id,
+        "system_prompt": current,
+    }))
+}
+
+pub async fn system_prompt_get_handler(
+    State(state): State<ServerState>,
+    Query(params): Query<std::collections::HashMap<String, String>>,
+) -> Json<serde_json::Value> {
+    let note_id = params.get("note_id").cloned().unwrap_or_default();
+    if note_id.is_empty() {
+        // Return global system prompt
+        let global = build_system_prompt(&state.config).await;
+        return Json(serde_json::json!({
+            "ok": true,
+            "note_id": null,
+            "system_prompt": global,
+            "is_override": false,
+        }));
+    }
+    let room = state.get_or_create_room(&note_id).await;
+    let override_prompt = room.system_prompt.read().await.clone();
+    let effective = if let Some(ref p) = override_prompt {
+        p.clone()
+    } else {
+        build_system_prompt(&state.config).await
+    };
+    Json(serde_json::json!({
+        "ok": true,
+        "note_id": note_id,
+        "system_prompt": effective,
+        "is_override": override_prompt.is_some(),
+    }))
+}
+
 pub async fn dir_browse_handler(
     State(_state): State<ServerState>,
     Json(req): Json<DirBrowseReq>,
@@ -1312,8 +1376,15 @@ async fn handle_chat_message(
         tokio::spawn(async move { broadcast_file_list(&s, &n).await; });
     }));
 
-    // Set system prompt
-    let system_prompt = build_system_prompt(&config).await;
+    // Set system prompt: per-note override > global config > default
+    let system_prompt = {
+        let room_prompt = room.system_prompt.read().await;
+        if let Some(ref p) = *room_prompt {
+            p.clone()
+        } else {
+            build_system_prompt(&config).await
+        }
+    };
     agent.set_system_prompt(&system_prompt);
 
     // Load chat history into agent context
@@ -2399,6 +2470,25 @@ mod isolation_tests {
         assert!(!is_guest_allowed_event("archive_done"));
         assert!(!is_guest_allowed_event("dir_browse_result"));
         assert!(!is_guest_allowed_event("history"));
+    }
+
+
+    #[tokio::test]
+    async fn test_per_note_system_prompt() {
+        let (state, _tmp) = make_state();
+        let room = state.get_or_create_room("note-prompt").await;
+
+        // Initially None
+        assert!(room.system_prompt.read().await.is_none());
+
+        // Set override
+        *room.system_prompt.write().await = Some("You are a pirate.".into());
+        let prompt = room.system_prompt.read().await.clone();
+        assert_eq!(prompt, Some("You are a pirate.".into()));
+
+        // Clear override
+        *room.system_prompt.write().await = None;
+        assert!(room.system_prompt.read().await.is_none());
     }
 
 }

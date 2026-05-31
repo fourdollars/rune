@@ -281,6 +281,7 @@ pub async fn run(config: RuneConfig, opts: NotesOptions) {
         .route("/api/dir/browse", post(api::dir_browse_handler))
         .route("/api/note/visibility", post(api::note_visibility_handler))
         .route("/api/file/visibility", post(api::file_visibility_handler))
+        .route("/api/system-prompt", get(api::system_prompt_get_handler).post(api::system_prompt_handler))
         .layer(axum_mw::from_fn_with_state(state.clone(), auth_middleware));
 
     // Static + SSE routes (SSE has its own auth logic inside the handler)
