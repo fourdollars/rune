@@ -19,15 +19,43 @@ use axum::{
     Json,
 };
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::convert::Infallible;
 use std::sync::atomic::{AtomicU32, Ordering};
-use std::sync::Arc;
-use tokio::sync::{broadcast, mpsc};
+use std::sync::{Arc, Mutex};
+use tokio::sync::{broadcast, mpsc, RwLock as TokioRwLock};
+use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, warn};
 
 // ─── Online user counter ───────────────────────────────────────────────────
 
 static ONLINE_COUNT: AtomicU32 = AtomicU32::new(0);
+
+// ─── Per-note isolation ────────────────────────────────────────────────────
+
+/// Each note gets its own isolated "chat room" with independent SSE channel,
+/// model override, and AI task lifecycle.
+pub struct NoteRoom {
+    pub note_id: String,
+    /// Per-note SSE broadcast channel (replaces global broadcast_tx for chat events)
+    pub broadcast_tx: broadcast::Sender<String>,
+    /// Cancel token for the currently running AI task (Cancel & Replace)
+    pub cancel_token: Mutex<Option<CancellationToken>>,
+    /// Per-note model override; None = fall back to global default
+    pub model_override: TokioRwLock<Option<String>>,
+}
+
+impl NoteRoom {
+    pub fn new(note_id: String) -> Self {
+        let (broadcast_tx, _) = broadcast::channel(256);
+        Self {
+            note_id,
+            broadcast_tx,
+            cancel_token: Mutex::new(None),
+            model_override: TokioRwLock::new(None),
+        }
+    }
+}
 
 // ─── SSE Event types (server→client) ──────────────────────────────────────
 
@@ -106,6 +134,8 @@ pub struct DirEntry {
 pub struct EventsQuery {
     pub nickname: Option<String>,
     pub token: Option<String>,
+    /// Required: the note to subscribe to.
+    pub note_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -172,6 +202,8 @@ pub struct NoteSwitchReq {
 #[derive(Debug, Deserialize)]
 pub struct ModelSwitchReq {
     pub model: String,
+    /// If provided, sets per-note override; otherwise sets global default.
+    pub note_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -299,6 +331,14 @@ pub fn broadcast(state: &ServerState, msg: &SseMsg) {
     }
 }
 
+/// Broadcast a message to a specific note room only.
+/// Subscribers to other rooms will NOT receive this message.
+pub fn broadcast_to_room(room: &NoteRoom, msg: &SseMsg) {
+    if let Ok(json) = serde_json::to_string(msg) {
+        let _ = room.broadcast_tx.send(json);
+    }
+}
+
 // ─── SSE endpoint ──────────────────────────────────────────────────────────
 
 pub async fn events_handler(
@@ -313,7 +353,6 @@ pub async fn events_handler(
     let is_guest = check_guest(&state, token);
     let token_ok = check_token(&state, token) || is_admin || is_guest;
     if !token_ok {
-        // Return 401 as a one-shot SSE error then close
         let err_stream = futures::stream::once(async {
             Ok::<_, Infallible>(Event::default()
                 .event("error")
@@ -322,11 +361,47 @@ pub async fn events_handler(
         return Sse::new(err_stream).keep_alive(KeepAlive::default()).into_response();
     }
 
+    // note_id: if provided, subscribe to room channel; otherwise use global
+    let note_id = params.note_id.clone().filter(|id| !id.is_empty());
+    let notes = build_note_list(&state).await;
+
+    // Validate note_id if provided
+    let room: Option<Arc<NoteRoom>> = if let Some(ref nid) = note_id {
+        let note_exists = notes.iter().any(|n| n.id == *nid);
+        if !note_exists {
+            let err_stream = futures::stream::once(async {
+                Ok::<_, Infallible>(Event::default()
+                    .event("error")
+                    .data(r#"{"type":"error","message":"Note not found"}"#.to_string()))
+            });
+            return Sse::new(err_stream).keep_alive(KeepAlive::default()).into_response();
+        }
+        // Guest + private note check
+        if is_guest {
+            let note_public = notes.iter().find(|n| n.id == *nid).map(|n| n.public).unwrap_or(false);
+            if !note_public {
+                let err_stream = futures::stream::once(async {
+                    Ok::<_, Infallible>(Event::default()
+                        .event("auth_error")
+                        .data(r#"{"type":"auth_error","message":"Guests cannot access private notes"}"#.to_string()))
+                });
+                return Sse::new(err_stream).keep_alive(KeepAlive::default()).into_response();
+            }
+        }
+        Some(state.get_or_create_room(nid).await)
+    } else {
+        None
+    };
+
+    // Subscribe to appropriate channel
+    let mut room_rx = if let Some(ref r) = room {
+        r.broadcast_tx.subscribe()
+    } else {
+        state.broadcast_tx.subscribe()
+    };
+
     // Increment online count
     let count = ONLINE_COUNT.fetch_add(1, Ordering::Relaxed) + 1;
-
-    // Create a receiver for broadcast messages
-    let mut rx = state.broadcast_tx.subscribe();
 
     // Build initial messages to send
     let mut init_msgs = Vec::new();
@@ -334,30 +409,38 @@ pub async fn events_handler(
     // Auth result
     init_msgs.push(SseMsg::AuthResult { is_admin, is_guest });
 
-    // Model list
-    let active_model = state.active_model.read().await.clone();
+    // Model list — show effective model for this note (or global default)
+    let effective = if let Some(ref nid) = note_id {
+        state.effective_model(nid).await
+    } else {
+        state.global_default_model.read().await.clone()
+    };
     init_msgs.push(SseMsg::ModelList {
         models: state.models.clone(),
-        active: active_model,
+        active: effective,
     });
 
-    // Session list
-    let notes = build_note_list(&state).await;
-    init_msgs.push(SseMsg::NoteList { notes, active: String::new() });
+    // Note list (global)
+    init_msgs.push(SseMsg::NoteList { notes, active: note_id.clone().unwrap_or_default() });
 
     // Users update
     init_msgs.push(SseMsg::UsersUpdate { count });
 
-    // System join message
+    // System join message — broadcast to the room if connected to one
     let join_msg = SseMsg::System { content: format!("{} joined", nickname) };
-    broadcast(&state, &join_msg);
+    if let Some(ref r) = room {
+        broadcast_to_room(r, &join_msg);
+    } else {
+        broadcast(&state, &join_msg);
+    }
 
-    // Users update broadcast
+    // Users update broadcast (global — affects all rooms)
     let users_msg = SseMsg::UsersUpdate { count };
     broadcast(&state, &users_msg);
 
     let nickname_clone = nickname.clone();
     let state_clone = state.clone();
+    let room_clone = room.clone();
 
     let stream = async_stream::stream! {
         // Send initial messages
@@ -368,9 +451,9 @@ pub async fn events_handler(
             }
         }
 
-        // Stream broadcast messages
+        // Stream room-specific broadcast messages
         loop {
-            match rx.recv().await {
+            match room_rx.recv().await {
                 Ok(json) => {
                     let event_type = extract_event_type(&json);
                     yield Ok::<_, Infallible>(Event::default().event(event_type).data(json));
@@ -386,7 +469,11 @@ pub async fn events_handler(
         // Client disconnected — decrement count
         let count = ONLINE_COUNT.fetch_sub(1, Ordering::Relaxed) - 1;
         let leave_msg = SseMsg::System { content: format!("{} left", nickname_clone) };
-        broadcast(&state_clone, &leave_msg);
+        if let Some(ref r) = room_clone {
+            broadcast_to_room(r, &leave_msg);
+        } else {
+            broadcast(&state_clone, &leave_msg);
+        }
         let users_msg = SseMsg::UsersUpdate { count };
         broadcast(&state_clone, &users_msg);
     };
@@ -422,13 +509,16 @@ pub async fn chat_handler(
     let preview: String = req.content.chars().take(50).collect();
     info!("Chat message: {}", preview);
 
-    // Broadcast user message
+    // Get (or create) the room for this note
+    let room = state.get_or_create_room(&req.note_id).await;
+
+    // Broadcast user message to the room
     let nickname = req.nickname.clone().unwrap_or_else(|| "user".to_string());
     let user_msg = SseMsg::ChatMessage {
         nickname: nickname.clone(),
         content: req.content.clone(),
     };
-    broadcast(&state, &user_msg);
+    broadcast_to_room(&room, &user_msg);
 
     // Persist user message
     state.chat_db.insert_async(
@@ -438,17 +528,32 @@ pub async fn chat_handler(
         req.content.clone(),
     ).await;
 
-    // Send thinking status
+    // Send thinking status to the room
     let thinking = SseMsg::Status { state: "thinking".to_string() };
-    broadcast(&state, &thinking);
+    broadcast_to_room(&room, &thinking);
 
-    // Spawn agent task
+    // Cancel & Replace: cancel any existing AI task for this note
+    let new_token = CancellationToken::new();
+    {
+        let mut guard = room.cancel_token.lock().unwrap();
+        if let Some(old) = guard.replace(new_token.clone()) {
+            old.cancel();
+        }
+    }
+
+    // Spawn agent task with cancellation
     let state_clone = state.clone();
     let note_id = req.note_id.clone();
     let content = req.content.clone();
     let nick = req.nickname.clone().unwrap_or_else(|| "user".to_string());
+    let cancel = new_token.clone();
     tokio::spawn(async move {
-        handle_chat_message(content, state_clone, note_id, nick).await;
+        tokio::select! {
+            _ = cancel.cancelled() => {
+                // Silently exit — new message replaced this one
+            }
+            _ = handle_chat_message(content, state_clone, note_id, nick) => {}
+        }
     });
 
     Json(ApiResponse::success())
@@ -480,9 +585,10 @@ pub async fn file_create_handler(
     // Broadcast updated file list
     broadcast_file_list(&state, &req.note_id).await;
 
-    // Broadcast file content (with note_id for client-side filtering)
+    // Broadcast file content to the room
+    let room = state.get_or_create_room(&req.note_id).await;
     let fc = SseMsg::FileContent { note_id: req.note_id.clone(), filename: req.name, content: empty };
-    broadcast(&state, &fc);
+    broadcast_to_room(&room, &fc);
 
     Json(ApiResponse::success())
 }
@@ -499,8 +605,9 @@ pub async fn file_delete_handler(
     let file_path = md_dir.join(&req.name);
     tokio::fs::remove_file(&file_path).await.ok();
 
+    let room = state.get_or_create_room(&req.note_id).await;
     let del = SseMsg::FileDeleted { filename: req.name };
-    broadcast(&state, &del);
+    broadcast_to_room(&room, &del);
     broadcast_file_list(&state, &req.note_id).await;
 
     Json(ApiResponse::success())
@@ -571,8 +678,9 @@ pub async fn file_update_handler(
         return Json(ApiResponse::err(format!("Failed to write: {}", e)));
     }
 
+    let room = state.get_or_create_room(&req.note_id).await;
     let fc = SseMsg::FileContent { note_id: req.note_id.clone(), filename: fname, content: req.content };
-    broadcast(&state, &fc);
+    broadcast_to_room(&room, &fc);
     Json(ApiResponse::success())
 }
 
@@ -673,16 +781,25 @@ pub async fn note_delete_handler(
 ) -> Json<ApiResponse> {
     match state.chat_db.delete_note(&req.note_id) {
         Ok(true) => {
+            // Cancel any running AI task in the room, then remove the room
+            {
+                let rooms = state.rooms.read().await;
+                if let Some(room) = rooms.get(&req.note_id) {
+                    let guard = room.cancel_token.lock().unwrap();
+                    if let Some(ref token) = *guard {
+                        token.cancel();
+                    }
+                }
+            }
+            // Remove room from map
+            state.rooms.write().await.remove(&req.note_id);
+
             // Remove the note directory if markdown/ is empty (or absent)
             let note_dir = state.data_dir.join("notes").join(&req.note_id);
             let md_dir = note_dir.join("markdown");
-            let md_empty = tokio::fs::read_dir(&md_dir).await
-                .map(|_| false) // will check properly below
-                .unwrap_or(true); // dir absent → treat as empty
-            // Re-check properly: read_dir succeeded means dir exists; peek first entry
             let md_empty = {
                 match tokio::fs::read_dir(&md_dir).await {
-                    Err(_) => true, // markdown/ doesn't exist
+                    Err(_) => true,
                     Ok(mut rd) => rd.next_entry().await.unwrap_or(None).is_none(),
                 }
             };
@@ -724,6 +841,7 @@ pub async fn note_switch_handler(
     };
 
     // Return all data in response (no broadcast — switch is per-client)
+    let current_model = state.effective_model(&req.note_id).await;
     Json(serde_json::json!({
         "ok": true,
         "note_id": req.note_id,
@@ -731,6 +849,7 @@ pub async fn note_switch_handler(
         "files": files,
         "current_file": first_file,
         "file_content": first_content,
+        "current_model": current_model,
     }))
 }
 
@@ -742,9 +861,21 @@ pub async fn model_switch_handler(
     if !state.models.contains(&req.model) {
         return Json(ApiResponse::err(format!("Unknown model: {}", req.model)));
     }
-    *state.active_model.write().await = req.model.clone();
-    let msg = SseMsg::ModelChanged { model: req.model };
-    broadcast(&state, &msg);
+
+    let msg = SseMsg::ModelChanged { model: req.model.clone() };
+
+    if let Some(ref note_id) = req.note_id {
+        // Per-note model override
+        let room = state.get_or_create_room(note_id).await;
+        *room.model_override.write().await = Some(req.model.clone());
+        broadcast_to_room(&room, &msg);
+    } else {
+        // Global default model
+        *state.global_default_model.write().await = req.model.clone();
+        // Also update legacy active_model for backwards compat
+        *state.active_model.write().await = req.model.clone();
+        broadcast(&state, &msg);
+    }
     Json(ApiResponse::success())
 }
 
@@ -767,11 +898,12 @@ pub async fn archive_handler(
     let db = state.chat_db.clone();
     match db.archive_async(req.note_id.clone(), archive_path).await {
         Ok(count) => {
+            let room = state.get_or_create_room(&req.note_id).await;
             let msg = SseMsg::ArchiveDone { filename, count };
-            broadcast(&state, &msg);
-            // Send empty history
+            broadcast_to_room(&room, &msg);
+            // Send empty history to the room
             let hist = SseMsg::History { messages: vec![] };
-            broadcast(&state, &hist);
+            broadcast_to_room(&room, &hist);
             Json(ApiResponse::success())
         }
         Err(e) => Json(ApiResponse::err(format!("Archive failed: {}", e))),
@@ -786,9 +918,10 @@ pub async fn search_handler(
         return Json(ApiResponse::err("Empty query"));
     }
     let archive_dir = state.note_markdown_dir(&req.note_id).parent().unwrap().join("archives");
-    let results = state.chat_db.search_async(req.note_id, req.query.clone(), archive_dir).await;
+    let results = state.chat_db.search_async(req.note_id.clone(), req.query.clone(), archive_dir).await;
+    let room = state.get_or_create_room(&req.note_id).await;
     let msg = SseMsg::SearchResults { query: req.query, results };
-    broadcast(&state, &msg);
+    broadcast_to_room(&room, &msg);
     Json(ApiResponse::success())
 }
 
@@ -1061,7 +1194,9 @@ async fn broadcast_file_list(state: &ServerState, note_id: &str) {
     }).collect();
     let active = files.first().map(|f| f.name.clone()).unwrap_or_default();
     let msg = SseMsg::FileList { files, active };
-    broadcast(state, &msg);
+    // Send to the room for this note
+    let room = state.get_or_create_room(note_id).await;
+    broadcast_to_room(&room, &msg);
 }
 
 async fn broadcast_note_list(state: &ServerState) {
@@ -1079,16 +1214,20 @@ async fn handle_chat_message(
     nickname: String,
 ) {
     let config = state.config.clone();
-    let active_model = state.active_model.read().await.clone();
+    // Use per-note effective model (override > global default)
+    let active_model = state.effective_model(&note_id).await;
+
+    // Get the room for per-note broadcasting
+    let room = state.get_or_create_room(&note_id).await;
 
     // Build provider
     let provider = match build_provider(&config) {
         Ok(p) => p,
         Err(e) => {
             let err = SseMsg::Error { message: format!("Provider error: {}", e) };
-            broadcast(&state, &err);
+            broadcast_to_room(&room, &err);
             let idle = SseMsg::Status { state: "idle".to_string() };
-            broadcast(&state, &idle);
+            broadcast_to_room(&room, &idle);
             return;
         }
     };
@@ -1096,22 +1235,26 @@ async fn handle_chat_message(
     // Build embedding
     let embedding = build_embedding(&config).await;
 
-    // Token streaming callback
-    let state_for_token = state.clone();
+    // Token streaming callback — sends to room only
+    let room_for_token = Arc::clone(&room);
     let token_callback: Arc<dyn Fn(&str) + Send + Sync> = Arc::new(move |token: &str| {
         let msg = SseMsg::ChatToken { content: token.to_string() };
-        broadcast(&state_for_token, &msg);
+        broadcast_to_room(&room_for_token, &msg);
     });
 
-    // Approval callback
+    // Approval callback — approval requests go to admin_broadcast (global),
+    // approval responses come back via global broadcast_tx (unchanged)
     let state_for_approval = state.clone();
+    let room_for_approval = Arc::clone(&room);
     let approval_callback: Arc<dyn Fn(String, String) -> std::pin::Pin<Box<dyn std::future::Future<Output = bool> + Send>> + Send + Sync> =
         Arc::new(move |id: String, detail: String| {
             let state = state_for_approval.clone();
+            let room = Arc::clone(&room_for_approval);
             Box::pin(async move {
+                // Send approval request to the room (so the admin client on this note sees it)
                 let msg = SseMsg::ApprovalRequest { id: id.clone(), detail };
-                broadcast(&state, &msg);
-                // Wait for approval response via broadcast
+                broadcast_to_room(&room, &msg);
+                // Wait for approval response via global broadcast channel
                 let mut rx = state.broadcast_tx.subscribe();
                 let approve_key = format!("__approval_granted__{}", id);
                 let deny_key = format!("__approval_denied__{}", id);
@@ -1142,7 +1285,7 @@ async fn handle_chat_message(
     agent.chat_note_id = Some(note_id.clone());
     agent.chat_archive_dir = Some(state.note_markdown_dir(&note_id)
         .parent().unwrap().join("archives"));
-    // Notify UI whenever AI writes/creates a markdown file
+    // Notify UI whenever AI writes/creates a markdown file — broadcast to room
     let state_for_filelist = state.clone();
     let note_id_for_filelist = note_id.clone();
     agent.file_list_callback = Some(Arc::new(move || {
@@ -1173,7 +1316,7 @@ async fn handle_chat_message(
     let stop_reason = agent.run(&user_msg).await;
 
     let done = SseMsg::ChatDone {};
-    broadcast(&state, &done);
+    broadcast_to_room(&room, &done);
 
     // Process result
     match &stop_reason {
@@ -1188,24 +1331,24 @@ async fn handle_chat_message(
         }
         StopReason::Error(e) => {
             let err = SseMsg::Error { message: format!("Agent error: {}", e) };
-            broadcast(&state, &err);
+            broadcast_to_room(&room, &err);
         }
         StopReason::MaxSteps => {
             let err = SseMsg::Error { message: "Agent reached max steps".to_string() };
-            broadcast(&state, &err);
+            broadcast_to_room(&room, &err);
         }
         StopReason::TokenBudgetExhausted => {
             let err = SseMsg::Error { message: "Token budget exhausted".to_string() };
-            broadcast(&state, &err);
+            broadcast_to_room(&room, &err);
         }
         _ => {}
     }
 
-    // Broadcast updated file list (new files may have been created)
+    // Broadcast updated file list to the room
     broadcast_file_list(&state, &note_id).await;
 
     let idle = SseMsg::Status { state: "idle".to_string() };
-    broadcast(&state, &idle);
+    broadcast_to_room(&room, &idle);
 }
 
 // ─── Provider/Embedding builders (from ws.rs) ──────────────────────────────
@@ -1581,6 +1724,8 @@ mod tests {
             active_file: Arc::new(tokio::sync::RwLock::new(String::new())),
             models: vec!["test-model".into()],
             active_model: Arc::new(tokio::sync::RwLock::new("test-model".into())),
+            rooms: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
+            global_default_model: Arc::new(tokio::sync::RwLock::new("test-model".into())),
             broadcast_tx,
             admin_broadcast_tx,
             chat_db: crate::serve::db::ChatDb::open(std::path::Path::new(":memory:")).unwrap(),
@@ -1652,6 +1797,8 @@ fn test_state(tmp: &TempDir) -> ServerState {
         active_file: Arc::new(RwLock::new(String::new())),
         models: vec!["gpt-5-mini".into(), "claude-sonnet-4.6".into()],
         active_model: Arc::new(RwLock::new("gpt-5-mini".into())),
+        rooms: Arc::new(RwLock::new(std::collections::HashMap::new())),
+        global_default_model: Arc::new(RwLock::new("gpt-5-mini".into())),
         broadcast_tx,
         admin_broadcast_tx,
         chat_db: db,
@@ -2069,4 +2216,146 @@ async fn test_full_session_file_flow() {
     assert_eq!(body["ok"], true);
 }
 
+}
+
+
+// ─── Per-Note Isolation Tests ──────────────────────────────────────────────
+
+#[cfg(test)]
+mod isolation_tests {
+    use crate::serve::api::NoteRoom;
+    use crate::serve::ServerState;
+    use crate::serve::db::ChatDb;
+    use crate::config::RuneConfig;
+    use std::sync::Arc;
+    use std::collections::HashMap;
+    use tokio::sync::{broadcast, RwLock};
+    use tempfile::TempDir;
+    use tokio_util::sync::CancellationToken;
+
+    fn make_state() -> (ServerState, TempDir) {
+        let tmp = tempfile::tempdir().unwrap();
+        let (broadcast_tx, _) = broadcast::channel(256);
+        let (admin_broadcast_tx, _) = broadcast::channel(256);
+        let db_path = tmp.path().join("test.db");
+        let db = ChatDb::open(&db_path).unwrap();
+        let state = ServerState {
+            config: RuneConfig::default(),
+            user_token: None,
+            admin_token: Some("admin123".into()),
+            guest_token: None,
+            files: Arc::new(RwLock::new(HashMap::new())),
+            active_file: Arc::new(RwLock::new(String::new())),
+            models: vec!["gpt-5-mini".into(), "claude-sonnet-4.6".into()],
+            active_model: Arc::new(RwLock::new("gpt-5-mini".into())),
+            rooms: Arc::new(RwLock::new(HashMap::new())),
+            global_default_model: Arc::new(RwLock::new("gpt-5-mini".into())),
+            broadcast_tx,
+            admin_broadcast_tx,
+            chat_db: db,
+            data_dir: tmp.path().join(".rune"),
+        };
+        (state, tmp)
+    }
+
+    #[tokio::test]
+    async fn test_room_lazy_create() {
+        let (state, _tmp) = make_state();
+        let room1 = state.get_or_create_room("note-a").await;
+        let room2 = state.get_or_create_room("note-a").await;
+        assert!(Arc::ptr_eq(&room1, &room2));
+    }
+
+    #[tokio::test]
+    async fn test_room_different_notes() {
+        let (state, _tmp) = make_state();
+        let room_a = state.get_or_create_room("note-a").await;
+        let room_b = state.get_or_create_room("note-b").await;
+        assert!(!Arc::ptr_eq(&room_a, &room_b));
+    }
+
+    #[tokio::test]
+    async fn test_effective_model_fallback() {
+        let (state, _tmp) = make_state();
+        let model = state.effective_model("note-x").await;
+        assert_eq!(model, "gpt-5-mini");
+    }
+
+    #[tokio::test]
+    async fn test_effective_model_override() {
+        let (state, _tmp) = make_state();
+        let room = state.get_or_create_room("note-x").await;
+        *room.model_override.write().await = Some("claude-sonnet-4.6".into());
+        let model = state.effective_model("note-x").await;
+        assert_eq!(model, "claude-sonnet-4.6");
+    }
+
+    #[tokio::test]
+    async fn test_cancel_replace() {
+        let (state, _tmp) = make_state();
+        let room = state.get_or_create_room("note-cancel").await;
+
+        let token1 = CancellationToken::new();
+        {
+            let mut guard = room.cancel_token.lock().unwrap();
+            *guard = Some(token1.clone());
+        }
+        assert!(!token1.is_cancelled());
+
+        let token2 = CancellationToken::new();
+        {
+            let mut guard = room.cancel_token.lock().unwrap();
+            if let Some(old) = guard.replace(token2.clone()) {
+                old.cancel();
+            }
+        }
+        assert!(token1.is_cancelled());
+        assert!(!token2.is_cancelled());
+    }
+
+    #[tokio::test]
+    async fn test_cancel_on_note_delete() {
+        let (state, _tmp) = make_state();
+        let room = state.get_or_create_room("note-del").await;
+
+        let token = CancellationToken::new();
+        {
+            let mut guard = room.cancel_token.lock().unwrap();
+            *guard = Some(token.clone());
+        }
+
+        // Simulate note deletion
+        {
+            let rooms = state.rooms.read().await;
+            if let Some(r) = rooms.get("note-del") {
+                let g = r.cancel_token.lock().unwrap();
+                if let Some(ref t) = *g {
+                    t.cancel();
+                }
+            }
+        }
+        state.rooms.write().await.remove("note-del");
+
+        assert!(token.is_cancelled());
+        assert!(state.rooms.read().await.get("note-del").is_none());
+    }
+
+    #[tokio::test]
+    async fn test_sse_isolation_broadcast() {
+        let (state, _tmp) = make_state();
+
+        let room_a = state.get_or_create_room("note-a").await;
+        let room_b = state.get_or_create_room("note-b").await;
+
+        let mut rx_a = room_a.broadcast_tx.subscribe();
+        let mut rx_b = room_b.broadcast_tx.subscribe();
+
+        let _ = room_a.broadcast_tx.send("hello-a".into());
+
+        let msg = rx_a.try_recv().unwrap();
+        assert_eq!(msg, "hello-a");
+
+        // Room B does NOT receive it
+        assert!(rx_b.try_recv().is_err());
+    }
 }

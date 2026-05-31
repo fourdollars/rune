@@ -266,12 +266,16 @@ document.getElementById('nickname-input').addEventListener('keydown', (e) => {
 });
 
 // --- Connection ---
-function connect() {
+function connect(noteId) {
     if (evtSource) { evtSource.close(); evtSource = null; }
+
+    // Use provided noteId, or fall back to currentNoteId, or saved localStorage
+    const targetNote = noteId || currentNoteId || localStorage.getItem('rune_note') || '';
 
     const params = new URLSearchParams();
     if (myNickname) params.set('nickname', myNickname);
     if (myToken) params.set('token', myToken);
+    if (targetNote) params.set('note_id', targetNote);
 
     evtSource = new EventSource('/api/events?' + params.toString());
     let authFailed = false;
@@ -1063,7 +1067,7 @@ function hideModelDialog() {
 
 function switchModel(model) {
     if (isConnected) {
-        api('model/switch', { model });
+        api('model/switch', { model, note_id: currentNoteId });
         try { localStorage.setItem('rune_model', model); } catch {}
     }
 }
@@ -1586,6 +1590,9 @@ async function switchNote(sessionId, forceFile = null) {
     renderNoteList();
     updateChatInputState();
     updatePageTitle();
+
+    // Reconnect SSE to the new note's room
+    connect(sessionId);
 
     const data = await api('note/switch', { note_id: sessionId });
     if (!data || !data.ok) return;

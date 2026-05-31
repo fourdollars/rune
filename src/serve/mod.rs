@@ -23,7 +23,9 @@ use axum::{
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::collections::HashMap;
 use tokio::sync::{broadcast, RwLock};
+use crate::serve::api::NoteRoom;
 use tracing::{info, warn};
 
 /// Get the Rune data directory (~/.rune).
@@ -54,7 +56,11 @@ pub struct ServerState {
     pub models: Vec<String>,
     /// Currently selected model (may be overridden at runtime).
     pub active_model: Arc<RwLock<String>>,
-    /// Broadcast to ALL connected clients.
+    /// Per-note rooms: isolated SSE channel + model + cancel token per note.
+    pub rooms: Arc<RwLock<HashMap<String, Arc<NoteRoom>>>>,
+    /// Global default model (used when a note has no per-note override).
+    pub global_default_model: Arc<RwLock<String>>,
+    /// Broadcast to ALL connected clients (legacy — used for approval routing).
     pub broadcast_tx: broadcast::Sender<String>,
     /// Broadcast to ADMIN clients only (approval requests).
     pub admin_broadcast_tx: broadcast::Sender<String>,
@@ -67,6 +73,36 @@ impl ServerState {
     /// Returns the markdown directory for a given note session.
     pub fn note_markdown_dir(&self, session: &str) -> PathBuf {
         self.data_dir.join("notes").join(session).join("markdown")
+    }
+
+    /// Get existing room or lazy-create one for the given note_id.
+    /// Uses double-checked locking: read first, write only on miss.
+    pub async fn get_or_create_room(&self, note_id: &str) -> Arc<NoteRoom> {
+        // Fast path: read lock
+        {
+            let rooms = self.rooms.read().await;
+            if let Some(room) = rooms.get(note_id) {
+                return Arc::clone(room);
+            }
+        }
+        // Slow path: write lock, re-check
+        let mut rooms = self.rooms.write().await;
+        if let Some(room) = rooms.get(note_id) {
+            return Arc::clone(room);
+        }
+        let room = Arc::new(NoteRoom::new(note_id.to_string()));
+        rooms.insert(note_id.to_string(), Arc::clone(&room));
+        room
+    }
+
+    /// Effective model for a note: per-note override if set, else global default.
+    pub async fn effective_model(&self, note_id: &str) -> String {
+        let room = self.get_or_create_room(note_id).await;
+        let override_model = room.model_override.read().await;
+        if let Some(ref m) = *override_model {
+            return m.clone();
+        }
+        self.global_default_model.read().await.clone()
     }
 }
 
@@ -149,7 +185,9 @@ pub async fn run(config: RuneConfig, opts: NotesOptions) {
         files: Arc::new(RwLock::new(initial_files)),
         active_file: Arc::new(RwLock::new(String::new())),
         models,
-        active_model: Arc::new(RwLock::new(first_model)),
+        active_model: Arc::new(RwLock::new(first_model.clone())),
+        rooms: Arc::new(RwLock::new(HashMap::new())),
+        global_default_model: Arc::new(RwLock::new(first_model)),
         broadcast_tx,
         admin_broadcast_tx,
         chat_db,
@@ -1246,7 +1284,9 @@ mod tests {
     async fn test_server_state_construction() {
         use crate::config::RuneConfig;
         use std::sync::Arc;
-        use tokio::sync::{broadcast, RwLock};
+        use std::collections::HashMap;
+use tokio::sync::{broadcast, RwLock};
+use crate::serve::api::NoteRoom;
 
         let (broadcast_tx, _) = broadcast::channel(256);
         let (admin_broadcast_tx, _) = broadcast::channel(64);
@@ -1269,6 +1309,8 @@ mod tests {
             active_file: Arc::new(RwLock::new(String::new())),
             models: models.clone(),
             active_model: Arc::new(RwLock::new(first_model.clone())),
+            rooms: Arc::new(RwLock::new(HashMap::new())),
+            global_default_model: Arc::new(RwLock::new(first_model.clone())),
             broadcast_tx,
             admin_broadcast_tx,
             chat_db: db,
@@ -1284,7 +1326,9 @@ mod tests {
     async fn test_server_state_with_token() {
         use crate::config::RuneConfig;
         use std::sync::Arc;
-        use tokio::sync::{broadcast, RwLock};
+        use std::collections::HashMap;
+use tokio::sync::{broadcast, RwLock};
+use crate::serve::api::NoteRoom;
 
         let (broadcast_tx, _) = broadcast::channel(256);
         let (admin_broadcast_tx, _) = broadcast::channel(64);
@@ -1299,6 +1343,8 @@ mod tests {
             active_file: Arc::new(RwLock::new("main.md".into())),
             models: vec!["gpt-4o".into()],
             active_model: Arc::new(RwLock::new("gpt-4o".into())),
+            rooms: Arc::new(RwLock::new(HashMap::new())),
+            global_default_model: Arc::new(RwLock::new("gpt-4o".into())),
             broadcast_tx,
             admin_broadcast_tx,
             chat_db: db,
@@ -1314,7 +1360,9 @@ mod tests {
     async fn test_server_state_broadcast_channel() {
         use crate::config::RuneConfig;
         use std::sync::Arc;
-        use tokio::sync::{broadcast, RwLock};
+        use std::collections::HashMap;
+use tokio::sync::{broadcast, RwLock};
+use crate::serve::api::NoteRoom;
 
         let (broadcast_tx, mut broadcast_rx) = broadcast::channel(256);
         let (admin_broadcast_tx, _) = broadcast::channel(64);
@@ -1329,6 +1377,8 @@ mod tests {
             active_file: Arc::new(RwLock::new(String::new())),
             models: vec![],
             active_model: Arc::new(RwLock::new(String::new())),
+            rooms: Arc::new(RwLock::new(HashMap::new())),
+            global_default_model: Arc::new(RwLock::new(String::new())),
             broadcast_tx,
             admin_broadcast_tx,
             chat_db: db,
