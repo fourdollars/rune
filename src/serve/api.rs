@@ -420,8 +420,13 @@ pub async fn events_handler(
         active: effective,
     });
 
-    // Note list (global)
-    init_msgs.push(SseMsg::NoteList { notes, active: note_id.clone().unwrap_or_default() });
+    // Note list — guests only see public notes
+    let visible_notes = if is_guest {
+        notes.into_iter().filter(|n| n.public).collect()
+    } else {
+        notes
+    };
+    init_msgs.push(SseMsg::NoteList { notes: visible_notes, active: note_id.clone().unwrap_or_default() });
 
     // Users update
     init_msgs.push(SseMsg::UsersUpdate { count });
@@ -456,6 +461,10 @@ pub async fn events_handler(
             match room_rx.recv().await {
                 Ok(json) => {
                     let event_type = extract_event_type(&json);
+                    // Guest filter: skip events not in allowlist
+                    if is_guest && !is_guest_allowed_event(&event_type) {
+                        continue;
+                    }
                     yield Ok::<_, Infallible>(Event::default().event(event_type).data(json));
                 }
                 Err(broadcast::error::RecvError::Lagged(n)) => {
@@ -479,6 +488,15 @@ pub async fn events_handler(
     };
 
     Sse::new(stream).keep_alive(KeepAlive::default()).into_response()
+}
+
+/// Check if an event type is allowed for guest users.
+pub fn is_guest_allowed_event(event_type: &str) -> bool {
+    matches!(event_type,
+        "chat_token" | "chat_done" | "chat_message" | "chat_meta"
+        | "file_content" | "file_list" | "note_list"
+        | "auth_result" | "model_list" | "users_update" | "system"
+    )
 }
 
 /// Extract event type from JSON (reads "type" field).
@@ -2358,4 +2376,29 @@ mod isolation_tests {
         // Room B does NOT receive it
         assert!(rx_b.try_recv().is_err());
     }
+
+    #[test]
+    fn test_guest_allowed_events() {
+        use crate::serve::api::is_guest_allowed_event;
+        // Allowed
+        assert!(is_guest_allowed_event("chat_token"));
+        assert!(is_guest_allowed_event("chat_done"));
+        assert!(is_guest_allowed_event("chat_message"));
+        assert!(is_guest_allowed_event("chat_meta"));
+        assert!(is_guest_allowed_event("file_content"));
+        assert!(is_guest_allowed_event("file_list"));
+        assert!(is_guest_allowed_event("note_list"));
+        assert!(is_guest_allowed_event("auth_result"));
+        assert!(is_guest_allowed_event("model_list"));
+        assert!(is_guest_allowed_event("users_update"));
+        assert!(is_guest_allowed_event("system"));
+        // Blocked
+        assert!(!is_guest_allowed_event("approval_request"));
+        assert!(!is_guest_allowed_event("status"));
+        assert!(!is_guest_allowed_event("search_results"));
+        assert!(!is_guest_allowed_event("archive_done"));
+        assert!(!is_guest_allowed_event("dir_browse_result"));
+        assert!(!is_guest_allowed_event("history"));
+    }
+
 }
