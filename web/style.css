@@ -1530,6 +1530,9 @@ pre.hljs-pre:hover .copy-btn {
     /* ─── Hide desktop panels ─── */
     .panel-left, .panel-right, .resize-handle { display: none !important; }
 
+    /* ─── Hide desktop editor textarea + highlight overlay (replaced by #mobile-editor) ─── */
+    #editor, #editor-highlight { display: none !important; }
+
     /* ─── Mobile header ─── */
     #mobile-header {
         display: flex;
