@@ -1081,7 +1081,6 @@ function hideModelDialog() {
 function switchModel(model) {
     if (isConnected) {
         api('model/switch', { model, note_id: currentNoteId });
-        try { localStorage.setItem('rune_model', model); } catch {}
     }
 }
 
@@ -1160,7 +1159,6 @@ function confirmLogout() {
     // Clear all stored credentials
     localStorage.removeItem('rune_nickname');
     localStorage.removeItem('rune_token');
-    localStorage.removeItem('rune_model');
     // Reset in-memory state
     myNickname = '';
     myToken    = '';
