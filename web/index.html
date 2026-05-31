@@ -252,6 +252,23 @@
         }, 50);
       });
     </script>
+    
+    <!-- Generic prompt/confirm dialog -->
+    <div id="generic-dialog-modal" class="modal-overlay hidden">
+        <div class="modal">
+            <h2 id="generic-dialog-title">Confirm</h2>
+            <p id="generic-dialog-message" style="margin: 0.5rem 0 1rem; color: var(--text-secondary);"></p>
+            <div id="generic-dialog-input-group" class="form-group" style="display:none">
+                <input type="text" id="generic-dialog-input" maxlength="100" />
+            </div>
+            <div class="modal-actions">
+                <button class="btn-secondary" id="generic-dialog-cancel">Cancel</button>
+                <button class="btn-primary" id="generic-dialog-ok">OK</button>
+                <button class="btn-danger" id="generic-dialog-danger" style="display:none">Delete</button>
+            </div>
+        </div>
+    </div>
+
     <script src="/assets/marked.min.js"></script>
     <script src="/assets/highlight.min.js"></script>
     <script src="/assets/app.js?v=ffef35a"></script>

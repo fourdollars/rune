@@ -622,6 +622,60 @@ function addChatMessage(nickname, content) {
     chatMessages.scrollTop = chatMessages.scrollHeight;
 }
 
+
+// --- Generic Dialog (replaces native prompt/confirm) ---
+function showDialog({ title, message, input, inputValue, placeholder, danger, okLabel }) {
+    return new Promise((resolve) => {
+        const modal = document.getElementById('generic-dialog-modal');
+        const titleEl = document.getElementById('generic-dialog-title');
+        const msgEl = document.getElementById('generic-dialog-message');
+        const inputGroup = document.getElementById('generic-dialog-input-group');
+        const inputEl = document.getElementById('generic-dialog-input');
+        const okBtn = document.getElementById('generic-dialog-ok');
+        const dangerBtn = document.getElementById('generic-dialog-danger');
+        const cancelBtn = document.getElementById('generic-dialog-cancel');
+
+        titleEl.textContent = title || 'Confirm';
+        msgEl.textContent = message || '';
+        msgEl.style.display = message ? '' : 'none';
+
+        if (input) {
+            inputGroup.style.display = '';
+            inputEl.value = inputValue || '';
+            inputEl.placeholder = placeholder || '';
+            inputEl.focus();
+        } else {
+            inputGroup.style.display = 'none';
+        }
+
+        if (danger) {
+            okBtn.style.display = 'none';
+            dangerBtn.style.display = '';
+            dangerBtn.textContent = okLabel || 'Delete';
+        } else {
+            okBtn.style.display = '';
+            dangerBtn.style.display = 'none';
+            okBtn.textContent = okLabel || 'OK';
+        }
+
+        function cleanup() {
+            modal.classList.add('hidden');
+            okBtn.onclick = null;
+            dangerBtn.onclick = null;
+            cancelBtn.onclick = null;
+            inputEl.onkeydown = null;
+        }
+
+        okBtn.onclick = () => { cleanup(); resolve(input ? inputEl.value.trim() : true); };
+        dangerBtn.onclick = () => { cleanup(); resolve(input ? inputEl.value.trim() : true); };
+        cancelBtn.onclick = () => { cleanup(); resolve(input ? null : false); };
+        inputEl.onkeydown = (e) => { if (e.key === 'Enter') { cleanup(); resolve(inputEl.value.trim()); } };
+
+        modal.classList.remove('hidden');
+        if (input) setTimeout(() => inputEl.focus(), 50);
+    });
+}
+
 function addSystemMessage(content) {
     const div = document.createElement('div');
     div.className = 'chat-msg system';
@@ -1205,17 +1259,17 @@ function updatePageTitle() {
         : 'Rune - ' + sessionName;
 }
 
-function createFile() {
-    const name = prompt('New filename (must end in .md):');
+async function createFile() {
+    const name = await showDialog({ title: 'New File', message: 'Filename must end in .md', input: true, placeholder: 'example.md' });
     if (!name) return;
-    const clean = name.trim();
-    if (!clean.endsWith('.md')) { alert('Filename must end in .md'); return; }
-    if (!/^[a-zA-Z0-9_\-\.]+\.md$/.test(clean)) { alert('Invalid filename. Use only letters, numbers, _ - .'); return; }
-    api('file/create', { note_id: currentNoteId, name: clean });
+    if (!name.endsWith('.md')) { addSystemMessage('Error: filename must end in .md'); return; }
+    if (!/^[a-zA-Z0-9_\-\.]+\.md$/.test(name)) { addSystemMessage('Error: invalid filename'); return; }
+    api('file/create', { note_id: currentNoteId, name });
 }
 
-function deleteCurrentFile() {
-    if (!confirm('Delete ' + currentFilename + '?')) return;
+async function deleteCurrentFile() {
+    const ok = await showDialog({ title: 'Delete File', message: 'Delete ' + currentFilename + '?', danger: true });
+    if (!ok) return;
     api('file/delete', { note_id: currentNoteId, name: currentFilename });
 }
 
@@ -1233,8 +1287,8 @@ async function switchFile(name) {
 function renameCurrentFile(newName) {
     const clean = newName.trim();
     if (!clean || clean === currentFilename) return;
-    if (!clean.endsWith('.md')) { alert('Filename must end in .md'); return; }
-    if (!/^[a-zA-Z0-9_\-\.]+\.md$/.test(clean)) { alert('Invalid filename'); return; }
+    if (!clean.endsWith('.md')) { addSystemMessage('Error: filename must end in .md'); return; }
+    if (!/^[a-zA-Z0-9_\-\.]+\.md$/.test(clean)) { addSystemMessage('Error: invalid filename'); return; }
     api('file/rename', { note_id: currentNoteId, old_name: currentFilename, new_name: clean });
 }
 
@@ -1528,11 +1582,11 @@ function renderNoteList() {
                 const renameBtn = document.createElement('button');
                 renameBtn.textContent = '✏️';
                 renameBtn.title = 'Rename';
-                renameBtn.onclick = (e) => {
+                renameBtn.onclick = async (e) => {
                     e.stopPropagation();
-                    const newName = prompt('Rename file:', fname);
-                    if (newName && newName.trim() && newName.trim() !== fname) {
-                        api('file/rename', { note_id: s.id, old_name: fname, new_name: newName.trim() });
+                    const newName = await showDialog({ title: 'Rename File', input: true, inputValue: fname, placeholder: 'new-name.md' });
+                    if (newName && newName !== fname) {
+                        api('file/rename', { note_id: s.id, old_name: fname, new_name: newName });
                     }
                 };
                 fileActions.appendChild(renameBtn);
@@ -1540,11 +1594,10 @@ function renderNoteList() {
                 const delBtn = document.createElement('button');
                 delBtn.textContent = '🗑';
                 delBtn.title = 'Delete';
-                delBtn.onclick = (e) => {
+                delBtn.onclick = async (e) => {
                     e.stopPropagation();
-                    if (confirm('Delete "' + fname + '"?')) {
-                        api('file/delete', { note_id: s.id, name: fname });
-                    }
+                    const ok = await showDialog({ title: 'Delete File', message: 'Delete "' + fname + '"?', danger: true });
+                    if (ok) api('file/delete', { note_id: s.id, name: fname });
                 };
                 fileActions.appendChild(delBtn);
 
@@ -1699,9 +1752,10 @@ function saveNoteSettings() {
     hideNoteSettings();
 }
 
-function deleteCurrentNote() {
+async function deleteCurrentNote() {
     if (!settingsNoteId) return;
-    if (!confirm('Delete this session? Chat history will be preserved but session metadata will be removed.')) return;
+    const ok = await showDialog({ title: 'Delete Note', message: 'Delete this note? Chat history will be preserved.', danger: true, okLabel: 'Delete Note' });
+    if (!ok) return;
     api('note/delete', { note_id: settingsNoteId });
     hideNoteSettings();
     if (currentNoteId === settingsNoteId) {
