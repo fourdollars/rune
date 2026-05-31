@@ -440,8 +440,10 @@ pub async fn events_handler(
     };
     init_msgs.push(SseMsg::NoteList { notes: visible_notes, active: note_id.clone().unwrap_or_default() });
 
-    // Users update
-    init_msgs.push(SseMsg::UsersUpdate { count });
+    // Users update (not sent to guests per spec)
+    if !is_guest {
+        init_msgs.push(SseMsg::UsersUpdate { count });
+    }
 
     // System join message — broadcast to the room if connected to one
     let join_msg = SseMsg::System { content: format!("{} joined", nickname) };
