@@ -267,17 +267,21 @@ document.getElementById('nickname-input').addEventListener('keydown', (e) => {
 
 // --- Connection ---
 async function fetchNoteListAndConnect() {
-    // Fetch note list via REST to determine first available note
-    const data = await api('note/switch', { note_id: '' }).catch(() => null);
-    // If server returns notes in note_list SSE, we won't have them here.
-    // Instead, just create the SSE with empty note_id — server will error,
-    // and we rely on note_list from switchNote flow.
-    // Actually: try localStorage first, then do a dummy switch to get note list.
+    // Try saved note first
     const saved = localStorage.getItem('rune_note');
-    if (saved) {
-        connect(saved);
-    }
-    // If no saved note, UI shows empty state. User picks from note list overlay.
+    if (saved) { connect(saved); return; }
+
+    // No saved note — fetch list via REST and connect to first available
+    try {
+        const res = await fetch('/api' + '/notes', {
+            headers: myToken ? { 'Authorization': 'Bearer ' + myToken } : {}
+        });
+        const data = await res.json();
+        if (data.ok && data.notes && data.notes.length > 0) {
+            const firstNote = data.notes[0].id;
+            connect(firstNote);
+        }
+    } catch {}
 }
 
 function connect(noteId) {

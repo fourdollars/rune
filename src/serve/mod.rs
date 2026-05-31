@@ -267,6 +267,7 @@ pub async fn run(config: RuneConfig, opts: NotesOptions) {
         .route("/api/file/rename", post(api::file_rename_handler))
         .route("/api/file/switch", post(api::file_switch_handler))
         .route("/api/file/update", post(api::file_update_handler))
+        .route("/api/notes", get(api::notes_list_json_handler))
         .route("/api/note/create", post(api::note_create_handler))
         .route("/api/note/rename", post(api::note_rename_handler))
         .route("/api/note/delete", post(api::note_delete_handler))

@@ -1284,6 +1284,15 @@ async fn broadcast_note_list(state: &ServerState) {
     }
 }
 
+
+/// GET /api/notes — JSON list of notes (authenticated users only)
+pub async fn notes_list_json_handler(
+    State(state): State<ServerState>,
+) -> Json<serde_json::Value> {
+    let notes = build_note_list(&state).await;
+    Json(serde_json::json!({ "ok": true, "notes": notes }))
+}
+
 // ─── Agent chat handler ────────────────────────────────────────────────────
 
 async fn handle_chat_message(
