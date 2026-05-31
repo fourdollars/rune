@@ -269,7 +269,7 @@ pub async fn build_note_list(state: &ServerState) -> Vec<NoteListEntry> {
     let notes = state.chat_db.list_notes().unwrap_or_default();
     let mut entries = Vec::new();
     for s in notes {
-        let md_dir = super::note_markdown_dir(&s.id);
+        let md_dir = state.note_markdown_dir(&s.id);
         let mut files = Vec::new();
         if let Ok(mut rd) = tokio::fs::read_dir(&md_dir).await {
             while let Ok(Some(entry)) = rd.next_entry().await {
@@ -465,7 +465,7 @@ pub async fn file_create_handler(
         return Json(ApiResponse::err(format!("Invalid filename: {}", req.name)));
     }
 
-    let md_dir = super::note_markdown_dir(&req.note_id);
+    let md_dir = state.note_markdown_dir(&req.note_id);
     let file_path = md_dir.join(&req.name);
     if file_path.exists() {
         return Json(ApiResponse::err(format!("File already exists: {}", req.name)));
@@ -495,7 +495,7 @@ pub async fn file_delete_handler(
         return Json(ApiResponse::err("No note selected"));
     }
 
-    let md_dir = super::note_markdown_dir(&req.note_id);
+    let md_dir = state.note_markdown_dir(&req.note_id);
     let file_path = md_dir.join(&req.name);
     tokio::fs::remove_file(&file_path).await.ok();
 
@@ -517,7 +517,7 @@ pub async fn file_rename_handler(
         return Json(ApiResponse::err(format!("Invalid filename: {}", req.new_name)));
     }
 
-    let md_dir = super::note_markdown_dir(&req.note_id);
+    let md_dir = state.note_markdown_dir(&req.note_id);
     let new_path = md_dir.join(&req.new_name);
     if new_path.exists() {
         return Json(ApiResponse::err(format!("File already exists: {}", req.new_name)));
@@ -540,7 +540,7 @@ pub async fn file_switch_handler(
         return Json(serde_json::json!({ "ok": false, "error": "No note selected" }));
     }
 
-    let file_path = super::note_markdown_dir(&req.note_id).join(&req.name);
+    let file_path = state.note_markdown_dir(&req.note_id).join(&req.name);
     match tokio::fs::read_to_string(&file_path).await {
         Ok(content) => {
             // Per-client action: return content via HTTP only, no broadcast.
@@ -566,7 +566,7 @@ pub async fn file_update_handler(
         return Json(ApiResponse::err("Invalid or missing filename"));
     }
 
-    let file_path = super::note_markdown_dir(&req.note_id).join(&fname);
+    let file_path = state.note_markdown_dir(&req.note_id).join(&fname);
     if let Err(e) = tokio::fs::write(&file_path, &req.content).await {
         return Json(ApiResponse::err(format!("Failed to write: {}", e)));
     }
@@ -595,7 +595,7 @@ pub async fn note_create_handler(
     match state.chat_db.create_note(&id, &req.name, None) {
         Ok(_) => {
             info!("Note '{}' created", id);
-            let md_dir = super::note_markdown_dir(&id);
+            let md_dir = state.note_markdown_dir(&id);
             let _ = tokio::fs::create_dir_all(&md_dir).await;
             broadcast_note_list(&state).await;
             Json(ApiResponse::success())
@@ -610,8 +610,8 @@ pub async fn note_rename_handler(
 ) -> Json<ApiResponse> {
     match state.chat_db.rename_note(&req.note_id, &req.name) {
         Ok(Some(new_id)) => {
-            let old_dir = super::data_dir().join("notes").join(&req.note_id);
-            let new_dir = super::data_dir().join("notes").join(&new_id);
+            let old_dir = state.data_dir.join("notes").join(&req.note_id);
+            let new_dir = state.data_dir.join("notes").join(&new_id);
             if old_dir.exists() {
                 if !new_dir.exists() {
                     // Simple rename: no target directory, just mv
@@ -674,7 +674,7 @@ pub async fn note_delete_handler(
     match state.chat_db.delete_note(&req.note_id) {
         Ok(true) => {
             // Remove the note directory if markdown/ is empty (or absent)
-            let note_dir = super::data_dir().join("notes").join(&req.note_id);
+            let note_dir = state.data_dir.join("notes").join(&req.note_id);
             let md_dir = note_dir.join("markdown");
             let md_empty = tokio::fs::read_dir(&md_dir).await
                 .map(|_| false) // will check properly below
@@ -705,7 +705,7 @@ pub async fn note_switch_handler(
     let history = state.chat_db.load_recent_async(req.note_id.clone(), 100).await;
 
     // Load file list
-    let md_dir = super::note_markdown_dir(&req.note_id);
+    let md_dir = state.note_markdown_dir(&req.note_id);
     let mut files = Vec::new();
     if let Ok(mut rd) = tokio::fs::read_dir(&md_dir).await {
         while let Ok(Some(entry)) = rd.next_entry().await {
@@ -755,7 +755,7 @@ pub async fn archive_handler(
     if req.note_id.is_empty() {
         return Json(ApiResponse::err("No note selected"));
     }
-    let archive_dir = super::note_markdown_dir(&req.note_id)
+    let archive_dir = state.note_markdown_dir(&req.note_id)
         .parent().unwrap().join("archives");
     let ts = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -785,7 +785,7 @@ pub async fn search_handler(
     if req.query.is_empty() {
         return Json(ApiResponse::err("Empty query"));
     }
-    let archive_dir = super::note_markdown_dir(&req.note_id).parent().unwrap().join("archives");
+    let archive_dir = state.note_markdown_dir(&req.note_id).parent().unwrap().join("archives");
     let results = state.chat_db.search_async(req.note_id, req.query.clone(), archive_dir).await;
     let msg = SseMsg::SearchResults { query: req.query, results };
     broadcast(&state, &msg);
@@ -1025,7 +1025,7 @@ pub async fn public_raw_handler(
     if !note_public || !file_public {
         return (StatusCode::NOT_FOUND, [(axum::http::header::CONTENT_TYPE, "text/plain")], "".to_string()).into_response();
     }
-    let file_path = super::note_markdown_dir(&note_id).join(&filename);
+    let file_path = state.note_markdown_dir(&note_id).join(&filename);
     match tokio::fs::read_to_string(&file_path).await {
         Ok(content) => (StatusCode::OK, [(axum::http::header::CONTENT_TYPE, "text/markdown; charset=utf-8")], content).into_response(),
         Err(_) => (StatusCode::NOT_FOUND, [(axum::http::header::CONTENT_TYPE, "text/plain")], "".to_string()).into_response(),
@@ -1045,7 +1045,7 @@ fn url_encode(s: &str) -> String {
 
 
 async fn broadcast_file_list(state: &ServerState, note_id: &str) {
-    let md_dir = super::note_markdown_dir(note_id);
+    let md_dir = state.note_markdown_dir(note_id);
     let mut file_names = Vec::new();
     if let Ok(mut rd) = tokio::fs::read_dir(&md_dir).await {
         while let Ok(Some(entry)) = rd.next_entry().await {
@@ -1137,10 +1137,10 @@ async fn handle_chat_message(
     agent.token_callback = Some(token_callback);
     agent.approval_callback = Some(approval_callback);
     agent.user_name = if !nickname.is_empty() && nickname != "user" { Some(nickname) } else { None };
-    agent.markdown_dir = Some(super::note_markdown_dir(&note_id));
+    agent.markdown_dir = Some(state.note_markdown_dir(&note_id));
     agent.chat_db = Some(state.chat_db.clone());
     agent.chat_note_id = Some(note_id.clone());
-    agent.chat_archive_dir = Some(super::note_markdown_dir(&note_id)
+    agent.chat_archive_dir = Some(state.note_markdown_dir(&note_id)
         .parent().unwrap().join("archives"));
     // Notify UI whenever AI writes/creates a markdown file
     let state_for_filelist = state.clone();
@@ -1584,6 +1584,7 @@ mod tests {
             broadcast_tx,
             admin_broadcast_tx,
             chat_db: crate::serve::db::ChatDb::open(std::path::Path::new(":memory:")).unwrap(),
+            data_dir: std::path::PathBuf::from("/tmp/rune-test"),
         }
     }
 }
@@ -1654,6 +1655,7 @@ fn test_state(tmp: &TempDir) -> ServerState {
         broadcast_tx,
         admin_broadcast_tx,
         chat_db: db,
+        data_dir: tmp.path().join(".rune"),
     }
 }
 
@@ -1747,7 +1749,6 @@ async fn test_session_rename() {
 #[tokio::test]
 async fn test_file_create() {
     let (app, tmp) = test_app();
-    std::env::set_var("HOME", tmp.path());
     post_json(&app, "/api/session/create", json!({"name": "file-test"})).await;
     let (_, body) = post_json(&app, "/api/file/create", json!({
         "note_id": "file-test",
@@ -1771,7 +1772,6 @@ async fn test_file_create_invalid_name() {
 #[tokio::test]
 async fn test_file_create_duplicate() {
     let (app, tmp) = test_app();
-    std::env::set_var("HOME", tmp.path());
     post_json(&app, "/api/session/create", json!({"name": "f2"})).await;
     post_json(&app, "/api/file/create", json!({"note_id": "f2", "name": "a.md"})).await;
     let (_, body) = post_json(&app, "/api/file/create", json!({"note_id": "f2", "name": "a.md"})).await;
@@ -1825,7 +1825,6 @@ async fn test_file_switch_not_found() {
 #[tokio::test]
 async fn test_file_rename() {
     let (app, tmp) = test_app();
-    std::env::set_var("HOME", tmp.path());
     post_json(&app, "/api/session/create", json!({"name": "f5"})).await;
     post_json(&app, "/api/file/create", json!({"note_id": "f5", "name": "old.md"})).await;
     let (_, body) = post_json(&app, "/api/file/rename", json!({

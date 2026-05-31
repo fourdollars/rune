@@ -59,6 +59,15 @@ pub struct ServerState {
     /// Broadcast to ADMIN clients only (approval requests).
     pub admin_broadcast_tx: broadcast::Sender<String>,
     pub chat_db: ChatDb,
+    /// Base data directory (default: ~/.rune). Injectable for testing.
+    pub data_dir: PathBuf,
+}
+
+impl ServerState {
+    /// Returns the markdown directory for a given note session.
+    pub fn note_markdown_dir(&self, session: &str) -> PathBuf {
+        self.data_dir.join("notes").join(session).join("markdown")
+    }
 }
 
 /// Options for `rune serve`.
@@ -137,6 +146,7 @@ pub async fn run(config: RuneConfig, opts: NotesOptions) {
         broadcast_tx,
         admin_broadcast_tx,
         chat_db,
+        data_dir: data_dir(),
     };
 
     // Auth middleware for POST API endpoints
@@ -1252,6 +1262,7 @@ mod tests {
             broadcast_tx,
             admin_broadcast_tx,
             chat_db: db,
+            data_dir: std::path::PathBuf::from("/tmp/rune-test"),
         };
 
         assert_eq!(state.user_token, None);
@@ -1281,6 +1292,7 @@ mod tests {
             broadcast_tx,
             admin_broadcast_tx,
             chat_db: db,
+            data_dir: std::path::PathBuf::from("/tmp/rune-test"),
         };
 
         assert_eq!(state.user_token.as_deref(), Some("my-secret-token"));
@@ -1310,6 +1322,7 @@ mod tests {
             broadcast_tx,
             admin_broadcast_tx,
             chat_db: db,
+            data_dir: std::path::PathBuf::from("/tmp/rune-test"),
         };
 
         // Verify broadcast channel is functional
