@@ -80,7 +80,7 @@ pub struct Agent {
     /// Called with (id, detail) when a tool needs user approval.
     /// Returns true = approved, false = denied.
     pub approval_callback: Option<Arc<dyn Fn(String, String) -> std::pin::Pin<Box<dyn std::future::Future<Output = bool> + Send>> + Send + Sync>>,
-    /// Shared markdown files (for serve mode — list_markdown/read_markdown/edit_markdown tools).
+    /// Shared markdown files (for serve mode — list_markdown/read_markdown/write_markdown tools).
     pub files: Option<Arc<RwLock<std::collections::HashMap<String, String>>>>,
     /// Currently active filename.
     pub active_file: Option<Arc<RwLock<String>>>,
@@ -1115,7 +1115,7 @@ impl Agent {
         Some(format!("{} result(s) for \"{}\":\n{}", lines.len(), query, lines.join("\n")))
     }
 
-/// Handle markdown tools (list_markdown / read_markdown / edit_markdown) for serve mode.
+/// Handle markdown tools (list_markdown / read_markdown / write_markdown) for serve mode.
     /// Returns Some(output) if handled, None if not a markdown tool.
     /// All operations are disk-based per-session (no shared in-memory map).
     async fn handle_markdown_tool(&self, name: &str, args: &serde_json::Value) -> Option<String> {
@@ -1164,7 +1164,7 @@ impl Agent {
                     Err(_) => Some(format!("Error: file not found: {}", fname)),
                 }
             }
-            "edit_markdown" => {
+            "write_markdown" => {
                 let new_content = args.get("content").and_then(|v| v.as_str());
                 let search = args.get("search").and_then(|v| v.as_str());
                 let replace = args.get("replace").and_then(|v| v.as_str());
@@ -1193,7 +1193,7 @@ impl Agent {
                         Err(_) => Some(format!("Error: file not found: {}", fname)),
                     }
                 } else {
-                    Some("Error: edit_markdown requires either 'content' (full replace) or 'search'+'replace' (targeted edit)".to_string())
+                    Some("Error: write_markdown requires either 'content' (full replace) or 'search'+'replace' (targeted edit)".to_string())
                 }
             }
             _ => None,
@@ -1327,7 +1327,7 @@ impl Agent {
             }
         }
 
-        // Intercept markdown tools (list_markdown / read_markdown / edit_markdown) for serve mode
+        // Intercept markdown tools (list_markdown / read_markdown / write_markdown) for serve mode
         if let Some(spec_output) = self.handle_markdown_tool(&tc.function.name, &args).await {
             return Ok(spec_output);
         }

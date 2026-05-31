@@ -450,7 +450,7 @@ stderr: {}",
             serde_json::json!({
                 "type": "function",
                 "function": {
-                    "name": "edit_markdown",
+                    "name": "write_markdown",
                     "description": "Edit a markdown file. Use 'content' for full replacement, or 'search'+'replace' for targeted edits. Defaults to the active file if no filename is given.",
                     "parameters": {
                         "type": "object",
@@ -1336,7 +1336,7 @@ mod tests {
     }
 
     /// Ensure the tool schema exposed to the LLM never contains legacy read_spec/edit_spec names.
-    /// This test prevents regression of the rename to list_markdown/read_markdown/edit_markdown.
+    /// This test prevents regression of the rename to list_markdown/read_markdown/write_markdown.
     #[test]
     fn test_tool_schema_no_legacy_spec_tools() {
         let registry = ToolRegistry::new(vec![]);
@@ -1358,7 +1358,7 @@ mod tests {
         let schema = serde_json::to_string(&registry.tool_definitions()).unwrap();
         assert!(schema.contains("list_markdown"), "tool schema missing 'list_markdown'");
         assert!(schema.contains("read_markdown"), "tool schema missing 'read_markdown'");
-        assert!(schema.contains("edit_markdown"), "tool schema missing 'edit_markdown'");
+        assert!(schema.contains("write_markdown"), "tool schema missing 'write_markdown'");
     }
 
     #[test]
