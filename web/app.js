@@ -476,12 +476,6 @@ function handleMessage(msg) {
         case 'model_list':
             availableModels = msg.models || [];
             activeModel = msg.active || '';
-            if (isAdmin) {
-                const saved = localStorage.getItem('rune_model');
-                if (saved && availableModels.includes(saved) && saved !== activeModel) {
-                    switchModel(saved);
-                }
-            }
             updateModelIndicator();
             break;
         case 'model_changed':
@@ -1615,6 +1609,12 @@ async function switchNote(sessionId, forceFile = null) {
 
     const data = await api('note/switch', { note_id: sessionId });
     if (!data || !data.ok) return;
+
+    // Update active model for this note
+    if (data.current_model) {
+        activeModel = data.current_model;
+        updateModelIndicator();
+    }
 
     // Replay history from response
     document.getElementById('chat-messages').innerHTML = '';
