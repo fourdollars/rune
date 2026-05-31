@@ -336,12 +336,7 @@ pub async fn build_note_list(state: &ServerState) -> Vec<NoteListEntry> {
     entries
 }
 
-/// Broadcast an SSE message to all connected clients.
-pub fn broadcast(state: &ServerState, msg: &SseMsg) {
-    if let Ok(json) = serde_json::to_string(msg) {
-        let _ = state.broadcast_tx.send(json);
-    }
-}
+
 
 /// Broadcast a message to a specific note room only.
 /// Subscribers to other rooms will NOT receive this message.
@@ -373,44 +368,47 @@ pub async fn events_handler(
         return Sse::new(err_stream).keep_alive(KeepAlive::default()).into_response();
     }
 
-    // note_id: if provided, subscribe to room channel; otherwise use global
-    let note_id = params.note_id.clone().filter(|id| !id.is_empty());
-    let notes = build_note_list(&state).await;
-
-    // Validate note_id if provided
-    let room: Option<Arc<NoteRoom>> = if let Some(ref nid) = note_id {
-        let note_exists = notes.iter().any(|n| n.id == *nid);
-        if !note_exists {
+    // note_id is REQUIRED per spec
+    let note_id = match params.note_id {
+        Some(ref id) if !id.is_empty() => id.clone(),
+        _ => {
             let err_stream = futures::stream::once(async {
                 Ok::<_, Infallible>(Event::default()
                     .event("error")
-                    .data(r#"{"type":"error","message":"Note not found"}"#.to_string()))
+                    .data(r#"{"type":"error","message":"note_id is required"}"#.to_string()))
             });
             return Sse::new(err_stream).keep_alive(KeepAlive::default()).into_response();
         }
-        // Guest + private note check
-        if is_guest {
-            let note_public = notes.iter().find(|n| n.id == *nid).map(|n| n.public).unwrap_or(false);
-            if !note_public {
-                let err_stream = futures::stream::once(async {
-                    Ok::<_, Infallible>(Event::default()
-                        .event("auth_error")
-                        .data(r#"{"type":"auth_error","message":"Guests cannot access private notes"}"#.to_string()))
-                });
-                return Sse::new(err_stream).keep_alive(KeepAlive::default()).into_response();
-            }
-        }
-        Some(state.get_or_create_room(nid).await)
-    } else {
-        None
     };
 
-    // Subscribe to appropriate channel
-    let mut room_rx = if let Some(ref r) = room {
-        r.broadcast_tx.subscribe()
-    } else {
-        state.broadcast_tx.subscribe()
-    };
+    let notes = build_note_list(&state).await;
+
+    // Verify note exists
+    if !notes.iter().any(|n| n.id == note_id) {
+        let err_stream = futures::stream::once(async {
+            Ok::<_, Infallible>(Event::default()
+                .event("error")
+                .data(r#"{"type":"error","message":"Note not found"}"#.to_string()))
+        });
+        return Sse::new(err_stream).keep_alive(KeepAlive::default()).into_response();
+    }
+
+    // Guest + private note check
+    if is_guest {
+        let note_public = notes.iter().find(|n| n.id == note_id).map(|n| n.public).unwrap_or(false);
+        if !note_public {
+            let err_stream = futures::stream::once(async {
+                Ok::<_, Infallible>(Event::default()
+                    .event("auth_error")
+                    .data(r#"{"type":"auth_error","message":"Guests cannot access private notes"}"#.to_string()))
+            });
+            return Sse::new(err_stream).keep_alive(KeepAlive::default()).into_response();
+        }
+    }
+
+    // Subscribe to room channel
+    let room = state.get_or_create_room(&note_id).await;
+    let mut room_rx = room.broadcast_tx.subscribe();
 
     // Increment online count
     let count = ONLINE_COUNT.fetch_add(1, Ordering::Relaxed) + 1;
@@ -421,12 +419,8 @@ pub async fn events_handler(
     // Auth result
     init_msgs.push(SseMsg::AuthResult { is_admin, is_guest });
 
-    // Model list — show effective model for this note (or global default)
-    let effective = if let Some(ref nid) = note_id {
-        state.effective_model(nid).await
-    } else {
-        state.global_default_model.read().await.clone()
-    };
+    // Model list — show effective model for this note
+    let effective = state.effective_model(&note_id).await;
     init_msgs.push(SseMsg::ModelList {
         models: state.models.clone(),
         active: effective,
@@ -438,28 +432,20 @@ pub async fn events_handler(
     } else {
         notes
     };
-    init_msgs.push(SseMsg::NoteList { notes: visible_notes, active: note_id.clone().unwrap_or_default() });
+    init_msgs.push(SseMsg::NoteList { notes: visible_notes, active: note_id.clone() });
 
     // Users update (not sent to guests per spec)
     if !is_guest {
         init_msgs.push(SseMsg::UsersUpdate { count });
     }
 
-    // System join message — broadcast to the room if connected to one
+    // System join message — broadcast to the room
     let join_msg = SseMsg::System { content: format!("{} joined", nickname) };
-    if let Some(ref r) = room {
-        broadcast_to_room(r, &join_msg);
-    } else {
-        broadcast(&state, &join_msg);
-    }
-
-    // Users update broadcast (global — affects all rooms)
-    let users_msg = SseMsg::UsersUpdate { count };
-    broadcast(&state, &users_msg);
+    broadcast_to_room(&room, &join_msg);
 
     let nickname_clone = nickname.clone();
     let state_clone = state.clone();
-    let room_clone = room.clone();
+    let room_clone = Arc::clone(&room);
 
     let stream = async_stream::stream! {
         // Send initial messages
@@ -492,13 +478,7 @@ pub async fn events_handler(
         // Client disconnected — decrement count
         let count = ONLINE_COUNT.fetch_sub(1, Ordering::Relaxed) - 1;
         let leave_msg = SseMsg::System { content: format!("{} left", nickname_clone) };
-        if let Some(ref r) = room_clone {
-            broadcast_to_room(r, &leave_msg);
-        } else {
-            broadcast(&state_clone, &leave_msg);
-        }
-        let users_msg = SseMsg::UsersUpdate { count };
-        broadcast(&state_clone, &users_msg);
+        broadcast_to_room(&room_clone, &leave_msg);
     };
 
     Sse::new(stream).keep_alive(KeepAlive::default()).into_response()
@@ -902,11 +882,12 @@ pub async fn model_switch_handler(
         *room.model_override.write().await = Some(req.model.clone());
         broadcast_to_room(&room, &msg);
     } else {
-        // Global default model
+        // Global default model — broadcast to all rooms
         *state.global_default_model.write().await = req.model.clone();
-        // Also update legacy active_model for backwards compat
-        *state.active_model.write().await = req.model.clone();
-        broadcast(&state, &msg);
+        let rooms = state.rooms.read().await;
+        for room in rooms.values() {
+            broadcast_to_room(room, &msg);
+        }
     }
     Json(ApiResponse::success())
 }
@@ -961,15 +942,22 @@ pub async fn approval_handler(
     State(state): State<ServerState>,
     Json(req): Json<ApprovalReq>,
 ) -> Json<ApiResponse> {
-    // Build approval response message
     let msg = if req.approved {
         format!("__approval_granted__{}", req.id)
     } else {
         format!("__approval_denied__{}", req.id)
     };
-    // Route through global broadcast_tx (the agent's approval callback
-    // listens on this channel regardless of room)
-    let _ = state.broadcast_tx.send(msg);
+    // Route approval response through the note's room channel
+    if let Some(ref note_id) = req.note_id {
+        let room = state.get_or_create_room(note_id).await;
+        let _ = room.broadcast_tx.send(msg);
+    } else {
+        // Fallback: broadcast to all rooms (shouldn't happen in normal flow)
+        let rooms = state.rooms.read().await;
+        for room in rooms.values() {
+            let _ = room.broadcast_tx.send(msg.clone());
+        }
+    }
     Json(ApiResponse::success())
 }
 
@@ -1289,7 +1277,11 @@ async fn broadcast_file_list(state: &ServerState, note_id: &str) {
 async fn broadcast_note_list(state: &ServerState) {
     let notes = build_note_list(state).await;
     let msg = SseMsg::NoteList { notes, active: String::new() };
-    broadcast(state, &msg);
+    // Note list is global — broadcast to all rooms
+    let rooms = state.rooms.read().await;
+    for room in rooms.values() {
+        broadcast_to_room(room, &msg);
+    }
 }
 
 // ─── Agent chat handler ────────────────────────────────────────────────────
@@ -1329,20 +1321,17 @@ async fn handle_chat_message(
         broadcast_to_room(&room_for_token, &msg);
     });
 
-    // Approval callback — approval requests go to admin_broadcast (global),
-    // approval responses come back via global broadcast_tx (unchanged)
-    let state_for_approval = state.clone();
+    // Approval callback — requests go to room, responses come back via room
     let room_for_approval = Arc::clone(&room);
     let approval_callback: Arc<dyn Fn(String, String) -> std::pin::Pin<Box<dyn std::future::Future<Output = bool> + Send>> + Send + Sync> =
         Arc::new(move |id: String, detail: String| {
-            let state = state_for_approval.clone();
             let room = Arc::clone(&room_for_approval);
             Box::pin(async move {
-                // Send approval request to the room (so the admin client on this note sees it)
+                // Send approval request to the room
                 let msg = SseMsg::ApprovalRequest { id: id.clone(), detail };
                 broadcast_to_room(&room, &msg);
-                // Wait for approval response via global broadcast channel
-                let mut rx = state.broadcast_tx.subscribe();
+                // Wait for approval response via room channel
+                let mut rx = room.broadcast_tx.subscribe();
                 let approve_key = format!("__approval_granted__{}", id);
                 let deny_key = format!("__approval_denied__{}", id);
                 loop {
@@ -1807,7 +1796,6 @@ mod tests {
 
     // Helper to create a minimal ServerState for tests
     fn mock_state(token: Option<String>, admin_token: Option<String>) -> ServerState {
-        let (broadcast_tx, _) = broadcast::channel(16);
         let (admin_broadcast_tx, _) = broadcast::channel(16);
         ServerState {
             config: crate::config::RuneConfig::default(),
@@ -1817,10 +1805,8 @@ mod tests {
             files: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
             active_file: Arc::new(tokio::sync::RwLock::new(String::new())),
             models: vec!["test-model".into()],
-            active_model: Arc::new(tokio::sync::RwLock::new("test-model".into())),
             rooms: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
             global_default_model: Arc::new(tokio::sync::RwLock::new("test-model".into())),
-            broadcast_tx,
             admin_broadcast_tx,
             chat_db: crate::serve::db::ChatDb::open(std::path::Path::new(":memory:")).unwrap(),
             data_dir: std::path::PathBuf::from("/tmp/rune-test"),
@@ -1878,7 +1864,6 @@ fn test_app() -> (Router, TempDir) {
 }
 
 fn test_state(tmp: &TempDir) -> ServerState {
-    let (broadcast_tx, _) = broadcast::channel(256);
     let (admin_broadcast_tx, _) = broadcast::channel(256);
     let db_path = tmp.path().join("test.db");
     let db = ChatDb::open(&db_path).unwrap();
@@ -1890,10 +1875,8 @@ fn test_state(tmp: &TempDir) -> ServerState {
         files: Arc::new(RwLock::new(std::collections::HashMap::new())),
         active_file: Arc::new(RwLock::new(String::new())),
         models: vec!["gpt-5-mini".into(), "claude-sonnet-4.6".into()],
-        active_model: Arc::new(RwLock::new("gpt-5-mini".into())),
         rooms: Arc::new(RwLock::new(std::collections::HashMap::new())),
         global_default_model: Arc::new(RwLock::new("gpt-5-mini".into())),
-        broadcast_tx,
         admin_broadcast_tx,
         chat_db: db,
         data_dir: tmp.path().join(".rune"),
@@ -2329,7 +2312,6 @@ mod isolation_tests {
 
     fn make_state() -> (ServerState, TempDir) {
         let tmp = tempfile::tempdir().unwrap();
-        let (broadcast_tx, _) = broadcast::channel(256);
         let (admin_broadcast_tx, _) = broadcast::channel(256);
         let db_path = tmp.path().join("test.db");
         let db = ChatDb::open(&db_path).unwrap();
@@ -2341,10 +2323,8 @@ mod isolation_tests {
             files: Arc::new(RwLock::new(HashMap::new())),
             active_file: Arc::new(RwLock::new(String::new())),
             models: vec!["gpt-5-mini".into(), "claude-sonnet-4.6".into()],
-            active_model: Arc::new(RwLock::new("gpt-5-mini".into())),
             rooms: Arc::new(RwLock::new(HashMap::new())),
             global_default_model: Arc::new(RwLock::new("gpt-5-mini".into())),
-            broadcast_tx,
             admin_broadcast_tx,
             chat_db: db,
             data_dir: tmp.path().join(".rune"),
@@ -2537,7 +2517,6 @@ mod isolation_tests {
         use tower::ServiceExt;
 
         let tmp = tempfile::tempdir().unwrap();
-        let (broadcast_tx, _) = broadcast::channel(256);
         let (admin_broadcast_tx, _) = broadcast::channel(256);
         let db = crate::serve::db::ChatDb::open(&tmp.path().join("t.db")).unwrap();
         let state = crate::serve::ServerState {
@@ -2548,10 +2527,8 @@ mod isolation_tests {
             files: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
             active_file: Arc::new(tokio::sync::RwLock::new(String::new())),
             models: vec!["gpt-5-mini".into(), "claude-sonnet-4.6".into()],
-            active_model: Arc::new(tokio::sync::RwLock::new("gpt-5-mini".into())),
             rooms: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
             global_default_model: Arc::new(tokio::sync::RwLock::new("gpt-5-mini".into())),
-            broadcast_tx,
             admin_broadcast_tx,
             chat_db: db,
             data_dir: tmp.path().join(".rune"),
@@ -2591,7 +2568,6 @@ mod isolation_tests {
         use tower::ServiceExt;
 
         let tmp = tempfile::tempdir().unwrap();
-        let (broadcast_tx, _) = broadcast::channel(256);
         let (admin_broadcast_tx, _) = broadcast::channel(256);
         let db = crate::serve::db::ChatDb::open(&tmp.path().join("t.db")).unwrap();
         let state = crate::serve::ServerState {
@@ -2602,10 +2578,8 @@ mod isolation_tests {
             files: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
             active_file: Arc::new(tokio::sync::RwLock::new(String::new())),
             models: vec!["m1".into()],
-            active_model: Arc::new(tokio::sync::RwLock::new("m1".into())),
             rooms: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
             global_default_model: Arc::new(tokio::sync::RwLock::new("m1".into())),
-            broadcast_tx,
             admin_broadcast_tx,
             chat_db: db,
             data_dir: tmp.path().join(".rune"),
@@ -2638,7 +2612,6 @@ mod isolation_tests {
         use tower::ServiceExt;
 
         let tmp = tempfile::tempdir().unwrap();
-        let (broadcast_tx, _) = broadcast::channel(256);
         let (admin_broadcast_tx, _) = broadcast::channel(256);
         let db = crate::serve::db::ChatDb::open(&tmp.path().join("t.db")).unwrap();
         // Create a private note
@@ -2652,10 +2625,8 @@ mod isolation_tests {
             files: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
             active_file: Arc::new(tokio::sync::RwLock::new(String::new())),
             models: vec!["m1".into()],
-            active_model: Arc::new(tokio::sync::RwLock::new("m1".into())),
             rooms: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
             global_default_model: Arc::new(tokio::sync::RwLock::new("m1".into())),
-            broadcast_tx,
             admin_broadcast_tx,
             chat_db: db,
             data_dir: tmp.path().join(".rune"),
@@ -2686,7 +2657,6 @@ mod isolation_tests {
         use tower::ServiceExt;
 
         let tmp = tempfile::tempdir().unwrap();
-        let (broadcast_tx, _) = broadcast::channel(256);
         let (admin_broadcast_tx, _) = broadcast::channel(256);
         let db = crate::serve::db::ChatDb::open(&tmp.path().join("t.db")).unwrap();
         // Create a public note
@@ -2701,10 +2671,8 @@ mod isolation_tests {
             files: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
             active_file: Arc::new(tokio::sync::RwLock::new(String::new())),
             models: vec!["m1".into()],
-            active_model: Arc::new(tokio::sync::RwLock::new("m1".into())),
             rooms: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
             global_default_model: Arc::new(tokio::sync::RwLock::new("m1".into())),
-            broadcast_tx,
             admin_broadcast_tx,
             chat_db: db,
             data_dir: tmp.path().join(".rune"),

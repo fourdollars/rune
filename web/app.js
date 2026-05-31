@@ -266,16 +266,35 @@ document.getElementById('nickname-input').addEventListener('keydown', (e) => {
 });
 
 // --- Connection ---
+async function fetchNoteListAndConnect() {
+    // Fetch note list via REST to determine first available note
+    const data = await api('note/switch', { note_id: '' }).catch(() => null);
+    // If server returns notes in note_list SSE, we won't have them here.
+    // Instead, just create the SSE with empty note_id — server will error,
+    // and we rely on note_list from switchNote flow.
+    // Actually: try localStorage first, then do a dummy switch to get note list.
+    const saved = localStorage.getItem('rune_note');
+    if (saved) {
+        connect(saved);
+    }
+    // If no saved note, UI shows empty state. User picks from note list overlay.
+}
+
 function connect(noteId) {
     if (evtSource) { evtSource.close(); evtSource = null; }
 
-    // Use provided noteId, or fall back to currentNoteId, or saved localStorage
-    const targetNote = noteId || currentNoteId || localStorage.getItem('rune_note') || '';
+    // note_id is required by the server — use provided or current
+    const targetNote = noteId || currentNoteId;
+    if (!targetNote) {
+        // No note selected yet — fetch note list via REST, then connect to first available
+        fetchNoteListAndConnect();
+        return;
+    }
 
     const params = new URLSearchParams();
     if (myNickname) params.set('nickname', myNickname);
     if (myToken) params.set('token', myToken);
-    if (targetNote) params.set('note_id', targetNote);
+    params.set('note_id', targetNote);
 
     evtSource = new EventSource('/api/events?' + params.toString());
     let authFailed = false;

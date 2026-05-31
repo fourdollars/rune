@@ -54,14 +54,10 @@ pub struct ServerState {
     pub active_file: Arc<RwLock<String>>,
     /// All available models (parsed from config.model by comma).
     pub models: Vec<String>,
-    /// Currently selected model (may be overridden at runtime).
-    pub active_model: Arc<RwLock<String>>,
     /// Per-note rooms: isolated SSE channel + model + cancel token per note.
     pub rooms: Arc<RwLock<HashMap<String, Arc<NoteRoom>>>>,
     /// Global default model (used when a note has no per-note override).
     pub global_default_model: Arc<RwLock<String>>,
-    /// Broadcast to ALL connected clients (legacy — used for approval routing).
-    pub broadcast_tx: broadcast::Sender<String>,
     /// Broadcast to ADMIN clients only (approval requests).
     pub admin_broadcast_tx: broadcast::Sender<String>,
     pub chat_db: ChatDb,
@@ -139,7 +135,6 @@ pub async fn run(config: RuneConfig, opts: NotesOptions) {
     // Files are loaded per-session on client connect/switch; start empty
     let initial_files = std::collections::HashMap::new();
 
-    let (broadcast_tx, _) = broadcast::channel(256);
     let (admin_broadcast_tx, _) = broadcast::channel(64);
 
     let db_path = data_dir().join("chat.db");
@@ -185,10 +180,8 @@ pub async fn run(config: RuneConfig, opts: NotesOptions) {
         files: Arc::new(RwLock::new(initial_files)),
         active_file: Arc::new(RwLock::new(String::new())),
         models,
-        active_model: Arc::new(RwLock::new(first_model.clone())),
         rooms: Arc::new(RwLock::new(HashMap::new())),
         global_default_model: Arc::new(RwLock::new(first_model)),
-        broadcast_tx,
         admin_broadcast_tx,
         chat_db,
         data_dir: data_dir(),
@@ -1318,10 +1311,8 @@ mod tests {
         use crate::config::RuneConfig;
         use std::sync::Arc;
         use std::collections::HashMap;
-use tokio::sync::{broadcast, RwLock};
-use crate::serve::api::NoteRoom;
+        use tokio::sync::{broadcast, RwLock};
 
-        let (broadcast_tx, _) = broadcast::channel(256);
         let (admin_broadcast_tx, _) = broadcast::channel(64);
         let db = ChatDb::open(std::path::Path::new(":memory:")).expect("in-memory db");
 
@@ -1341,10 +1332,8 @@ use crate::serve::api::NoteRoom;
             files: Arc::new(RwLock::new(std::collections::HashMap::new())),
             active_file: Arc::new(RwLock::new(String::new())),
             models: models.clone(),
-            active_model: Arc::new(RwLock::new(first_model.clone())),
             rooms: Arc::new(RwLock::new(HashMap::new())),
             global_default_model: Arc::new(RwLock::new(first_model.clone())),
-            broadcast_tx,
             admin_broadcast_tx,
             chat_db: db,
             data_dir: std::path::PathBuf::from("/tmp/rune-test"),
@@ -1352,7 +1341,7 @@ use crate::serve::api::NoteRoom;
 
         assert_eq!(state.user_token, None);
         assert_eq!(state.admin_token.as_deref(), Some("admin"));
-        assert_eq!(*state.active_model.read().await, first_model);
+        assert_eq!(*state.global_default_model.read().await, first_model);
     }
 
     #[tokio::test]
@@ -1360,10 +1349,8 @@ use crate::serve::api::NoteRoom;
         use crate::config::RuneConfig;
         use std::sync::Arc;
         use std::collections::HashMap;
-use tokio::sync::{broadcast, RwLock};
-use crate::serve::api::NoteRoom;
+        use tokio::sync::{broadcast, RwLock};
 
-        let (broadcast_tx, _) = broadcast::channel(256);
         let (admin_broadcast_tx, _) = broadcast::channel(64);
         let db = ChatDb::open(std::path::Path::new(":memory:")).expect("in-memory db");
 
@@ -1375,10 +1362,8 @@ use crate::serve::api::NoteRoom;
             files: Arc::new(RwLock::new(std::collections::HashMap::new())),
             active_file: Arc::new(RwLock::new("main.md".into())),
             models: vec!["gpt-4o".into()],
-            active_model: Arc::new(RwLock::new("gpt-4o".into())),
             rooms: Arc::new(RwLock::new(HashMap::new())),
             global_default_model: Arc::new(RwLock::new("gpt-4o".into())),
-            broadcast_tx,
             admin_broadcast_tx,
             chat_db: db,
             data_dir: std::path::PathBuf::from("/tmp/rune-test"),
@@ -1390,14 +1375,12 @@ use crate::serve::api::NoteRoom;
     }
 
     #[tokio::test]
-    async fn test_server_state_broadcast_channel() {
+    async fn test_server_state_room_broadcast() {
         use crate::config::RuneConfig;
         use std::sync::Arc;
         use std::collections::HashMap;
-use tokio::sync::{broadcast, RwLock};
-use crate::serve::api::NoteRoom;
+        use tokio::sync::{broadcast, RwLock};
 
-        let (broadcast_tx, mut broadcast_rx) = broadcast::channel(256);
         let (admin_broadcast_tx, _) = broadcast::channel(64);
         let db = ChatDb::open(std::path::Path::new(":memory:")).expect("in-memory db");
 
@@ -1409,18 +1392,18 @@ use crate::serve::api::NoteRoom;
             files: Arc::new(RwLock::new(std::collections::HashMap::new())),
             active_file: Arc::new(RwLock::new(String::new())),
             models: vec![],
-            active_model: Arc::new(RwLock::new(String::new())),
             rooms: Arc::new(RwLock::new(HashMap::new())),
             global_default_model: Arc::new(RwLock::new(String::new())),
-            broadcast_tx,
             admin_broadcast_tx,
             chat_db: db,
             data_dir: std::path::PathBuf::from("/tmp/rune-test"),
         };
 
-        // Verify broadcast channel is functional
-        state.broadcast_tx.send("hello".into()).unwrap();
-        let msg = broadcast_rx.recv().await.unwrap();
+        // Verify per-room broadcast channel is functional
+        let room = state.get_or_create_room("test-room").await;
+        let mut rx = room.broadcast_tx.subscribe();
+        room.broadcast_tx.send("hello".into()).unwrap();
+        let msg = rx.recv().await.unwrap();
         assert_eq!(msg, "hello");
     }
 
