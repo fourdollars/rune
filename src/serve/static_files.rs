@@ -12,6 +12,9 @@ static ASSETS: LazyLock<HashMap<&'static str, &'static str>> = LazyLock::new(|| 
     m.insert("marked.min.js",          include_str!("../../web/marked.min.js"));
     m.insert("highlight.min.js",       include_str!("../../web/highlight.min.js"));
     m.insert("highlight-dark.min.css", include_str!("../../web/highlight-dark.min.css"));
+    m.insert("katex.min.css",          include_str!("../../web/katex.min.css"));
+    m.insert("katex.min.js",           include_str!("../../web/katex.min.js"));
+    m.insert("katex-auto-render.min.js", include_str!("../../web/katex-auto-render.min.js"));
     m
 });
 
@@ -40,6 +43,19 @@ mod tests {
         assert!(get("app.js").is_some(),     "app.js missing");
         assert!(get("style.css").is_some(),  "style.css missing");
         assert!(get("favicon.svg").is_some(),"favicon.svg missing");
+        assert!(get("katex.min.css").is_some(), "katex.min.css missing");
+        assert!(get("katex.min.js").is_some(), "katex.min.js missing");
+        assert!(get("katex-auto-render.min.js").is_some(), "katex-auto-render.min.js missing");
+    }
+
+    #[test]
+    fn test_katex_assets_valid() {
+        let css = get("katex.min.css").unwrap();
+        assert!(css.contains(".katex"), "katex.min.css doesn't contain .katex selector");
+        let js = get("katex.min.js").unwrap();
+        assert!(js.len() > 100_000, "katex.min.js suspiciously small: {} bytes", js.len());
+        let ar = get("katex-auto-render.min.js").unwrap();
+        assert!(ar.contains("renderMathInElement"), "auto-render missing renderMathInElement");
     }
 
     #[test]

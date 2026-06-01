@@ -1052,6 +1052,18 @@ function initPreviewScrollSync() {
 function renderPreview() {
     if (typeof marked !== 'undefined') {
         preview.innerHTML = marked.parse(specContent);
+        // Render LaTeX math expressions with KaTeX
+        if (typeof renderMathInElement !== 'undefined') {
+            renderMathInElement(preview, {
+                delimiters: [
+                    {left: '$$', right: '$$', display: true},
+                    {left: '$', right: '$', display: false},
+                    {left: '\\(', right: '\\)', display: false},
+                    {left: '\\[', right: '\\]', display: true}
+                ],
+                throwOnError: false
+            });
+        }
         // Render mermaid blocks (with ready-wait for slow 3MB load)
         preview.querySelectorAll('.mermaid-block').forEach(el => {
             const src = el.dataset.src ? el.dataset.src.replace(/&quot;/g, '"') : '';

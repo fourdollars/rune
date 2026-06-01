@@ -1129,6 +1129,9 @@ const PUBLIC_PREVIEW_HTML: &str = r#"<!DOCTYPE html>
   <div id="loading">Loading…</div>
   <div id="content" style="display:none"></div>
 </div>
+<link rel="stylesheet" href="/assets/katex.min.css">
+<script src="/assets/katex.min.js"></script>
+<script src="/assets/katex-auto-render.min.js"></script>
 <script src="/assets/marked.min.js"></script>
 <script src="/assets/highlight.min.js"></script>
 <script src="/assets-bin/mermaid.min.js"></script>
@@ -1156,6 +1159,17 @@ const PUBLIC_PREVIEW_HTML: &str = r#"<!DOCTYPE html>
     const html = marked.parse(md);
     const content = document.getElementById('content');
     content.innerHTML = html;
+    if (typeof renderMathInElement !== 'undefined') {
+      renderMathInElement(content, {
+        delimiters: [
+          {left: '$$', right: '$$', display: true},
+          {left: '$', right: '$', display: false},
+          {left: '\\\\(', right: '\\\\)', display: false},
+          {left: '\\\\[', right: '\\\\]', display: true}
+        ],
+        throwOnError: false
+      });
+    }
     document.getElementById('loading').style.display = 'none';
     content.style.display = '';
     if (typeof mermaid !== 'undefined') {
