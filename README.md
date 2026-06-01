@@ -85,6 +85,16 @@ echo "Summarize the README.md in this project" | \
   ghcr.io/fourdollars/rune --json --yes
 ```
 
+**Rune Notes serve mode:**
+
+```bash
+docker run --rm -it \
+  -v ~/.rune:/home/rune/.rune \
+  -p 9527:9527 \
+  ghcr.io/fourdollars/rune notes --bind 0.0.0.0 --port 9527
+```
+
+
 Available tags: `latest` (Debian-based, built from main branch), `<sha>` (specific commit).
 
 ## CLI Usage
@@ -534,18 +544,34 @@ src/
 │   ├── landlock.rs     — Landlock filesystem restriction (internal subcommand)
 │   ├── seccomp.rs      — Seccomp BPF syscall filter (internal subcommand)
 │   └── net_guard.rs    — Seccomp user-notif network filter (internal subcommand)
+├── serve/
+│   ├── mod.rs          — HTTP server, routes, auth middleware
+│   ├── api.rs          — SSE handlers, chat, file/note CRUD, public pages
+│   ├── db.rs           — SQLite persistence (sessions, file visibility)
+│   └── static_files.rs — Embedded static assets (include_str!)
 ├── setup.rs             — rune init wizard
 ├── skills/mod.rs        — SKILL.md loader
-├── tools/mod.rs         — 6 built-in tools (all sandboxed)
+├── tools/mod.rs         — 10 built-in tools (6 standard + 4 serve-mode)
 ├── embedding/mod.rs     — Embedding engine + vector store
 └── trace/mod.rs         — JSON trace + redaction
+
+web/
+├── index.html           — Rune Notes SPA
+├── app.js               — Frontend logic (SSE, editor, chat, auth)
+├── style.css            — UI styles (light/dark, responsive)
+├── favicon.svg          — Rune logo
+├── marked.min.js        — Markdown rendering
+├── mermaid.min.js       — Diagram rendering
+├── katex.min.js/css     — LaTeX math rendering
+├── highlight.min.js     — Syntax highlighting
+└── highlight-dark.min.css
 ```
 
 ## Development
 
 ```bash
-cargo build --release    # Single binary
-cargo test               # Unit tests (259)
+cargo build --release    # Single binary (~12MB)
+cargo test               # Unit tests (762)
 ./tests/e2e.sh           # E2E tests (26)
 make check-all           # Both
 ```
