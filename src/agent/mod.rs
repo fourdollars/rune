@@ -1366,7 +1366,7 @@ impl Agent {
                 );
                 eprintln!("  {} {}", "✗".red(), msg.dimmed());
                 return Err(StopReason::Error(msg));
-            } else {
+            } else if Self::has_tty() {
                 eprint!(
                     "
   {} Execute? [Y/n] ",
@@ -1380,6 +1380,9 @@ impl Agent {
                         return Ok("DENIED: user rejected tool execution".to_string());
                     }
                 }
+            } else {
+                // No TTY and no approval_callback — deny silently
+                return Ok("DENIED: no interactive approval available".to_string());
             }
         }
 
@@ -1456,7 +1459,7 @@ impl Agent {
 
             // Check if it's a domain block we can interactively resolve
             if let Some(domain) = Self::extract_blocked_domain(&output.content) {
-                if self.interactive {
+                if self.interactive && Self::has_tty() {
                     eprint!(
                         "\n  {} Add '{}' to allowed_domains? [Y/n] ",
                         "🔓".yellow(),
@@ -1491,7 +1494,7 @@ impl Agent {
 
             // Check if it's a command block we can interactively resolve
             if let Some(command) = Self::extract_blocked_command(&output.content) {
-                if self.interactive {
+                if self.interactive && Self::has_tty() {
                     eprint!(
                         "\n  {} Add '{}' to allowed_commands? [Y/n] ",
                         "🔓".yellow(),
@@ -1526,7 +1529,7 @@ impl Agent {
 
             // Check if it's a network error we can resolve by adding a domain
             if let Some(domain) = Self::extract_network_blocked_domain(&output.content) {
-                if self.interactive {
+                if self.interactive && Self::has_tty() {
                     eprint!(
                         "\n  {} Network blocked for '{}'. Add to allowed_domains? [Y/n] ",
                         "🔓".yellow(),
@@ -1554,7 +1557,7 @@ impl Agent {
 
             // Check if it's a file/binary permission error — use strace probing
             if contains_permission_denied(&output.content) {
-                if self.interactive {
+                if self.interactive && Self::has_tty() {
                     // Extract the original command from args for strace re-run
                     let cmd_for_strace = args
                         .get("cmd")
@@ -2169,6 +2172,12 @@ impl Agent {
             }
         }
         None
+    }
+
+    /// Check if a real TTY is available for interactive prompts.
+    /// Returns false in serve mode (systemd service, no controlling terminal).
+    fn has_tty() -> bool {
+        std::fs::File::open("/dev/tty").is_ok()
     }
 
     /// Simple Y/n prompt via /dev/tty.
