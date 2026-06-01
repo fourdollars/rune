@@ -3650,4 +3650,101 @@ read(3, "root:x:0:0:...", 4096) = 1234"#;
         assert_eq!(msgs[0].content.as_deref(), Some("m3"));
     }
 
+    #[tokio::test]
+    async fn test_write_markdown_broadcasts_file_content() {
+        use std::sync::{Arc, Mutex};
+        use tempfile::TempDir;
+
+        let tmp = TempDir::new().unwrap();
+        let md_dir = tmp.path().to_path_buf();
+
+        // Create initial file
+        std::fs::write(md_dir.join("hello.md"), "# Original").unwrap();
+
+        let config = RuneConfig::default();
+        let provider = ProviderRegistry::new();
+        let mut agent = Agent::new(config, provider, false, None);
+        agent.markdown_dir = Some(md_dir.clone());
+
+        // Track file_list_callback calls
+        let list_calls = Arc::new(Mutex::new(0u32));
+        let lc = list_calls.clone();
+        agent.file_list_callback = Some(Arc::new(move || { *lc.lock().unwrap() += 1; }));
+
+        // Track file_content_callback calls
+        let content_calls: Arc<Mutex<Vec<(String, String)>>> = Arc::new(Mutex::new(vec![]));
+        let cc = content_calls.clone();
+        agent.file_content_callback = Some(Arc::new(move |f: String, c: String| {
+            cc.lock().unwrap().push((f, c));
+        }));
+
+        // Test 1: full replace
+        let args = serde_json::json!({"filename": "hello.md", "content": "# Replaced"});
+        let result = agent.handle_markdown_tool("write_markdown", &args).await;
+        assert!(result.unwrap().contains("updated (full replace)"));
+        assert_eq!(*list_calls.lock().unwrap(), 1);
+        {
+            let calls = content_calls.lock().unwrap();
+            assert_eq!(calls.len(), 1);
+            assert_eq!(calls[0].0, "hello.md");
+            assert_eq!(calls[0].1, "# Replaced");
+        }
+
+        // Verify file on disk
+        let on_disk = std::fs::read_to_string(md_dir.join("hello.md")).unwrap();
+        assert_eq!(on_disk, "# Replaced");
+
+        // Test 2: search/replace
+        let args2 = serde_json::json!({"filename": "hello.md", "search": "Replaced", "replace": "Edited"});
+        let result2 = agent.handle_markdown_tool("write_markdown", &args2).await;
+        assert!(result2.unwrap().contains("updated: replaced"));
+        assert_eq!(*list_calls.lock().unwrap(), 2);
+        {
+            let calls = content_calls.lock().unwrap();
+            assert_eq!(calls.len(), 2);
+            assert_eq!(calls[1].0, "hello.md");
+            assert_eq!(calls[1].1, "# Edited");
+        }
+
+        let on_disk2 = std::fs::read_to_string(md_dir.join("hello.md")).unwrap();
+        assert_eq!(on_disk2, "# Edited");
+    }
+
+    #[tokio::test]
+    async fn test_write_markdown_no_callback_without_setting() {
+        use tempfile::TempDir;
+
+        let tmp = TempDir::new().unwrap();
+        let md_dir = tmp.path().to_path_buf();
+        std::fs::write(md_dir.join("test.md"), "content").unwrap();
+
+        let config = RuneConfig::default();
+        let provider = ProviderRegistry::new();
+        let mut agent = Agent::new(config, provider, false, None);
+        agent.markdown_dir = Some(md_dir);
+
+        // No callbacks set — should still work without panic
+        let args = serde_json::json!({"filename": "test.md", "content": "new content"});
+        let result = agent.handle_markdown_tool("write_markdown", &args).await;
+        assert!(result.unwrap().contains("updated"));
+    }
+
+    #[tokio::test]
+    async fn test_write_markdown_search_not_found() {
+        use tempfile::TempDir;
+
+        let tmp = TempDir::new().unwrap();
+        let md_dir = tmp.path().to_path_buf();
+        std::fs::write(md_dir.join("test.md"), "hello world").unwrap();
+
+        let config = RuneConfig::default();
+        let provider = ProviderRegistry::new();
+        let mut agent = Agent::new(config, provider, false, None);
+        agent.markdown_dir = Some(md_dir);
+
+        let args = serde_json::json!({"filename": "test.md", "search": "nonexistent", "replace": "x"});
+        let result = agent.handle_markdown_tool("write_markdown", &args).await;
+        assert!(result.unwrap().contains("search text not found"));
+    }
+
 }
