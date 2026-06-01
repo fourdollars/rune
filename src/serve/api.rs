@@ -1193,27 +1193,71 @@ pub async fn public_notes_list_handler(
     State(state): State<ServerState>,
 ) -> impl axum::response::IntoResponse {
     let notes = state.chat_db.list_notes().unwrap_or_default();
-    let mut html = String::from("<!DOCTYPE html><html><head><meta charset='UTF-8'><title>Public Notes</title>");
-    html.push_str("<style>:root{color-scheme:light dark}@media(prefers-color-scheme:dark){body{background:#1e1e2e;color:#cdd6f4}a{color:#89b4fa}footer{border-color:#585b70 !important}}body{font-family:sans-serif;max-width:860px;margin:40px auto;padding:0 20px;background:#f6f8fa;color:#24292e}");
-    html.push_str("h1{margin-bottom:24px}ul{list-style:none;padding:0}li{margin:8px 0}a{color:#0366d6;text-decoration:none}a:hover{text-decoration:underline}");
-    html.push_str(".note-header{font-weight:600;margin-top:16px;margin-bottom:4px}.file-link{padding-left:16px;display:block}</style></head><body>");
-    html.push_str("<h1>Public Notes</h1><ul>");
+    let mut items = String::new();
     let mut any = false;
     for note in &notes {
         if !note.public { continue; }
         let public_files = state.chat_db.list_public_files(&note.id);
         if public_files.is_empty() { continue; }
         any = true;
-        html.push_str(&format!("<li><div class='note-header'>&#128193; {}</div><ul>", html_escape(&note.name)));
+        items.push_str(&format!("<div class='note-section'><h3>&#128193; {}</h3><ul>", html_escape(&note.name)));
         for fname in &public_files {
             let slug = fname.strip_suffix(".md").unwrap_or(fname);
             let url = format!("/notes/{}/{}", url_encode(&note.id), url_encode(slug));
-            html.push_str(&format!("<li><a class='file-link' href='{}'>{}</a></li>", url, html_escape(fname)));
+            items.push_str(&format!("<li><a href='{}'>{}</a></li>", url, html_escape(fname)));
         }
-        html.push_str("</ul></li>");
+        items.push_str("</ul></div>");
     }
-    if !any { html.push_str("<li><em>No public notes available.</em></li>"); }
-    html.push_str("</ul><footer style='margin-top:40px;padding-top:16px;border-top:1px solid #ccc;opacity:0.4;text-align:center;font-size:12px'>Wrought by <a href='https://fourdollars.github.io/rune/' style='color:inherit;text-decoration:underline'>ᚱᚢᚾᛖ</a></footer></body></html>");
+    if !any { items.push_str("<p class='empty'>No public notes available.</p>"); }
+
+    let html = format!(r#"<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Public Notes</title>
+<style>
+  :root {{ color-scheme: light dark; }}
+  @media (prefers-color-scheme: dark) {{
+    body {{ background: #1e1e2e; color: #cdd6f4; }}
+    .container {{ background: #181825; border: 1px solid #313244; }}
+    a {{ color: #89b4fa; }}
+    h1,h3 {{ color: #cba6f7; }}
+    .note-section {{ border-bottom-color: #313244; }}
+    footer {{ border-top-color: #313244; }}
+  }}
+  @media (prefers-color-scheme: light) {{
+    body {{ background: #f6f8fa; color: #24292e; }}
+    .container {{ background: #fff; border: 1px solid #e1e4e8; }}
+    a {{ color: #0366d6; }}
+    h1,h3 {{ color: #24292e; }}
+    .note-section {{ border-bottom-color: #eaecef; }}
+    footer {{ border-top-color: #eaecef; }}
+  }}
+  * {{ box-sizing: border-box; }}
+  body {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif; margin: 0; padding: 20px; }}
+  .container {{ max-width: 860px; margin: 0 auto; padding: 32px 40px; border-radius: 8px; }}
+  h1 {{ font-size: 2em; margin-top: 0; margin-bottom: 24px; font-weight: 600; line-height: 1.25; padding-bottom: .3em; border-bottom: 1px solid; }}
+  h3 {{ font-size: 1.25em; margin: 0 0 8px; font-weight: 600; }}
+  .note-section {{ margin-bottom: 20px; padding-bottom: 16px; border-bottom: 1px solid; }}
+  .note-section:last-child {{ border-bottom: none; }}
+  ul {{ list-style: none; padding: 0; margin: 0; }}
+  li {{ margin: 6px 0; padding-left: 16px; }}
+  a {{ text-decoration: none; font-size: 15px; line-height: 1.6; }}
+  a:hover {{ text-decoration: underline; }}
+  .empty {{ opacity: 0.5; font-style: italic; }}
+  footer {{ margin-top: 32px; padding-top: 16px; border-top: 1px solid; opacity: 0.4; text-align: center; font-size: 12px; }}
+  footer a {{ color: inherit; text-decoration: underline; }}
+</style>
+</head>
+<body>
+<div class="container">
+  <h1>Public Notes</h1>
+  {}
+  <footer>Wrought by <a href="https://fourdollars.github.io/rune/">ᚱᚢᚾᛖ</a></footer>
+</div>
+</body>
+</html>"#, items);
     axum::response::Html(html)
 }
 
