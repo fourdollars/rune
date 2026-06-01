@@ -946,6 +946,10 @@ impl Agent {
             } else {
                 // Sequential execution (single tool call or interactive confirm mode)
                 for tc in &response.tool_calls {
+                    // Notify tool status start (matches the parallel path)
+                    if let Some(cb) = &self.tool_status_callback {
+                        cb(&tc.function.name, "start");
+                    }
                     let args_preview = tc.function.arguments.clone();
                     let result = match self.execute_tool_call(tc).await {
                         Ok(result) => {
