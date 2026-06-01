@@ -3980,9 +3980,8 @@ read(3, "root:x:0:0:...", 4096) = 1234"#;
                 _request: crate::provider::LlmRequest,
             ) -> std::pin::Pin<
                 Box<
-                    dyn std::future::Future<
-                            Output = anyhow::Result<crate::provider::LlmResponse>,
-                        > + Send
+                    dyn std::future::Future<Output = anyhow::Result<crate::provider::LlmResponse>>
+                        + Send
                         + '_,
                 >,
             > {
@@ -4090,9 +4089,8 @@ read(3, "root:x:0:0:...", 4096) = 1234"#;
                 _request: crate::provider::LlmRequest,
             ) -> std::pin::Pin<
                 Box<
-                    dyn std::future::Future<
-                            Output = anyhow::Result<crate::provider::LlmResponse>,
-                        > + Send
+                    dyn std::future::Future<Output = anyhow::Result<crate::provider::LlmResponse>>
+                        + Send
                         + '_,
                 >,
             > {
@@ -4161,15 +4159,14 @@ read(3, "root:x:0:0:...", 4096) = 1234"#;
 
         let recorded = events.lock().unwrap().clone();
         // Parallel: 2 starts, then 2 ends
-        let starts: Vec<_> = recorded
-            .iter()
-            .filter(|e| e.1 == "start")
-            .collect();
-        let ends: Vec<_> = recorded
-            .iter()
-            .filter(|e| e.1 == "end")
-            .collect();
-        assert_eq!(starts.len(), 2, "Expected 2 start events, got: {:?}", recorded);
+        let starts: Vec<_> = recorded.iter().filter(|e| e.1 == "start").collect();
+        let ends: Vec<_> = recorded.iter().filter(|e| e.1 == "end").collect();
+        assert_eq!(
+            starts.len(),
+            2,
+            "Expected 2 start events, got: {:?}",
+            recorded
+        );
         assert_eq!(ends.len(), 2, "Expected 2 end events, got: {:?}", recorded);
     }
 
@@ -4193,7 +4190,9 @@ read(3, "root:x:0:0:...", 4096) = 1234"#;
         let source = include_str!("mod.rs");
         // The no-TTY fallback must be `false`, not `true`
         assert!(
-            source.contains("// No TTY (e.g. serve mode / systemd) -- deny by default\n        false"),
+            source.contains(
+                "// No TTY (e.g. serve mode / systemd) -- deny by default\n        false"
+            ),
             "prompt_yn must return false when no TTY is available"
         );
         assert!(
@@ -4219,9 +4218,8 @@ read(3, "root:x:0:0:...", 4096) = 1234"#;
                 _request: crate::provider::LlmRequest,
             ) -> std::pin::Pin<
                 Box<
-                    dyn std::future::Future<
-                            Output = anyhow::Result<crate::provider::LlmResponse>,
-                        > + Send
+                    dyn std::future::Future<Output = anyhow::Result<crate::provider::LlmResponse>>
+                        + Send
                         + '_,
                 >,
             > {
