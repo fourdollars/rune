@@ -378,15 +378,16 @@ guest_token = "your-guest-token"
 
 | Capability | Admin | User | Guest |
 |---|:---:|:---:|:---:|
-| View notes & files | ✅ | ✅ | ✅ |
+| View notes & files | ✅ | ✅ | ✅ (public only) |
 | Read chat history | ✅ | ✅ | ✅ |
 | Switch notes/files | ✅ | ✅ | ✅ |
 | Chat with AI | ✅ | ✅ | ❌ |
 | Create/edit/delete files | ✅ | ✅ | ❌ |
-| Create/rename/delete notes | ✅ | ✅ | ❌ |
+| Create/rename/delete notes | ✅ | ❌ | ❌ |
 | Approve AI tool requests | ✅ | ❌ | ❌ |
 | Toggle public visibility | ✅ | ❌ | ❌ |
-| Switch AI model | ✅ | ❌ | ❌ |
+| Switch AI model/thinking | ✅ | ❌ | ❌ |
+| See model/thinking info | ✅ | ✅ | ❌ |
 
 ### Public Pages
 

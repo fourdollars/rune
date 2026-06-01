@@ -21,6 +21,7 @@ Use this skill when you need to:
 - Read/write files with filesystem restrictions
 - Fetch URLs with domain-level access control
 - Inspect processes safely
+- Serve a notes/markdown interface via `rune notes`
 
 ## Installation
 
@@ -60,6 +61,46 @@ When stdin is piped into Rune, it runs once and exits immediately. It does not e
 ```bash
 rune --model gpt-4o
 rune --provider gemini
+```
+
+## Rune Notes (Serve Mode)
+
+Rune can serve a markdown notes interface over HTTP:
+
+```bash
+rune notes --bind 0.0.0.0 --port 9527
+```
+
+This starts an AI-assisted notes server. When running in serve mode, four additional contextual tools become available to the agent:
+
+| Tool | Description |
+|------|-------------|
+| `search_chat` | Search through chat/conversation history |
+| `list_markdown` | List available markdown notes/documents |
+| `read_markdown` | Read a specific markdown note |
+| `write_markdown` | Write or update a markdown note |
+
+These tools are **only available in `rune notes` serve mode** — they are not present in standard CLI mode.
+
+### Notes Configuration
+
+Add a `[notes]` section to `~/.rune/rune.toml` to configure serve-mode defaults:
+
+```toml
+[notes]
+token_budget = 131072      # token budget for notes mode
+thinking = "low"           # thinking level for notes mode
+```
+
+### Container Usage for Notes Mode
+
+The same container image works for both CLI and notes serve mode:
+
+```bash
+docker run --rm -it \
+  -v ~/.rune:/home/rune/.rune \
+  -p 9527:9527 \
+  ghcr.io/fourdollars/rune notes --bind 0.0.0.0 --port 9527
 ```
 
 ## CLI Flags
@@ -104,6 +145,10 @@ allowed_paths_ro = ["/bin", "/usr", "/lib"]
 allowed_files_ro = ["/home/user/.netrc"]
 allowed_files_rw = ["/tmp/data.json"]
 denied_paths = ["/root", "/etc/shadow"]
+
+[notes]
+token_budget = 131072      # token budget for notes serve mode
+thinking = "low"           # thinking level for notes serve mode
 
 [embedding]
 enabled = true             # default: false
@@ -201,6 +246,10 @@ When a tool call is blocked in `confirm` mode, Rune automatically:
 
 ## Built-in Tools
 
+Rune provides 10 built-in tools. The first 6 are always available; the last 4 are contextual (serve mode only):
+
+### Standard Tools (always available)
+
 | Tool | Description |
 |------|-------------|
 | `read_file` | Read file contents (sandboxed, 32KB limit) |
@@ -209,6 +258,15 @@ When a tool call is blocked in `confirm` mode, Rune automatically:
 | `execute_cmd` | Execute shell command (sandboxed) |
 | `fetch_url` | Fetch URL content (requires domain in allowlist) |
 | `inspect_process` | Inspect process by PID |
+
+### Serve-Mode Tools (only available in `rune notes`)
+
+| Tool | Description |
+|------|-------------|
+| `search_chat` | Search through chat/conversation history |
+| `list_markdown` | List available markdown notes/documents |
+| `read_markdown` | Read a specific markdown note |
+| `write_markdown` | Write or update a markdown note |
 
 ## Skills
 
@@ -230,7 +288,7 @@ When the `[embedding]` section is enabled in config, skills can be matched seman
 
 ## Container Usage
 
-Run Rune via Docker without installing locally:
+The same container image works for both CLI and notes serve mode:
 
 ```bash
 # First-time setup
@@ -247,6 +305,20 @@ docker run --rm -it \
   -v ~/.rune:/home/rune/.rune \
   -v $(pwd):/workspace -w /workspace \
   ghcr.io/fourdollars/rune
+
+# Notes serve mode (expose port 9527)
+docker run --rm -it \
+  -v ~/.rune:/home/rune/.rune \
+  -p 9527:9527 \
+  ghcr.io/fourdollars/rune notes --bind 0.0.0.0 --port 9527
+```
+
+## Testing
+
+The test suite covers 762 unit tests:
+
+```bash
+cargo test
 ```
 
 ## Concourse CI Resource Type
@@ -307,4 +379,7 @@ rune --thinking high
 
 # Preload specific skills only
 rune --skills jira,launchpad
+
+# Start notes serve mode
+rune notes --bind 0.0.0.0 --port 9527
 ```

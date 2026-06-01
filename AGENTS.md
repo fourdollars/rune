@@ -43,12 +43,24 @@ model = "text-embedding-3-small"  # auto-detected from provider
 threshold = 0.6                    # cosine similarity threshold
 ```
 
+### Notes (Serve Mode) Configuration
+
+```toml
+[notes]
+port = 9527
+bind = "0.0.0.0"
+admin_token = "adminCHANGE_ME"
+user_token = "userCHANGE_ME"
+guest_token = "guestCHANGE_ME"
+thinking = "high"
+```
+
 ### Concourse Resource Type
 - `check` / `in` / `out` now run the same sandboxed agent pipeline used by pipe mode.
 - Copilot tokens (`ghu_` / `ghp_`) are auto-refreshed before LLM calls.
 - Sandbox allowlists can be provided in the resource source (`network.allowed_domains`, `filesystem.read_write_paths`, `filesystem.read_only_paths`).
 
-## Built-in Tools (6)
+## Built-in Tools (10)
 
 | Tool | Sandboxed | Dangerous* | Notes |
 |------|-----------|-----------|-------|
@@ -58,10 +70,14 @@ threshold = 0.6                    # cosine similarity threshold
 | `execute_cmd` | ✓ | ✓ | Per-cmd timeout, pipeline-aware policy |
 | `fetch_url` | ✓ | ✓ | Domain allowlist enforced |
 | `inspect_process` | ✓ | ✗ | — |
+| `search_chat` | ✓ | ✗ | Semantic search over conversation history |
+| `list_markdown` | ✓ | ✗ | List notes/files in serve mode |
+| `read_markdown` | ✓ | ✓† | Read a markdown note file |
+| `write_markdown` | ✓ | ✓† | Write/update a markdown note file |
 
 *"Dangerous" = requires user confirmation in `confirm` mode.
 
-†**Path-based auto-allow:** `read_file` is auto-approved if the resolved path falls under `allowed_paths_ro` or `allowed_paths_rw`. `write_file` is auto-approved if under `allowed_paths_rw`. CWD is implicitly added to `allowed_paths_ro` at startup.
+†**Path-based auto-allow:** `read_file` / `read_markdown` are auto-approved if the resolved path falls under `allowed_paths_ro` or `allowed_paths_rw`. `write_file` / `write_markdown` are auto-approved if under `allowed_paths_rw`. CWD is implicitly added to `allowed_paths_ro` at startup.
 
 ## Policy & Confirm Flow
 
@@ -97,6 +113,7 @@ Up to 5 isolation layers per tool invocation (best-effort; the executor applies 
 3. **Seccomp BPF** (internal `_seccomp` subcommand) — syscall filtering
 4. **Landlock** (internal `_landlock` subcommand) — filesystem restriction
 5. **DNS/Domain allowlist** — selective network access (represented via net-guard/allowed_domains)
+
 ## Skills
 
 Skills are `@name`-referenced bundles (`SKILL.md` + metadata). On reference:
@@ -140,6 +157,52 @@ When `trace = true`, the agent records structured JSON traces to `.rune/traces/`
 | `/exit` | Exit |
 | `/quit` | Exit |
 
+**Serve mode** (starts the Notes web server):
+```bash
+rune notes --bind 0.0.0.0
+```
+
+## Rune Notes (Serve Mode)
+
+`rune notes` starts an embedded HTTP server that serves a collaborative markdown notebook UI from the same binary. Features:
+
+- **Multi-note collections** — multiple named note workspaces, each with its own set of markdown files
+- **Per-note markdown files** — each file stored as a plain `.md` file on disk
+- **Per-note model override** — each note can use a different LLM model
+- **Per-note AI chat** — each note has its own AI assistant with file context
+- **File visibility** — each file can be marked public or private
+- **Real-time updates** — SSE (Server-Sent Events) for live streaming of AI responses, model changes, user presence, and system events
+- **Public preview pages** — rendered markdown with Mermaid diagram support, KaTeX math, and syntax highlighting (highlight.js)
+- **Guest read-only mode** — unauthenticated guests can browse and read public notes
+- **Role-based access control** — admin / user / guest roles with distinct permissions
+
+### Role Permissions
+
+| Capability | Admin | User | Guest |
+|-----------|-------|------|-------|
+| Read public notes/files | ✓ | ✓ | ✓ |
+| AI chat | ✓ | ✓ | ✗ |
+| File CRUD | ✓ | ✓ | ✗ |
+| Note create/delete | ✓ | ✗ | ✗ |
+| Model switch | ✓ | ✗ | ✗ |
+| Visibility toggle | ✓ | ✗ | ✗ |
+| SSE thinking/model events | ✓ | ✓ | ✗ |
+
+### Public Pages
+
+| Path | Description |
+|------|-------------|
+| `/notes/` | Lists all public notes |
+| `/notes/{note}/` | Lists public files in a note |
+| `/notes/{note}/{file}` | Rendered markdown preview (client-side with marked.js) |
+| `/api/public/raw/{note}/{file}` | Raw markdown content |
+
+### SSE Events
+
+The serve mode uses the following SSE event types:
+
+`auth_result` · `model_list` · `model_changed` · `note_list` · `note_switched` · `history` · `file_list` · `file_content` · `file_deleted` · `chat_token` · `chat_done` · `chat_meta` · `chat_message` · `status` · `system` · `users_update` · `error` · `auth_error` · `approval_request` · `archive_done` · `search_results` · `dir_browse_result`
+
 ## File Map
 
 ```
@@ -158,8 +221,14 @@ src/
 ├── concourse/       — AI-driven resource type (sandboxed check/in/out + Copilot refresh)
 ├── mcp/             — MCP client (stdio JSON-RPC)
 ├── cli/             — interactive CLI, slash commands, persistent history
+├── serve/           — Notes HTTP server (serve mode)
+│   ├── mod.rs           — server setup, routing, middleware
+│   ├── api.rs           — REST + SSE API handlers
+│   ├── db.rs            — note/file persistence and metadata
+│   └── static_files.rs  — embedded static asset serving
 ├── setup.rs         — `rune init` wizard
-
+web/                 — Frontend assets for serve mode (HTML/CSS/JS, embedded at compile time)
+```
 
 ## Container Deployment
 
@@ -187,6 +256,13 @@ echo "Explain this codebase" | docker run --rm -i \
   -v ~/.rune:/home/rune/.rune \
   -v $(pwd):/workspace -w /workspace \
   ghcr.io/fourdollars/rune --json --yes
+
+# Serve mode (Notes web UI)
+docker run --rm -it \
+  -v ~/.rune:/home/rune/.rune \
+  -v $(pwd)/notes:/notes \
+  -p 9527:9527 \
+  ghcr.io/fourdollars/rune notes --bind 0.0.0.0
 ```
 
 Concourse CI resource type (symlinks pre-configured at `/opt/resource/{check,in,out}`):
@@ -210,10 +286,10 @@ resource_types:
 ## Testing
 
 ```bash
-cargo test                    # 259 unit tests
+cargo test                    # 762 unit tests
 ./tests/e2e.sh               # 26 E2E integration tests
 cargo llvm-cov --summary-only # coverage report
-cargo build --release         # release build (~6.2MB)
+cargo build --release         # release build (~12MB)
 ```
 
 CI runs: `fmt` → `clippy` → `test+coverage` → `build` → `e2e`.

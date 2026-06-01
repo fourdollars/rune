@@ -20,7 +20,7 @@
         <div class="rune-border">ᛟ ᚺ ᛊ ᛏ ᛒ ᛖ ᚹ ᛗ ᛚ ᛝ ᛟ</div>
         <h1 class="glow">ᚱ ᚢ ᚾ ᛖ</h1>
         <p class="tagline">Zero-Trust AI Agent</p>
-        <p class="sub">High-performance. Single binary. Sandboxed by default.</p>
+        <p class="sub">High-performance. Single binary. Sandboxed by default. Triple mode: CLI agent, CI resource, and self-hosted wiki.</p>
         <div class="cta">
             <a href="https://github.com/fourdollars/rune" class="btn btn-primary">⚡ View on GitHub</a>
             <a href="#docker" class="btn btn-secondary">Get Started</a>
@@ -39,7 +39,7 @@
             </div>
             <div class="feature-card fade-in">
                 <div class="feature-icon">🔧</div>
-                <h3>6 Built-in Tools</h3>
+                <h3>10 Built-in Tools</h3>
                 <p>read_file, write_file, list_dir, execute_cmd, fetch_url, inspect_process — all sandboxed.</p>
             </div>
             <div class="feature-card fade-in">
@@ -81,6 +81,11 @@
                 <div class="feature-icon">💬</div>
                 <h3>Custom System Prompt</h3>
                 <p>Override the default system prompt via CLI flag, env var, or config. AGENTS.md context is always appended.</p>
+            </div>
+            <div class="feature-card fade-in">
+                <div class="feature-icon">📝</div>
+                <h3>Rune Notes</h3>
+                <p>AI-powered Markdown wiki served from the same binary. Real-time collaboration, public sharing, KaTeX math, Mermaid diagrams, syntax highlighting, role-based auth (admin/user/guest).</p>
             </div>
 
         </div>
@@ -314,6 +319,44 @@
 
     <!-- Install -->
     
+    <!-- Rune Notes -->
+    <section class="features" id="notes">
+        <h2 class="section-title">📝 Rune Notes — Self-Hosted Wiki</h2>
+        <p class="section-desc">A full-featured, AI-powered Markdown wiki served from the same Rune binary. Zero extra dependencies.</p>
+        <div class="feature-grid">
+            <div class="feature-card fade-in">
+                <div class="feature-icon">🌐</div>
+                <h3>Web UI Included</h3>
+                <p>Full browser-based editor and viewer. Start the notes server with <code>rune notes --serve</code>. No separate process needed.</p>
+            </div>
+            <div class="feature-card fade-in">
+                <div class="feature-icon">🔒</div>
+                <h3>Role-Based Auth</h3>
+                <p>Three roles: <strong>admin</strong> (full control), <strong>user</strong> (read/write own notes), <strong>guest</strong> (public read-only access). Per-file visibility settings.</p>
+            </div>
+            <div class="feature-card fade-in">
+                <div class="feature-icon">🤝</div>
+                <h3>Real-Time Collaboration</h3>
+                <p>Multiple users can edit notes simultaneously. Changes sync in real time via WebSocket — no page refresh needed.</p>
+            </div>
+            <div class="feature-card fade-in">
+                <div class="feature-icon">🔗</div>
+                <h3>Public Sharing</h3>
+                <p>Mark any note as public and share a direct URL. Guests can read without logging in. Great for public docs or personal wikis.</p>
+            </div>
+            <div class="feature-card fade-in">
+                <div class="feature-icon">🧮</div>
+                <h3>Rich Rendering</h3>
+                <p>KaTeX math rendering, Mermaid diagrams, syntax-highlighted code blocks, and standard Markdown — all rendered in the browser.</p>
+            </div>
+            <div class="feature-card fade-in">
+                <div class="feature-icon">🤖</div>
+                <h3>AI Chat Integration</h3>
+                <p>Ask questions about your notes using the same AI models as the CLI. Context-aware answers grounded in your own wiki content.</p>
+            </div>
+        </div>
+    </section>
+
     <!-- Concourse CI -->
     <section class="concourse" id="concourse">
         <h2 class="section-title">🚀 Concourse CI — Quick Start</h2>
