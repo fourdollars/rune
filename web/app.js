@@ -1726,8 +1726,8 @@ async function switchNote(sessionId, forceFile = null) {
     updateChatInputState();
     updatePageTitle();
 
-    // Reconnect SSE to the new note's room
-    connect(sessionId);
+    // Close existing SSE immediately (stop receiving events from old room)
+    if (evtSource) { evtSource.close(); evtSource = null; }
 
     const data = await api('note/switch', { note_id: sessionId });
     if (!data || !data.ok) return;
@@ -1740,9 +1740,16 @@ async function switchNote(sessionId, forceFile = null) {
 
     // Replay history from response
     document.getElementById('chat-messages').innerHTML = '';
+    currentAssistantEl = null;
+    currentAssistantText = '';
+    currentAssistantDiv = null;
     if (data.history && data.history.length) {
         replayHistory(data.history);
     }
+
+    // Reconnect SSE AFTER history replay — streaming recovery tokens
+    // (if AI task is mid-stream) will append correctly to chat area
+    connect(sessionId);
 
     // Update file list
     fileList = data.files || [];

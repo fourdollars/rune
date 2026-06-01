@@ -45,6 +45,9 @@ pub struct NoteRoom {
     pub model_override: TokioRwLock<Option<String>>,
     /// Per-note system prompt override; None = fall back to global default
     pub system_prompt: TokioRwLock<Option<String>>,
+    /// Accumulated streaming tokens for the current AI response (cleared on chat_done).
+    /// Allows clients reconnecting mid-stream to recover partial output.
+    pub streaming_tokens: Arc<TokioRwLock<String>>,
 }
 
 impl NoteRoom {
@@ -56,6 +59,7 @@ impl NoteRoom {
             cancel_token: Mutex::new(None),
             model_override: TokioRwLock::new(None),
             system_prompt: TokioRwLock::new(None),
+            streaming_tokens: Arc::new(TokioRwLock::new(String::new())),
         }
     }
 }
@@ -499,6 +503,21 @@ pub async fn events_handler(
         init_msgs.push(SseMsg::UsersUpdate { count });
     }
 
+    // Streaming recovery: if AI task is mid-stream, send status + accumulated tokens
+    {
+        let buf = room.streaming_tokens.read().await;
+        if !buf.is_empty() {
+            // Tell client we're currently thinking
+            init_msgs.push(SseMsg::Status {
+                state: "thinking".to_string(),
+            });
+            // Send accumulated tokens so client can display partial response
+            init_msgs.push(SseMsg::ChatToken {
+                content: buf.clone(),
+            });
+        }
+    }
+
     // System join message — broadcast to the room
     let join_msg = SseMsg::System {
         content: format!("{} joined", nickname),
@@ -628,6 +647,11 @@ pub async fn chat_handler(
         if let Some(old) = guard.replace(new_token.clone()) {
             old.cancel();
         }
+    }
+    // Clear accumulated tokens from the cancelled task
+    {
+        let mut buf = room.streaming_tokens.write().await;
+        buf.clear();
     }
 
     // Spawn agent task with cancellation
@@ -1689,13 +1713,18 @@ async fn handle_chat_message(
     // Build embedding
     let embedding = build_embedding(&config).await;
 
-    // Token streaming callback — sends to room only
+    // Token streaming callback — sends to room + accumulates for mid-stream reconnect
     let room_for_token = Arc::clone(&room);
+    let streaming_buf = Arc::clone(&room.streaming_tokens);
     let token_callback: Arc<dyn Fn(&str) + Send + Sync> = Arc::new(move |token: &str| {
         let msg = SseMsg::ChatToken {
             content: token.to_string(),
         };
         broadcast_to_room(&room_for_token, &msg);
+        // Accumulate for clients that reconnect mid-stream
+        if let Ok(mut buf) = streaming_buf.try_write() {
+            buf.push_str(token);
+        }
     });
 
     // Approval callback — requests go to room, responses come back via room
@@ -1809,6 +1838,12 @@ async fn handle_chat_message(
 
     // Run agent
     let stop_reason = agent.run(&user_msg).await;
+
+    // Clear streaming buffer — response is complete (or failed)
+    {
+        let mut buf = room.streaming_tokens.write().await;
+        buf.clear();
+    }
 
     let done = SseMsg::ChatDone {};
     broadcast_to_room(&room, &done);
@@ -3113,6 +3148,30 @@ mod isolation_tests {
 
         assert!(token.is_cancelled());
         assert!(state.rooms.read().await.get("note-del").is_none());
+    }
+
+    #[tokio::test]
+    async fn test_streaming_tokens_accumulate_and_clear() {
+        let (state, _tmp) = make_state();
+        let room = state.get_or_create_room("note-stream").await;
+
+        // Initially empty
+        assert!(room.streaming_tokens.read().await.is_empty());
+
+        // Simulate token accumulation
+        {
+            let mut buf = room.streaming_tokens.write().await;
+            buf.push_str("Hello ");
+            buf.push_str("world");
+        }
+        assert_eq!(*room.streaming_tokens.read().await, "Hello world");
+
+        // Clear on done
+        {
+            let mut buf = room.streaming_tokens.write().await;
+            buf.clear();
+        }
+        assert!(room.streaming_tokens.read().await.is_empty());
     }
 
     #[tokio::test]
