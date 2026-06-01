@@ -1,3 +1,4 @@
+# Rebuild trigger: include rune notes serve mode
 FROM rust:bookworm AS builder
 WORKDIR /app
 
