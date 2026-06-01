@@ -800,7 +800,7 @@ pre.hljs-pre:hover .copy-btn {
     border: none !important;
 }
 
-/* --- split-title bar (desktop split-view only) --- */
+/* --- split-title bar (visible when editor or preview is shown) --- */
 #split-title {
     display: none;
     height: 36px;
@@ -818,9 +818,6 @@ pre.hljs-pre:hover .copy-btn {
     white-space: nowrap;
     padding: 0 12px;
     width: 100%;
-}
-#center-body.split-view #split-title {
-    display: flex;
 }
 
 /* --- split-body: contains editor + preview side-by-side --- */

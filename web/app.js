@@ -947,6 +947,12 @@ function applyPanelLayout() {
         previewContainer.style.width = '';
     }
 
+    // Show split-title whenever any panel is visible (editor or preview)
+    const splitTitle = document.getElementById('split-title');
+    if (splitTitle) {
+        splitTitle.style.display = (showEdit || showPreview) ? 'flex' : 'none';
+    }
+
     // Both off → hide center so chat expands to fill
     if (!showEdit && !showPreview) {
         center.classList.add('hidden');
