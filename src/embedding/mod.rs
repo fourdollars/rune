@@ -275,6 +275,11 @@ impl EmbeddingEngine {
             req = req.header("Copilot-Integration-Id", "vscode-chat");
         }
 
+        if url.contains("openrouter.ai") {
+            req = req.header("HTTP-Referer", "https://fourdollars.github.io/rune/");
+            req = req.header("X-Title", "Rune AI Agent");
+        }
+
         let resp = req.json(&body).send().await?;
 
         if !resp.status().is_success() {

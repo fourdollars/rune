@@ -410,7 +410,13 @@ pub struct OpenAiProvider {
 
 impl OpenAiProvider {
     pub fn new(name: String, api_key: String, base_url: Option<String>) -> Self {
-        let base = base_url.unwrap_or_else(|| "https://api.openai.com/v1".to_string());
+        let base = base_url.unwrap_or_else(|| {
+            if name == "openrouter" {
+                "https://openrouter.ai/api/v1".to_string()
+            } else {
+                "https://api.openai.com/v1".to_string()
+            }
+        });
         OpenAiProvider {
             api_key,
             base_url: base,
@@ -451,11 +457,18 @@ impl Provider for OpenAiProvider {
             debug!(url = %url, payload_len = payload.len(), "sending LLM request");
 
             let client = Client::new();
-            let response = client
+            let mut req = client
                 .post(&url)
                 .bearer_auth(&api_key)
                 .header("Content-Type", "application/json")
-                .timeout(std::time::Duration::from_secs(120))
+                .timeout(std::time::Duration::from_secs(120));
+
+            if base_url.contains("openrouter.ai") {
+                req = req.header("HTTP-Referer", "https://fourdollars.github.io/rune/");
+                req = req.header("X-Title", "Rune AI Agent");
+            }
+
+            let response = req
                 .body(payload)
                 .send()
                 .await
@@ -540,11 +553,17 @@ impl Provider for OpenAiProvider {
             }
 
             let url = format!("{}/chat/completions", base_url.trim_end_matches('/'));
-            let builder = client
+            let mut builder = client
                 .post(url)
                 .bearer_auth(api_key)
-                .header("Accept", "text/event-stream")
-                .json(&payload);
+                .header("Accept", "text/event-stream");
+
+            if base_url.contains("openrouter.ai") {
+                builder = builder.header("HTTP-Referer", "https://fourdollars.github.io/rune/");
+                builder = builder.header("X-Title", "Rune AI Agent");
+            }
+
+            let builder = builder.json(&payload);
 
             stream_openai_compatible_response(builder, tx).await
         })

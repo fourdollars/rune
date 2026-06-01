@@ -1425,7 +1425,18 @@ pub async fn run() {
         } else {
             // For other providers (OpenRouter, OpenAI, etc.): use main base_url if set
             if emb_cfg.base_url.is_none() {
-                emb_cfg.base_url = cfg.base_url.clone();
+                let is_openrouter = cfg.provider.as_deref() == Some("openrouter")
+                    || cfg
+                        .api_key
+                        .as_deref()
+                        .map(|k| k.starts_with("sk-or-"))
+                        .unwrap_or(false);
+                let default_url = if is_openrouter {
+                    Some("https://openrouter.ai/api/v1".to_string())
+                } else {
+                    cfg.base_url.clone()
+                };
+                emb_cfg.base_url = cfg.base_url.clone().or(default_url);
             }
             Some(crate::embedding::EmbeddingEngine::new(emb_cfg))
         }
