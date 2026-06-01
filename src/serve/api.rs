@@ -1240,7 +1240,7 @@ pub async fn public_notes_list_handler(
   h1 {{ font-size: 2em; margin-top: 0; margin-bottom: 24px; font-weight: 600; line-height: 1.25; padding-bottom: .3em; border-bottom: 1px solid; }}
   h3 {{ font-size: 1.25em; margin: 0 0 8px; font-weight: 600; }}
   .note-section {{ margin-bottom: 20px; padding-bottom: 16px; border-bottom: 1px solid; }}
-  .note-section:last-child {{ border-bottom: none; }}
+  .note-section:last-of-type {{ border-bottom: none; padding-bottom: 0; margin-bottom: 0; }}
   ul {{ list-style: none; padding: 0; margin: 0; }}
   li {{ margin: 6px 0; padding-left: 16px; }}
   a {{ text-decoration: none; font-size: 15px; line-height: 1.6; }}
