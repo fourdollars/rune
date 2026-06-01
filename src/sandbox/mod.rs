@@ -292,7 +292,7 @@ impl SandboxExecutor {
                     " cp /etc/ld.so.conf /tmp/.etc/ 2>/dev/null;",
                     " cp -a /etc/ld.so.conf.d /tmp/.etc/ 2>/dev/null;",
                     " cp /etc/nsswitch.conf /tmp/.etc/ 2>/dev/null;",
-                    " cp /etc/resolv.conf /tmp/.etc/ 2>/dev/null;",
+                    " cp /run/systemd/resolve/resolv.conf /tmp/.etc/resolv.conf 2>/dev/null || cp /etc/resolv.conf /tmp/.etc/ 2>/dev/null;",
                     " cp -a /etc/ssl /tmp/.etc/ 2>/dev/null;",
                     " cp -a /etc/ca-certificates /tmp/.etc/ 2>/dev/null;",
                     " cp -a /etc/alternatives /tmp/.etc/ 2>/dev/null;",
@@ -769,6 +769,31 @@ mod tests {
             result.stdout.contains("READABLE"),
             "ld.so.cache should be readable for dynamic linking, got: {}",
             result.stdout
+        );
+    }
+
+    #[tokio::test]
+    async fn test_sandbox_dns_resolves() {
+        // Sandbox must have a working resolv.conf pointing to a real nameserver
+        // (not 127.0.0.53 stub which is unreachable after /var/run is masked).
+        let executor = SandboxExecutor::with_defaults();
+        let result = executor
+            .run_shell_command(
+                "cat /etc/resolv.conf | grep -v '^#' | grep nameserver",
+                None,
+                None,
+            )
+            .await
+            .expect("should succeed");
+        let stdout = result.stdout.trim();
+        assert!(
+            !stdout.is_empty(),
+            "resolv.conf should have a nameserver line, got empty"
+        );
+        assert!(
+            !stdout.contains("127.0.0.53"),
+            "resolv.conf should NOT point to stub resolver 127.0.0.53 inside sandbox, got: {}",
+            stdout
         );
     }
 
