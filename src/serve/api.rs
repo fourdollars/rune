@@ -48,6 +48,9 @@ pub struct NoteRoom {
     /// Accumulated streaming tokens for the current AI response (cleared on chat_done).
     /// Allows clients reconnecting mid-stream to recover partial output.
     pub streaming_tokens: Arc<TokioRwLock<String>>,
+    /// Current AI task status for this room ("idle", "thinking", "typing").
+    /// Used by SSE reconnect to restore correct status even when streaming_tokens is empty.
+    pub active_status: Arc<TokioRwLock<String>>,
 }
 
 impl NoteRoom {
@@ -60,6 +63,7 @@ impl NoteRoom {
             model_override: TokioRwLock::new(None),
             system_prompt: TokioRwLock::new(None),
             streaming_tokens: Arc::new(TokioRwLock::new(String::new())),
+            active_status: Arc::new(TokioRwLock::new("idle".to_string())),
         }
     }
 }
@@ -85,6 +89,8 @@ pub enum SseMsg {
     ChatMessage { nickname: String, content: String },
     #[serde(rename = "status")]
     Status { state: String },
+    #[serde(rename = "tool_status")]
+    ToolStatus { tool: String, state: String },
     #[serde(rename = "error")]
     Error { message: String },
     #[serde(rename = "system")]
@@ -503,18 +509,32 @@ pub async fn events_handler(
         init_msgs.push(SseMsg::UsersUpdate { count });
     }
 
-    // Streaming recovery: if AI task is mid-stream, send status + accumulated tokens
+    // Streaming recovery: restore AI task status on reconnect
     {
-        let buf = room.streaming_tokens.read().await;
-        if !buf.is_empty() {
-            // Tell client we're currently thinking
-            init_msgs.push(SseMsg::Status {
-                state: "thinking".to_string(),
-            });
-            // Send accumulated tokens so client can display partial response
-            init_msgs.push(SseMsg::ChatToken {
-                content: buf.clone(),
-            });
+        let status = room.active_status.read().await;
+        if *status != "idle" {
+            // Room has an active AI task — send current status
+            if let Some(tool_name) = status.strip_prefix("tool:") {
+                // Currently executing a tool — send thinking + tool_status
+                init_msgs.push(SseMsg::Status {
+                    state: "thinking".to_string(),
+                });
+                init_msgs.push(SseMsg::ToolStatus {
+                    tool: tool_name.to_string(),
+                    state: "start".to_string(),
+                });
+            } else {
+                init_msgs.push(SseMsg::Status {
+                    state: status.clone(),
+                });
+            }
+            // If there are accumulated tokens, send them for partial display
+            let buf = room.streaming_tokens.read().await;
+            if !buf.is_empty() {
+                init_msgs.push(SseMsg::ChatToken {
+                    content: buf.clone(),
+                });
+            }
         }
     }
 
@@ -639,6 +659,12 @@ pub async fn chat_handler(
         state: "thinking".to_string(),
     };
     broadcast_to_room(&room, &thinking);
+
+    // Mark room as active (for SSE reconnect recovery)
+    {
+        let mut status = room.active_status.write().await;
+        *status = "thinking".to_string();
+    }
 
     // Cancel & Replace: cancel any existing AI task for this note
     let new_token = CancellationToken::new();
@@ -1716,6 +1742,7 @@ async fn handle_chat_message(
     // Token streaming callback — sends to room + accumulates for mid-stream reconnect
     let room_for_token = Arc::clone(&room);
     let streaming_buf = Arc::clone(&room.streaming_tokens);
+    let status_for_token = Arc::clone(&room.active_status);
     let token_callback: Arc<dyn Fn(&str) + Send + Sync> = Arc::new(move |token: &str| {
         let msg = SseMsg::ChatToken {
             content: token.to_string(),
@@ -1723,6 +1750,12 @@ async fn handle_chat_message(
         broadcast_to_room(&room_for_token, &msg);
         // Accumulate for clients that reconnect mid-stream
         if let Ok(mut buf) = streaming_buf.try_write() {
+            // Update status to "typing" on first token
+            if buf.is_empty() {
+                if let Ok(mut s) = status_for_token.try_write() {
+                    *s = "typing".to_string();
+                }
+            }
             buf.push_str(token);
         }
     });
@@ -1768,6 +1801,28 @@ async fn handle_chat_message(
     let mut agent = Agent::new(cfg, provider, true, embedding);
     agent.token_callback = Some(token_callback);
     agent.approval_callback = Some(approval_callback);
+
+    // Tool status callback: broadcast tool start/end to room for UI indicator
+    let room_for_tool = Arc::clone(&room);
+    let status_for_tool = Arc::clone(&room.active_status);
+    agent.tool_status_callback = Some(Arc::new(move |tool_name: &str, state: &str| {
+        let msg = SseMsg::ToolStatus {
+            tool: tool_name.to_string(),
+            state: state.to_string(),
+        };
+        broadcast_to_room(&room_for_tool, &msg);
+        // Update active_status for reconnect recovery
+        if state == "start" {
+            if let Ok(mut s) = status_for_tool.try_write() {
+                *s = format!("tool:{}", tool_name);
+            }
+        } else if state == "end" {
+            if let Ok(mut s) = status_for_tool.try_write() {
+                *s = "thinking".to_string();
+            }
+        }
+    }));
+
     agent.user_name = if !nickname.is_empty() && nickname != "user" {
         Some(nickname)
     } else {
@@ -1885,6 +1940,12 @@ async fn handle_chat_message(
 
     // Broadcast updated file list to the room
     broadcast_file_list(&state, &note_id).await;
+
+    // Mark room as idle (for SSE reconnect recovery)
+    {
+        let mut status = room.active_status.write().await;
+        *status = "idle".to_string();
+    }
 
     let idle = SseMsg::Status {
         state: "idle".to_string(),
@@ -3172,6 +3233,48 @@ mod isolation_tests {
             buf.clear();
         }
         assert!(room.streaming_tokens.read().await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_active_status_lifecycle() {
+        let (state, _tmp) = make_state();
+        let room = state.get_or_create_room("note-status").await;
+
+        // Initially idle
+        assert_eq!(*room.active_status.read().await, "idle");
+
+        // Set to thinking (simulates chat start)
+        {
+            let mut s = room.active_status.write().await;
+            *s = "thinking".to_string();
+        }
+        assert_eq!(*room.active_status.read().await, "thinking");
+
+        // Set to tool status (simulates tool execution)
+        {
+            let mut s = room.active_status.write().await;
+            *s = "tool:fetch_url".to_string();
+        }
+        // Verify strip_prefix works for reconnect logic
+        {
+            let status = room.active_status.read().await;
+            assert_eq!(*status, "tool:fetch_url");
+            assert_eq!(status.strip_prefix("tool:"), Some("fetch_url"));
+        }
+
+        // Set to typing (simulates token streaming)
+        {
+            let mut s = room.active_status.write().await;
+            *s = "typing".to_string();
+        }
+        assert_eq!(*room.active_status.read().await, "typing");
+
+        // Back to idle (simulates completion)
+        {
+            let mut s = room.active_status.write().await;
+            *s = "idle".to_string();
+        }
+        assert_eq!(*room.active_status.read().await, "idle");
     }
 
     #[tokio::test]

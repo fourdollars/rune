@@ -110,6 +110,9 @@ pub struct Agent {
     /// Callback fired after a markdown file content is changed (for serve mode).
     /// Broadcasts file_content SSE event so other users see the update in real-time.
     pub file_content_callback: Option<Arc<dyn Fn(String, String) + Send + Sync>>,
+    /// Callback fired when a tool execution starts/ends (for serve mode status indicator).
+    /// Called with (tool_name, "start"|"end").
+    pub tool_status_callback: Option<Arc<dyn Fn(&str, &str) + Send + Sync>>,
 }
 
 impl Agent {
@@ -225,6 +228,7 @@ impl Agent {
             user_name: None,
             file_list_callback: None,
             file_content_callback: None,
+            tool_status_callback: None,
         }
     }
 
@@ -870,12 +874,26 @@ impl Agent {
                     return stop;
                 }
 
+                // Notify tool status for all parallel tools
+                if let Some(cb) = &self.tool_status_callback {
+                    for (_id, name, _args) in &dispatch_list {
+                        cb(name, "start");
+                    }
+                }
+
                 // Parallel dispatch via ToolRegistry (which only needs &self)
                 let futs: Vec<_> = dispatch_list
                     .iter()
                     .map(|(_id, name, args)| self.tools.execute(name, args.clone()))
                     .collect();
                 let results = futures::future::join_all(futs).await;
+
+                // Notify tool status end for all parallel tools
+                if let Some(cb) = &self.tool_status_callback {
+                    for (_id, name, _args) in &dispatch_list {
+                        cb(name, "end");
+                    }
+                }
 
                 // Push results in order
                 for (i, output) in results.into_iter().enumerate() {
@@ -958,10 +976,16 @@ impl Agent {
                                 tool_call_id: Some(tc.id.clone()),
                                 content_parts: None,
                             });
+                            if let Some(cb) = &self.tool_status_callback {
+                                cb(&tc.function.name, "end");
+                            }
                             self.finish_trace(&stop);
                             return stop;
                         }
                     };
+                    if let Some(cb) = &self.tool_status_callback {
+                        cb(&tc.function.name, "end");
+                    }
                     self.messages.push(LlmMessage {
                         role: "tool".to_string(),
                         name: None,

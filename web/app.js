@@ -327,7 +327,7 @@ function connect(noteId) {
         'auth_result', 'model_list', 'note_list', 'note_switched',
         'history', 'file_list', 'file_content', 'file_deleted',
         'chat_token', 'chat_done', 'chat_meta', 'chat_message',
-        'status', 'system', 'users_update', 'error',
+        'status', 'tool_status', 'system', 'users_update', 'error',
         'model_changed', 'approval_request', 'archive_done',
         'search_results', 'dir_browse_result', 'auth_error'
     ];
@@ -422,6 +422,13 @@ function handleMessage(msg) {
             break;
         case 'status':
             setStatus(msg.state);
+            break;
+        case 'tool_status':
+            if (msg.state === 'start') {
+                setToolStatus(msg.tool);
+            } else {
+                clearToolStatus();
+            }
             break;
         case 'file_list':
             // msg.files is now Vec<FileEntry> with {name, public}
@@ -1368,6 +1375,7 @@ const STATUS_EMOJI = {
     idle:         '🟢',
     typing:       '⌨️',
     thinking:     '🤔',
+    tool:         '🔧',
     disconnected: '🔴',
 };
 function setStatus(state) {
@@ -1380,6 +1388,22 @@ function setStatus(state) {
         mobileStatus.className = `status ${state}`;
         mobileStatus.textContent = STATUS_EMOJI[state] || '⚪';
     }
+}
+
+function setToolStatus(toolName) {
+    statusIndicator.className = 'status tool';
+    statusIndicator.textContent = '🔧';
+    statusIndicator.title = `tool: ${toolName}`;
+    const mobileStatus = document.getElementById('mobile-status');
+    if (mobileStatus) {
+        mobileStatus.className = 'status tool';
+        mobileStatus.textContent = '🔧';
+    }
+}
+
+function clearToolStatus() {
+    // Revert to thinking (tool ended, waiting for next LLM response)
+    setStatus('thinking');
 }
 
 // --- Panel Toggle ---
