@@ -1482,14 +1482,28 @@ impl Agent {
                         output = self.tools.execute(&tc.function.name, args.clone()).await;
                         continue;
                     }
+                } else if self.config.policy.mode == "confirm" {
+                    // Confirm mode without TTY: use approval_callback (web UI)
+                    if let Some(ref cb) = self.approval_callback {
+                        let id = format!("domain-allow-{}", domain);
+                        let detail = format!("Add '{}' to allowed_domains?", domain);
+                        let approved = cb(id, detail).await;
+                        if approved {
+                            self.tools.add_allowed_domain(&domain);
+                            self.config.policy.allowed_domains.push(domain.clone());
+                            crate::config::persist_domain(&domain);
+                            output = self.tools.execute(&tc.function.name, args.clone()).await;
+                            continue;
+                        }
+                    }
                 }
-                // User said no, or non-interactive
+                // allowlist/unrestricted or user denied: soft-fail to LLM
                 eprintln!(
                     "  {} {}",
                     "✗".red(),
                     char_preview(&output.content, 200).dimmed()
                 );
-                return Err(StopReason::Error(output.content));
+                return Ok(output.content);
             }
 
             // Check if it's a command block we can interactively resolve
@@ -1517,14 +1531,28 @@ impl Agent {
                         output = self.tools.execute(&tc.function.name, args.clone()).await;
                         continue;
                     }
+                } else if self.config.policy.mode == "confirm" {
+                    // Confirm mode without TTY: use approval_callback (web UI)
+                    if let Some(ref cb) = self.approval_callback {
+                        let id = format!("command-allow-{}", command);
+                        let detail = format!("Add '{}' to allowed_commands?", command);
+                        let approved = cb(id, detail).await;
+                        if approved {
+                            self.tools.add_allowed_command(&command);
+                            self.config.policy.allowed_commands.push(command.clone());
+                            crate::config::persist_command(&command);
+                            output = self.tools.execute(&tc.function.name, args.clone()).await;
+                            continue;
+                        }
+                    }
                 }
-                // User said no, or non-interactive
+                // allowlist/unrestricted or user denied: soft-fail to LLM
                 eprintln!(
                     "  {} {}",
                     "✗".red(),
                     char_preview(&output.content, 200).dimmed()
                 );
-                return Err(StopReason::Error(output.content));
+                return Ok(output.content);
             }
 
             // Check if it's a network error we can resolve by adding a domain
@@ -1711,7 +1739,11 @@ impl Agent {
                 char_preview(&output.content, 200).dimmed()
             );
             if Self::is_policy_blocked(&output.content) {
-                return Err(StopReason::Error(output.content));
+                // Unrestricted: should not reach here, but soft-fail if it does
+                // Allowlist: soft-fail — let LLM see the error and adapt
+                // Confirm without TTY: soft-fail — LLM can inform user
+                // Confirm with TTY: already handled in the loop above
+                return Ok(output.content);
             }
             // Non-interactive: any tool error is a hard stop (sandbox enforcement)
             if !self.interactive {
@@ -4201,17 +4233,112 @@ read(3, "root:x:0:0:...", 4096) = 1234"#;
         );
     }
 
-    #[tokio::test]
-    async fn test_allowlist_blocks_unlisted_command_in_serve_mode() {
-        use std::sync::{Arc, Mutex};
+    // ─── Policy blocked soft-fail tests ────────────────────────────────────────
 
-        // Provider that calls an unlisted command, then gives up with text
-        struct BlockedCmdProvider {
-            call_count: Mutex<u32>,
+    /// Helper: a provider that first tries an unlisted command, then responds
+    /// with final text on 2nd call (simulating LLM adapting after seeing error).
+    struct PolicyBlockProvider {
+        call_count: std::sync::Mutex<u32>,
+    }
+    impl crate::provider::Provider for PolicyBlockProvider {
+        fn name(&self) -> &str {
+            "policy-block-mock"
         }
-        impl crate::provider::Provider for BlockedCmdProvider {
+        fn chat(
+            &self,
+            _request: crate::provider::LlmRequest,
+        ) -> std::pin::Pin<
+            Box<
+                dyn std::future::Future<Output = anyhow::Result<crate::provider::LlmResponse>>
+                    + Send
+                    + '_,
+            >,
+        > {
+            Box::pin(async move {
+                let mut count = self.call_count.lock().unwrap();
+                *count += 1;
+                if *count == 1 {
+                    // First call: try to execute `cargo test` (not in allowlist)
+                    Ok(crate::provider::LlmResponse {
+                        content: None,
+                        tool_calls: vec![crate::provider::LlmToolCall {
+                            id: "call_1".to_string(),
+                            call_type: "function".to_string(),
+                            function: crate::provider::LlmFunction {
+                                name: "execute_cmd".to_string(),
+                                arguments: r#"{"cmd":"cargo test"}"#.to_string(),
+                            },
+                        }],
+                        usage: crate::provider::TokenUsage::default(),
+                        model: "mock".to_string(),
+                    })
+                } else {
+                    // Second call: LLM sees the error and gives a final answer
+                    Ok(crate::provider::LlmResponse {
+                        content: Some("cargo is not allowed, let me try another way.".to_string()),
+                        tool_calls: vec![],
+                        usage: crate::provider::TokenUsage::default(),
+                        model: "mock".to_string(),
+                    })
+                }
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn test_allowlist_mode_softfails_blocked_command() {
+        // In allowlist mode without TTY (web serve), blocked command should
+        // soft-fail: error returned to LLM as tool result, agent continues.
+        let mut config = crate::config::RuneConfig {
+            model: "policy-block-mock".to_string(),
+            ..Default::default()
+        };
+        config.policy.mode = "allowlist".to_string();
+        config.policy.allowed_commands = vec!["echo".to_string(), "ls".to_string()];
+
+        let mut registry = crate::provider::ProviderRegistry::new();
+        registry.register(Box::new(PolicyBlockProvider {
+            call_count: std::sync::Mutex::new(0),
+        }));
+        // interactive=true, no TTY — simulates rune notes web serve
+        let mut agent = Agent::new(config, registry, true, None);
+
+        let result = agent.run("run tests").await;
+
+        // Should be FinalAnswer (LLM adapted), NOT StopReason::Error
+        match &result {
+            StopReason::FinalAnswer(answer) => {
+                assert!(
+                    answer.contains("not allowed") || answer.contains("another way"),
+                    "Expected LLM to adapt after seeing blocked error. Got: {}",
+                    answer
+                );
+            }
+            StopReason::Error(e) => {
+                panic!(
+                    "allowlist mode should soft-fail (not hard stop). Got Error: {}",
+                    e
+                );
+            }
+            other => panic!("Unexpected StopReason: {:?}", other),
+        }
+
+        // Command must NOT be auto-added
+        assert!(
+            !agent.config.policy.allowed_commands.contains(&"cargo".to_string()),
+            "Blocked command must not be auto-added in allowlist mode"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_allowlist_mode_softfails_blocked_domain() {
+        // Blocked domain in allowlist mode should also soft-fail to LLM.
+        struct DomainBlockProvider {
+            call_count: std::sync::Mutex<u32>,
+        }
+        impl crate::provider::Provider for DomainBlockProvider {
             fn name(&self) -> &str {
-                "blocked-cmd-mock"
+                "domain-block-mock"
             }
             fn chat(
                 &self,
@@ -4227,15 +4354,14 @@ read(3, "root:x:0:0:...", 4096) = 1234"#;
                     let mut count = self.call_count.lock().unwrap();
                     *count += 1;
                     if *count == 1 {
-                        // Try to call `curl` which is NOT in allowed_commands
                         Ok(crate::provider::LlmResponse {
                             content: None,
                             tool_calls: vec![crate::provider::LlmToolCall {
                                 id: "call_1".to_string(),
                                 call_type: "function".to_string(),
                                 function: crate::provider::LlmFunction {
-                                    name: "execute_cmd".to_string(),
-                                    arguments: r#"{"cmd":"curl http://example.com"}"#.to_string(),
+                                    name: "fetch_url".to_string(),
+                                    arguments: r#"{"url":"https://evil.example.com/api"}"#.to_string(),
                                 },
                             }],
                             usage: crate::provider::TokenUsage::default(),
@@ -4243,7 +4369,7 @@ read(3, "root:x:0:0:...", 4096) = 1234"#;
                         })
                     } else {
                         Ok(crate::provider::LlmResponse {
-                            content: Some("Command was blocked.".to_string()),
+                            content: Some("Domain not allowed, I cannot fetch that URL.".to_string()),
                             tool_calls: vec![],
                             usage: crate::provider::TokenUsage::default(),
                             model: "mock".to_string(),
@@ -4254,27 +4380,251 @@ read(3, "root:x:0:0:...", 4096) = 1234"#;
         }
 
         let mut config = crate::config::RuneConfig {
-            model: "blocked-cmd-mock".to_string(),
+            model: "domain-block-mock".to_string(),
             ..Default::default()
         };
-        // allowlist mode with only "echo" allowed — "curl" should be blocked
         config.policy.mode = "allowlist".to_string();
+        config.policy.allowed_commands = vec!["echo".to_string()];
+        config.policy.allowed_domains = vec!["safe.example.com".to_string()];
+
+        let mut registry = crate::provider::ProviderRegistry::new();
+        registry.register(Box::new(DomainBlockProvider {
+            call_count: std::sync::Mutex::new(0),
+        }));
+        let mut agent = Agent::new(config, registry, true, None);
+
+        let result = agent.run("fetch evil site").await;
+
+        match &result {
+            StopReason::FinalAnswer(_) => {} // Good: soft-failed, LLM adapted
+            StopReason::Error(e) => {
+                panic!("allowlist mode should soft-fail domain blocks. Got Error: {}", e);
+            }
+            other => panic!("Unexpected StopReason: {:?}", other),
+        }
+
+        // Domain must NOT be auto-added
+        assert!(
+            !agent.config.policy.allowed_domains.contains(&"evil.example.com".to_string()),
+            "Blocked domain must not be auto-added in allowlist mode"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_confirm_mode_uses_approval_callback_for_blocked_command() {
+        use std::sync::{Arc, Mutex};
+
+        // Provider that tries a blocked command, then after approval succeeds,
+        // gives a final answer.
+        struct ConfirmBlockProvider {
+            call_count: Mutex<u32>,
+        }
+        impl crate::provider::Provider for ConfirmBlockProvider {
+            fn name(&self) -> &str {
+                "confirm-block-mock"
+            }
+            fn chat(
+                &self,
+                _request: crate::provider::LlmRequest,
+            ) -> std::pin::Pin<
+                Box<
+                    dyn std::future::Future<Output = anyhow::Result<crate::provider::LlmResponse>>
+                        + Send
+                        + '_,
+                >,
+            > {
+                Box::pin(async move {
+                    let mut count = self.call_count.lock().unwrap();
+                    *count += 1;
+                    if *count == 1 {
+                        // Try blocked command
+                        Ok(crate::provider::LlmResponse {
+                            content: None,
+                            tool_calls: vec![crate::provider::LlmToolCall {
+                                id: "call_1".to_string(),
+                                call_type: "function".to_string(),
+                                function: crate::provider::LlmFunction {
+                                    name: "execute_cmd".to_string(),
+                                    arguments: r#"{"cmd":"cargo build"}"#.to_string(),
+                                },
+                            }],
+                            usage: crate::provider::TokenUsage::default(),
+                            model: "mock".to_string(),
+                        })
+                    } else {
+                        Ok(crate::provider::LlmResponse {
+                            content: Some("Build complete.".to_string()),
+                            tool_calls: vec![],
+                            usage: crate::provider::TokenUsage::default(),
+                            model: "mock".to_string(),
+                        })
+                    }
+                })
+            }
+        }
+
+        let mut config = crate::config::RuneConfig {
+            model: "confirm-block-mock".to_string(),
+            ..Default::default()
+        };
+        config.policy.mode = "confirm".to_string();
         config.policy.allowed_commands = vec!["echo".to_string()];
 
         let mut registry = crate::provider::ProviderRegistry::new();
-        registry.register(Box::new(BlockedCmdProvider {
+        registry.register(Box::new(ConfirmBlockProvider {
             call_count: Mutex::new(0),
         }));
-        // interactive=true simulates serve mode (rune notes)
         let mut agent = Agent::new(config, registry, true, None);
 
-        // Verify that "curl" is NOT added to allowed_commands after run
-        let _result = agent.run("fetch example.com").await;
+        // Set approval_callback that always approves
+        let approved_calls: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+        let approved_calls_clone = Arc::clone(&approved_calls);
+        agent.approval_callback = Some(Arc::new(move |id: String, _detail: String| {
+            approved_calls_clone.lock().unwrap().push(id);
+            Box::pin(async move { true })
+        }));
 
+        let result = agent.run("build the project").await;
+
+        // The approval_callback should have been invoked for the blocked command
+        let calls = approved_calls.lock().unwrap();
         assert!(
-            !agent.config.policy.allowed_commands.contains(&"curl".to_string()),
-            "Blocked command 'curl' must NOT be auto-added to allowlist in serve mode (no TTY). Got: {:?}",
-            agent.config.policy.allowed_commands
+            calls.iter().any(|c| c.contains("cargo")),
+            "approval_callback should be called with command 'cargo'. Got: {:?}",
+            *calls
         );
+
+        // After approval, command should be added to allowed_commands
+        assert!(
+            agent.config.policy.allowed_commands.contains(&"cargo".to_string()),
+            "After approval, 'cargo' should be added to allowed_commands"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_confirm_mode_softfails_when_approval_denied() {
+        use std::sync::Mutex;
+
+        struct ConfirmDenyProvider {
+            call_count: Mutex<u32>,
+        }
+        impl crate::provider::Provider for ConfirmDenyProvider {
+            fn name(&self) -> &str {
+                "confirm-deny-mock"
+            }
+            fn chat(
+                &self,
+                _request: crate::provider::LlmRequest,
+            ) -> std::pin::Pin<
+                Box<
+                    dyn std::future::Future<Output = anyhow::Result<crate::provider::LlmResponse>>
+                        + Send
+                        + '_,
+                >,
+            > {
+                Box::pin(async move {
+                    let mut count = self.call_count.lock().unwrap();
+                    *count += 1;
+                    if *count == 1 {
+                        Ok(crate::provider::LlmResponse {
+                            content: None,
+                            tool_calls: vec![crate::provider::LlmToolCall {
+                                id: "call_1".to_string(),
+                                call_type: "function".to_string(),
+                                function: crate::provider::LlmFunction {
+                                    name: "execute_cmd".to_string(),
+                                    arguments: r#"{"cmd":"cargo test"}"#.to_string(),
+                                },
+                            }],
+                            usage: crate::provider::TokenUsage::default(),
+                            model: "mock".to_string(),
+                        })
+                    } else {
+                        // LLM adapts after seeing the denial
+                        Ok(crate::provider::LlmResponse {
+                            content: Some("User denied cargo, will skip tests.".to_string()),
+                            tool_calls: vec![],
+                            usage: crate::provider::TokenUsage::default(),
+                            model: "mock".to_string(),
+                        })
+                    }
+                })
+            }
+        }
+
+        let mut config = crate::config::RuneConfig {
+            model: "confirm-deny-mock".to_string(),
+            ..Default::default()
+        };
+        config.policy.mode = "confirm".to_string();
+        config.policy.allowed_commands = vec!["echo".to_string()];
+
+        let mut registry = crate::provider::ProviderRegistry::new();
+        registry.register(Box::new(ConfirmDenyProvider {
+            call_count: Mutex::new(0),
+        }));
+        let mut agent = Agent::new(config, registry, true, None);
+
+        // approval_callback that always denies
+        agent.approval_callback = Some(Arc::new(move |_id: String, _detail: String| {
+            Box::pin(async move { false })
+        }));
+
+        let result = agent.run("test the project").await;
+
+        // Should soft-fail to LLM (FinalAnswer), not hard stop
+        match &result {
+            StopReason::FinalAnswer(answer) => {
+                assert!(
+                    answer.contains("denied") || answer.contains("skip"),
+                    "Expected LLM to adapt after denial. Got: {}",
+                    answer
+                );
+            }
+            StopReason::Error(e) => {
+                panic!(
+                    "confirm mode with denied approval should soft-fail, not hard stop. Got: {}",
+                    e
+                );
+            }
+            other => panic!("Unexpected StopReason: {:?}", other),
+        }
+
+        // Command must NOT be added
+        assert!(
+            !agent.config.policy.allowed_commands.contains(&"cargo".to_string()),
+            "Denied command must not be added to allowed_commands"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_confirm_mode_no_callback_softfails() {
+        // confirm mode without approval_callback and without TTY: should soft-fail
+        let mut config = crate::config::RuneConfig {
+            model: "policy-block-mock".to_string(),
+            ..Default::default()
+        };
+        config.policy.mode = "confirm".to_string();
+        config.policy.allowed_commands = vec!["echo".to_string()];
+
+        let mut registry = crate::provider::ProviderRegistry::new();
+        registry.register(Box::new(PolicyBlockProvider {
+            call_count: std::sync::Mutex::new(0),
+        }));
+        // interactive=true but no TTY and no approval_callback
+        let mut agent = Agent::new(config, registry, true, None);
+
+        let result = agent.run("run cargo").await;
+
+        match &result {
+            StopReason::FinalAnswer(_) => {} // Good: soft-failed
+            StopReason::Error(e) => {
+                panic!(
+                    "confirm mode without callback should soft-fail. Got Error: {}",
+                    e
+                );
+            }
+            other => panic!("Unexpected StopReason: {:?}", other),
+        }
     }
 }
