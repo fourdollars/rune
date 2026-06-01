@@ -303,7 +303,12 @@ mod tests {
 
     fn build_filter(block_net: bool, allowed_syscalls: &[&str]) -> Vec<SockFilter> {
         let all_dangerous = vec![
-            SYS_PTRACE, SYS_MOUNT, SYS_UNSHARE, SYS_KEXEC_LOAD, SYS_BPF, SYS_SETNS,
+            SYS_PTRACE,
+            SYS_MOUNT,
+            SYS_UNSHARE,
+            SYS_KEXEC_LOAD,
+            SYS_BPF,
+            SYS_SETNS,
         ];
         let wildcard = allowed_syscalls.iter().any(|s| *s == "*");
         let mut blocked: Vec<u32> = if wildcard {
@@ -328,7 +333,12 @@ mod tests {
         let num_blocked = blocked.len();
         let mut filter: Vec<SockFilter> = Vec::new();
         filter.push(bpf_stmt(BPF_LD | BPF_W | BPF_ABS, OFFSET_ARCH));
-        filter.push(bpf_jump(BPF_JMP | BPF_JEQ | BPF_K, AUDIT_ARCH_X86_64, 0, (num_blocked + 2) as u8));
+        filter.push(bpf_jump(
+            BPF_JMP | BPF_JEQ | BPF_K,
+            AUDIT_ARCH_X86_64,
+            0,
+            (num_blocked + 2) as u8,
+        ));
         filter.push(bpf_stmt(BPF_LD | BPF_W | BPF_ABS, OFFSET_NR));
         for (i, &nr) in blocked.iter().enumerate() {
             let jump_to_deny = (num_blocked - i) as u8;
@@ -371,7 +381,10 @@ mod tests {
 
     #[test]
     fn test_filter_allow_all_dangerous() {
-        let filter = build_filter(false, &["ptrace", "mount", "unshare", "kexec_load", "bpf", "setns"]);
+        let filter = build_filter(
+            false,
+            &["ptrace", "mount", "unshare", "kexec_load", "bpf", "setns"],
+        );
         assert_eq!(filter.len(), 5);
     }
 

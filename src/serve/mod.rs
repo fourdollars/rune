@@ -6,12 +6,13 @@
 //!   - SSE endpoint for server→client push + REST API for client→server
 //!   - Token auth required for non-localhost connections
 
+pub mod api;
 pub mod db;
 mod static_files;
-pub mod api;
 pub use db::ChatDb;
 
 use crate::config::RuneConfig;
+use crate::serve::api::NoteRoom;
 use axum::{
     extract::ConnectInfo,
     http::{header, StatusCode},
@@ -20,12 +21,11 @@ use axum::{
     routing::{get, post},
     Router,
 };
+use std::collections::HashMap;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::collections::HashMap;
 use tokio::sync::{broadcast, RwLock};
-use crate::serve::api::NoteRoom;
 use tracing::{info, warn};
 
 /// Get the Rune data directory (~/.rune).
@@ -171,12 +171,16 @@ pub async fn run(config: RuneConfig, opts: NotesOptions) {
     }
 
     // Parse comma-separated model list from config
-    let models: Vec<String> = config.model
+    let models: Vec<String> = config
+        .model
         .split(',')
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty())
         .collect();
-    let first_model = models.first().cloned().unwrap_or_else(|| config.model.clone());
+    let first_model = models
+        .first()
+        .cloned()
+        .unwrap_or_else(|| config.model.clone());
 
     let state = ServerState {
         config: config.clone(),
@@ -201,44 +205,52 @@ pub async fn run(config: RuneConfig, opts: NotesOptions) {
         next: axum::middleware::Next,
     ) -> axum::response::Response {
         // Extract token from header OR query param
-        let from_header = req.headers()
+        let from_header = req
+            .headers()
             .get("authorization")
             .and_then(|v| v.to_str().ok())
             .and_then(|v| v.strip_prefix("Bearer "))
             .map(|s| s.to_string());
-        let from_query = req.uri().query()
-            .and_then(|q| q.split('&')
+        let from_query = req.uri().query().and_then(|q| {
+            q.split('&')
                 .find(|p| p.starts_with("token="))
-                .map(|p| p.trim_start_matches("token=").to_string()));
+                .map(|p| p.trim_start_matches("token=").to_string())
+        });
         let provided = from_header.or(from_query);
 
         // Strict auth: token must match one of user_token / admin_token / guest_token
-        let user_ok = state.user_token.as_deref()
+        let user_ok = state
+            .user_token
+            .as_deref()
             .map(|ut| provided.as_deref() == Some(ut))
             .unwrap_or(false);
-        let admin_ok = state.admin_token.as_deref()
+        let admin_ok = state
+            .admin_token
+            .as_deref()
             .map(|at| provided.as_deref() == Some(at))
             .unwrap_or(false);
-        let guest_ok = state.guest_token.as_deref()
+        let guest_ok = state
+            .guest_token
+            .as_deref()
             .map(|gt| !gt.is_empty() && provided.as_deref() == Some(gt))
             .unwrap_or(false);
 
         // Reject if none match
         if !user_ok && !admin_ok && !guest_ok {
-            let body = axum::Json(serde_json::json!({"ok": false, "error": "Authentication failed"}));
+            let body =
+                axum::Json(serde_json::json!({"ok": false, "error": "Authentication failed"}));
             return (StatusCode::UNAUTHORIZED, body).into_response();
         }
 
         // Guest: block all mutations (only allow read-only endpoints)
         if guest_ok {
             let path = req.uri().path().to_string();
-            let allowed_guest_paths = [
-                "/api/note/switch",
-                "/api/file/switch",
-                "/api/system-prompt",
-            ];
+            let allowed_guest_paths =
+                ["/api/note/switch", "/api/file/switch", "/api/system-prompt"];
             if !allowed_guest_paths.iter().any(|p| path == *p) {
-                let body = axum::Json(serde_json::json!({"ok": false, "error": "Guest access is read-only"}));
+                let body = axum::Json(
+                    serde_json::json!({"ok": false, "error": "Guest access is read-only"}),
+                );
                 return (StatusCode::FORBIDDEN, body).into_response();
             }
         }
@@ -258,7 +270,9 @@ pub async fn run(config: RuneConfig, opts: NotesOptions) {
             let is_admin_only = admin_only_paths.iter().any(|p| path == *p)
                 || (path == "/api/system-prompt" && req.method() == axum::http::Method::POST);
             if is_admin_only {
-                let body = axum::Json(serde_json::json!({"ok": false, "error": "Admin privileges required"}));
+                let body = axum::Json(
+                    serde_json::json!({"ok": false, "error": "Admin privileges required"}),
+                );
                 return (StatusCode::FORBIDDEN, body).into_response();
             }
         }
@@ -285,7 +299,10 @@ pub async fn run(config: RuneConfig, opts: NotesOptions) {
         .route("/api/dir/browse", post(api::dir_browse_handler))
         .route("/api/note/visibility", post(api::note_visibility_handler))
         .route("/api/file/visibility", post(api::file_visibility_handler))
-        .route("/api/system-prompt", get(api::system_prompt_get_handler).post(api::system_prompt_handler))
+        .route(
+            "/api/system-prompt",
+            get(api::system_prompt_get_handler).post(api::system_prompt_handler),
+        )
         .layer(axum_mw::from_fn_with_state(state.clone(), auth_middleware));
 
     // Static + SSE routes (SSE has its own auth logic inside the handler)
@@ -299,8 +316,13 @@ pub async fn run(config: RuneConfig, opts: NotesOptions) {
         // Public (no-auth) routes
         .route("/notes", get(api::public_notes_list_handler))
         .route("/notes/", get(api::public_notes_list_handler))
+        .route("/notes/{note}/", get(api::public_note_index_handler))
+        .route("/notes/{note}", get(api::public_note_index_handler))
         .route("/notes/{note}/{file}", get(api::public_preview_handler))
-        .route("/api/public/raw/{note}/{file}", get(api::public_raw_handler))
+        .route(
+            "/api/public/raw/{note}/{file}",
+            get(api::public_raw_handler),
+        )
         .merge(api_routes)
         .with_state(state);
 
@@ -355,11 +377,17 @@ async fn index_handler() -> impl IntoResponse {
 
 /// Static asset handler.
 fn mime_for(path: &str) -> &'static str {
-    if path.ends_with(".js")   { "application/javascript" }
-    else if path.ends_with(".css")  { "text/css" }
-    else if path.ends_with(".html") { "text/html" }
-    else if path.ends_with(".svg")  { "image/svg+xml" }
-    else { "application/octet-stream" }
+    if path.ends_with(".js") {
+        "application/javascript"
+    } else if path.ends_with(".css") {
+        "text/css"
+    } else if path.ends_with(".html") {
+        "text/html"
+    } else if path.ends_with(".svg") {
+        "image/svg+xml"
+    } else {
+        "application/octet-stream"
+    }
 }
 
 async fn favicon_handler() -> impl IntoResponse {
@@ -368,7 +396,8 @@ async fn favicon_handler() -> impl IntoResponse {
             StatusCode::OK,
             [(axum::http::header::CONTENT_TYPE, "image/svg+xml")],
             content,
-        ).into_response(),
+        )
+            .into_response(),
         None => StatusCode::NOT_FOUND.into_response(),
     }
 }
@@ -379,7 +408,12 @@ async fn binary_asset_handler(
     match static_files::get_bytes(&path) {
         Some(bytes) => {
             let mime = mime_for(&path);
-            (StatusCode::OK, [(axum::http::header::CONTENT_TYPE, mime)], bytes).into_response()
+            (
+                StatusCode::OK,
+                [(axum::http::header::CONTENT_TYPE, mime)],
+                bytes,
+            )
+                .into_response()
         }
         None => StatusCode::NOT_FOUND.into_response(),
     }
@@ -405,12 +439,11 @@ async fn static_handler(
                 (header::CACHE_CONTROL, "no-cache, must-revalidate"),
             ],
             content,
-        ).into_response(),
+        )
+            .into_response(),
         None => StatusCode::NOT_FOUND.into_response(),
     }
 }
-
-
 
 fn is_localhost(ip: IpAddr) -> bool {
     match ip {
@@ -448,7 +481,9 @@ mod tests {
         std::env::remove_var("HOME");
         let d = data_dir();
         assert_eq!(d, std::path::PathBuf::from("./.rune"));
-        if let Some(v) = orig { std::env::set_var("HOME", v); }
+        if let Some(v) = orig {
+            std::env::set_var("HOME", v);
+        }
     }
 
     #[test]
@@ -456,7 +491,10 @@ mod tests {
         let _lock = ENV_LOCK.lock().unwrap();
         std::env::set_var("HOME", "/tmp/fake_home");
         let d = note_markdown_dir("my-session");
-        assert_eq!(d, std::path::PathBuf::from("/tmp/fake_home/.rune/notes/my-session/markdown"));
+        assert_eq!(
+            d,
+            std::path::PathBuf::from("/tmp/fake_home/.rune/notes/my-session/markdown")
+        );
     }
 
     #[test]
@@ -495,7 +533,9 @@ mod tests {
 
     #[test]
     fn test_is_localhost_ipv6_non_local() {
-        assert!(!is_localhost(IpAddr::V6(Ipv6Addr::new(0x2001, 0xdb8, 0, 0, 0, 0, 0, 1))));
+        assert!(!is_localhost(IpAddr::V6(Ipv6Addr::new(
+            0x2001, 0xdb8, 0, 0, 0, 0, 0, 1
+        ))));
     }
 
     // ──────────────────────────────────────────────
@@ -550,7 +590,8 @@ mod tests {
     #[test]
     fn test_model_list_parsing_single() {
         let model_str = "gpt-4o";
-        let models: Vec<String> = model_str.split(',')
+        let models: Vec<String> = model_str
+            .split(',')
             .map(|s| s.trim().to_string())
             .filter(|s| !s.is_empty())
             .collect();
@@ -560,17 +601,22 @@ mod tests {
     #[test]
     fn test_model_list_parsing_multiple() {
         let model_str = "gpt-4o, claude-3-5-sonnet, gemini-1.5-pro";
-        let models: Vec<String> = model_str.split(',')
+        let models: Vec<String> = model_str
+            .split(',')
             .map(|s| s.trim().to_string())
             .filter(|s| !s.is_empty())
             .collect();
-        assert_eq!(models, vec!["gpt-4o", "claude-3-5-sonnet", "gemini-1.5-pro"]);
+        assert_eq!(
+            models,
+            vec!["gpt-4o", "claude-3-5-sonnet", "gemini-1.5-pro"]
+        );
     }
 
     #[test]
     fn test_model_list_parsing_empty_parts_filtered() {
         let model_str = "gpt-4o,,claude-3-5-sonnet, ";
-        let models: Vec<String> = model_str.split(',')
+        let models: Vec<String> = model_str
+            .split(',')
             .map(|s| s.trim().to_string())
             .filter(|s| !s.is_empty())
             .collect();
@@ -579,12 +625,16 @@ mod tests {
 
     #[test]
     fn test_first_model_fallback_when_empty() {
-        let models: Vec<String> = "".split(',')
+        let models: Vec<String> = ""
+            .split(',')
             .map(|s| s.trim().to_string())
             .filter(|s| !s.is_empty())
             .collect();
         let config_model = "fallback-model".to_string();
-        let first = models.first().cloned().unwrap_or_else(|| config_model.clone());
+        let first = models
+            .first()
+            .cloned()
+            .unwrap_or_else(|| config_model.clone());
         assert_eq!(first, "fallback-model");
     }
 
@@ -594,83 +644,93 @@ mod tests {
 
     #[tokio::test]
     async fn test_index_handler_returns_html_or_500() {
-        use axum::{routing::get, Router};
         use axum::http::{Request, StatusCode};
+        use axum::{routing::get, Router};
         use tower::ServiceExt;
 
         // Auth middleware for POST API endpoints
-    async fn auth_middleware(
-        axum::extract::State(state): axum::extract::State<ServerState>,
-        ConnectInfo(addr): ConnectInfo<SocketAddr>,
-        req: axum::http::Request<axum::body::Body>,
-        next: axum::middleware::Next,
-    ) -> axum::response::Response {
-        // Extract token from header OR query param
-        let from_header = req.headers()
-            .get("authorization")
-            .and_then(|v| v.to_str().ok())
-            .and_then(|v| v.strip_prefix("Bearer "))
-            .map(|s| s.to_string());
-        let from_query = req.uri().query()
-            .and_then(|q| q.split('&')
-                .find(|p| p.starts_with("token="))
-                .map(|p| p.trim_start_matches("token=").to_string()));
-        let provided = from_header.or(from_query);
+        async fn auth_middleware(
+            axum::extract::State(state): axum::extract::State<ServerState>,
+            ConnectInfo(addr): ConnectInfo<SocketAddr>,
+            req: axum::http::Request<axum::body::Body>,
+            next: axum::middleware::Next,
+        ) -> axum::response::Response {
+            // Extract token from header OR query param
+            let from_header = req
+                .headers()
+                .get("authorization")
+                .and_then(|v| v.to_str().ok())
+                .and_then(|v| v.strip_prefix("Bearer "))
+                .map(|s| s.to_string());
+            let from_query = req.uri().query().and_then(|q| {
+                q.split('&')
+                    .find(|p| p.starts_with("token="))
+                    .map(|p| p.trim_start_matches("token=").to_string())
+            });
+            let provided = from_header.or(from_query);
 
-        // Strict auth: token must match one of user_token / admin_token / guest_token
-        let user_ok = state.user_token.as_deref()
-            .map(|ut| provided.as_deref() == Some(ut))
-            .unwrap_or(false);
-        let admin_ok = state.admin_token.as_deref()
-            .map(|at| provided.as_deref() == Some(at))
-            .unwrap_or(false);
-        let guest_ok = state.guest_token.as_deref()
-            .map(|gt| !gt.is_empty() && provided.as_deref() == Some(gt))
-            .unwrap_or(false);
+            // Strict auth: token must match one of user_token / admin_token / guest_token
+            let user_ok = state
+                .user_token
+                .as_deref()
+                .map(|ut| provided.as_deref() == Some(ut))
+                .unwrap_or(false);
+            let admin_ok = state
+                .admin_token
+                .as_deref()
+                .map(|at| provided.as_deref() == Some(at))
+                .unwrap_or(false);
+            let guest_ok = state
+                .guest_token
+                .as_deref()
+                .map(|gt| !gt.is_empty() && provided.as_deref() == Some(gt))
+                .unwrap_or(false);
 
-        // Reject if none match
-        if !user_ok && !admin_ok && !guest_ok {
-            let body = axum::Json(serde_json::json!({"ok": false, "error": "Authentication failed"}));
-            return (StatusCode::UNAUTHORIZED, body).into_response();
-        }
-
-        // Guest: block all mutations (only allow read-only endpoints)
-        if guest_ok {
-            let path = req.uri().path().to_string();
-            let allowed_guest_paths = [
-                "/api/note/switch",
-                "/api/file/switch",
-                "/api/system-prompt",
-            ];
-            if !allowed_guest_paths.iter().any(|p| path == *p) {
-                let body = axum::Json(serde_json::json!({"ok": false, "error": "Guest access is read-only"}));
-                return (StatusCode::FORBIDDEN, body).into_response();
+            // Reject if none match
+            if !user_ok && !admin_ok && !guest_ok {
+                let body =
+                    axum::Json(serde_json::json!({"ok": false, "error": "Authentication failed"}));
+                return (StatusCode::UNAUTHORIZED, body).into_response();
             }
-        }
 
-        // Admin-only endpoints: note management, model switch, visibility
-        if !admin_ok {
-            let path = req.uri().path().to_string();
-            let admin_only_paths = [
-                "/api/note/create",
-                "/api/note/rename",
-                "/api/note/delete",
-                "/api/model/switch",
-                "/api/note/visibility",
-                "/api/file/visibility",
-            ];
-            // system-prompt POST is admin-only (GET is open to all authenticated)
-            let is_admin_only = admin_only_paths.iter().any(|p| path == *p)
-                || (path == "/api/system-prompt" && req.method() == axum::http::Method::POST);
-            if is_admin_only {
-                let body = axum::Json(serde_json::json!({"ok": false, "error": "Admin privileges required"}));
-                return (StatusCode::FORBIDDEN, body).into_response();
+            // Guest: block all mutations (only allow read-only endpoints)
+            if guest_ok {
+                let path = req.uri().path().to_string();
+                let allowed_guest_paths =
+                    ["/api/note/switch", "/api/file/switch", "/api/system-prompt"];
+                if !allowed_guest_paths.iter().any(|p| path == *p) {
+                    let body = axum::Json(
+                        serde_json::json!({"ok": false, "error": "Guest access is read-only"}),
+                    );
+                    return (StatusCode::FORBIDDEN, body).into_response();
+                }
             }
-        }
-        next.run(req).await
-    }
 
-    let app = Router::new().route("/", get(index_handler));
+            // Admin-only endpoints: note management, model switch, visibility
+            if !admin_ok {
+                let path = req.uri().path().to_string();
+                let admin_only_paths = [
+                    "/api/note/create",
+                    "/api/note/rename",
+                    "/api/note/delete",
+                    "/api/model/switch",
+                    "/api/note/visibility",
+                    "/api/file/visibility",
+                ];
+                // system-prompt POST is admin-only (GET is open to all authenticated)
+                let is_admin_only = admin_only_paths.iter().any(|p| path == *p)
+                    || (path == "/api/system-prompt" && req.method() == axum::http::Method::POST);
+                if is_admin_only {
+                    let body = axum::Json(
+                        serde_json::json!({"ok": false, "error": "Admin privileges required"}),
+                    );
+                    return (StatusCode::FORBIDDEN, body).into_response();
+                }
+            }
+            next.run(req).await
+        }
+
+        let app = Router::new().route("/", get(index_handler));
         let req = Request::builder()
             .uri("/")
             .body(axum::body::Body::empty())
@@ -679,89 +739,100 @@ mod tests {
         // Either 200 (embedded file found) or 500 (no embed in test binary)
         assert!(
             resp.status() == StatusCode::OK || resp.status() == StatusCode::INTERNAL_SERVER_ERROR,
-            "unexpected status: {}", resp.status()
+            "unexpected status: {}",
+            resp.status()
         );
     }
 
     #[tokio::test]
     async fn test_favicon_handler_returns_svg_or_404() {
-        use axum::{routing::get, Router};
         use axum::http::{Request, StatusCode};
+        use axum::{routing::get, Router};
         use tower::ServiceExt;
 
         // Auth middleware for POST API endpoints
-    async fn auth_middleware(
-        axum::extract::State(state): axum::extract::State<ServerState>,
-        ConnectInfo(addr): ConnectInfo<SocketAddr>,
-        req: axum::http::Request<axum::body::Body>,
-        next: axum::middleware::Next,
-    ) -> axum::response::Response {
-        // Extract token from header OR query param
-        let from_header = req.headers()
-            .get("authorization")
-            .and_then(|v| v.to_str().ok())
-            .and_then(|v| v.strip_prefix("Bearer "))
-            .map(|s| s.to_string());
-        let from_query = req.uri().query()
-            .and_then(|q| q.split('&')
-                .find(|p| p.starts_with("token="))
-                .map(|p| p.trim_start_matches("token=").to_string()));
-        let provided = from_header.or(from_query);
+        async fn auth_middleware(
+            axum::extract::State(state): axum::extract::State<ServerState>,
+            ConnectInfo(addr): ConnectInfo<SocketAddr>,
+            req: axum::http::Request<axum::body::Body>,
+            next: axum::middleware::Next,
+        ) -> axum::response::Response {
+            // Extract token from header OR query param
+            let from_header = req
+                .headers()
+                .get("authorization")
+                .and_then(|v| v.to_str().ok())
+                .and_then(|v| v.strip_prefix("Bearer "))
+                .map(|s| s.to_string());
+            let from_query = req.uri().query().and_then(|q| {
+                q.split('&')
+                    .find(|p| p.starts_with("token="))
+                    .map(|p| p.trim_start_matches("token=").to_string())
+            });
+            let provided = from_header.or(from_query);
 
-        // Strict auth: token must match one of user_token / admin_token / guest_token
-        let user_ok = state.user_token.as_deref()
-            .map(|ut| provided.as_deref() == Some(ut))
-            .unwrap_or(false);
-        let admin_ok = state.admin_token.as_deref()
-            .map(|at| provided.as_deref() == Some(at))
-            .unwrap_or(false);
-        let guest_ok = state.guest_token.as_deref()
-            .map(|gt| !gt.is_empty() && provided.as_deref() == Some(gt))
-            .unwrap_or(false);
+            // Strict auth: token must match one of user_token / admin_token / guest_token
+            let user_ok = state
+                .user_token
+                .as_deref()
+                .map(|ut| provided.as_deref() == Some(ut))
+                .unwrap_or(false);
+            let admin_ok = state
+                .admin_token
+                .as_deref()
+                .map(|at| provided.as_deref() == Some(at))
+                .unwrap_or(false);
+            let guest_ok = state
+                .guest_token
+                .as_deref()
+                .map(|gt| !gt.is_empty() && provided.as_deref() == Some(gt))
+                .unwrap_or(false);
 
-        // Reject if none match
-        if !user_ok && !admin_ok && !guest_ok {
-            let body = axum::Json(serde_json::json!({"ok": false, "error": "Authentication failed"}));
-            return (StatusCode::UNAUTHORIZED, body).into_response();
-        }
-
-        // Guest: block all mutations (only allow read-only endpoints)
-        if guest_ok {
-            let path = req.uri().path().to_string();
-            let allowed_guest_paths = [
-                "/api/note/switch",
-                "/api/file/switch",
-                "/api/system-prompt",
-            ];
-            if !allowed_guest_paths.iter().any(|p| path == *p) {
-                let body = axum::Json(serde_json::json!({"ok": false, "error": "Guest access is read-only"}));
-                return (StatusCode::FORBIDDEN, body).into_response();
+            // Reject if none match
+            if !user_ok && !admin_ok && !guest_ok {
+                let body =
+                    axum::Json(serde_json::json!({"ok": false, "error": "Authentication failed"}));
+                return (StatusCode::UNAUTHORIZED, body).into_response();
             }
-        }
 
-        // Admin-only endpoints: note management, model switch, visibility
-        if !admin_ok {
-            let path = req.uri().path().to_string();
-            let admin_only_paths = [
-                "/api/note/create",
-                "/api/note/rename",
-                "/api/note/delete",
-                "/api/model/switch",
-                "/api/note/visibility",
-                "/api/file/visibility",
-            ];
-            // system-prompt POST is admin-only (GET is open to all authenticated)
-            let is_admin_only = admin_only_paths.iter().any(|p| path == *p)
-                || (path == "/api/system-prompt" && req.method() == axum::http::Method::POST);
-            if is_admin_only {
-                let body = axum::Json(serde_json::json!({"ok": false, "error": "Admin privileges required"}));
-                return (StatusCode::FORBIDDEN, body).into_response();
+            // Guest: block all mutations (only allow read-only endpoints)
+            if guest_ok {
+                let path = req.uri().path().to_string();
+                let allowed_guest_paths =
+                    ["/api/note/switch", "/api/file/switch", "/api/system-prompt"];
+                if !allowed_guest_paths.iter().any(|p| path == *p) {
+                    let body = axum::Json(
+                        serde_json::json!({"ok": false, "error": "Guest access is read-only"}),
+                    );
+                    return (StatusCode::FORBIDDEN, body).into_response();
+                }
             }
-        }
-        next.run(req).await
-    }
 
-    let app = Router::new().route("/favicon.ico", get(favicon_handler));
+            // Admin-only endpoints: note management, model switch, visibility
+            if !admin_ok {
+                let path = req.uri().path().to_string();
+                let admin_only_paths = [
+                    "/api/note/create",
+                    "/api/note/rename",
+                    "/api/note/delete",
+                    "/api/model/switch",
+                    "/api/note/visibility",
+                    "/api/file/visibility",
+                ];
+                // system-prompt POST is admin-only (GET is open to all authenticated)
+                let is_admin_only = admin_only_paths.iter().any(|p| path == *p)
+                    || (path == "/api/system-prompt" && req.method() == axum::http::Method::POST);
+                if is_admin_only {
+                    let body = axum::Json(
+                        serde_json::json!({"ok": false, "error": "Admin privileges required"}),
+                    );
+                    return (StatusCode::FORBIDDEN, body).into_response();
+                }
+            }
+            next.run(req).await
+        }
+
+        let app = Router::new().route("/favicon.ico", get(favicon_handler));
         let req = Request::builder()
             .uri("/favicon.ico")
             .body(axum::body::Body::empty())
@@ -769,10 +840,12 @@ mod tests {
         let resp = app.oneshot(req).await.unwrap();
         assert!(
             resp.status() == StatusCode::OK || resp.status() == StatusCode::NOT_FOUND,
-            "unexpected status: {}", resp.status()
+            "unexpected status: {}",
+            resp.status()
         );
         if resp.status() == StatusCode::OK {
-            let ct = resp.headers()
+            let ct = resp
+                .headers()
                 .get(axum::http::header::CONTENT_TYPE)
                 .and_then(|v| v.to_str().ok())
                 .unwrap_or("");
@@ -782,83 +855,93 @@ mod tests {
 
     #[tokio::test]
     async fn test_static_handler_js_returns_ok_or_404() {
-        use axum::{routing::get, Router};
         use axum::http::{Request, StatusCode};
+        use axum::{routing::get, Router};
         use tower::ServiceExt;
 
         // Auth middleware for POST API endpoints
-    async fn auth_middleware(
-        axum::extract::State(state): axum::extract::State<ServerState>,
-        ConnectInfo(addr): ConnectInfo<SocketAddr>,
-        req: axum::http::Request<axum::body::Body>,
-        next: axum::middleware::Next,
-    ) -> axum::response::Response {
-        // Extract token from header OR query param
-        let from_header = req.headers()
-            .get("authorization")
-            .and_then(|v| v.to_str().ok())
-            .and_then(|v| v.strip_prefix("Bearer "))
-            .map(|s| s.to_string());
-        let from_query = req.uri().query()
-            .and_then(|q| q.split('&')
-                .find(|p| p.starts_with("token="))
-                .map(|p| p.trim_start_matches("token=").to_string()));
-        let provided = from_header.or(from_query);
+        async fn auth_middleware(
+            axum::extract::State(state): axum::extract::State<ServerState>,
+            ConnectInfo(addr): ConnectInfo<SocketAddr>,
+            req: axum::http::Request<axum::body::Body>,
+            next: axum::middleware::Next,
+        ) -> axum::response::Response {
+            // Extract token from header OR query param
+            let from_header = req
+                .headers()
+                .get("authorization")
+                .and_then(|v| v.to_str().ok())
+                .and_then(|v| v.strip_prefix("Bearer "))
+                .map(|s| s.to_string());
+            let from_query = req.uri().query().and_then(|q| {
+                q.split('&')
+                    .find(|p| p.starts_with("token="))
+                    .map(|p| p.trim_start_matches("token=").to_string())
+            });
+            let provided = from_header.or(from_query);
 
-        // Strict auth: token must match one of user_token / admin_token / guest_token
-        let user_ok = state.user_token.as_deref()
-            .map(|ut| provided.as_deref() == Some(ut))
-            .unwrap_or(false);
-        let admin_ok = state.admin_token.as_deref()
-            .map(|at| provided.as_deref() == Some(at))
-            .unwrap_or(false);
-        let guest_ok = state.guest_token.as_deref()
-            .map(|gt| !gt.is_empty() && provided.as_deref() == Some(gt))
-            .unwrap_or(false);
+            // Strict auth: token must match one of user_token / admin_token / guest_token
+            let user_ok = state
+                .user_token
+                .as_deref()
+                .map(|ut| provided.as_deref() == Some(ut))
+                .unwrap_or(false);
+            let admin_ok = state
+                .admin_token
+                .as_deref()
+                .map(|at| provided.as_deref() == Some(at))
+                .unwrap_or(false);
+            let guest_ok = state
+                .guest_token
+                .as_deref()
+                .map(|gt| !gt.is_empty() && provided.as_deref() == Some(gt))
+                .unwrap_or(false);
 
-        // Reject if none match
-        if !user_ok && !admin_ok && !guest_ok {
-            let body = axum::Json(serde_json::json!({"ok": false, "error": "Authentication failed"}));
-            return (StatusCode::UNAUTHORIZED, body).into_response();
-        }
-
-        // Guest: block all mutations (only allow read-only endpoints)
-        if guest_ok {
-            let path = req.uri().path().to_string();
-            let allowed_guest_paths = [
-                "/api/note/switch",
-                "/api/file/switch",
-                "/api/system-prompt",
-            ];
-            if !allowed_guest_paths.iter().any(|p| path == *p) {
-                let body = axum::Json(serde_json::json!({"ok": false, "error": "Guest access is read-only"}));
-                return (StatusCode::FORBIDDEN, body).into_response();
+            // Reject if none match
+            if !user_ok && !admin_ok && !guest_ok {
+                let body =
+                    axum::Json(serde_json::json!({"ok": false, "error": "Authentication failed"}));
+                return (StatusCode::UNAUTHORIZED, body).into_response();
             }
-        }
 
-        // Admin-only endpoints: note management, model switch, visibility
-        if !admin_ok {
-            let path = req.uri().path().to_string();
-            let admin_only_paths = [
-                "/api/note/create",
-                "/api/note/rename",
-                "/api/note/delete",
-                "/api/model/switch",
-                "/api/note/visibility",
-                "/api/file/visibility",
-            ];
-            // system-prompt POST is admin-only (GET is open to all authenticated)
-            let is_admin_only = admin_only_paths.iter().any(|p| path == *p)
-                || (path == "/api/system-prompt" && req.method() == axum::http::Method::POST);
-            if is_admin_only {
-                let body = axum::Json(serde_json::json!({"ok": false, "error": "Admin privileges required"}));
-                return (StatusCode::FORBIDDEN, body).into_response();
+            // Guest: block all mutations (only allow read-only endpoints)
+            if guest_ok {
+                let path = req.uri().path().to_string();
+                let allowed_guest_paths =
+                    ["/api/note/switch", "/api/file/switch", "/api/system-prompt"];
+                if !allowed_guest_paths.iter().any(|p| path == *p) {
+                    let body = axum::Json(
+                        serde_json::json!({"ok": false, "error": "Guest access is read-only"}),
+                    );
+                    return (StatusCode::FORBIDDEN, body).into_response();
+                }
             }
-        }
-        next.run(req).await
-    }
 
-    let app = Router::new().route("/assets/{*path}", get(static_handler));
+            // Admin-only endpoints: note management, model switch, visibility
+            if !admin_ok {
+                let path = req.uri().path().to_string();
+                let admin_only_paths = [
+                    "/api/note/create",
+                    "/api/note/rename",
+                    "/api/note/delete",
+                    "/api/model/switch",
+                    "/api/note/visibility",
+                    "/api/file/visibility",
+                ];
+                // system-prompt POST is admin-only (GET is open to all authenticated)
+                let is_admin_only = admin_only_paths.iter().any(|p| path == *p)
+                    || (path == "/api/system-prompt" && req.method() == axum::http::Method::POST);
+                if is_admin_only {
+                    let body = axum::Json(
+                        serde_json::json!({"ok": false, "error": "Admin privileges required"}),
+                    );
+                    return (StatusCode::FORBIDDEN, body).into_response();
+                }
+            }
+            next.run(req).await
+        }
+
+        let app = Router::new().route("/assets/{*path}", get(static_handler));
         let req = Request::builder()
             .uri("/assets/app.js")
             .body(axum::body::Body::empty())
@@ -866,10 +949,12 @@ mod tests {
         let resp = app.oneshot(req).await.unwrap();
         assert!(
             resp.status() == StatusCode::OK || resp.status() == StatusCode::NOT_FOUND,
-            "unexpected status: {}", resp.status()
+            "unexpected status: {}",
+            resp.status()
         );
         if resp.status() == StatusCode::OK {
-            let ct = resp.headers()
+            let ct = resp
+                .headers()
                 .get(axum::http::header::CONTENT_TYPE)
                 .and_then(|v| v.to_str().ok())
                 .unwrap_or("");
@@ -879,350 +964,384 @@ mod tests {
 
     #[tokio::test]
     async fn test_static_handler_css_returns_ok_or_404() {
-        use axum::{routing::get, Router};
         use axum::http::{Request, StatusCode};
+        use axum::{routing::get, Router};
         use tower::ServiceExt;
 
         // Auth middleware for POST API endpoints
-    async fn auth_middleware(
-        axum::extract::State(state): axum::extract::State<ServerState>,
-        ConnectInfo(addr): ConnectInfo<SocketAddr>,
-        req: axum::http::Request<axum::body::Body>,
-        next: axum::middleware::Next,
-    ) -> axum::response::Response {
-        // Extract token from header OR query param
-        let from_header = req.headers()
-            .get("authorization")
-            .and_then(|v| v.to_str().ok())
-            .and_then(|v| v.strip_prefix("Bearer "))
-            .map(|s| s.to_string());
-        let from_query = req.uri().query()
-            .and_then(|q| q.split('&')
-                .find(|p| p.starts_with("token="))
-                .map(|p| p.trim_start_matches("token=").to_string()));
-        let provided = from_header.or(from_query);
+        async fn auth_middleware(
+            axum::extract::State(state): axum::extract::State<ServerState>,
+            ConnectInfo(addr): ConnectInfo<SocketAddr>,
+            req: axum::http::Request<axum::body::Body>,
+            next: axum::middleware::Next,
+        ) -> axum::response::Response {
+            // Extract token from header OR query param
+            let from_header = req
+                .headers()
+                .get("authorization")
+                .and_then(|v| v.to_str().ok())
+                .and_then(|v| v.strip_prefix("Bearer "))
+                .map(|s| s.to_string());
+            let from_query = req.uri().query().and_then(|q| {
+                q.split('&')
+                    .find(|p| p.starts_with("token="))
+                    .map(|p| p.trim_start_matches("token=").to_string())
+            });
+            let provided = from_header.or(from_query);
 
-        // Strict auth: token must match one of user_token / admin_token / guest_token
-        let user_ok = state.user_token.as_deref()
-            .map(|ut| provided.as_deref() == Some(ut))
-            .unwrap_or(false);
-        let admin_ok = state.admin_token.as_deref()
-            .map(|at| provided.as_deref() == Some(at))
-            .unwrap_or(false);
-        let guest_ok = state.guest_token.as_deref()
-            .map(|gt| !gt.is_empty() && provided.as_deref() == Some(gt))
-            .unwrap_or(false);
+            // Strict auth: token must match one of user_token / admin_token / guest_token
+            let user_ok = state
+                .user_token
+                .as_deref()
+                .map(|ut| provided.as_deref() == Some(ut))
+                .unwrap_or(false);
+            let admin_ok = state
+                .admin_token
+                .as_deref()
+                .map(|at| provided.as_deref() == Some(at))
+                .unwrap_or(false);
+            let guest_ok = state
+                .guest_token
+                .as_deref()
+                .map(|gt| !gt.is_empty() && provided.as_deref() == Some(gt))
+                .unwrap_or(false);
 
-        // Reject if none match
-        if !user_ok && !admin_ok && !guest_ok {
-            let body = axum::Json(serde_json::json!({"ok": false, "error": "Authentication failed"}));
-            return (StatusCode::UNAUTHORIZED, body).into_response();
-        }
-
-        // Guest: block all mutations (only allow read-only endpoints)
-        if guest_ok {
-            let path = req.uri().path().to_string();
-            let allowed_guest_paths = [
-                "/api/note/switch",
-                "/api/file/switch",
-                "/api/system-prompt",
-            ];
-            if !allowed_guest_paths.iter().any(|p| path == *p) {
-                let body = axum::Json(serde_json::json!({"ok": false, "error": "Guest access is read-only"}));
-                return (StatusCode::FORBIDDEN, body).into_response();
+            // Reject if none match
+            if !user_ok && !admin_ok && !guest_ok {
+                let body =
+                    axum::Json(serde_json::json!({"ok": false, "error": "Authentication failed"}));
+                return (StatusCode::UNAUTHORIZED, body).into_response();
             }
-        }
 
-        // Admin-only endpoints: note management, model switch, visibility
-        if !admin_ok {
-            let path = req.uri().path().to_string();
-            let admin_only_paths = [
-                "/api/note/create",
-                "/api/note/rename",
-                "/api/note/delete",
-                "/api/model/switch",
-                "/api/note/visibility",
-                "/api/file/visibility",
-            ];
-            // system-prompt POST is admin-only (GET is open to all authenticated)
-            let is_admin_only = admin_only_paths.iter().any(|p| path == *p)
-                || (path == "/api/system-prompt" && req.method() == axum::http::Method::POST);
-            if is_admin_only {
-                let body = axum::Json(serde_json::json!({"ok": false, "error": "Admin privileges required"}));
-                return (StatusCode::FORBIDDEN, body).into_response();
+            // Guest: block all mutations (only allow read-only endpoints)
+            if guest_ok {
+                let path = req.uri().path().to_string();
+                let allowed_guest_paths =
+                    ["/api/note/switch", "/api/file/switch", "/api/system-prompt"];
+                if !allowed_guest_paths.iter().any(|p| path == *p) {
+                    let body = axum::Json(
+                        serde_json::json!({"ok": false, "error": "Guest access is read-only"}),
+                    );
+                    return (StatusCode::FORBIDDEN, body).into_response();
+                }
             }
-        }
-        next.run(req).await
-    }
 
-    let app = Router::new().route("/assets/{*path}", get(static_handler));
+            // Admin-only endpoints: note management, model switch, visibility
+            if !admin_ok {
+                let path = req.uri().path().to_string();
+                let admin_only_paths = [
+                    "/api/note/create",
+                    "/api/note/rename",
+                    "/api/note/delete",
+                    "/api/model/switch",
+                    "/api/note/visibility",
+                    "/api/file/visibility",
+                ];
+                // system-prompt POST is admin-only (GET is open to all authenticated)
+                let is_admin_only = admin_only_paths.iter().any(|p| path == *p)
+                    || (path == "/api/system-prompt" && req.method() == axum::http::Method::POST);
+                if is_admin_only {
+                    let body = axum::Json(
+                        serde_json::json!({"ok": false, "error": "Admin privileges required"}),
+                    );
+                    return (StatusCode::FORBIDDEN, body).into_response();
+                }
+            }
+            next.run(req).await
+        }
+
+        let app = Router::new().route("/assets/{*path}", get(static_handler));
         let req = Request::builder()
             .uri("/assets/style.css")
             .body(axum::body::Body::empty())
             .unwrap();
         let resp = app.oneshot(req).await.unwrap();
-        assert!(
-            resp.status() == StatusCode::OK || resp.status() == StatusCode::NOT_FOUND,
-        );
+        assert!(resp.status() == StatusCode::OK || resp.status() == StatusCode::NOT_FOUND,);
     }
 
     #[tokio::test]
     async fn test_static_handler_svg_returns_ok_or_404() {
-        use axum::{routing::get, Router};
         use axum::http::{Request, StatusCode};
+        use axum::{routing::get, Router};
         use tower::ServiceExt;
 
         // Auth middleware for POST API endpoints
-    async fn auth_middleware(
-        axum::extract::State(state): axum::extract::State<ServerState>,
-        ConnectInfo(addr): ConnectInfo<SocketAddr>,
-        req: axum::http::Request<axum::body::Body>,
-        next: axum::middleware::Next,
-    ) -> axum::response::Response {
-        // Extract token from header OR query param
-        let from_header = req.headers()
-            .get("authorization")
-            .and_then(|v| v.to_str().ok())
-            .and_then(|v| v.strip_prefix("Bearer "))
-            .map(|s| s.to_string());
-        let from_query = req.uri().query()
-            .and_then(|q| q.split('&')
-                .find(|p| p.starts_with("token="))
-                .map(|p| p.trim_start_matches("token=").to_string()));
-        let provided = from_header.or(from_query);
+        async fn auth_middleware(
+            axum::extract::State(state): axum::extract::State<ServerState>,
+            ConnectInfo(addr): ConnectInfo<SocketAddr>,
+            req: axum::http::Request<axum::body::Body>,
+            next: axum::middleware::Next,
+        ) -> axum::response::Response {
+            // Extract token from header OR query param
+            let from_header = req
+                .headers()
+                .get("authorization")
+                .and_then(|v| v.to_str().ok())
+                .and_then(|v| v.strip_prefix("Bearer "))
+                .map(|s| s.to_string());
+            let from_query = req.uri().query().and_then(|q| {
+                q.split('&')
+                    .find(|p| p.starts_with("token="))
+                    .map(|p| p.trim_start_matches("token=").to_string())
+            });
+            let provided = from_header.or(from_query);
 
-        // Strict auth: token must match one of user_token / admin_token / guest_token
-        let user_ok = state.user_token.as_deref()
-            .map(|ut| provided.as_deref() == Some(ut))
-            .unwrap_or(false);
-        let admin_ok = state.admin_token.as_deref()
-            .map(|at| provided.as_deref() == Some(at))
-            .unwrap_or(false);
-        let guest_ok = state.guest_token.as_deref()
-            .map(|gt| !gt.is_empty() && provided.as_deref() == Some(gt))
-            .unwrap_or(false);
+            // Strict auth: token must match one of user_token / admin_token / guest_token
+            let user_ok = state
+                .user_token
+                .as_deref()
+                .map(|ut| provided.as_deref() == Some(ut))
+                .unwrap_or(false);
+            let admin_ok = state
+                .admin_token
+                .as_deref()
+                .map(|at| provided.as_deref() == Some(at))
+                .unwrap_or(false);
+            let guest_ok = state
+                .guest_token
+                .as_deref()
+                .map(|gt| !gt.is_empty() && provided.as_deref() == Some(gt))
+                .unwrap_or(false);
 
-        // Reject if none match
-        if !user_ok && !admin_ok && !guest_ok {
-            let body = axum::Json(serde_json::json!({"ok": false, "error": "Authentication failed"}));
-            return (StatusCode::UNAUTHORIZED, body).into_response();
-        }
-
-        // Guest: block all mutations (only allow read-only endpoints)
-        if guest_ok {
-            let path = req.uri().path().to_string();
-            let allowed_guest_paths = [
-                "/api/note/switch",
-                "/api/file/switch",
-                "/api/system-prompt",
-            ];
-            if !allowed_guest_paths.iter().any(|p| path == *p) {
-                let body = axum::Json(serde_json::json!({"ok": false, "error": "Guest access is read-only"}));
-                return (StatusCode::FORBIDDEN, body).into_response();
+            // Reject if none match
+            if !user_ok && !admin_ok && !guest_ok {
+                let body =
+                    axum::Json(serde_json::json!({"ok": false, "error": "Authentication failed"}));
+                return (StatusCode::UNAUTHORIZED, body).into_response();
             }
-        }
 
-        // Admin-only endpoints: note management, model switch, visibility
-        if !admin_ok {
-            let path = req.uri().path().to_string();
-            let admin_only_paths = [
-                "/api/note/create",
-                "/api/note/rename",
-                "/api/note/delete",
-                "/api/model/switch",
-                "/api/note/visibility",
-                "/api/file/visibility",
-            ];
-            // system-prompt POST is admin-only (GET is open to all authenticated)
-            let is_admin_only = admin_only_paths.iter().any(|p| path == *p)
-                || (path == "/api/system-prompt" && req.method() == axum::http::Method::POST);
-            if is_admin_only {
-                let body = axum::Json(serde_json::json!({"ok": false, "error": "Admin privileges required"}));
-                return (StatusCode::FORBIDDEN, body).into_response();
+            // Guest: block all mutations (only allow read-only endpoints)
+            if guest_ok {
+                let path = req.uri().path().to_string();
+                let allowed_guest_paths =
+                    ["/api/note/switch", "/api/file/switch", "/api/system-prompt"];
+                if !allowed_guest_paths.iter().any(|p| path == *p) {
+                    let body = axum::Json(
+                        serde_json::json!({"ok": false, "error": "Guest access is read-only"}),
+                    );
+                    return (StatusCode::FORBIDDEN, body).into_response();
+                }
             }
-        }
-        next.run(req).await
-    }
 
-    let app = Router::new().route("/assets/{*path}", get(static_handler));
+            // Admin-only endpoints: note management, model switch, visibility
+            if !admin_ok {
+                let path = req.uri().path().to_string();
+                let admin_only_paths = [
+                    "/api/note/create",
+                    "/api/note/rename",
+                    "/api/note/delete",
+                    "/api/model/switch",
+                    "/api/note/visibility",
+                    "/api/file/visibility",
+                ];
+                // system-prompt POST is admin-only (GET is open to all authenticated)
+                let is_admin_only = admin_only_paths.iter().any(|p| path == *p)
+                    || (path == "/api/system-prompt" && req.method() == axum::http::Method::POST);
+                if is_admin_only {
+                    let body = axum::Json(
+                        serde_json::json!({"ok": false, "error": "Admin privileges required"}),
+                    );
+                    return (StatusCode::FORBIDDEN, body).into_response();
+                }
+            }
+            next.run(req).await
+        }
+
+        let app = Router::new().route("/assets/{*path}", get(static_handler));
         let req = Request::builder()
             .uri("/assets/icon.svg")
             .body(axum::body::Body::empty())
             .unwrap();
         let resp = app.oneshot(req).await.unwrap();
-        assert!(
-            resp.status() == StatusCode::OK || resp.status() == StatusCode::NOT_FOUND,
-        );
+        assert!(resp.status() == StatusCode::OK || resp.status() == StatusCode::NOT_FOUND,);
     }
 
     #[tokio::test]
     async fn test_static_handler_octet_fallback() {
-        use axum::{routing::get, Router};
         use axum::http::{Request, StatusCode};
+        use axum::{routing::get, Router};
         use tower::ServiceExt;
 
         // Auth middleware for POST API endpoints
-    async fn auth_middleware(
-        axum::extract::State(state): axum::extract::State<ServerState>,
-        ConnectInfo(addr): ConnectInfo<SocketAddr>,
-        req: axum::http::Request<axum::body::Body>,
-        next: axum::middleware::Next,
-    ) -> axum::response::Response {
-        // Extract token from header OR query param
-        let from_header = req.headers()
-            .get("authorization")
-            .and_then(|v| v.to_str().ok())
-            .and_then(|v| v.strip_prefix("Bearer "))
-            .map(|s| s.to_string());
-        let from_query = req.uri().query()
-            .and_then(|q| q.split('&')
-                .find(|p| p.starts_with("token="))
-                .map(|p| p.trim_start_matches("token=").to_string()));
-        let provided = from_header.or(from_query);
+        async fn auth_middleware(
+            axum::extract::State(state): axum::extract::State<ServerState>,
+            ConnectInfo(addr): ConnectInfo<SocketAddr>,
+            req: axum::http::Request<axum::body::Body>,
+            next: axum::middleware::Next,
+        ) -> axum::response::Response {
+            // Extract token from header OR query param
+            let from_header = req
+                .headers()
+                .get("authorization")
+                .and_then(|v| v.to_str().ok())
+                .and_then(|v| v.strip_prefix("Bearer "))
+                .map(|s| s.to_string());
+            let from_query = req.uri().query().and_then(|q| {
+                q.split('&')
+                    .find(|p| p.starts_with("token="))
+                    .map(|p| p.trim_start_matches("token=").to_string())
+            });
+            let provided = from_header.or(from_query);
 
-        // Strict auth: token must match one of user_token / admin_token / guest_token
-        let user_ok = state.user_token.as_deref()
-            .map(|ut| provided.as_deref() == Some(ut))
-            .unwrap_or(false);
-        let admin_ok = state.admin_token.as_deref()
-            .map(|at| provided.as_deref() == Some(at))
-            .unwrap_or(false);
-        let guest_ok = state.guest_token.as_deref()
-            .map(|gt| !gt.is_empty() && provided.as_deref() == Some(gt))
-            .unwrap_or(false);
+            // Strict auth: token must match one of user_token / admin_token / guest_token
+            let user_ok = state
+                .user_token
+                .as_deref()
+                .map(|ut| provided.as_deref() == Some(ut))
+                .unwrap_or(false);
+            let admin_ok = state
+                .admin_token
+                .as_deref()
+                .map(|at| provided.as_deref() == Some(at))
+                .unwrap_or(false);
+            let guest_ok = state
+                .guest_token
+                .as_deref()
+                .map(|gt| !gt.is_empty() && provided.as_deref() == Some(gt))
+                .unwrap_or(false);
 
-        // Reject if none match
-        if !user_ok && !admin_ok && !guest_ok {
-            let body = axum::Json(serde_json::json!({"ok": false, "error": "Authentication failed"}));
-            return (StatusCode::UNAUTHORIZED, body).into_response();
-        }
-
-        // Guest: block all mutations (only allow read-only endpoints)
-        if guest_ok {
-            let path = req.uri().path().to_string();
-            let allowed_guest_paths = [
-                "/api/note/switch",
-                "/api/file/switch",
-                "/api/system-prompt",
-            ];
-            if !allowed_guest_paths.iter().any(|p| path == *p) {
-                let body = axum::Json(serde_json::json!({"ok": false, "error": "Guest access is read-only"}));
-                return (StatusCode::FORBIDDEN, body).into_response();
+            // Reject if none match
+            if !user_ok && !admin_ok && !guest_ok {
+                let body =
+                    axum::Json(serde_json::json!({"ok": false, "error": "Authentication failed"}));
+                return (StatusCode::UNAUTHORIZED, body).into_response();
             }
-        }
 
-        // Admin-only endpoints: note management, model switch, visibility
-        if !admin_ok {
-            let path = req.uri().path().to_string();
-            let admin_only_paths = [
-                "/api/note/create",
-                "/api/note/rename",
-                "/api/note/delete",
-                "/api/model/switch",
-                "/api/note/visibility",
-                "/api/file/visibility",
-            ];
-            // system-prompt POST is admin-only (GET is open to all authenticated)
-            let is_admin_only = admin_only_paths.iter().any(|p| path == *p)
-                || (path == "/api/system-prompt" && req.method() == axum::http::Method::POST);
-            if is_admin_only {
-                let body = axum::Json(serde_json::json!({"ok": false, "error": "Admin privileges required"}));
-                return (StatusCode::FORBIDDEN, body).into_response();
+            // Guest: block all mutations (only allow read-only endpoints)
+            if guest_ok {
+                let path = req.uri().path().to_string();
+                let allowed_guest_paths =
+                    ["/api/note/switch", "/api/file/switch", "/api/system-prompt"];
+                if !allowed_guest_paths.iter().any(|p| path == *p) {
+                    let body = axum::Json(
+                        serde_json::json!({"ok": false, "error": "Guest access is read-only"}),
+                    );
+                    return (StatusCode::FORBIDDEN, body).into_response();
+                }
             }
-        }
-        next.run(req).await
-    }
 
-    let app = Router::new().route("/assets/{*path}", get(static_handler));
+            // Admin-only endpoints: note management, model switch, visibility
+            if !admin_ok {
+                let path = req.uri().path().to_string();
+                let admin_only_paths = [
+                    "/api/note/create",
+                    "/api/note/rename",
+                    "/api/note/delete",
+                    "/api/model/switch",
+                    "/api/note/visibility",
+                    "/api/file/visibility",
+                ];
+                // system-prompt POST is admin-only (GET is open to all authenticated)
+                let is_admin_only = admin_only_paths.iter().any(|p| path == *p)
+                    || (path == "/api/system-prompt" && req.method() == axum::http::Method::POST);
+                if is_admin_only {
+                    let body = axum::Json(
+                        serde_json::json!({"ok": false, "error": "Admin privileges required"}),
+                    );
+                    return (StatusCode::FORBIDDEN, body).into_response();
+                }
+            }
+            next.run(req).await
+        }
+
+        let app = Router::new().route("/assets/{*path}", get(static_handler));
         let req = Request::builder()
             .uri("/assets/data.bin")
             .body(axum::body::Body::empty())
             .unwrap();
         let resp = app.oneshot(req).await.unwrap();
-        assert!(
-            resp.status() == StatusCode::OK || resp.status() == StatusCode::NOT_FOUND,
-        );
+        assert!(resp.status() == StatusCode::OK || resp.status() == StatusCode::NOT_FOUND,);
     }
 
     #[tokio::test]
     async fn test_binary_asset_handler_not_found() {
-        use axum::{routing::get, Router};
         use axum::http::{Request, StatusCode};
+        use axum::{routing::get, Router};
         use tower::ServiceExt;
 
         // Auth middleware for POST API endpoints
-    async fn auth_middleware(
-        axum::extract::State(state): axum::extract::State<ServerState>,
-        ConnectInfo(addr): ConnectInfo<SocketAddr>,
-        req: axum::http::Request<axum::body::Body>,
-        next: axum::middleware::Next,
-    ) -> axum::response::Response {
-        // Extract token from header OR query param
-        let from_header = req.headers()
-            .get("authorization")
-            .and_then(|v| v.to_str().ok())
-            .and_then(|v| v.strip_prefix("Bearer "))
-            .map(|s| s.to_string());
-        let from_query = req.uri().query()
-            .and_then(|q| q.split('&')
-                .find(|p| p.starts_with("token="))
-                .map(|p| p.trim_start_matches("token=").to_string()));
-        let provided = from_header.or(from_query);
+        async fn auth_middleware(
+            axum::extract::State(state): axum::extract::State<ServerState>,
+            ConnectInfo(addr): ConnectInfo<SocketAddr>,
+            req: axum::http::Request<axum::body::Body>,
+            next: axum::middleware::Next,
+        ) -> axum::response::Response {
+            // Extract token from header OR query param
+            let from_header = req
+                .headers()
+                .get("authorization")
+                .and_then(|v| v.to_str().ok())
+                .and_then(|v| v.strip_prefix("Bearer "))
+                .map(|s| s.to_string());
+            let from_query = req.uri().query().and_then(|q| {
+                q.split('&')
+                    .find(|p| p.starts_with("token="))
+                    .map(|p| p.trim_start_matches("token=").to_string())
+            });
+            let provided = from_header.or(from_query);
 
-        // Strict auth: token must match one of user_token / admin_token / guest_token
-        let user_ok = state.user_token.as_deref()
-            .map(|ut| provided.as_deref() == Some(ut))
-            .unwrap_or(false);
-        let admin_ok = state.admin_token.as_deref()
-            .map(|at| provided.as_deref() == Some(at))
-            .unwrap_or(false);
-        let guest_ok = state.guest_token.as_deref()
-            .map(|gt| !gt.is_empty() && provided.as_deref() == Some(gt))
-            .unwrap_or(false);
+            // Strict auth: token must match one of user_token / admin_token / guest_token
+            let user_ok = state
+                .user_token
+                .as_deref()
+                .map(|ut| provided.as_deref() == Some(ut))
+                .unwrap_or(false);
+            let admin_ok = state
+                .admin_token
+                .as_deref()
+                .map(|at| provided.as_deref() == Some(at))
+                .unwrap_or(false);
+            let guest_ok = state
+                .guest_token
+                .as_deref()
+                .map(|gt| !gt.is_empty() && provided.as_deref() == Some(gt))
+                .unwrap_or(false);
 
-        // Reject if none match
-        if !user_ok && !admin_ok && !guest_ok {
-            let body = axum::Json(serde_json::json!({"ok": false, "error": "Authentication failed"}));
-            return (StatusCode::UNAUTHORIZED, body).into_response();
-        }
-
-        // Guest: block all mutations (only allow read-only endpoints)
-        if guest_ok {
-            let path = req.uri().path().to_string();
-            let allowed_guest_paths = [
-                "/api/note/switch",
-                "/api/file/switch",
-                "/api/system-prompt",
-            ];
-            if !allowed_guest_paths.iter().any(|p| path == *p) {
-                let body = axum::Json(serde_json::json!({"ok": false, "error": "Guest access is read-only"}));
-                return (StatusCode::FORBIDDEN, body).into_response();
+            // Reject if none match
+            if !user_ok && !admin_ok && !guest_ok {
+                let body =
+                    axum::Json(serde_json::json!({"ok": false, "error": "Authentication failed"}));
+                return (StatusCode::UNAUTHORIZED, body).into_response();
             }
-        }
 
-        // Admin-only endpoints: note management, model switch, visibility
-        if !admin_ok {
-            let path = req.uri().path().to_string();
-            let admin_only_paths = [
-                "/api/note/create",
-                "/api/note/rename",
-                "/api/note/delete",
-                "/api/model/switch",
-                "/api/note/visibility",
-                "/api/file/visibility",
-            ];
-            // system-prompt POST is admin-only (GET is open to all authenticated)
-            let is_admin_only = admin_only_paths.iter().any(|p| path == *p)
-                || (path == "/api/system-prompt" && req.method() == axum::http::Method::POST);
-            if is_admin_only {
-                let body = axum::Json(serde_json::json!({"ok": false, "error": "Admin privileges required"}));
-                return (StatusCode::FORBIDDEN, body).into_response();
+            // Guest: block all mutations (only allow read-only endpoints)
+            if guest_ok {
+                let path = req.uri().path().to_string();
+                let allowed_guest_paths =
+                    ["/api/note/switch", "/api/file/switch", "/api/system-prompt"];
+                if !allowed_guest_paths.iter().any(|p| path == *p) {
+                    let body = axum::Json(
+                        serde_json::json!({"ok": false, "error": "Guest access is read-only"}),
+                    );
+                    return (StatusCode::FORBIDDEN, body).into_response();
+                }
             }
-        }
-        next.run(req).await
-    }
 
-    let app = Router::new().route("/assets-bin/{*path}", get(binary_asset_handler));
+            // Admin-only endpoints: note management, model switch, visibility
+            if !admin_ok {
+                let path = req.uri().path().to_string();
+                let admin_only_paths = [
+                    "/api/note/create",
+                    "/api/note/rename",
+                    "/api/note/delete",
+                    "/api/model/switch",
+                    "/api/note/visibility",
+                    "/api/file/visibility",
+                ];
+                // system-prompt POST is admin-only (GET is open to all authenticated)
+                let is_admin_only = admin_only_paths.iter().any(|p| path == *p)
+                    || (path == "/api/system-prompt" && req.method() == axum::http::Method::POST);
+                if is_admin_only {
+                    let body = axum::Json(
+                        serde_json::json!({"ok": false, "error": "Admin privileges required"}),
+                    );
+                    return (StatusCode::FORBIDDEN, body).into_response();
+                }
+            }
+            next.run(req).await
+        }
+
+        let app = Router::new().route("/assets-bin/{*path}", get(binary_asset_handler));
         let req = Request::builder()
             .uri("/assets-bin/nonexistent.wasm")
             .body(axum::body::Body::empty())
@@ -1237,7 +1356,10 @@ mod tests {
 
     #[test]
     fn test_mime_for_path_with_directory() {
-        assert_eq!(mime_for("assets/deep/path/bundle.js"), "application/javascript");
+        assert_eq!(
+            mime_for("assets/deep/path/bundle.js"),
+            "application/javascript"
+        );
         assert_eq!(mime_for("assets/theme/dark.css"), "text/css");
     }
 
@@ -1306,7 +1428,9 @@ mod tests {
 
     #[test]
     fn test_is_localhost_ipv6_all_zeros() {
-        assert!(!is_localhost(IpAddr::V6(Ipv6Addr::new(0, 0, 0, 0, 0, 0, 0, 0))));
+        assert!(!is_localhost(IpAddr::V6(Ipv6Addr::new(
+            0, 0, 0, 0, 0, 0, 0, 0
+        ))));
     }
 
     // ──────────────────────────────────────────────
@@ -1316,20 +1440,24 @@ mod tests {
     #[tokio::test]
     async fn test_server_state_construction() {
         use crate::config::RuneConfig;
-        use std::sync::Arc;
         use std::collections::HashMap;
+        use std::sync::Arc;
         use tokio::sync::{broadcast, RwLock};
 
         let (admin_broadcast_tx, _) = broadcast::channel(64);
         let db = ChatDb::open(std::path::Path::new(":memory:")).expect("in-memory db");
 
         let config = RuneConfig::default();
-        let models: Vec<String> = config.model
+        let models: Vec<String> = config
+            .model
             .split(',')
             .map(|s| s.trim().to_string())
             .filter(|s| !s.is_empty())
             .collect();
-        let first_model = models.first().cloned().unwrap_or_else(|| config.model.clone());
+        let first_model = models
+            .first()
+            .cloned()
+            .unwrap_or_else(|| config.model.clone());
 
         let state = ServerState {
             config: config.clone(),
@@ -1354,8 +1482,8 @@ mod tests {
     #[tokio::test]
     async fn test_server_state_with_token() {
         use crate::config::RuneConfig;
-        use std::sync::Arc;
         use std::collections::HashMap;
+        use std::sync::Arc;
         use tokio::sync::{broadcast, RwLock};
 
         let (admin_broadcast_tx, _) = broadcast::channel(64);
@@ -1384,8 +1512,8 @@ mod tests {
     #[tokio::test]
     async fn test_server_state_room_broadcast() {
         use crate::config::RuneConfig;
-        use std::sync::Arc;
         use std::collections::HashMap;
+        use std::sync::Arc;
         use tokio::sync::{broadcast, RwLock};
 
         let (admin_broadcast_tx, _) = broadcast::channel(64);
@@ -1419,7 +1547,10 @@ mod tests {
         let _lock = ENV_LOCK.lock().unwrap();
         std::env::set_var("HOME", "/tmp/testrun");
         let db_path = data_dir().join("chat.db");
-        assert_eq!(db_path, std::path::PathBuf::from("/tmp/testrun/.rune/chat.db"));
+        assert_eq!(
+            db_path,
+            std::path::PathBuf::from("/tmp/testrun/.rune/chat.db")
+        );
     }
 
     // ──────────────────────────────────────────────
@@ -1449,10 +1580,7 @@ mod tests {
         };
 
         // run() binds and serves; we cancel after 100ms
-        let result = timeout(
-            Duration::from_millis(100),
-            run(config, opts),
-        ).await;
+        let result = timeout(Duration::from_millis(100), run(config, opts)).await;
 
         // Timeout means the server started listening (good);
         // an Err(Elapsed) is expected and correct.
@@ -1479,10 +1607,10 @@ mod tests {
 
         // run() now returns early (instead of process::exit) when no tokens configured.
         // We expect it to complete immediately (Ok) rather than timeout (Err).
-        let result = timeout(
-            Duration::from_millis(200),
-            run(config, opts),
-        ).await;
-        assert!(result.is_ok(), "expected early return when no tokens, got timeout");
+        let result = timeout(Duration::from_millis(200), run(config, opts)).await;
+        assert!(
+            result.is_ok(),
+            "expected early return when no tokens, got timeout"
+        );
     }
 }

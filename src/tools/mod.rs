@@ -464,7 +464,6 @@ stderr: {}",
                     }
                 }
             }),
-
         ]
     }
 
@@ -1356,16 +1355,31 @@ mod tests {
     fn test_tool_schema_has_markdown_tools() {
         let registry = ToolRegistry::new(vec![]);
         let schema = serde_json::to_string(&registry.tool_definitions()).unwrap();
-        assert!(schema.contains("list_markdown"), "tool schema missing 'list_markdown'");
-        assert!(schema.contains("read_markdown"), "tool schema missing 'read_markdown'");
-        assert!(schema.contains("write_markdown"), "tool schema missing 'write_markdown'");
+        assert!(
+            schema.contains("list_markdown"),
+            "tool schema missing 'list_markdown'"
+        );
+        assert!(
+            schema.contains("read_markdown"),
+            "tool schema missing 'read_markdown'"
+        );
+        assert!(
+            schema.contains("write_markdown"),
+            "tool schema missing 'write_markdown'"
+        );
     }
 
     #[test]
     fn test_tool_schema_has_search_chat() {
         let registry = ToolRegistry::new(vec![]);
         let schema = serde_json::to_string(&registry.tool_definitions()).unwrap();
-        assert!(schema.contains("search_chat"), "tool schema missing 'search_chat'");
-        assert!(schema.contains("\"query\""),  "search_chat schema missing 'query' param");
+        assert!(
+            schema.contains("search_chat"),
+            "tool schema missing 'search_chat'"
+        );
+        assert!(
+            schema.contains("\"query\""),
+            "search_chat schema missing 'query' param"
+        );
     }
 }

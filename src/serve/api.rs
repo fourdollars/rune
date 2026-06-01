@@ -70,7 +70,13 @@ pub enum SseMsg {
     #[serde(rename = "chat_done")]
     ChatDone {},
     #[serde(rename = "chat_meta")]
-    ChatMeta { model: String, tokens_in: u32, tokens_out: u32, context_tokens: u32, context_window: u32 },
+    ChatMeta {
+        model: String,
+        tokens_in: u32,
+        tokens_out: u32,
+        context_tokens: u32,
+        context_window: u32,
+    },
     #[serde(rename = "chat_message")]
     ChatMessage { nickname: String, content: String },
     #[serde(rename = "status")]
@@ -82,17 +88,29 @@ pub enum SseMsg {
     #[serde(rename = "users_update")]
     UsersUpdate { count: u32 },
     #[serde(rename = "history")]
-    History { messages: Vec<crate::serve::db::ChatRecord> },
+    History {
+        messages: Vec<crate::serve::db::ChatRecord>,
+    },
     #[serde(rename = "auth_result")]
     AuthResult { is_admin: bool, is_guest: bool },
     #[serde(rename = "file_list")]
-    FileList { files: Vec<FileEntry>, active: String },
+    FileList {
+        files: Vec<FileEntry>,
+        active: String,
+    },
     #[serde(rename = "file_content")]
-    FileContent { note_id: String, filename: String, content: String },
+    FileContent {
+        note_id: String,
+        filename: String,
+        content: String,
+    },
     #[serde(rename = "file_deleted")]
     FileDeleted { filename: String },
     #[serde(rename = "note_list")]
-    NoteList { notes: Vec<NoteListEntry>, active: String },
+    NoteList {
+        notes: Vec<NoteListEntry>,
+        active: String,
+    },
     #[serde(rename = "note_switched")]
     NoteSwitched { note_id: String },
     #[serde(rename = "model_list")]
@@ -104,9 +122,16 @@ pub enum SseMsg {
     #[serde(rename = "archive_done")]
     ArchiveDone { filename: String, count: usize },
     #[serde(rename = "search_results")]
-    SearchResults { query: String, results: Vec<crate::serve::db::ChatRecord> },
+    SearchResults {
+        query: String,
+        results: Vec<crate::serve::db::ChatRecord>,
+    },
     #[serde(rename = "dir_browse_result")]
-    DirBrowseResult { path: String, parent: Option<String>, entries: Vec<DirEntry> },
+    DirBrowseResult {
+        path: String,
+        parent: Option<String>,
+        entries: Vec<DirEntry>,
+    },
 }
 
 #[derive(Debug, Serialize, Clone)]
@@ -201,7 +226,6 @@ pub struct NoteSwitchReq {
     pub note_id: String,
 }
 
-
 #[derive(Debug, Deserialize)]
 pub struct ModelSwitchReq {
     pub model: String,
@@ -266,13 +290,25 @@ pub struct ApiResponse {
 
 impl ApiResponse {
     pub fn success() -> Self {
-        Self { ok: true, error: None, data: None }
+        Self {
+            ok: true,
+            error: None,
+            data: None,
+        }
     }
     pub fn with_data(data: serde_json::Value) -> Self {
-        Self { ok: true, error: None, data: Some(data) }
+        Self {
+            ok: true,
+            error: None,
+            data: Some(data),
+        }
     }
     pub fn err(msg: impl Into<String>) -> Self {
-        Self { ok: false, error: Some(msg.into()), data: None }
+        Self {
+            ok: false,
+            error: Some(msg.into()),
+            data: None,
+        }
     }
 }
 
@@ -303,7 +339,9 @@ pub fn is_valid_filename(name: &str) -> bool {
     !name.is_empty()
         && name.ends_with(".md")
         && name.len() <= 64
-        && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-' || c == '.')
+        && name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-' || c == '.')
         && !name.contains("..")
 }
 
@@ -336,8 +374,6 @@ pub async fn build_note_list(state: &ServerState) -> Vec<NoteListEntry> {
     entries
 }
 
-
-
 /// Broadcast a message to a specific note room only.
 /// Subscribers to other rooms will NOT receive this message.
 pub fn broadcast_to_room(room: &NoteRoom, msg: &SseMsg) {
@@ -361,11 +397,15 @@ pub async fn events_handler(
     let token_ok = check_token(&state, token) || is_admin || is_guest;
     if !token_ok {
         let err_stream = futures::stream::once(async {
-            Ok::<_, Infallible>(Event::default()
-                .event("error")
-                .data(r#"{"type":"error","message":"Authentication failed"}"#.to_string()))
+            Ok::<_, Infallible>(
+                Event::default()
+                    .event("error")
+                    .data(r#"{"type":"error","message":"Authentication failed"}"#.to_string()),
+            )
         });
-        return Sse::new(err_stream).keep_alive(KeepAlive::default()).into_response();
+        return Sse::new(err_stream)
+            .keep_alive(KeepAlive::default())
+            .into_response();
     }
 
     // note_id is REQUIRED per spec
@@ -373,11 +413,15 @@ pub async fn events_handler(
         Some(ref id) if !id.is_empty() => id.clone(),
         _ => {
             let err_stream = futures::stream::once(async {
-                Ok::<_, Infallible>(Event::default()
-                    .event("error")
-                    .data(r#"{"type":"error","message":"note_id is required"}"#.to_string()))
+                Ok::<_, Infallible>(
+                    Event::default()
+                        .event("error")
+                        .data(r#"{"type":"error","message":"note_id is required"}"#.to_string()),
+                )
             });
-            return Sse::new(err_stream).keep_alive(KeepAlive::default()).into_response();
+            return Sse::new(err_stream)
+                .keep_alive(KeepAlive::default())
+                .into_response();
         }
     };
 
@@ -386,23 +430,36 @@ pub async fn events_handler(
     // Verify note exists
     if !notes.iter().any(|n| n.id == note_id) {
         let err_stream = futures::stream::once(async {
-            Ok::<_, Infallible>(Event::default()
-                .event("error")
-                .data(r#"{"type":"error","message":"Note not found"}"#.to_string()))
+            Ok::<_, Infallible>(
+                Event::default()
+                    .event("error")
+                    .data(r#"{"type":"error","message":"Note not found"}"#.to_string()),
+            )
         });
-        return Sse::new(err_stream).keep_alive(KeepAlive::default()).into_response();
+        return Sse::new(err_stream)
+            .keep_alive(KeepAlive::default())
+            .into_response();
     }
 
     // Guest + private note check
     if is_guest {
-        let note_public = notes.iter().find(|n| n.id == note_id).map(|n| n.public).unwrap_or(false);
+        let note_public = notes
+            .iter()
+            .find(|n| n.id == note_id)
+            .map(|n| n.public)
+            .unwrap_or(false);
         if !note_public {
             let err_stream = futures::stream::once(async {
-                Ok::<_, Infallible>(Event::default()
-                    .event("auth_error")
-                    .data(r#"{"type":"auth_error","message":"Guests cannot access private notes"}"#.to_string()))
+                Ok::<_, Infallible>(
+                    Event::default().event("auth_error").data(
+                        r#"{"type":"auth_error","message":"Guests cannot access private notes"}"#
+                            .to_string(),
+                    ),
+                )
             });
-            return Sse::new(err_stream).keep_alive(KeepAlive::default()).into_response();
+            return Sse::new(err_stream)
+                .keep_alive(KeepAlive::default())
+                .into_response();
         }
     }
 
@@ -432,7 +489,10 @@ pub async fn events_handler(
     } else {
         notes
     };
-    init_msgs.push(SseMsg::NoteList { notes: visible_notes, active: note_id.clone() });
+    init_msgs.push(SseMsg::NoteList {
+        notes: visible_notes,
+        active: note_id.clone(),
+    });
 
     // Users update (not sent to guests per spec)
     if !is_guest {
@@ -440,7 +500,9 @@ pub async fn events_handler(
     }
 
     // System join message — broadcast to the room
-    let join_msg = SseMsg::System { content: format!("{} joined", nickname) };
+    let join_msg = SseMsg::System {
+        content: format!("{} joined", nickname),
+    };
     broadcast_to_room(&room, &join_msg);
 
     let nickname_clone = nickname.clone();
@@ -481,15 +543,25 @@ pub async fn events_handler(
         broadcast_to_room(&room_clone, &leave_msg);
     };
 
-    Sse::new(stream).keep_alive(KeepAlive::default()).into_response()
+    Sse::new(stream)
+        .keep_alive(KeepAlive::default())
+        .into_response()
 }
 
 /// Check if an event type is allowed for guest users.
 pub fn is_guest_allowed_event(event_type: &str) -> bool {
-    matches!(event_type,
-        "chat_token" | "chat_done" | "chat_message" | "chat_meta"
-        | "file_content" | "file_list" | "note_list"
-        | "auth_result" | "model_list" | "model_changed"
+    matches!(
+        event_type,
+        "chat_token"
+            | "chat_done"
+            | "chat_message"
+            | "chat_meta"
+            | "file_content"
+            | "file_list"
+            | "note_list"
+            | "auth_result"
+            | "model_list"
+            | "model_changed"
     )
 }
 
@@ -533,15 +605,20 @@ pub async fn chat_handler(
     broadcast_to_room(&room, &user_msg);
 
     // Persist user message
-    state.chat_db.insert_async(
-        req.note_id.clone(),
-        "user".to_string(),
-        nickname,
-        req.content.clone(),
-    ).await;
+    state
+        .chat_db
+        .insert_async(
+            req.note_id.clone(),
+            "user".to_string(),
+            nickname,
+            req.content.clone(),
+        )
+        .await;
 
     // Send thinking status to the room
-    let thinking = SseMsg::Status { state: "thinking".to_string() };
+    let thinking = SseMsg::Status {
+        state: "thinking".to_string(),
+    };
     broadcast_to_room(&room, &thinking);
 
     // Cancel & Replace: cancel any existing AI task for this note
@@ -585,7 +662,10 @@ pub async fn file_create_handler(
     let md_dir = state.note_markdown_dir(&req.note_id);
     let file_path = md_dir.join(&req.name);
     if file_path.exists() {
-        return Json(ApiResponse::err(format!("File already exists: {}", req.name)));
+        return Json(ApiResponse::err(format!(
+            "File already exists: {}",
+            req.name
+        )));
     }
 
     let empty = format!("# {}\n\n", req.name.trim_end_matches(".md"));
@@ -599,7 +679,11 @@ pub async fn file_create_handler(
 
     // Broadcast file content to the room
     let room = state.get_or_create_room(&req.note_id).await;
-    let fc = SseMsg::FileContent { note_id: req.note_id.clone(), filename: req.name, content: empty };
+    let fc = SseMsg::FileContent {
+        note_id: req.note_id.clone(),
+        filename: req.name,
+        content: empty,
+    };
     broadcast_to_room(&room, &fc);
 
     Json(ApiResponse::success())
@@ -633,13 +717,19 @@ pub async fn file_rename_handler(
         return Json(ApiResponse::err("No note selected"));
     }
     if !is_valid_filename(&req.new_name) {
-        return Json(ApiResponse::err(format!("Invalid filename: {}", req.new_name)));
+        return Json(ApiResponse::err(format!(
+            "Invalid filename: {}",
+            req.new_name
+        )));
     }
 
     let md_dir = state.note_markdown_dir(&req.note_id);
     let new_path = md_dir.join(&req.new_name);
     if new_path.exists() {
-        return Json(ApiResponse::err(format!("File already exists: {}", req.new_name)));
+        return Json(ApiResponse::err(format!(
+            "File already exists: {}",
+            req.new_name
+        )));
     }
 
     let old_path = md_dir.join(&req.old_name);
@@ -667,8 +757,16 @@ pub async fn file_switch_handler(
             Json(serde_json::json!({ "ok": true, "content": content, "filename": req.name }))
         }
         Err(e) => {
-            tracing::warn!("file/switch failed: note_id={:?} name={:?} path={:?} err={}", req.note_id, req.name, file_path, e);
-            Json(serde_json::json!({ "ok": false, "error": format!("File not found: {}", req.name) }))
+            tracing::warn!(
+                "file/switch failed: note_id={:?} name={:?} path={:?} err={}",
+                req.note_id,
+                req.name,
+                file_path,
+                e
+            );
+            Json(
+                serde_json::json!({ "ok": false, "error": format!("File not found: {}", req.name) }),
+            )
         }
     }
 }
@@ -691,7 +789,11 @@ pub async fn file_update_handler(
     }
 
     let room = state.get_or_create_room(&req.note_id).await;
-    let fc = SseMsg::FileContent { note_id: req.note_id.clone(), filename: fname, content: req.content };
+    let fc = SseMsg::FileContent {
+        note_id: req.note_id.clone(),
+        filename: fname,
+        content: req.content,
+    };
     broadcast_to_room(&room, &fc);
     Json(ApiResponse::success())
 }
@@ -703,8 +805,6 @@ pub async fn note_create_handler(
     if req.name.is_empty() {
         return Json(ApiResponse::err("Note name required"));
     }
-
-
 
     // Persist DB on first session creation
     if let Err(e) = state.chat_db.ensure_persistent() {
@@ -754,7 +854,11 @@ pub async fn note_rename_handler(
 /// - archives/*.jsonl  → moved as-is (no filename collision expected, named by timestamp)
 /// - markdown/*        → moved; on name collision, src file renamed to <stem>.from-<src_note>.md
 async fn merge_note_dirs(src: &std::path::Path, dst: &std::path::Path) {
-    let src_note = src.file_name().unwrap_or_default().to_string_lossy().to_string();
+    let src_note = src
+        .file_name()
+        .unwrap_or_default()
+        .to_string_lossy()
+        .to_string();
     for subdir in &["archives", "markdown"] {
         let src_sub = src.join(subdir);
         let dst_sub = dst.join(subdir);
@@ -831,7 +935,10 @@ pub async fn note_switch_handler(
     Json(req): Json<NoteSwitchReq>,
 ) -> Json<serde_json::Value> {
     // Load history for response (per-client, not broadcast)
-    let history = state.chat_db.load_recent_async(req.note_id.clone(), 100).await;
+    let history = state
+        .chat_db
+        .load_recent_async(req.note_id.clone(), 100)
+        .await;
 
     // Load file list
     let md_dir = state.note_markdown_dir(&req.note_id);
@@ -839,7 +946,9 @@ pub async fn note_switch_handler(
     if let Ok(mut rd) = tokio::fs::read_dir(&md_dir).await {
         while let Ok(Some(entry)) = rd.next_entry().await {
             let name = entry.file_name().to_string_lossy().to_string();
-            if name.ends_with(".md") { files.push(name); }
+            if name.ends_with(".md") {
+                files.push(name);
+            }
         }
     }
     files.sort();
@@ -865,7 +974,6 @@ pub async fn note_switch_handler(
     }))
 }
 
-
 pub async fn model_switch_handler(
     State(state): State<ServerState>,
     Json(req): Json<ModelSwitchReq>,
@@ -874,7 +982,9 @@ pub async fn model_switch_handler(
         return Json(ApiResponse::err(format!("Unknown model: {}", req.model)));
     }
 
-    let msg = SseMsg::ModelChanged { model: req.model.clone() };
+    let msg = SseMsg::ModelChanged {
+        model: req.model.clone(),
+    };
 
     if let Some(ref note_id) = req.note_id {
         // Per-note model override — persist to DB
@@ -900,8 +1010,11 @@ pub async fn archive_handler(
     if req.note_id.is_empty() {
         return Json(ApiResponse::err("No note selected"));
     }
-    let archive_dir = state.note_markdown_dir(&req.note_id)
-        .parent().unwrap().join("archives");
+    let archive_dir = state
+        .note_markdown_dir(&req.note_id)
+        .parent()
+        .unwrap()
+        .join("archives");
     let ts = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
@@ -931,10 +1044,20 @@ pub async fn search_handler(
     if req.query.is_empty() {
         return Json(ApiResponse::err("Empty query"));
     }
-    let archive_dir = state.note_markdown_dir(&req.note_id).parent().unwrap().join("archives");
-    let results = state.chat_db.search_async(req.note_id.clone(), req.query.clone(), archive_dir).await;
+    let archive_dir = state
+        .note_markdown_dir(&req.note_id)
+        .parent()
+        .unwrap()
+        .join("archives");
+    let results = state
+        .chat_db
+        .search_async(req.note_id.clone(), req.query.clone(), archive_dir)
+        .await;
     let room = state.get_or_create_room(&req.note_id).await;
-    let msg = SseMsg::SearchResults { query: req.query, results };
+    let msg = SseMsg::SearchResults {
+        query: req.query,
+        results,
+    };
     broadcast_to_room(&room, &msg);
     Json(ApiResponse::success())
 }
@@ -1021,14 +1144,17 @@ pub async fn dir_browse_handler(
     Json(req): Json<DirBrowseReq>,
 ) -> Json<ApiResponse> {
     let browse_path = std::path::Path::new(&req.path);
-    let canonical = tokio::fs::canonicalize(browse_path).await
+    let canonical = tokio::fs::canonicalize(browse_path)
+        .await
         .unwrap_or_else(|_| browse_path.to_path_buf());
     let parent = canonical.parent().map(|p| p.to_string_lossy().to_string());
     let mut entries = Vec::new();
     if let Ok(mut rd) = tokio::fs::read_dir(&canonical).await {
         while let Ok(Some(entry)) = rd.next_entry().await {
             let name = entry.file_name().to_string_lossy().to_string();
-            if name.starts_with('.') { continue; }
+            if name.starts_with('.') {
+                continue;
+            }
             if let Ok(meta) = entry.metadata().await {
                 if meta.is_dir() {
                     entries.push(DirEntry { name, is_dir: true });
@@ -1042,7 +1168,8 @@ pub async fn dir_browse_handler(
         path: canonical.to_string_lossy().to_string(),
         parent,
         entries,
-    }).unwrap_or_default();
+    })
+    .unwrap_or_default();
 
     Json(ApiResponse::with_data(data))
 }
@@ -1066,7 +1193,10 @@ pub async fn file_visibility_handler(
     State(state): State<ServerState>,
     Json(req): Json<FileVisibilityReq>,
 ) -> Json<ApiResponse> {
-    match state.chat_db.set_file_public(&req.note_id, &req.filename, req.public) {
+    match state
+        .chat_db
+        .set_file_public(&req.note_id, &req.filename, req.public)
+    {
         Ok(_) => {
             broadcast_file_list(&state, &req.note_id).await;
             Json(ApiResponse::success())
@@ -1121,11 +1251,13 @@ const PUBLIC_PREVIEW_HTML: &str = r#"<!DOCTYPE html>
   img { max-width: 100%; }
   .meta { font-size: 12px; opacity: 0.5; margin-bottom: 24px; }
   #loading { text-align: center; padding: 40px; opacity: 0.5; }
+  footer { margin-top: 32px; padding-top: 16px; border-top: 1px solid; opacity: 0.4; text-align: center; font-size: 12px; }
+  footer a { color: inherit; text-decoration: underline; }
 </style>
 </head>
 <body>
 <div class="container">
-  <div class="meta">{{NOTE}} / {{FILE}}</div>
+  <div class="meta"><a href="/notes/{{NOTE}}/" style="color:inherit;text-decoration:none;opacity:1" onmouseover="this.style.textDecoration='underline'" onmouseout="this.style.textDecoration='none'">{{NOTE_LABEL}}</a> / {{FILE_LABEL}}</div>
   <div id="loading">Loading…</div>
   <div id="content" style="display:none"></div>
 </div>
@@ -1183,9 +1315,7 @@ const PUBLIC_PREVIEW_HTML: &str = r#"<!DOCTYPE html>
   }
 })();
 </script>
-<footer style="max-width:860px;margin:32px auto 16px;padding-top:16px;border-top:1px solid currentColor;opacity:0.3;text-align:center;font-size:12px">
-  Wrought by <a href="https://fourdollars.github.io/rune/" style="color:inherit;text-decoration:underline">ᚱᚢᚾᛖ</a>
-</footer>
+<footer>Wrought by <a href="https://fourdollars.github.io/rune/">ᚱᚢᚾᛖ</a></footer>
 </body>
 </html>"#;
 
@@ -1196,21 +1326,35 @@ pub async fn public_notes_list_handler(
     let mut items = String::new();
     let mut any = false;
     for note in &notes {
-        if !note.public { continue; }
+        if !note.public {
+            continue;
+        }
         let public_files = state.chat_db.list_public_files(&note.id);
-        if public_files.is_empty() { continue; }
+        if public_files.is_empty() {
+            continue;
+        }
         any = true;
-        items.push_str(&format!("<div class='note-section'><h3>&#128193; {}</h3><ul>", html_escape(&note.name)));
+        items.push_str(&format!(
+            "<div class='note-section'><h3>&#128193; {}</h3><ul>",
+            html_escape(&note.name)
+        ));
         for fname in &public_files {
             let slug = fname.strip_suffix(".md").unwrap_or(fname);
             let url = format!("/notes/{}/{}", url_encode(&note.id), url_encode(slug));
-            items.push_str(&format!("<li><a href='{}'>{}</a></li>", url, html_escape(fname)));
+            items.push_str(&format!(
+                "<li><a href='{}'>{}</a></li>",
+                url,
+                html_escape(fname)
+            ));
         }
         items.push_str("</ul></div>");
     }
-    if !any { items.push_str("<p class='empty'>No public notes available.</p>"); }
+    if !any {
+        items.push_str("<p class='empty'>No public notes available.</p>");
+    }
 
-    let html = format!(r#"<!DOCTYPE html>
+    let html = format!(
+        r#"<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
@@ -1257,8 +1401,103 @@ pub async fn public_notes_list_handler(
   <footer>Wrought by <a href="https://fourdollars.github.io/rune/">ᚱᚢᚾᛖ</a></footer>
 </div>
 </body>
-</html>"#, items);
+</html>"#,
+        items
+    );
     axum::response::Html(html)
+}
+
+pub async fn public_note_index_handler(
+    State(state): State<ServerState>,
+    axum::extract::Path(note_id): axum::extract::Path<String>,
+) -> impl axum::response::IntoResponse {
+    // Note must exist and be public
+    let note = state
+        .chat_db
+        .list_notes()
+        .unwrap_or_default()
+        .into_iter()
+        .find(|n| n.id == note_id);
+    let note = match note {
+        Some(n) if n.public => n,
+        _ => {
+            return (
+                StatusCode::NOT_FOUND,
+                axum::response::Html("<h1>404 Not Found</h1>".to_string()),
+            )
+                .into_response()
+        }
+    };
+
+    let public_files = state.chat_db.list_public_files(&note_id);
+    let mut items = String::new();
+    for fname in &public_files {
+        let slug = fname.strip_suffix(".md").unwrap_or(fname);
+        let url = format!("/notes/{}/{}", url_encode(&note_id), url_encode(slug));
+        items.push_str(&format!(
+            "<li><a href='{}'>{}</a></li>",
+            url,
+            html_escape(fname)
+        ));
+    }
+    if items.is_empty() {
+        items.push_str("<p class=\'empty\'>No public files in this note.</p>");
+    } else {
+        items = format!("<ul>{}</ul>", items);
+    }
+
+    let html = format!(
+        r#"<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>{name}</title>
+<style>
+  :root {{ color-scheme: light dark; }}
+  @media (prefers-color-scheme: dark) {{
+    body {{ background: #1e1e2e; color: #cdd6f4; }}
+    .container {{ background: #181825; border: 1px solid #313244; }}
+    a {{ color: #89b4fa; }}
+    h1 {{ color: #cba6f7; }}
+    .back {{ color: #a6e3a1; }}
+    footer {{ border-top-color: #313244; }}
+  }}
+  @media (prefers-color-scheme: light) {{
+    body {{ background: #f6f8fa; color: #24292e; }}
+    .container {{ background: #fff; border: 1px solid #e1e4e8; }}
+    a {{ color: #0366d6; }}
+    h1 {{ color: #24292e; }}
+    footer {{ border-top-color: #eaecef; }}
+  }}
+  * {{ box-sizing: border-box; }}
+  body {{ font-family: -apple-system, BlinkMacSystemFont, \'Segoe UI\', Helvetica, Arial, sans-serif; margin: 0; padding: 20px; }}
+  .container {{ max-width: 860px; margin: 0 auto; padding: 32px 40px; border-radius: 8px; }}
+  h1 {{ font-size: 2em; margin-top: 0; margin-bottom: 24px; font-weight: 600; line-height: 1.25; padding-bottom: .3em; border-bottom: 1px solid; }}
+  .back {{ display:inline-block; margin-bottom: 16px; font-size: 14px; opacity: 0.7; text-decoration: none; }}
+  .back:hover {{ opacity: 1; text-decoration: underline; }}
+  ul {{ list-style: none; padding: 0; margin: 0; }}
+  li {{ margin: 6px 0; padding-left: 16px; }}
+  a {{ text-decoration: none; font-size: 15px; line-height: 1.6; }}
+  a:hover {{ text-decoration: underline; }}
+  .empty {{ opacity: 0.5; font-style: italic; }}
+  footer {{ margin-top: 32px; padding-top: 16px; border-top: 1px solid; opacity: 0.4; text-align: center; font-size: 12px; }}
+  footer a {{ color: inherit; text-decoration: underline; }}
+</style>
+</head>
+<body>
+<div class="container">
+  <a href="/notes/" class="back">← All Notes</a>
+  <h1>&#128193; {name}</h1>
+  {items}
+  <footer>Wrought by <a href="https://fourdollars.github.io/rune/">ᚱᚢᚾᛖ</a></footer>
+</div>
+</body>
+</html>"#,
+        name = html_escape(&note.name),
+        items = items
+    );
+    (StatusCode::OK, axum::response::Html(html)).into_response()
 }
 
 pub async fn public_preview_handler(
@@ -1266,18 +1505,35 @@ pub async fn public_preview_handler(
     axum::extract::Path((note_id, file_slug)): axum::extract::Path<(String, String)>,
 ) -> impl axum::response::IntoResponse {
     // Accept both "OpenAI" and "OpenAI.md"
-    let filename = if file_slug.ends_with(".md") { file_slug.clone() } else { format!("{}.md", file_slug) };
-    let note_public = state.chat_db.list_notes().unwrap_or_default()
-        .iter().find(|n| n.id == note_id).map(|n| n.public).unwrap_or(false);
+    let filename = if file_slug.ends_with(".md") {
+        file_slug.clone()
+    } else {
+        format!("{}.md", file_slug)
+    };
+    let note_public = state
+        .chat_db
+        .list_notes()
+        .unwrap_or_default()
+        .iter()
+        .find(|n| n.id == note_id)
+        .map(|n| n.public)
+        .unwrap_or(false);
     let file_public = state.chat_db.is_file_public(&note_id, &filename);
     if !note_public || !file_public {
-        return (StatusCode::NOT_FOUND, axum::response::Html("<h1>404 Not Found</h1>".to_string())).into_response();
+        return (
+            StatusCode::NOT_FOUND,
+            axum::response::Html("<h1>404 Not Found</h1>".to_string()),
+        )
+            .into_response();
     }
-    let title = format!("{} / {}", note_id, filename);
+    let file_label = filename.strip_suffix(".md").unwrap_or(&filename);
+    let title = format!("{} / {}", note_id, file_label);
     let page = PUBLIC_PREVIEW_HTML
         .replace("{{TITLE}}", &html_escape(&title))
         .replace("{{NOTE}}", &url_encode(&note_id))
-        .replace("{{FILE}}", &url_encode(&filename));
+        .replace("{{FILE}}", &url_encode(&filename))
+        .replace("{{NOTE_LABEL}}", &html_escape(&note_id))
+        .replace("{{FILE_LABEL}}", &html_escape(file_label));
     (StatusCode::OK, axum::response::Html(page)).into_response()
 }
 
@@ -1285,31 +1541,63 @@ pub async fn public_raw_handler(
     State(state): State<ServerState>,
     axum::extract::Path((note_id, file_slug)): axum::extract::Path<(String, String)>,
 ) -> impl axum::response::IntoResponse {
-    let filename = if file_slug.ends_with(".md") { file_slug.clone() } else { format!("{}.md", file_slug) };
-    let note_public = state.chat_db.list_notes().unwrap_or_default()
-        .iter().find(|n| n.id == note_id).map(|n| n.public).unwrap_or(false);
+    let filename = if file_slug.ends_with(".md") {
+        file_slug.clone()
+    } else {
+        format!("{}.md", file_slug)
+    };
+    let note_public = state
+        .chat_db
+        .list_notes()
+        .unwrap_or_default()
+        .iter()
+        .find(|n| n.id == note_id)
+        .map(|n| n.public)
+        .unwrap_or(false);
     let file_public = state.chat_db.is_file_public(&note_id, &filename);
     if !note_public || !file_public {
-        return (StatusCode::NOT_FOUND, [(axum::http::header::CONTENT_TYPE, "text/plain")], "".to_string()).into_response();
+        return (
+            StatusCode::NOT_FOUND,
+            [(axum::http::header::CONTENT_TYPE, "text/plain")],
+            "".to_string(),
+        )
+            .into_response();
     }
     let file_path = state.note_markdown_dir(&note_id).join(&filename);
     match tokio::fs::read_to_string(&file_path).await {
-        Ok(content) => (StatusCode::OK, [(axum::http::header::CONTENT_TYPE, "text/markdown; charset=utf-8")], content).into_response(),
-        Err(_) => (StatusCode::NOT_FOUND, [(axum::http::header::CONTENT_TYPE, "text/plain")], "".to_string()).into_response(),
+        Ok(content) => (
+            StatusCode::OK,
+            [(
+                axum::http::header::CONTENT_TYPE,
+                "text/markdown; charset=utf-8",
+            )],
+            content,
+        )
+            .into_response(),
+        Err(_) => (
+            StatusCode::NOT_FOUND,
+            [(axum::http::header::CONTENT_TYPE, "text/plain")],
+            "".to_string(),
+        )
+            .into_response(),
     }
 }
 
 fn html_escape(s: &str) -> String {
-    s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;").replace('"', "&quot;")
+    s.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
 }
 
 fn url_encode(s: &str) -> String {
-    s.chars().map(|c| match c {
-        'A'..='Z' | 'a'..='z' | '0'..='9' | '-' | '_' | '.' | '~' => c.to_string(),
-        _ => format!("%{:02X}", c as u32),
-    }).collect()
+    s.chars()
+        .map(|c| match c {
+            'A'..='Z' | 'a'..='z' | '0'..='9' | '-' | '_' | '.' | '~' => c.to_string(),
+            _ => format!("%{:02X}", c as u32),
+        })
+        .collect()
 }
-
 
 async fn broadcast_file_list(state: &ServerState, note_id: &str) {
     let md_dir = state.note_markdown_dir(note_id);
@@ -1317,25 +1605,43 @@ async fn broadcast_file_list(state: &ServerState, note_id: &str) {
     if let Ok(mut rd) = tokio::fs::read_dir(&md_dir).await {
         while let Ok(Some(entry)) = rd.next_entry().await {
             let name = entry.file_name().to_string_lossy().to_string();
-            if name.ends_with(".md") { file_names.push(name); }
+            if name.ends_with(".md") {
+                file_names.push(name);
+            }
         }
     }
     file_names.sort();
     let visibility = state.chat_db.get_file_visibility(note_id);
-    let files: Vec<FileEntry> = file_names.iter().map(|name| {
-        let public = visibility.iter().find(|(f, _)| f == name).map(|(_, p)| *p).unwrap_or(false);
-        FileEntry { name: name.clone(), public }
-    }).collect();
+    let files: Vec<FileEntry> = file_names
+        .iter()
+        .map(|name| {
+            let public = visibility
+                .iter()
+                .find(|(f, _)| f == name)
+                .map(|(_, p)| *p)
+                .unwrap_or(false);
+            FileEntry {
+                name: name.clone(),
+                public,
+            }
+        })
+        .collect();
     let active = files.first().map(|f| f.name.clone()).unwrap_or_default();
     let msg = SseMsg::FileList { files, active };
-    // Send to the room for this note
+    // Send file_list to the note's own room
     let room = state.get_or_create_room(note_id).await;
     broadcast_to_room(&room, &msg);
+    // Also broadcast note_list to ALL rooms so clients subscribed to other notes
+    // can update the sidebar visibility state for this note
+    broadcast_note_list(state).await;
 }
 
 async fn broadcast_note_list(state: &ServerState) {
     let notes = build_note_list(state).await;
-    let msg = SseMsg::NoteList { notes, active: String::new() };
+    let msg = SseMsg::NoteList {
+        notes,
+        active: String::new(),
+    };
     // Note list is global — broadcast to all rooms
     let rooms = state.rooms.read().await;
     for room in rooms.values() {
@@ -1343,11 +1649,8 @@ async fn broadcast_note_list(state: &ServerState) {
     }
 }
 
-
 /// GET /api/notes — JSON list of notes (authenticated users only)
-pub async fn notes_list_json_handler(
-    State(state): State<ServerState>,
-) -> Json<serde_json::Value> {
+pub async fn notes_list_json_handler(State(state): State<ServerState>) -> Json<serde_json::Value> {
     let notes = build_note_list(&state).await;
     Json(serde_json::json!({ "ok": true, "notes": notes }))
 }
@@ -1371,9 +1674,13 @@ async fn handle_chat_message(
     let provider = match build_provider(&config) {
         Ok(p) => p,
         Err(e) => {
-            let err = SseMsg::Error { message: format!("Provider error: {}", e) };
+            let err = SseMsg::Error {
+                message: format!("Provider error: {}", e),
+            };
             broadcast_to_room(&room, &err);
-            let idle = SseMsg::Status { state: "idle".to_string() };
+            let idle = SseMsg::Status {
+                state: "idle".to_string(),
+            };
             broadcast_to_room(&room, &idle);
             return;
         }
@@ -1385,37 +1692,46 @@ async fn handle_chat_message(
     // Token streaming callback — sends to room only
     let room_for_token = Arc::clone(&room);
     let token_callback: Arc<dyn Fn(&str) + Send + Sync> = Arc::new(move |token: &str| {
-        let msg = SseMsg::ChatToken { content: token.to_string() };
+        let msg = SseMsg::ChatToken {
+            content: token.to_string(),
+        };
         broadcast_to_room(&room_for_token, &msg);
     });
 
     // Approval callback — requests go to room, responses come back via room
     let room_for_approval = Arc::clone(&room);
-    let approval_callback: Arc<dyn Fn(String, String) -> std::pin::Pin<Box<dyn std::future::Future<Output = bool> + Send>> + Send + Sync> =
-        Arc::new(move |id: String, detail: String| {
-            let room = Arc::clone(&room_for_approval);
-            Box::pin(async move {
-                // Send approval request to the room
-                let msg = SseMsg::ApprovalRequest { id: id.clone(), detail };
-                broadcast_to_room(&room, &msg);
-                // Wait for approval response via room channel
-                let mut rx = room.broadcast_tx.subscribe();
-                let approve_key = format!("__approval_granted__{}", id);
-                let deny_key = format!("__approval_denied__{}", id);
-                loop {
-                    match tokio::time::timeout(
-                        std::time::Duration::from_secs(300),
-                        rx.recv()
-                    ).await {
-                        Ok(Ok(msg)) => {
-                            if msg == approve_key { return true; }
-                            if msg == deny_key { return false; }
+    let approval_callback: Arc<
+        dyn Fn(String, String) -> std::pin::Pin<Box<dyn std::future::Future<Output = bool> + Send>>
+            + Send
+            + Sync,
+    > = Arc::new(move |id: String, detail: String| {
+        let room = Arc::clone(&room_for_approval);
+        Box::pin(async move {
+            // Send approval request to the room
+            let msg = SseMsg::ApprovalRequest {
+                id: id.clone(),
+                detail,
+            };
+            broadcast_to_room(&room, &msg);
+            // Wait for approval response via room channel
+            let mut rx = room.broadcast_tx.subscribe();
+            let approve_key = format!("__approval_granted__{}", id);
+            let deny_key = format!("__approval_denied__{}", id);
+            loop {
+                match tokio::time::timeout(std::time::Duration::from_secs(300), rx.recv()).await {
+                    Ok(Ok(msg)) => {
+                        if msg == approve_key {
+                            return true;
                         }
-                        _ => return false,
+                        if msg == deny_key {
+                            return false;
+                        }
                     }
+                    _ => return false,
                 }
-            })
-        });
+            }
+        })
+    });
 
     // Build agent
     let mut cfg = config.clone();
@@ -1423,19 +1739,30 @@ async fn handle_chat_message(
     let mut agent = Agent::new(cfg, provider, true, embedding);
     agent.token_callback = Some(token_callback);
     agent.approval_callback = Some(approval_callback);
-    agent.user_name = if !nickname.is_empty() && nickname != "user" { Some(nickname) } else { None };
+    agent.user_name = if !nickname.is_empty() && nickname != "user" {
+        Some(nickname)
+    } else {
+        None
+    };
     agent.markdown_dir = Some(state.note_markdown_dir(&note_id));
     agent.chat_db = Some(state.chat_db.clone());
     agent.chat_note_id = Some(note_id.clone());
-    agent.chat_archive_dir = Some(state.note_markdown_dir(&note_id)
-        .parent().unwrap().join("archives"));
+    agent.chat_archive_dir = Some(
+        state
+            .note_markdown_dir(&note_id)
+            .parent()
+            .unwrap()
+            .join("archives"),
+    );
     // Notify UI whenever AI writes/creates a markdown file — broadcast to room
     let state_for_filelist = state.clone();
     let note_id_for_filelist = note_id.clone();
     agent.file_list_callback = Some(Arc::new(move || {
         let s = state_for_filelist.clone();
         let n = note_id_for_filelist.clone();
-        tokio::spawn(async move { broadcast_file_list(&s, &n).await; });
+        tokio::spawn(async move {
+            broadcast_file_list(&s, &n).await;
+        });
     }));
 
     // Broadcast file content changes to all users in the room (real-time sync)
@@ -1446,7 +1773,11 @@ async fn handle_chat_message(
         let n = note_id_for_content.clone();
         tokio::spawn(async move {
             let room = s.get_or_create_room(&n).await;
-            let fc = SseMsg::FileContent { note_id: n, filename, content };
+            let fc = SseMsg::FileContent {
+                note_id: n,
+                filename,
+                content,
+            };
             broadcast_to_room(&room, &fc);
         });
     }));
@@ -1486,23 +1817,32 @@ async fn handle_chat_message(
     match &stop_reason {
         StopReason::FinalAnswer(answer) => {
             // Save assistant response
-            state.chat_db.insert_async(
-                note_id.clone(),
-                "assistant".to_string(),
-                "ᚱᚢᚾᛖ".to_string(),
-                answer.clone(),
-            ).await;
+            state
+                .chat_db
+                .insert_async(
+                    note_id.clone(),
+                    "assistant".to_string(),
+                    "ᚱᚢᚾᛖ".to_string(),
+                    answer.clone(),
+                )
+                .await;
         }
         StopReason::Error(e) => {
-            let err = SseMsg::Error { message: format!("Agent error: {}", e) };
+            let err = SseMsg::Error {
+                message: format!("Agent error: {}", e),
+            };
             broadcast_to_room(&room, &err);
         }
         StopReason::MaxSteps => {
-            let err = SseMsg::Error { message: "Agent reached max steps".to_string() };
+            let err = SseMsg::Error {
+                message: "Agent reached max steps".to_string(),
+            };
             broadcast_to_room(&room, &err);
         }
         StopReason::TokenBudgetExhausted => {
-            let err = SseMsg::Error { message: "Token budget exhausted".to_string() };
+            let err = SseMsg::Error {
+                message: "Token budget exhausted".to_string(),
+            };
             broadcast_to_room(&room, &err);
         }
         _ => {}
@@ -1511,7 +1851,9 @@ async fn handle_chat_message(
     // Broadcast updated file list to the room
     broadcast_file_list(&state, &note_id).await;
 
-    let idle = SseMsg::Status { state: "idle".to_string() };
+    let idle = SseMsg::Status {
+        state: "idle".to_string(),
+    };
     broadcast_to_room(&room, &idle);
 }
 
@@ -1528,11 +1870,19 @@ fn build_provider(config: &RuneConfig) -> anyhow::Result<ProviderRegistry> {
     let provider_name = config.provider.as_deref().unwrap_or_else(|| {
         if key.starts_with("ghu_")
             || key.starts_with("ghp_")
-            || config.base_url.as_deref().map(|u| u.contains("githubcopilot")).unwrap_or(false)
+            || config
+                .base_url
+                .as_deref()
+                .map(|u| u.contains("githubcopilot"))
+                .unwrap_or(false)
         {
             "github-copilot"
         } else if key.starts_with("AIza")
-            || config.base_url.as_deref().map(|u| u.contains("generativelanguage.googleapis.com")).unwrap_or(false)
+            || config
+                .base_url
+                .as_deref()
+                .map(|u| u.contains("generativelanguage.googleapis.com"))
+                .unwrap_or(false)
         {
             "gemini"
         } else if key.starts_with("sk-or-") {
@@ -1574,8 +1924,10 @@ async fn build_embedding(config: &RuneConfig) -> Option<EmbeddingEngine> {
     }
     let emb_config = config.embedding.clone();
     let provider_name = config.provider.as_deref().unwrap_or("");
-    if provider_name == "github-copilot" || provider_name == "copilot"
-        || api_key.starts_with("ghu_") || api_key.starts_with("ghp_")
+    if provider_name == "github-copilot"
+        || provider_name == "copilot"
+        || api_key.starts_with("ghu_")
+        || api_key.starts_with("ghp_")
     {
         Some(EmbeddingEngine::new_copilot(emb_config, api_key))
     } else {
@@ -1715,7 +2067,6 @@ mod tests {
         assert!(!check_token(&state, None));
     }
 
-
     #[test]
     fn test_api_response_success() {
         let resp = ApiResponse::success();
@@ -1752,7 +2103,9 @@ mod tests {
 
     #[test]
     fn test_sse_msg_serialization() {
-        let msg = SseMsg::ChatToken { content: "hello".into() };
+        let msg = SseMsg::ChatToken {
+            content: "hello".into(),
+        };
         let json = serde_json::to_string(&msg).unwrap();
         assert!(json.contains(r#""type":"chat_token""#));
         assert!(json.contains(r#""content":"hello""#));
@@ -1760,7 +2113,9 @@ mod tests {
 
     #[test]
     fn test_sse_msg_error_serialization() {
-        let msg = SseMsg::Error { message: "oops".into() };
+        let msg = SseMsg::Error {
+            message: "oops".into(),
+        };
         let json = serde_json::to_string(&msg).unwrap();
         assert!(json.contains(r#""type":"error""#));
         assert!(json.contains(r#""message":"oops""#));
@@ -1800,7 +2155,16 @@ mod tests {
     #[test]
     fn test_sse_msg_file_list() {
         let msg = SseMsg::FileList {
-            files: vec![FileEntry { name: "a.md".into(), public: false }, FileEntry { name: "b.md".into(), public: false }],
+            files: vec![
+                FileEntry {
+                    name: "a.md".into(),
+                    public: false,
+                },
+                FileEntry {
+                    name: "b.md".into(),
+                    public: false,
+                },
+            ],
             active: "a.md".into(),
         };
         let json = serde_json::to_string(&msg).unwrap();
@@ -1831,7 +2195,10 @@ mod tests {
         let msg = SseMsg::DirBrowseResult {
             path: "/home".into(),
             parent: Some("/".into()),
-            entries: vec![DirEntry { name: "user".into(), is_dir: true }],
+            entries: vec![DirEntry {
+                name: "user".into(),
+                is_dir: true,
+            }],
         };
         let json = serde_json::to_string(&msg).unwrap();
         assert!(json.contains(r#""type":"dir_browse_result""#));
@@ -1845,7 +2212,7 @@ mod tests {
             name: "Session One".into(),
             files: vec!["readme.md".into()],
             public: false,
-                public_files: vec![],
+            public_files: vec![],
         };
         let json = serde_json::to_string(&entry).unwrap();
         assert!(json.contains(r#""id":"s1""#));
@@ -1895,500 +2262,753 @@ mod tests {
     }
 }
 
-
 #[cfg(test)]
 mod integration_tests {
-//! Integration tests for SSE + REST API handlers.
-//! Uses tower::ServiceExt to call axum Router directly without network.
+    //! Integration tests for SSE + REST API handlers.
+    //! Uses tower::ServiceExt to call axum Router directly without network.
 
-use axum::{
-    body::Body,
-    http::{Request, StatusCode},
-    routing::{get, post},
-    Router,
-};
-use http_body_util::BodyExt;
-use serde_json::{json, Value};
-use std::sync::Arc;
-use tempfile::TempDir;
-use tokio::sync::{broadcast, RwLock};
-use tower::ServiceExt;
+    use axum::{
+        body::Body,
+        http::{Request, StatusCode},
+        routing::{get, post},
+        Router,
+    };
+    use http_body_util::BodyExt;
+    use serde_json::{json, Value};
+    use std::sync::Arc;
+    use tempfile::TempDir;
+    use tokio::sync::{broadcast, RwLock};
+    use tower::ServiceExt;
 
-use crate::config::RuneConfig;
-use crate::serve::api::*;
-use crate::serve::db::ChatDb;
-use crate::serve::ServerState;
+    use crate::config::RuneConfig;
+    use crate::serve::api::*;
+    use crate::serve::db::ChatDb;
+    use crate::serve::ServerState;
 
-/// Build a test app with all routes and a fresh temp state.
-fn test_app() -> (Router, TempDir) {
-    let tmp = tempfile::tempdir().unwrap();
-    let state = test_state(&tmp);
-    let app = Router::new()
-        .route("/api/events", get(events_handler))
-        .route("/api/chat", post(chat_handler))
-        .route("/api/file/create", post(file_create_handler))
-        .route("/api/file/delete", post(file_delete_handler))
-        .route("/api/file/rename", post(file_rename_handler))
-        .route("/api/file/switch", post(file_switch_handler))
-        .route("/api/file/update", post(file_update_handler))
-        .route("/api/session/create", post(note_create_handler))
-        .route("/api/session/rename", post(note_rename_handler))
-        .route("/api/session/delete", post(note_delete_handler))
-        .route("/api/session/switch", post(note_switch_handler))
-        .route("/api/model/switch", post(model_switch_handler))
-        .route("/api/chat/archive", post(archive_handler))
-        .route("/api/chat/search", post(search_handler))
-        .route("/api/approval", post(approval_handler))
-        .route("/api/dir/browse", post(dir_browse_handler))
-        .with_state(state);
-    (app, tmp)
-}
+    /// Build a test app with all routes and a fresh temp state.
+    fn test_app() -> (Router, TempDir) {
+        let tmp = tempfile::tempdir().unwrap();
+        let state = test_state(&tmp);
+        let app = Router::new()
+            .route("/api/events", get(events_handler))
+            .route("/api/chat", post(chat_handler))
+            .route("/api/file/create", post(file_create_handler))
+            .route("/api/file/delete", post(file_delete_handler))
+            .route("/api/file/rename", post(file_rename_handler))
+            .route("/api/file/switch", post(file_switch_handler))
+            .route("/api/file/update", post(file_update_handler))
+            .route("/api/session/create", post(note_create_handler))
+            .route("/api/session/rename", post(note_rename_handler))
+            .route("/api/session/delete", post(note_delete_handler))
+            .route("/api/session/switch", post(note_switch_handler))
+            .route("/api/model/switch", post(model_switch_handler))
+            .route("/api/chat/archive", post(archive_handler))
+            .route("/api/chat/search", post(search_handler))
+            .route("/api/approval", post(approval_handler))
+            .route("/api/dir/browse", post(dir_browse_handler))
+            .with_state(state);
+        (app, tmp)
+    }
 
-fn test_state(tmp: &TempDir) -> ServerState {
-    let (admin_broadcast_tx, _) = broadcast::channel(256);
-    let db_path = tmp.path().join("test.db");
-    let db = ChatDb::open(&db_path).unwrap();
-    ServerState {
-        config: RuneConfig::default(),
-        user_token: None,
-        admin_token: Some("admin123".into()),
-        guest_token: None,
-        files: Arc::new(RwLock::new(std::collections::HashMap::new())),
-        active_file: Arc::new(RwLock::new(String::new())),
-        models: vec!["gpt-5-mini".into(), "claude-sonnet-4.6".into()],
-        rooms: Arc::new(RwLock::new(std::collections::HashMap::new())),
-        global_default_model: Arc::new(RwLock::new("gpt-5-mini".into())),
-        admin_broadcast_tx,
-        chat_db: db,
-        data_dir: tmp.path().join(".rune"),
+    fn test_state(tmp: &TempDir) -> ServerState {
+        let (admin_broadcast_tx, _) = broadcast::channel(256);
+        let db_path = tmp.path().join("test.db");
+        let db = ChatDb::open(&db_path).unwrap();
+        ServerState {
+            config: RuneConfig::default(),
+            user_token: None,
+            admin_token: Some("admin123".into()),
+            guest_token: None,
+            files: Arc::new(RwLock::new(std::collections::HashMap::new())),
+            active_file: Arc::new(RwLock::new(String::new())),
+            models: vec!["gpt-5-mini".into(), "claude-sonnet-4.6".into()],
+            rooms: Arc::new(RwLock::new(std::collections::HashMap::new())),
+            global_default_model: Arc::new(RwLock::new("gpt-5-mini".into())),
+            admin_broadcast_tx,
+            chat_db: db,
+            data_dir: tmp.path().join(".rune"),
+        }
+    }
+
+    fn test_state_with_token(tmp: &TempDir) -> ServerState {
+        let mut state = test_state(tmp);
+        state.user_token = Some("secret".into());
+        state
+    }
+
+    async fn post_json(app: &Router, path: &str, body: Value) -> (StatusCode, Value) {
+        let req = Request::builder()
+            .method("POST")
+            .uri(path)
+            .header("Content-Type", "application/json")
+            .body(Body::from(serde_json::to_vec(&body).unwrap()))
+            .unwrap();
+        let resp = app.clone().oneshot(req).await.unwrap();
+        let status = resp.status();
+        let bytes = resp.into_body().collect().await.unwrap().to_bytes();
+        let val: Value = serde_json::from_slice(&bytes).unwrap_or(json!(null));
+        (status, val)
+    }
+
+    // ─── Session CRUD tests ────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_session_create() {
+        let (app, _tmp) = test_app();
+        let (status, body) = post_json(
+            &app,
+            "/api/session/create",
+            json!({
+                "name": "test-session",
+            }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["ok"], true);
+    }
+
+    #[tokio::test]
+    async fn test_session_create_empty_name() {
+        let (app, _tmp) = test_app();
+        let (status, body) = post_json(
+            &app,
+            "/api/session/create",
+            json!({
+                "name": "",
+            }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["ok"], false);
+        assert!(body["error"].as_str().unwrap().contains("required"));
+    }
+
+    #[tokio::test]
+    async fn test_session_create_duplicate() {
+        let (app, _tmp) = test_app();
+        post_json(&app, "/api/session/create", json!({"name": "dup"})).await;
+        let (_, body) = post_json(&app, "/api/session/create", json!({"name": "dup"})).await;
+        assert_eq!(body["ok"], false);
+    }
+
+    #[tokio::test]
+    async fn test_session_delete() {
+        let (app, _tmp) = test_app();
+        post_json(&app, "/api/session/create", json!({"name": "del-me"})).await;
+        let (_, body) = post_json(&app, "/api/session/delete", json!({"note_id": "del-me"})).await;
+        assert_eq!(body["ok"], true);
+    }
+
+    #[tokio::test]
+    async fn test_session_delete_nonexistent() {
+        let (app, _tmp) = test_app();
+        let (_, body) = post_json(&app, "/api/session/delete", json!({"note_id": "nope"})).await;
+        assert_eq!(body["ok"], false);
+    }
+
+    #[tokio::test]
+    async fn test_session_switch() {
+        let (app, _tmp) = test_app();
+        post_json(&app, "/api/session/create", json!({"name": "s1"})).await;
+        let (_, body) = post_json(&app, "/api/session/switch", json!({"note_id": "s1"})).await;
+        assert_eq!(body["ok"], true);
+    }
+
+    #[tokio::test]
+    async fn test_session_rename() {
+        let (app, _tmp) = test_app();
+        post_json(&app, "/api/session/create", json!({"name": "old-name"})).await;
+        let (_, body) = post_json(
+            &app,
+            "/api/session/rename",
+            json!({
+                "note_id": "old-name",
+                "name": "new-name"
+            }),
+        )
+        .await;
+        assert_eq!(body["ok"], true);
+    }
+
+    // ─── File CRUD tests ───────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_file_create() {
+        let (app, tmp) = test_app();
+        post_json(&app, "/api/session/create", json!({"name": "file-test"})).await;
+        let (_, body) = post_json(
+            &app,
+            "/api/file/create",
+            json!({
+                "note_id": "file-test",
+                "name": "notes.md"
+            }),
+        )
+        .await;
+        assert_eq!(body["ok"], true);
+    }
+
+    #[tokio::test]
+    async fn test_file_create_invalid_name() {
+        let (app, _tmp) = test_app();
+        post_json(&app, "/api/session/create", json!({"name": "f1"})).await;
+        let (_, body) = post_json(
+            &app,
+            "/api/file/create",
+            json!({
+                "note_id": "f1",
+                "name": "bad file.txt"
+            }),
+        )
+        .await;
+        assert_eq!(body["ok"], false);
+        assert!(body["error"].as_str().unwrap().contains("Invalid"));
+    }
+
+    #[tokio::test]
+    async fn test_file_create_duplicate() {
+        let (app, tmp) = test_app();
+        post_json(&app, "/api/session/create", json!({"name": "f2"})).await;
+        post_json(
+            &app,
+            "/api/file/create",
+            json!({"note_id": "f2", "name": "a.md"}),
+        )
+        .await;
+        let (_, body) = post_json(
+            &app,
+            "/api/file/create",
+            json!({"note_id": "f2", "name": "a.md"}),
+        )
+        .await;
+        assert_eq!(body["ok"], false);
+        assert!(body["error"].as_str().unwrap().contains("exists"));
+    }
+
+    #[tokio::test]
+    async fn test_file_create_no_session() {
+        let (app, _tmp) = test_app();
+        let (_, body) = post_json(
+            &app,
+            "/api/file/create",
+            json!({
+                "note_id": "",
+                "name": "x.md"
+            }),
+        )
+        .await;
+        assert_eq!(body["ok"], false);
+    }
+
+    #[tokio::test]
+    async fn test_file_update_and_switch() {
+        let (app, _tmp) = test_app();
+        post_json(&app, "/api/session/create", json!({"name": "f3"})).await;
+        post_json(
+            &app,
+            "/api/file/create",
+            json!({"note_id": "f3", "name": "doc.md"}),
+        )
+        .await;
+
+        // Update
+        let (_, body) = post_json(
+            &app,
+            "/api/file/update",
+            json!({
+                "note_id": "f3",
+                "filename": "doc.md",
+                "content": "# Hello\nWorld"
+            }),
+        )
+        .await;
+        assert_eq!(body["ok"], true);
+
+        // Switch (read back)
+        let (_, body) = post_json(
+            &app,
+            "/api/file/switch",
+            json!({
+                "note_id": "f3",
+                "name": "doc.md"
+            }),
+        )
+        .await;
+        assert_eq!(body["ok"], true);
+    }
+
+    #[tokio::test]
+    async fn test_file_switch_not_found() {
+        let (app, _tmp) = test_app();
+        post_json(&app, "/api/session/create", json!({"name": "f4"})).await;
+        let (_, body) = post_json(
+            &app,
+            "/api/file/switch",
+            json!({
+                "note_id": "f4",
+                "name": "nope.md"
+            }),
+        )
+        .await;
+        assert_eq!(body["ok"], false);
+    }
+
+    #[tokio::test]
+    async fn test_file_rename() {
+        let (app, tmp) = test_app();
+        post_json(&app, "/api/session/create", json!({"name": "f5"})).await;
+        post_json(
+            &app,
+            "/api/file/create",
+            json!({"note_id": "f5", "name": "old.md"}),
+        )
+        .await;
+        let (_, body) = post_json(
+            &app,
+            "/api/file/rename",
+            json!({
+                "note_id": "f5",
+                "old_name": "old.md",
+                "new_name": "new.md"
+            }),
+        )
+        .await;
+        assert_eq!(body["ok"], true);
+    }
+
+    #[tokio::test]
+    async fn test_file_rename_conflict() {
+        let (app, _tmp) = test_app();
+        post_json(&app, "/api/session/create", json!({"name": "f6"})).await;
+        post_json(
+            &app,
+            "/api/file/create",
+            json!({"note_id": "f6", "name": "a.md"}),
+        )
+        .await;
+        post_json(
+            &app,
+            "/api/file/create",
+            json!({"note_id": "f6", "name": "b.md"}),
+        )
+        .await;
+        let (_, body) = post_json(
+            &app,
+            "/api/file/rename",
+            json!({
+                "note_id": "f6",
+                "old_name": "a.md",
+                "new_name": "b.md"
+            }),
+        )
+        .await;
+        assert_eq!(body["ok"], false);
+        assert!(body["error"].as_str().unwrap().contains("exists"));
+    }
+
+    #[tokio::test]
+    async fn test_file_delete() {
+        let (app, _tmp) = test_app();
+        post_json(&app, "/api/session/create", json!({"name": "f7"})).await;
+        post_json(
+            &app,
+            "/api/file/create",
+            json!({"note_id": "f7", "name": "rm.md"}),
+        )
+        .await;
+        let (_, body) = post_json(
+            &app,
+            "/api/file/delete",
+            json!({
+                "note_id": "f7",
+                "name": "rm.md"
+            }),
+        )
+        .await;
+        assert_eq!(body["ok"], true);
+    }
+
+    #[tokio::test]
+    async fn test_file_update_invalid_filename() {
+        let (app, _tmp) = test_app();
+        post_json(&app, "/api/session/create", json!({"name": "f8"})).await;
+        let (_, body) = post_json(
+            &app,
+            "/api/file/update",
+            json!({
+                "note_id": "f8",
+                "filename": "",
+                "content": "x"
+            }),
+        )
+        .await;
+        assert_eq!(body["ok"], false);
+    }
+
+    // ─── Model switch tests ────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_model_switch_valid() {
+        let (app, _tmp) = test_app();
+        let (_, body) = post_json(
+            &app,
+            "/api/model/switch",
+            json!({
+                "model": "claude-sonnet-4.6"
+            }),
+        )
+        .await;
+        assert_eq!(body["ok"], true);
+    }
+
+    #[tokio::test]
+    async fn test_model_switch_unknown() {
+        let (app, _tmp) = test_app();
+        let (_, body) = post_json(
+            &app,
+            "/api/model/switch",
+            json!({
+                "model": "unknown-model"
+            }),
+        )
+        .await;
+        assert_eq!(body["ok"], false);
+        assert!(body["error"].as_str().unwrap().contains("Unknown"));
+    }
+
+    // ─── Chat tests ────────────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_chat_no_session() {
+        let (app, _tmp) = test_app();
+        let (_, body) = post_json(
+            &app,
+            "/api/chat",
+            json!({
+                "note_id": "",
+                "content": "hello"
+            }),
+        )
+        .await;
+        assert_eq!(body["ok"], false);
+        assert!(body["error"].as_str().unwrap().contains("note"));
+    }
+
+    #[tokio::test]
+    async fn test_chat_empty_content() {
+        let (app, _tmp) = test_app();
+        let (_, body) = post_json(
+            &app,
+            "/api/chat",
+            json!({
+                "note_id": "s1",
+                "content": "   "
+            }),
+        )
+        .await;
+        assert_eq!(body["ok"], false);
+        assert!(body["error"].as_str().unwrap().contains("Empty"));
+    }
+
+    // ─── Archive + Search tests ────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_archive_no_session() {
+        let (app, _tmp) = test_app();
+        let (_, body) = post_json(
+            &app,
+            "/api/chat/archive",
+            json!({
+                "note_id": ""
+            }),
+        )
+        .await;
+        assert_eq!(body["ok"], false);
+    }
+
+    #[tokio::test]
+    async fn test_search_empty_query() {
+        let (app, _tmp) = test_app();
+        let (_, body) = post_json(
+            &app,
+            "/api/chat/search",
+            json!({
+                "note_id": "s1",
+                "query": ""
+            }),
+        )
+        .await;
+        assert_eq!(body["ok"], false);
+        assert!(body["error"].as_str().unwrap().contains("Empty"));
+    }
+
+    #[tokio::test]
+    async fn test_search_valid() {
+        let (app, _tmp) = test_app();
+        post_json(&app, "/api/session/create", json!({"name": "search-test"})).await;
+        let (_, body) = post_json(
+            &app,
+            "/api/chat/search",
+            json!({
+                "note_id": "search-test",
+                "query": "hello"
+            }),
+        )
+        .await;
+        assert_eq!(body["ok"], true);
+    }
+
+    // ─── Dir browse tests ──────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_dir_browse_root() {
+        let (app, _tmp) = test_app();
+        let (_, body) = post_json(
+            &app,
+            "/api/dir/browse",
+            json!({
+                "path": "/tmp"
+            }),
+        )
+        .await;
+        assert_eq!(body["ok"], true);
+        assert!(body["data"].is_object());
+    }
+
+    #[tokio::test]
+    async fn test_dir_browse_nonexistent() {
+        let (app, _tmp) = test_app();
+        let (_, body) = post_json(
+            &app,
+            "/api/dir/browse",
+            json!({
+                "path": "/nonexistent_path_12345"
+            }),
+        )
+        .await;
+        // Should still return ok with empty entries
+        assert_eq!(body["ok"], true);
+    }
+
+    // ─── Approval test ─────────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_approval_granted() {
+        let (app, _tmp) = test_app();
+        let (_, body) = post_json(
+            &app,
+            "/api/approval",
+            json!({
+                "id": "test-123",
+                "approved": true
+            }),
+        )
+        .await;
+        assert_eq!(body["ok"], true);
+    }
+
+    #[tokio::test]
+    async fn test_approval_denied() {
+        let (app, _tmp) = test_app();
+        let (_, body) = post_json(
+            &app,
+            "/api/approval",
+            json!({
+                "id": "test-456",
+                "approved": false
+            }),
+        )
+        .await;
+        assert_eq!(body["ok"], true);
+    }
+
+    // ─── SSE endpoint test ─────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_sse_events_connect() {
+        let (app, _tmp) = test_app();
+        let req = Request::builder()
+            .method("GET")
+            .uri("/api/events?nickname=tester")
+            .body(Body::empty())
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        // Content-Type should be text/event-stream
+        let ct = resp
+            .headers()
+            .get("content-type")
+            .unwrap()
+            .to_str()
+            .unwrap();
+        assert!(
+            ct.contains("text/event-stream"),
+            "Expected SSE content type, got: {}",
+            ct
+        );
+    }
+
+    // ─── Full flow integration test ────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_full_session_file_flow() {
+        let (app, _tmp) = test_app();
+
+        // Create session
+        let (_, body) = post_json(
+            &app,
+            "/api/session/create",
+            json!({
+                "name": "integration",
+            }),
+        )
+        .await;
+        assert_eq!(body["ok"], true);
+
+        // Create file
+        let (_, body) = post_json(
+            &app,
+            "/api/file/create",
+            json!({
+                "note_id": "integration",
+                "name": "readme.md"
+            }),
+        )
+        .await;
+        assert_eq!(body["ok"], true);
+
+        // Update file
+        let (_, body) = post_json(
+            &app,
+            "/api/file/update",
+            json!({
+                "note_id": "integration",
+                "filename": "readme.md",
+                "content": "# Integration Test\n\nThis works!"
+            }),
+        )
+        .await;
+        assert_eq!(body["ok"], true);
+
+        // Switch to file (read back)
+        let (_, body) = post_json(
+            &app,
+            "/api/file/switch",
+            json!({
+                "note_id": "integration",
+                "name": "readme.md"
+            }),
+        )
+        .await;
+        assert_eq!(body["ok"], true);
+
+        // Rename file
+        let (_, body) = post_json(
+            &app,
+            "/api/file/rename",
+            json!({
+                "note_id": "integration",
+                "old_name": "readme.md",
+                "new_name": "docs.md"
+            }),
+        )
+        .await;
+        assert_eq!(body["ok"], true);
+
+        // Delete file
+        let (_, body) = post_json(
+            &app,
+            "/api/file/delete",
+            json!({
+                "note_id": "integration",
+                "name": "docs.md"
+            }),
+        )
+        .await;
+        assert_eq!(body["ok"], true);
+
+        // Delete session
+        let (_, body) = post_json(
+            &app,
+            "/api/session/delete",
+            json!({
+                "note_id": "integration"
+            }),
+        )
+        .await;
+        assert_eq!(body["ok"], true);
+    }
+
+    #[tokio::test]
+    async fn test_file_visibility_change_broadcasts_note_list_to_all_rooms() {
+        // Regression test: changing file visibility on note B while subscribed to note A
+        // must update the note_list in note A's room so the sidebar reflects the change.
+        use tokio::sync::broadcast;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let (admin_broadcast_tx, _) = broadcast::channel(256);
+        let db = crate::serve::db::ChatDb::open(&tmp.path().join("t.db")).unwrap();
+        let _ = db.create_note("note-a", "note-a", None);
+        let _ = db.set_note_public("note-a", true);
+        let _ = db.create_note("note-b", "note-b", None);
+        let _ = db.set_note_public("note-b", true);
+        let _ = db.set_file_public("note-b", "doc.md", false);
+
+        let state = crate::serve::ServerState {
+            config: crate::config::RuneConfig::default(),
+            user_token: None,
+            admin_token: Some("admin".into()),
+            guest_token: None,
+            files: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
+            active_file: Arc::new(tokio::sync::RwLock::new(String::new())),
+            models: vec!["m1".into()],
+            rooms: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
+            global_default_model: Arc::new(tokio::sync::RwLock::new("m1".into())),
+            admin_broadcast_tx,
+            chat_db: db,
+            data_dir: tmp.path().join(".rune"),
+        };
+
+        // Subscribe to note-a's room BEFORE triggering visibility change on note-b
+        let room_a = state.get_or_create_room("note-a").await;
+        let mut rx_a = room_a.broadcast_tx.subscribe();
+
+        // Trigger file visibility change on note-b
+        broadcast_file_list(&state, "note-b").await;
+
+        // note-a's room should receive a note_list event (from broadcast_note_list)
+        let mut got_note_list = false;
+        // Drain up to 10 messages looking for note_list
+        for _ in 0..10 {
+            match rx_a.try_recv() {
+                Ok(msg) => {
+                    if msg.contains("note_list") {
+                        got_note_list = true;
+                        break;
+                    }
+                }
+                Err(_) => break,
+            }
+        }
+        assert!(
+            got_note_list,
+            "note-a room should receive note_list broadcast when note-b file visibility changes"
+        );
     }
 }
-
-fn test_state_with_token(tmp: &TempDir) -> ServerState {
-    let mut state = test_state(tmp);
-    state.user_token = Some("secret".into());
-    state
-}
-
-async fn post_json(app: &Router, path: &str, body: Value) -> (StatusCode, Value) {
-    let req = Request::builder()
-        .method("POST")
-        .uri(path)
-        .header("Content-Type", "application/json")
-        .body(Body::from(serde_json::to_vec(&body).unwrap()))
-        .unwrap();
-    let resp = app.clone().oneshot(req).await.unwrap();
-    let status = resp.status();
-    let bytes = resp.into_body().collect().await.unwrap().to_bytes();
-    let val: Value = serde_json::from_slice(&bytes).unwrap_or(json!(null));
-    (status, val)
-}
-
-// ─── Session CRUD tests ────────────────────────────────────────────────────
-
-#[tokio::test]
-async fn test_session_create() {
-    let (app, _tmp) = test_app();
-    let (status, body) = post_json(&app, "/api/session/create", json!({
-        "name": "test-session",
-    })).await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(body["ok"], true);
-}
-
-#[tokio::test]
-async fn test_session_create_empty_name() {
-    let (app, _tmp) = test_app();
-    let (status, body) = post_json(&app, "/api/session/create", json!({
-        "name": "",
-    })).await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(body["ok"], false);
-    assert!(body["error"].as_str().unwrap().contains("required"));
-}
-
-#[tokio::test]
-async fn test_session_create_duplicate() {
-    let (app, _tmp) = test_app();
-    post_json(&app, "/api/session/create", json!({"name": "dup"})).await;
-    let (_, body) = post_json(&app, "/api/session/create", json!({"name": "dup"})).await;
-    assert_eq!(body["ok"], false);
-}
-
-#[tokio::test]
-async fn test_session_delete() {
-    let (app, _tmp) = test_app();
-    post_json(&app, "/api/session/create", json!({"name": "del-me"})).await;
-    let (_, body) = post_json(&app, "/api/session/delete", json!({"note_id": "del-me"})).await;
-    assert_eq!(body["ok"], true);
-}
-
-#[tokio::test]
-async fn test_session_delete_nonexistent() {
-    let (app, _tmp) = test_app();
-    let (_, body) = post_json(&app, "/api/session/delete", json!({"note_id": "nope"})).await;
-    assert_eq!(body["ok"], false);
-}
-
-#[tokio::test]
-async fn test_session_switch() {
-    let (app, _tmp) = test_app();
-    post_json(&app, "/api/session/create", json!({"name": "s1"})).await;
-    let (_, body) = post_json(&app, "/api/session/switch", json!({"note_id": "s1"})).await;
-    assert_eq!(body["ok"], true);
-}
-
-#[tokio::test]
-async fn test_session_rename() {
-    let (app, _tmp) = test_app();
-    post_json(&app, "/api/session/create", json!({"name": "old-name"})).await;
-    let (_, body) = post_json(&app, "/api/session/rename", json!({
-        "note_id": "old-name",
-        "name": "new-name"
-    })).await;
-    assert_eq!(body["ok"], true);
-}
-
-// ─── File CRUD tests ───────────────────────────────────────────────────────
-
-#[tokio::test]
-async fn test_file_create() {
-    let (app, tmp) = test_app();
-    post_json(&app, "/api/session/create", json!({"name": "file-test"})).await;
-    let (_, body) = post_json(&app, "/api/file/create", json!({
-        "note_id": "file-test",
-        "name": "notes.md"
-    })).await;
-    assert_eq!(body["ok"], true);
-}
-
-#[tokio::test]
-async fn test_file_create_invalid_name() {
-    let (app, _tmp) = test_app();
-    post_json(&app, "/api/session/create", json!({"name": "f1"})).await;
-    let (_, body) = post_json(&app, "/api/file/create", json!({
-        "note_id": "f1",
-        "name": "bad file.txt"
-    })).await;
-    assert_eq!(body["ok"], false);
-    assert!(body["error"].as_str().unwrap().contains("Invalid"));
-}
-
-#[tokio::test]
-async fn test_file_create_duplicate() {
-    let (app, tmp) = test_app();
-    post_json(&app, "/api/session/create", json!({"name": "f2"})).await;
-    post_json(&app, "/api/file/create", json!({"note_id": "f2", "name": "a.md"})).await;
-    let (_, body) = post_json(&app, "/api/file/create", json!({"note_id": "f2", "name": "a.md"})).await;
-    assert_eq!(body["ok"], false);
-    assert!(body["error"].as_str().unwrap().contains("exists"));
-}
-
-#[tokio::test]
-async fn test_file_create_no_session() {
-    let (app, _tmp) = test_app();
-    let (_, body) = post_json(&app, "/api/file/create", json!({
-        "note_id": "",
-        "name": "x.md"
-    })).await;
-    assert_eq!(body["ok"], false);
-}
-
-#[tokio::test]
-async fn test_file_update_and_switch() {
-    let (app, _tmp) = test_app();
-    post_json(&app, "/api/session/create", json!({"name": "f3"})).await;
-    post_json(&app, "/api/file/create", json!({"note_id": "f3", "name": "doc.md"})).await;
-
-    // Update
-    let (_, body) = post_json(&app, "/api/file/update", json!({
-        "note_id": "f3",
-        "filename": "doc.md",
-        "content": "# Hello\nWorld"
-    })).await;
-    assert_eq!(body["ok"], true);
-
-    // Switch (read back)
-    let (_, body) = post_json(&app, "/api/file/switch", json!({
-        "note_id": "f3",
-        "name": "doc.md"
-    })).await;
-    assert_eq!(body["ok"], true);
-}
-
-#[tokio::test]
-async fn test_file_switch_not_found() {
-    let (app, _tmp) = test_app();
-    post_json(&app, "/api/session/create", json!({"name": "f4"})).await;
-    let (_, body) = post_json(&app, "/api/file/switch", json!({
-        "note_id": "f4",
-        "name": "nope.md"
-    })).await;
-    assert_eq!(body["ok"], false);
-}
-
-#[tokio::test]
-async fn test_file_rename() {
-    let (app, tmp) = test_app();
-    post_json(&app, "/api/session/create", json!({"name": "f5"})).await;
-    post_json(&app, "/api/file/create", json!({"note_id": "f5", "name": "old.md"})).await;
-    let (_, body) = post_json(&app, "/api/file/rename", json!({
-        "note_id": "f5",
-        "old_name": "old.md",
-        "new_name": "new.md"
-    })).await;
-    assert_eq!(body["ok"], true);
-}
-
-#[tokio::test]
-async fn test_file_rename_conflict() {
-    let (app, _tmp) = test_app();
-    post_json(&app, "/api/session/create", json!({"name": "f6"})).await;
-    post_json(&app, "/api/file/create", json!({"note_id": "f6", "name": "a.md"})).await;
-    post_json(&app, "/api/file/create", json!({"note_id": "f6", "name": "b.md"})).await;
-    let (_, body) = post_json(&app, "/api/file/rename", json!({
-        "note_id": "f6",
-        "old_name": "a.md",
-        "new_name": "b.md"
-    })).await;
-    assert_eq!(body["ok"], false);
-    assert!(body["error"].as_str().unwrap().contains("exists"));
-}
-
-#[tokio::test]
-async fn test_file_delete() {
-    let (app, _tmp) = test_app();
-    post_json(&app, "/api/session/create", json!({"name": "f7"})).await;
-    post_json(&app, "/api/file/create", json!({"note_id": "f7", "name": "rm.md"})).await;
-    let (_, body) = post_json(&app, "/api/file/delete", json!({
-        "note_id": "f7",
-        "name": "rm.md"
-    })).await;
-    assert_eq!(body["ok"], true);
-}
-
-#[tokio::test]
-async fn test_file_update_invalid_filename() {
-    let (app, _tmp) = test_app();
-    post_json(&app, "/api/session/create", json!({"name": "f8"})).await;
-    let (_, body) = post_json(&app, "/api/file/update", json!({
-        "note_id": "f8",
-        "filename": "",
-        "content": "x"
-    })).await;
-    assert_eq!(body["ok"], false);
-}
-
-// ─── Model switch tests ────────────────────────────────────────────────────
-
-#[tokio::test]
-async fn test_model_switch_valid() {
-    let (app, _tmp) = test_app();
-    let (_, body) = post_json(&app, "/api/model/switch", json!({
-        "model": "claude-sonnet-4.6"
-    })).await;
-    assert_eq!(body["ok"], true);
-}
-
-#[tokio::test]
-async fn test_model_switch_unknown() {
-    let (app, _tmp) = test_app();
-    let (_, body) = post_json(&app, "/api/model/switch", json!({
-        "model": "unknown-model"
-    })).await;
-    assert_eq!(body["ok"], false);
-    assert!(body["error"].as_str().unwrap().contains("Unknown"));
-}
-
-// ─── Chat tests ────────────────────────────────────────────────────────────
-
-#[tokio::test]
-async fn test_chat_no_session() {
-    let (app, _tmp) = test_app();
-    let (_, body) = post_json(&app, "/api/chat", json!({
-        "note_id": "",
-        "content": "hello"
-    })).await;
-    assert_eq!(body["ok"], false);
-    assert!(body["error"].as_str().unwrap().contains("note"));
-}
-
-#[tokio::test]
-async fn test_chat_empty_content() {
-    let (app, _tmp) = test_app();
-    let (_, body) = post_json(&app, "/api/chat", json!({
-        "note_id": "s1",
-        "content": "   "
-    })).await;
-    assert_eq!(body["ok"], false);
-    assert!(body["error"].as_str().unwrap().contains("Empty"));
-}
-
-// ─── Archive + Search tests ────────────────────────────────────────────────
-
-#[tokio::test]
-async fn test_archive_no_session() {
-    let (app, _tmp) = test_app();
-    let (_, body) = post_json(&app, "/api/chat/archive", json!({
-        "note_id": ""
-    })).await;
-    assert_eq!(body["ok"], false);
-}
-
-#[tokio::test]
-async fn test_search_empty_query() {
-    let (app, _tmp) = test_app();
-    let (_, body) = post_json(&app, "/api/chat/search", json!({
-        "note_id": "s1",
-        "query": ""
-    })).await;
-    assert_eq!(body["ok"], false);
-    assert!(body["error"].as_str().unwrap().contains("Empty"));
-}
-
-#[tokio::test]
-async fn test_search_valid() {
-    let (app, _tmp) = test_app();
-    post_json(&app, "/api/session/create", json!({"name": "search-test"})).await;
-    let (_, body) = post_json(&app, "/api/chat/search", json!({
-        "note_id": "search-test",
-        "query": "hello"
-    })).await;
-    assert_eq!(body["ok"], true);
-}
-
-// ─── Dir browse tests ──────────────────────────────────────────────────────
-
-#[tokio::test]
-async fn test_dir_browse_root() {
-    let (app, _tmp) = test_app();
-    let (_, body) = post_json(&app, "/api/dir/browse", json!({
-        "path": "/tmp"
-    })).await;
-    assert_eq!(body["ok"], true);
-    assert!(body["data"].is_object());
-}
-
-#[tokio::test]
-async fn test_dir_browse_nonexistent() {
-    let (app, _tmp) = test_app();
-    let (_, body) = post_json(&app, "/api/dir/browse", json!({
-        "path": "/nonexistent_path_12345"
-    })).await;
-    // Should still return ok with empty entries
-    assert_eq!(body["ok"], true);
-}
-
-// ─── Approval test ─────────────────────────────────────────────────────────
-
-#[tokio::test]
-async fn test_approval_granted() {
-    let (app, _tmp) = test_app();
-    let (_, body) = post_json(&app, "/api/approval", json!({
-        "id": "test-123",
-        "approved": true
-    })).await;
-    assert_eq!(body["ok"], true);
-}
-
-#[tokio::test]
-async fn test_approval_denied() {
-    let (app, _tmp) = test_app();
-    let (_, body) = post_json(&app, "/api/approval", json!({
-        "id": "test-456",
-        "approved": false
-    })).await;
-    assert_eq!(body["ok"], true);
-}
-
-// ─── SSE endpoint test ─────────────────────────────────────────────────────
-
-#[tokio::test]
-async fn test_sse_events_connect() {
-    let (app, _tmp) = test_app();
-    let req = Request::builder()
-        .method("GET")
-        .uri("/api/events?nickname=tester")
-        .body(Body::empty())
-        .unwrap();
-    let resp = app.oneshot(req).await.unwrap();
-    assert_eq!(resp.status(), StatusCode::OK);
-    // Content-Type should be text/event-stream
-    let ct = resp.headers().get("content-type").unwrap().to_str().unwrap();
-    assert!(ct.contains("text/event-stream"), "Expected SSE content type, got: {}", ct);
-}
-
-// ─── Full flow integration test ────────────────────────────────────────────
-
-#[tokio::test]
-async fn test_full_session_file_flow() {
-    let (app, _tmp) = test_app();
-
-    // Create session
-    let (_, body) = post_json(&app, "/api/session/create", json!({
-        "name": "integration",
-    })).await;
-    assert_eq!(body["ok"], true);
-
-    // Create file
-    let (_, body) = post_json(&app, "/api/file/create", json!({
-        "note_id": "integration",
-        "name": "readme.md"
-    })).await;
-    assert_eq!(body["ok"], true);
-
-    // Update file
-    let (_, body) = post_json(&app, "/api/file/update", json!({
-        "note_id": "integration",
-        "filename": "readme.md",
-        "content": "# Integration Test\n\nThis works!"
-    })).await;
-    assert_eq!(body["ok"], true);
-
-    // Switch to file (read back)
-    let (_, body) = post_json(&app, "/api/file/switch", json!({
-        "note_id": "integration",
-        "name": "readme.md"
-    })).await;
-    assert_eq!(body["ok"], true);
-
-    // Rename file
-    let (_, body) = post_json(&app, "/api/file/rename", json!({
-        "note_id": "integration",
-        "old_name": "readme.md",
-        "new_name": "docs.md"
-    })).await;
-    assert_eq!(body["ok"], true);
-
-    // Delete file
-    let (_, body) = post_json(&app, "/api/file/delete", json!({
-        "note_id": "integration",
-        "name": "docs.md"
-    })).await;
-    assert_eq!(body["ok"], true);
-
-    // Delete session
-    let (_, body) = post_json(&app, "/api/session/delete", json!({
-        "note_id": "integration"
-    })).await;
-    assert_eq!(body["ok"], true);
-}
-
-}
-
 
 // ─── Per-Note Isolation Tests ──────────────────────────────────────────────
 
 #[cfg(test)]
 mod isolation_tests {
-    use crate::serve::api::NoteRoom;
-    use crate::serve::ServerState;
-    use crate::serve::db::ChatDb;
     use crate::config::RuneConfig;
-    use std::sync::Arc;
+    use crate::serve::api::NoteRoom;
+    use crate::serve::db::ChatDb;
+    use crate::serve::ServerState;
     use std::collections::HashMap;
-    use tokio::sync::{broadcast, RwLock};
+    use std::sync::Arc;
     use tempfile::TempDir;
+    use tokio::sync::{broadcast, RwLock};
     use tokio_util::sync::CancellationToken;
 
     fn make_state() -> (ServerState, TempDir) {
@@ -2539,7 +3159,6 @@ mod isolation_tests {
         assert!(!is_guest_allowed_event("history"));
     }
 
-
     #[tokio::test]
     async fn test_per_note_system_prompt() {
         let (state, _tmp) = make_state();
@@ -2557,7 +3176,6 @@ mod isolation_tests {
         *room.system_prompt.write().await = None;
         assert!(room.system_prompt.read().await.is_none());
     }
-
 
     #[tokio::test]
     async fn test_room_concurrent_create() {
@@ -2592,8 +3210,8 @@ mod isolation_tests {
     #[tokio::test]
     async fn test_model_override_admin_only_via_api() {
         // Use tower to test that model/switch with note_id requires admin
-        use axum::{routing::post, Router};
         use axum::body::Body;
+        use axum::{routing::post, Router};
         use http_body_util::BodyExt;
         use tower::ServiceExt;
 
@@ -2619,7 +3237,10 @@ mod isolation_tests {
         let _ = state.chat_db.create_note("test-note", "test-note", None);
 
         let app = Router::new()
-            .route("/api/model/switch", post(crate::serve::api::model_switch_handler))
+            .route(
+                "/api/model/switch",
+                post(crate::serve::api::model_switch_handler),
+            )
             .with_state(state.clone());
 
         // Admin can set per-note override
@@ -2627,7 +3248,9 @@ mod isolation_tests {
             .method("POST")
             .uri("/api/model/switch")
             .header("Content-Type", "application/json")
-            .body(Body::from(r#"{"model":"claude-sonnet-4.6","note_id":"test-note"}"#))
+            .body(Body::from(
+                r#"{"model":"claude-sonnet-4.6","note_id":"test-note"}"#,
+            ))
             .unwrap();
         let resp = app.clone().oneshot(req).await.unwrap();
         assert_eq!(resp.status(), axum::http::StatusCode::OK);
@@ -2643,8 +3266,8 @@ mod isolation_tests {
 
     #[tokio::test]
     async fn test_sse_note_not_found() {
-        use axum::{routing::get, Router};
         use axum::body::Body;
+        use axum::{routing::get, Router};
         use http_body_util::BodyExt;
         use tower::ServiceExt;
 
@@ -2682,13 +3305,17 @@ mod isolation_tests {
         // Body should contain error event
         let body = resp.into_body().collect().await.unwrap().to_bytes();
         let body_str = String::from_utf8_lossy(&body);
-        assert!(body_str.contains("Note not found"), "Expected 'Note not found' in: {}", body_str);
+        assert!(
+            body_str.contains("Note not found"),
+            "Expected 'Note not found' in: {}",
+            body_str
+        );
     }
 
     #[tokio::test]
     async fn test_guest_private_note_rejected() {
-        use axum::{routing::get, Router};
         use axum::body::Body;
+        use axum::{routing::get, Router};
         use http_body_util::BodyExt;
         use tower::ServiceExt;
 
@@ -2726,14 +3353,17 @@ mod isolation_tests {
         let resp = app.oneshot(req).await.unwrap();
         let body = resp.into_body().collect().await.unwrap().to_bytes();
         let body_str = String::from_utf8_lossy(&body);
-        assert!(body_str.contains("Guests cannot access private notes"),
-            "Expected auth_error in: {}", body_str);
+        assert!(
+            body_str.contains("Guests cannot access private notes"),
+            "Expected auth_error in: {}",
+            body_str
+        );
     }
 
     #[tokio::test]
     async fn test_guest_public_note_allowed() {
-        use axum::{routing::get, Router};
         use axum::body::Body;
+        use axum::{routing::get, Router};
         use http_body_util::BodyExt;
         use tower::ServiceExt;
 
@@ -2774,16 +3404,131 @@ mod isolation_tests {
 
         // Read first frame with timeout (SSE streams forever, so we just check first data)
         let mut body = resp.into_body();
-        let first_frame = tokio::time::timeout(
-            std::time::Duration::from_millis(100),
-            body.frame(),
-        ).await;
-        assert!(first_frame.is_ok(), "Should receive first SSE frame quickly");
+        let first_frame =
+            tokio::time::timeout(std::time::Duration::from_millis(100), body.frame()).await;
+        assert!(
+            first_frame.is_ok(),
+            "Should receive first SSE frame quickly"
+        );
         let frame = first_frame.unwrap().unwrap().unwrap();
         let data = frame.into_data().unwrap();
         let text = String::from_utf8_lossy(&data);
         // First event should be auth_result
-        assert!(text.contains("auth_result"), "Expected auth_result in first frame: {}", text);
+        assert!(
+            text.contains("auth_result"),
+            "Expected auth_result in first frame: {}",
+            text
+        );
     }
 
+    #[tokio::test]
+    async fn test_public_note_index_returns_public_files() {
+        use axum::body::Body;
+        use axum::{routing::get, Router};
+        use http_body_util::BodyExt;
+        use tower::ServiceExt;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let (admin_broadcast_tx, _) = broadcast::channel(256);
+        let db = crate::serve::db::ChatDb::open(&tmp.path().join("t.db")).unwrap();
+        let _ = db.create_note("main", "main", None);
+        let _ = db.set_note_public("main", true);
+        let _ = db.set_file_public("main", "OpenAI.md", true);
+        let _ = db.set_file_public("main", "private.md", false);
+
+        let state = crate::serve::ServerState {
+            config: crate::config::RuneConfig::default(),
+            user_token: None,
+            admin_token: Some("admin".into()),
+            guest_token: None,
+            files: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
+            active_file: Arc::new(tokio::sync::RwLock::new(String::new())),
+            models: vec!["m1".into()],
+            rooms: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
+            global_default_model: Arc::new(tokio::sync::RwLock::new("m1".into())),
+            admin_broadcast_tx,
+            chat_db: db,
+            data_dir: tmp.path().join(".rune"),
+        };
+
+        let app = Router::new()
+            .route(
+                "/notes/{note}/",
+                get(crate::serve::api::public_note_index_handler),
+            )
+            .route(
+                "/notes/{note}",
+                get(crate::serve::api::public_note_index_handler),
+            )
+            .with_state(state);
+
+        // With trailing slash
+        let req = axum::http::Request::builder()
+            .method("GET")
+            .uri("/notes/main/")
+            .body(Body::empty())
+            .unwrap();
+        let resp = app.clone().oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), axum::http::StatusCode::OK);
+        let body = String::from_utf8_lossy(&resp.into_body().collect().await.unwrap().to_bytes())
+            .to_string();
+        assert!(
+            body.contains("OpenAI.md"),
+            "Should show public file; got: {}",
+            &body[..body.len().min(300)]
+        );
+        assert!(!body.contains("private.md"), "Should NOT show private file");
+
+        // Without trailing slash
+        let req = axum::http::Request::builder()
+            .method("GET")
+            .uri("/notes/main")
+            .body(Body::empty())
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), axum::http::StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn test_public_note_index_private_note_returns_404() {
+        use axum::body::Body;
+        use axum::{routing::get, Router};
+        use tower::ServiceExt;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let (admin_broadcast_tx, _) = broadcast::channel(256);
+        let db = crate::serve::db::ChatDb::open(&tmp.path().join("t.db")).unwrap();
+        let _ = db.create_note("secret", "secret", None);
+        // Note stays private (public=false by default)
+
+        let state = crate::serve::ServerState {
+            config: crate::config::RuneConfig::default(),
+            user_token: None,
+            admin_token: Some("admin".into()),
+            guest_token: None,
+            files: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
+            active_file: Arc::new(tokio::sync::RwLock::new(String::new())),
+            models: vec!["m1".into()],
+            rooms: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
+            global_default_model: Arc::new(tokio::sync::RwLock::new("m1".into())),
+            admin_broadcast_tx,
+            chat_db: db,
+            data_dir: tmp.path().join(".rune"),
+        };
+
+        let app = Router::new()
+            .route(
+                "/notes/{note}/",
+                get(crate::serve::api::public_note_index_handler),
+            )
+            .with_state(state);
+
+        let req = axum::http::Request::builder()
+            .method("GET")
+            .uri("/notes/secret/")
+            .body(Body::empty())
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), axum::http::StatusCode::NOT_FOUND);
+    }
 }

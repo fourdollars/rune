@@ -2380,12 +2380,15 @@ mod tests {
     #[test]
     fn test_finalize_tool_calls_single() {
         let mut states = BTreeMap::new();
-        states.insert(0, StreamingToolCallState {
-            id: Some("call_1".to_string()),
-            call_type: "function".to_string(),
-            name: "read_file".to_string(),
-            arguments: r#"{"path":"/tmp"}"#.to_string(),
-        });
+        states.insert(
+            0,
+            StreamingToolCallState {
+                id: Some("call_1".to_string()),
+                call_type: "function".to_string(),
+                name: "read_file".to_string(),
+                arguments: r#"{"path":"/tmp"}"#.to_string(),
+            },
+        );
         let calls = finalize_tool_calls(states);
         assert_eq!(calls.len(), 1);
         assert_eq!(calls[0].id, "call_1");
@@ -2396,12 +2399,15 @@ mod tests {
     #[test]
     fn test_finalize_tool_calls_no_id_uses_index() {
         let mut states = BTreeMap::new();
-        states.insert(3, StreamingToolCallState {
-            id: None,
-            call_type: String::new(),
-            name: "execute_cmd".to_string(),
-            arguments: "{}".to_string(),
-        });
+        states.insert(
+            3,
+            StreamingToolCallState {
+                id: None,
+                call_type: String::new(),
+                name: "execute_cmd".to_string(),
+                arguments: "{}".to_string(),
+            },
+        );
         let calls = finalize_tool_calls(states);
         assert_eq!(calls.len(), 1);
         assert_eq!(calls[0].id, "stream-3");
@@ -2411,18 +2417,24 @@ mod tests {
     #[test]
     fn test_finalize_tool_calls_ordered_by_index() {
         let mut states = BTreeMap::new();
-        states.insert(1, StreamingToolCallState {
-            id: Some("c1".to_string()),
-            call_type: "function".to_string(),
-            name: "b_tool".to_string(),
-            arguments: "{}".to_string(),
-        });
-        states.insert(0, StreamingToolCallState {
-            id: Some("c0".to_string()),
-            call_type: "function".to_string(),
-            name: "a_tool".to_string(),
-            arguments: "{}".to_string(),
-        });
+        states.insert(
+            1,
+            StreamingToolCallState {
+                id: Some("c1".to_string()),
+                call_type: "function".to_string(),
+                name: "b_tool".to_string(),
+                arguments: "{}".to_string(),
+            },
+        );
+        states.insert(
+            0,
+            StreamingToolCallState {
+                id: Some("c0".to_string()),
+                call_type: "function".to_string(),
+                name: "a_tool".to_string(),
+                arguments: "{}".to_string(),
+            },
+        );
         let calls = finalize_tool_calls(states);
         // BTreeMap orders by key ascending
         assert_eq!(calls[0].function.name, "a_tool");
@@ -2516,7 +2528,10 @@ mod tests {
     fn test_gemini_provider_new_defaults() {
         let p = GeminiProvider::new("AIzaTest".to_string(), None, None);
         assert_eq!(p.model, "gemini-2.0-flash");
-        assert_eq!(p.base_url, "https://generativelanguage.googleapis.com/v1beta");
+        assert_eq!(
+            p.base_url,
+            "https://generativelanguage.googleapis.com/v1beta"
+        );
         assert_eq!(p.api_key, "AIzaTest");
     }
 
@@ -2617,7 +2632,10 @@ mod tests {
             max_tokens: None,
             thinking: None,
         };
-        let err = reg.chat_with_streaming("missing", req, tx).await.unwrap_err();
+        let err = reg
+            .chat_with_streaming("missing", req, tx)
+            .await
+            .unwrap_err();
         assert!(err.to_string().contains("provider not found"));
     }
 
@@ -2726,7 +2744,10 @@ mod tests {
         assert_eq!(tool_deltas.len(), 1);
         assert_eq!(tool_deltas[0].index, 0);
         assert_eq!(tool_deltas[0].id.as_deref(), Some("call_1"));
-        assert_eq!(tool_deltas[0].function.as_ref().unwrap().name.as_deref(), Some("read_file"));
+        assert_eq!(
+            tool_deltas[0].function.as_ref().unwrap().name.as_deref(),
+            Some("read_file")
+        );
     }
 
     #[test]
@@ -2877,9 +2898,7 @@ mod tests {
         let (content, _) = parse_choices(&v);
         assert_eq!(content, Some("   ".to_string()));
     }
-
 }
-
 
 #[cfg(test)]
 mod provider_tests {
@@ -2953,7 +2972,10 @@ mod provider_tests {
     #[test]
     fn test_finalize_tool_calls_nested_valid_json() {
         let mut states = BTreeMap::new();
-        states.insert(0, make_state("complex_tool", r#"{"a":{"b":[1,2,3]},"c":"d"}"#));
+        states.insert(
+            0,
+            make_state("complex_tool", r#"{"a":{"b":[1,2,3]},"c":"d"}"#),
+        );
 
         let result = finalize_tool_calls(states);
         assert_eq!(result.len(), 1, "valid nested JSON should be kept");

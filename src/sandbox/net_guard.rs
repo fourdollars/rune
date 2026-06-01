@@ -666,7 +666,7 @@ mod tests_extra {
         // Verify the pattern-matching logic: *.github.com → suffix ".github.com"
         let pattern = "*.github.com".to_string();
         let suffix = &pattern[1..]; // ".github.com"
-        let base = &suffix[1..];    // "github.com"
+        let base = &suffix[1..]; // "github.com"
 
         // subdomain should match
         assert!("raw.github.com".ends_with(suffix));
@@ -698,7 +698,7 @@ mod tests_extra {
     fn test_wildcard_deeply_nested_subdomain() {
         let pattern = "*.github.com";
         let suffix = &pattern[1..]; // ".github.com"
-        // deeply nested subdomain should also match
+                                    // deeply nested subdomain should also match
         let host = "a.b.github.com";
         assert!(host.ends_with(suffix));
     }
@@ -744,10 +744,7 @@ mod tests_extra {
 
     #[test]
     fn test_wildcard_strip_prefix_logic() {
-        let patterns = vec![
-            "*.github.com".to_string(),
-            "*.npmjs.com".to_string(),
-        ];
+        let patterns = vec!["*.github.com".to_string(), "*.npmjs.com".to_string()];
         for p in &patterns {
             if let Some(suffix) = p.strip_prefix('*') {
                 assert!(suffix.starts_with('.'));

@@ -1018,7 +1018,9 @@ allowed_domains = ["example.com"]"#;
     #[test]
     fn test_model_copilot_gpt4o_mini() {
         let m = match ("1", "2") {
-            ("1", "1") => "gpt-4o", ("1", "2") => "gpt-4o-mini", ("1", "3") => "claude-3.5-sonnet",
+            ("1", "1") => "gpt-4o",
+            ("1", "2") => "gpt-4o-mini",
+            ("1", "3") => "claude-3.5-sonnet",
             _ => "unknown",
         };
         assert_eq!(m, "gpt-4o-mini");
@@ -1027,7 +1029,9 @@ allowed_domains = ["example.com"]"#;
     #[test]
     fn test_model_gemini_flash() {
         let m = match ("2", "1") {
-            ("2", "1") => "gemini-2.0-flash", ("2", "2") => "gemini-1.5-pro", _ => "unknown",
+            ("2", "1") => "gemini-2.0-flash",
+            ("2", "2") => "gemini-1.5-pro",
+            _ => "unknown",
         };
         assert_eq!(m, "gemini-2.0-flash");
     }
@@ -1045,9 +1049,27 @@ allowed_domains = ["example.com"]"#;
 
     #[test]
     fn test_model_openai_provider_choices() {
-        assert_eq!(match ("3", "1") { ("3","1") => "gpt-4o-mini", _ => "x" }, "gpt-4o-mini");
-        assert_eq!(match ("3", "2") { ("3","2") => "gpt-4o", _ => "x" }, "gpt-4o");
-        assert_eq!(match ("3", "3") { ("3","3") => "gpt-4-turbo", _ => "x" }, "gpt-4-turbo");
+        assert_eq!(
+            match ("3", "1") {
+                ("3", "1") => "gpt-4o-mini",
+                _ => "x",
+            },
+            "gpt-4o-mini"
+        );
+        assert_eq!(
+            match ("3", "2") {
+                ("3", "2") => "gpt-4o",
+                _ => "x",
+            },
+            "gpt-4o"
+        );
+        assert_eq!(
+            match ("3", "3") {
+                ("3", "3") => "gpt-4-turbo",
+                _ => "x",
+            },
+            "gpt-4-turbo"
+        );
     }
 
     // ── Thinking level mapping ────────────────────────────────────────────
@@ -1055,16 +1077,29 @@ allowed_domains = ["example.com"]"#;
     #[test]
     fn test_thinking_off_variants() {
         for input in &["1", "off", "none"] {
-            let result = match *input { "1"|"off"|"none" => "off", "2"|"low" => "low",
-                "3"|"medium" => "medium", "4"|"high" => "high", "5"|"xhigh" => "xhigh", other => other };
+            let result = match *input {
+                "1" | "off" | "none" => "off",
+                "2" | "low" => "low",
+                "3" | "medium" => "medium",
+                "4" | "high" => "high",
+                "5" | "xhigh" => "xhigh",
+                other => other,
+            };
             assert_eq!(result, "off", "input: {}", input);
         }
     }
 
     #[test]
     fn test_thinking_high_and_xhigh() {
-        let high = match "4" { "1"|"off"|"none" => "off", "4"|"high" => "high", other => other };
-        let xhigh = match "5" { "5"|"xhigh" => "xhigh", other => other };
+        let high = match "4" {
+            "1" | "off" | "none" => "off",
+            "4" | "high" => "high",
+            other => other,
+        };
+        let xhigh = match "5" {
+            "5" | "xhigh" => "xhigh",
+            other => other,
+        };
         assert_eq!(high, "high");
         assert_eq!(xhigh, "xhigh");
     }
@@ -1075,7 +1110,9 @@ allowed_domains = ["example.com"]"#;
     fn test_thinking_not_written_when_off() {
         let thinking = "off";
         let mut c = String::new();
-        if thinking != "off" && thinking != "none" { c.push_str("thinking\n"); }
+        if thinking != "off" && thinking != "none" {
+            c.push_str("thinking\n");
+        }
         assert!(!c.contains("thinking"));
     }
 
@@ -1083,7 +1120,9 @@ allowed_domains = ["example.com"]"#;
     fn test_thinking_written_when_high() {
         let thinking = "high";
         let mut c = String::new();
-        if thinking != "off" && thinking != "none" { c.push_str(&format!("thinking = \"{}\"\n", thinking)); }
+        if thinking != "off" && thinking != "none" {
+            c.push_str(&format!("thinking = \"{}\"\n", thinking));
+        }
         assert!(c.contains("thinking = \"high\""));
     }
 
@@ -1091,7 +1130,9 @@ allowed_domains = ["example.com"]"#;
     fn test_base_url_not_written_when_none() {
         let base_url: Option<String> = None;
         let mut c = String::new();
-        if let Some(ref url) = base_url { c.push_str(&format!("base_url = \"{}\"\n", url)); }
+        if let Some(ref url) = base_url {
+            c.push_str(&format!("base_url = \"{}\"\n", url));
+        }
         assert!(!c.contains("base_url"));
     }
 
@@ -1099,7 +1140,9 @@ allowed_domains = ["example.com"]"#;
     fn test_base_url_written_when_some() {
         let base_url = Some("https://api.openai.com/v1".to_string());
         let mut c = String::new();
-        if let Some(ref url) = base_url { c.push_str(&format!("base_url = \"{}\"\n", url)); }
+        if let Some(ref url) = base_url {
+            c.push_str(&format!("base_url = \"{}\"\n", url));
+        }
         assert!(c.contains("https://api.openai.com/v1"));
     }
 
@@ -1107,7 +1150,9 @@ allowed_domains = ["example.com"]"#;
     fn test_api_key_not_written_when_empty() {
         let api_key = "";
         let mut c = String::new();
-        if !api_key.is_empty() { c.push_str(&format!("api_key = \"{}\"\n", api_key)); }
+        if !api_key.is_empty() {
+            c.push_str(&format!("api_key = \"{}\"\n", api_key));
+        }
         assert!(!c.contains("api_key"));
     }
 
@@ -1115,7 +1160,9 @@ allowed_domains = ["example.com"]"#;
     fn test_api_key_written_when_set() {
         let api_key = "ghu_test123";
         let mut c = String::new();
-        if !api_key.is_empty() { c.push_str(&format!("api_key = \"{}\"\n", api_key)); }
+        if !api_key.is_empty() {
+            c.push_str(&format!("api_key = \"{}\"\n", api_key));
+        }
         assert!(c.contains("ghu_test123"));
     }
 }

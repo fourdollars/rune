@@ -79,7 +79,17 @@ pub struct Agent {
     /// Optional approval callback (for WebUI serve mode).
     /// Called with (id, detail) when a tool needs user approval.
     /// Returns true = approved, false = denied.
-    pub approval_callback: Option<Arc<dyn Fn(String, String) -> std::pin::Pin<Box<dyn std::future::Future<Output = bool> + Send>> + Send + Sync>>,
+    pub approval_callback: Option<
+        Arc<
+            dyn Fn(
+                    String,
+                    String,
+                )
+                    -> std::pin::Pin<Box<dyn std::future::Future<Output = bool> + Send>>
+                + Send
+                + Sync,
+        >,
+    >,
     /// Shared markdown files (for serve mode — list_markdown/read_markdown/write_markdown tools).
     pub files: Option<Arc<RwLock<std::collections::HashMap<String, String>>>>,
     /// Currently active filename.
@@ -234,7 +244,12 @@ impl Agent {
     pub fn load_history(&mut self, records: &[crate::serve::db::ChatRecord]) {
         use crate::provider::LlmMessage;
         // Find insertion point: after system message (index 0), before any existing messages
-        let insert_at = if self.messages.first().map(|m| m.role == "system").unwrap_or(false) {
+        let insert_at = if self
+            .messages
+            .first()
+            .map(|m| m.role == "system")
+            .unwrap_or(false)
+        {
             1
         } else {
             0
@@ -743,7 +758,7 @@ impl Agent {
 
             // Update token usage
             self.tokens_used += response.usage.total_tokens;
-            self.tokens_in  += response.usage.prompt_tokens;
+            self.tokens_in += response.usage.prompt_tokens;
             self.tokens_out += response.usage.completion_tokens;
 
             // If no tool calls, we have our final answer
@@ -763,7 +778,8 @@ impl Agent {
             }
 
             // We have tool calls — validate arguments JSON before adding to history
-            let valid_tool_calls: Vec<_> = response.tool_calls
+            let valid_tool_calls: Vec<_> = response
+                .tool_calls
                 .iter()
                 .filter(|tc| {
                     if tc.function.arguments.is_empty() {
@@ -1098,35 +1114,51 @@ impl Agent {
         }
     }
 
-/// Handle search_chat tool for serve mode — full-text search across live DB + archives.
+    /// Handle search_chat tool for serve mode — full-text search across live DB + archives.
     async fn handle_search_chat_tool(&self, args: &serde_json::Value) -> Option<String> {
         let db = self.chat_db.as_ref()?;
         let query = args.get("query").and_then(|v| v.as_str())?;
         let session_id = self.chat_note_id.as_deref().unwrap_or("default");
-        let archive_dir = self.chat_archive_dir.clone()
+        let archive_dir = self
+            .chat_archive_dir
+            .clone()
             .unwrap_or_else(|| std::path::PathBuf::from("."));
-        let results = db.search_async(
-            session_id.to_string(),
-            query.to_string(),
-            archive_dir,
-        ).await;
+        let results = db
+            .search_async(session_id.to_string(), query.to_string(), archive_dir)
+            .await;
         if results.is_empty() {
             return Some(format!("No messages found for query: \"{}\"", query));
         }
-        let lines: Vec<String> = results.iter().map(|r| {
-            format!("[ts={}] {}: {}", r.created_at, r.nickname, char_preview(&r.content, 200))
-        }).collect();
-        Some(format!("{} result(s) for \"{}\":\n{}", lines.len(), query, lines.join("\n")))
+        let lines: Vec<String> = results
+            .iter()
+            .map(|r| {
+                format!(
+                    "[ts={}] {}: {}",
+                    r.created_at,
+                    r.nickname,
+                    char_preview(&r.content, 200)
+                )
+            })
+            .collect();
+        Some(format!(
+            "{} result(s) for \"{}\":\n{}",
+            lines.len(),
+            query,
+            lines.join("\n")
+        ))
     }
 
-/// Handle markdown tools (list_markdown / read_markdown / write_markdown) for serve mode.
+    /// Handle markdown tools (list_markdown / read_markdown / write_markdown) for serve mode.
     /// Returns Some(output) if handled, None if not a markdown tool.
     /// All operations are disk-based per-session (no shared in-memory map).
     async fn handle_markdown_tool(&self, name: &str, args: &serde_json::Value) -> Option<String> {
         let md_dir = self.markdown_dir.as_ref()?;
 
         // Resolve filename: use arg if provided, else first .md file in dir
-        let fname_arg = args.get("filename").and_then(|v| v.as_str()).map(|s| s.to_string());
+        let fname_arg = args
+            .get("filename")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
         let fname = if let Some(f) = fname_arg {
             f
         } else {
@@ -1178,8 +1210,12 @@ impl Agent {
                     if let Err(e) = tokio::fs::write(&file_path, full_content).await {
                         return Some(format!("Error writing {}: {}", fname, e));
                     }
-                    if let Some(cb) = &self.file_list_callback { cb(); }
-                    if let Some(cb) = &self.file_content_callback { cb(fname.clone(), full_content.to_string()); }
+                    if let Some(cb) = &self.file_list_callback {
+                        cb();
+                    }
+                    if let Some(cb) = &self.file_content_callback {
+                        cb(fname.clone(), full_content.to_string());
+                    }
                     Some(format!("{} updated (full replace)", fname))
                 } else if let (Some(search_str), Some(replace_str)) = (search, replace) {
                     match tokio::fs::read_to_string(&file_path).await {
@@ -1189,9 +1225,17 @@ impl Agent {
                                 if let Err(e) = tokio::fs::write(&file_path, &updated).await {
                                     return Some(format!("Error writing {}: {}", fname, e));
                                 }
-                                if let Some(cb) = &self.file_list_callback { cb(); }
-                                if let Some(cb) = &self.file_content_callback { cb(fname.clone(), updated.clone()); }
-                                Some(format!("{} updated: replaced '{}...'", fname, char_preview(search_str, 40)))
+                                if let Some(cb) = &self.file_list_callback {
+                                    cb();
+                                }
+                                if let Some(cb) = &self.file_content_callback {
+                                    cb(fname.clone(), updated.clone());
+                                }
+                                Some(format!(
+                                    "{} updated: replaced '{}...'",
+                                    fname,
+                                    char_preview(search_str, 40)
+                                ))
                             } else {
                                 Some(format!("Error: search text not found in {}", fname))
                             }
@@ -1205,8 +1249,6 @@ impl Agent {
             _ => None,
         }
     }
-
-
 
     /// Truncate a string keeping prefix and suffix, replacing middle with "..."
     fn truncate_middle(s: &str, max_len: usize) -> String {
@@ -1252,9 +1294,7 @@ impl Agent {
         if let Some(ref mut t) = self.trace {
             t.record(StepKind::ToolCall {
                 name: tc.function.name.clone(),
-                arguments_preview: redact(
-                    char_preview(&tc.function.arguments, 100).as_str(),
-                ),
+                arguments_preview: redact(char_preview(&tc.function.arguments, 100).as_str()),
             });
         }
 
@@ -1282,7 +1322,11 @@ impl Agent {
             // WebUI serve mode: use approval_callback
             if let Some(ref cb) = self.approval_callback {
                 let id = format!("{}-{}", tc.function.name, uuid_approval());
-                let detail = format!("{} {}", tc.function.name, serde_json::to_string(&args).unwrap_or_default());
+                let detail = format!(
+                    "{} {}",
+                    tc.function.name,
+                    serde_json::to_string(&args).unwrap_or_default()
+                );
                 let approved = cb(id.clone(), detail).await;
                 if !approved {
                     return Ok("DENIED: user rejected tool execution".to_string());
@@ -2195,7 +2239,11 @@ fn uuid_approval() -> String {
     let t = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default();
-    format!("{:x}{:04x}", t.as_secs() & 0xffff, t.subsec_nanos() & 0xffff)
+    format!(
+        "{:x}{:04x}",
+        t.as_secs() & 0xffff,
+        t.subsec_nanos() & 0xffff
+    )
 }
 
 #[cfg(test)]
@@ -2681,8 +2729,8 @@ read(3, "root:x:0:0:...", 4096) = 1234"#;
 
     #[test]
     fn test_load_history_injects_messages() {
-        use crate::serve::db::ChatRecord;
         use crate::provider::Provider;
+        use crate::serve::db::ChatRecord;
         // Minimal stub: just test load_history inserts messages correctly
         // We can't easily build a full Agent without a provider, so test via
         // direct message count inspection after load_history.
@@ -2695,15 +2743,32 @@ read(3, "root:x:0:0:...", 4096) = 1234"#;
         // We need a provider — skip if unavailable in test env
         // Instead, test load_history logic via a minimal agent construction:
         let records = vec![
-            ChatRecord { id: 1, note_id: "default".into(), role: "user".into(),
-                nickname: "alice".into(), content: "hello".into(), created_at: 0,
-            model: None, tokens_in: None, tokens_out: None },
-            ChatRecord { id: 2, note_id: "default".into(), role: "assistant".into(),
-                nickname: "rune".into(), content: "hi there".into(), created_at: 1,
-            model: None, tokens_in: None, tokens_out: None },
+            ChatRecord {
+                id: 1,
+                note_id: "default".into(),
+                role: "user".into(),
+                nickname: "alice".into(),
+                content: "hello".into(),
+                created_at: 0,
+                model: None,
+                tokens_in: None,
+                tokens_out: None,
+            },
+            ChatRecord {
+                id: 2,
+                note_id: "default".into(),
+                role: "assistant".into(),
+                nickname: "rune".into(),
+                content: "hi there".into(),
+                created_at: 1,
+                model: None,
+                tokens_in: None,
+                tokens_out: None,
+            },
         ];
         // Verify filtering: tool_call roles should be excluded
-        let filtered: Vec<_> = records.iter()
+        let filtered: Vec<_> = records
+            .iter()
             .filter(|r| r.role == "user" || r.role == "assistant")
             .collect();
         assert_eq!(filtered.len(), 2);
@@ -2772,12 +2837,16 @@ read(3, "root:x:0:0:...", 4096) = 1234"#;
 
     #[test]
     fn test_is_policy_blocked_starts_with_blocked() {
-        assert!(Agent::is_policy_blocked("BLOCKED: domain not in allowed_domains"));
+        assert!(Agent::is_policy_blocked(
+            "BLOCKED: domain not in allowed_domains"
+        ));
     }
 
     #[test]
     fn test_is_policy_blocked_starts_with_blocked_by_policy() {
-        assert!(Agent::is_policy_blocked("BLOCKED by policy: command not allowed"));
+        assert!(Agent::is_policy_blocked(
+            "BLOCKED by policy: command not allowed"
+        ));
     }
 
     #[test]
@@ -2789,7 +2858,9 @@ read(3, "root:x:0:0:...", 4096) = 1234"#;
 
     #[test]
     fn test_is_policy_blocked_allowed_commands_msg() {
-        assert!(Agent::is_policy_blocked("command 'curl' is not in allowed_commands"));
+        assert!(Agent::is_policy_blocked(
+            "command 'curl' is not in allowed_commands"
+        ));
     }
 
     #[test]
@@ -2818,7 +2889,10 @@ read(3, "root:x:0:0:...", 4096) = 1234"#;
 
     #[test]
     fn test_char_preview_unicode_boundary() {
-        assert_eq!(super::char_preview("\u{4f60}\u{597d}\u{4e16}\u{754c}", 2), "\u{4f60}\u{597d}");
+        assert_eq!(
+            super::char_preview("\u{4f60}\u{597d}\u{4e16}\u{754c}", 2),
+            "\u{4f60}\u{597d}"
+        );
     }
 
     #[test]
@@ -2853,7 +2927,10 @@ read(3, "root:x:0:0:...", 4096) = 1234"#;
 
     #[test]
     fn test_extract_blocked_domain_no_match() {
-        assert_eq!(Agent::extract_blocked_domain("network is unreachable"), None);
+        assert_eq!(
+            Agent::extract_blocked_domain("network is unreachable"),
+            None
+        );
         assert_eq!(Agent::extract_blocked_domain(""), None);
     }
 
@@ -3069,12 +3146,16 @@ read(3, "root:x:0:0:...", 4096) = 1234"#;
 
     #[test]
     fn test_contains_permission_denied_mixed_case() {
-        assert!(super::contains_permission_denied("Error: PERMISSION DENIED"));
+        assert!(super::contains_permission_denied(
+            "Error: PERMISSION DENIED"
+        ));
     }
 
     #[test]
     fn test_contains_permission_denied_false_positive_check() {
-        assert!(!super::contains_permission_denied("access granted to resource"));
+        assert!(!super::contains_permission_denied(
+            "access granted to resource"
+        ));
         assert!(!super::contains_permission_denied("accessed the database"));
     }
 
@@ -3116,7 +3197,6 @@ read(3, "root:x:0:0:...", 4096) = 1234"#;
         assert_eq!(result, "'echo $HOME'");
     }
 
-
     // ─── MockProvider for Agent construction tests ───────────────────────────
 
     struct MockProvider;
@@ -3127,7 +3207,13 @@ read(3, "root:x:0:0:...", 4096) = 1234"#;
         fn chat(
             &self,
             _request: crate::provider::LlmRequest,
-        ) -> std::pin::Pin<Box<dyn std::future::Future<Output = anyhow::Result<crate::provider::LlmResponse>> + Send + '_>> {
+        ) -> std::pin::Pin<
+            Box<
+                dyn std::future::Future<Output = anyhow::Result<crate::provider::LlmResponse>>
+                    + Send
+                    + '_,
+            >,
+        > {
             Box::pin(async move {
                 Ok(crate::provider::LlmResponse {
                     content: Some("mock response".to_string()),
@@ -3178,10 +3264,23 @@ read(3, "root:x:0:0:...", 4096) = 1234"#;
         let mut registry = crate::provider::ProviderRegistry::new();
         registry.register(Box::new(MockProvider));
         let agent = Agent::new(config, registry, false, None);
-        let cwd = std::env::current_dir().unwrap().to_string_lossy().to_string();
+        let cwd = std::env::current_dir()
+            .unwrap()
+            .to_string_lossy()
+            .to_string();
         assert!(
-            agent.config.policy.allowed_paths_ro.iter().any(|p| cwd.starts_with(p.trim_end_matches("/")))
-            || agent.config.policy.allowed_paths_rw.iter().any(|p| cwd.starts_with(p.trim_end_matches("/")))
+            agent
+                .config
+                .policy
+                .allowed_paths_ro
+                .iter()
+                .any(|p| cwd.starts_with(p.trim_end_matches("/")))
+                || agent
+                    .config
+                    .policy
+                    .allowed_paths_rw
+                    .iter()
+                    .any(|p| cwd.starts_with(p.trim_end_matches("/")))
         );
     }
 
@@ -3213,10 +3312,7 @@ read(3, "root:x:0:0:...", 4096) = 1234"#;
     async fn test_set_system_prompt_content_stored() {
         let mut agent = make_test_agent();
         agent.set_system_prompt("Be concise.");
-        assert_eq!(
-            agent.messages[0].content.as_deref(),
-            Some("Be concise.")
-        );
+        assert_eq!(agent.messages[0].content.as_deref(), Some("Be concise."));
     }
 
     #[tokio::test]
@@ -3225,10 +3321,7 @@ read(3, "root:x:0:0:...", 4096) = 1234"#;
         agent.set_system_prompt("First prompt.");
         agent.set_system_prompt("Second prompt.");
         assert_eq!(agent.message_count(), 1);
-        assert_eq!(
-            agent.messages[0].content.as_deref(),
-            Some("Second prompt.")
-        );
+        assert_eq!(agent.messages[0].content.as_deref(), Some("Second prompt."));
     }
 
     #[tokio::test]
@@ -3529,7 +3622,12 @@ read(3, "root:x:0:0:...", 4096) = 1234"#;
         let mut registry = crate::provider::ProviderRegistry::new();
         registry.register(Box::new(MockProvider));
         let agent = Agent::new(config, registry, false, None);
-        assert!(agent.config.policy.allowed_paths_rw.iter().any(|p| p == "/tmp"));
+        assert!(agent
+            .config
+            .policy
+            .allowed_paths_rw
+            .iter()
+            .any(|p| p == "/tmp"));
     }
 
     #[tokio::test]
@@ -3574,21 +3672,53 @@ read(3, "root:x:0:0:...", 4096) = 1234"#;
             agent.set_system_prompt(&format!("prompt #{}", i));
         }
         assert_eq!(agent.message_count(), 1);
-        assert_eq!(
-            agent.messages[0].content.as_deref(),
-            Some("prompt #4")
-        );
+        assert_eq!(agent.messages[0].content.as_deref(), Some("prompt #4"));
     }
 
     #[test]
     fn test_sanitize_trailing_user_messages() {
         // Simulates what load_history does: trim consecutive trailing user messages
         let mut msgs: Vec<LlmMessage> = vec![
-            LlmMessage { role: "user".into(), name: None, content: Some("q1".into()), tool_calls: None, tool_call_id: None, content_parts: None },
-            LlmMessage { role: "assistant".into(), name: None, content: Some("a1".into()), tool_calls: None, tool_call_id: None, content_parts: None },
-            LlmMessage { role: "user".into(), name: None, content: Some("orphan1".into()), tool_calls: None, tool_call_id: None, content_parts: None },
-            LlmMessage { role: "user".into(), name: None, content: Some("orphan2".into()), tool_calls: None, tool_call_id: None, content_parts: None },
-            LlmMessage { role: "user".into(), name: None, content: Some("latest".into()), tool_calls: None, tool_call_id: None, content_parts: None },
+            LlmMessage {
+                role: "user".into(),
+                name: None,
+                content: Some("q1".into()),
+                tool_calls: None,
+                tool_call_id: None,
+                content_parts: None,
+            },
+            LlmMessage {
+                role: "assistant".into(),
+                name: None,
+                content: Some("a1".into()),
+                tool_calls: None,
+                tool_call_id: None,
+                content_parts: None,
+            },
+            LlmMessage {
+                role: "user".into(),
+                name: None,
+                content: Some("orphan1".into()),
+                tool_calls: None,
+                tool_call_id: None,
+                content_parts: None,
+            },
+            LlmMessage {
+                role: "user".into(),
+                name: None,
+                content: Some("orphan2".into()),
+                tool_calls: None,
+                tool_call_id: None,
+                content_parts: None,
+            },
+            LlmMessage {
+                role: "user".into(),
+                name: None,
+                content: Some("latest".into()),
+                tool_calls: None,
+                tool_call_id: None,
+                content_parts: None,
+            },
         ];
 
         // Apply same logic as load_history
@@ -3610,9 +3740,30 @@ read(3, "root:x:0:0:...", 4096) = 1234"#;
     #[test]
     fn test_sanitize_no_orphans_unchanged() {
         let mut msgs: Vec<LlmMessage> = vec![
-            LlmMessage { role: "user".into(), name: None, content: Some("q1".into()), tool_calls: None, tool_call_id: None, content_parts: None },
-            LlmMessage { role: "assistant".into(), name: None, content: Some("a1".into()), tool_calls: None, tool_call_id: None, content_parts: None },
-            LlmMessage { role: "user".into(), name: None, content: Some("q2".into()), tool_calls: None, tool_call_id: None, content_parts: None },
+            LlmMessage {
+                role: "user".into(),
+                name: None,
+                content: Some("q1".into()),
+                tool_calls: None,
+                tool_call_id: None,
+                content_parts: None,
+            },
+            LlmMessage {
+                role: "assistant".into(),
+                name: None,
+                content: Some("a1".into()),
+                tool_calls: None,
+                tool_call_id: None,
+                content_parts: None,
+            },
+            LlmMessage {
+                role: "user".into(),
+                name: None,
+                content: Some("q2".into()),
+                tool_calls: None,
+                tool_call_id: None,
+                content_parts: None,
+            },
         ];
 
         while msgs.len() >= 2 {
@@ -3631,9 +3782,30 @@ read(3, "root:x:0:0:...", 4096) = 1234"#;
     #[test]
     fn test_sanitize_all_user_messages() {
         let mut msgs: Vec<LlmMessage> = vec![
-            LlmMessage { role: "user".into(), name: None, content: Some("m1".into()), tool_calls: None, tool_call_id: None, content_parts: None },
-            LlmMessage { role: "user".into(), name: None, content: Some("m2".into()), tool_calls: None, tool_call_id: None, content_parts: None },
-            LlmMessage { role: "user".into(), name: None, content: Some("m3".into()), tool_calls: None, tool_call_id: None, content_parts: None },
+            LlmMessage {
+                role: "user".into(),
+                name: None,
+                content: Some("m1".into()),
+                tool_calls: None,
+                tool_call_id: None,
+                content_parts: None,
+            },
+            LlmMessage {
+                role: "user".into(),
+                name: None,
+                content: Some("m2".into()),
+                tool_calls: None,
+                tool_call_id: None,
+                content_parts: None,
+            },
+            LlmMessage {
+                role: "user".into(),
+                name: None,
+                content: Some("m3".into()),
+                tool_calls: None,
+                tool_call_id: None,
+                content_parts: None,
+            },
         ];
 
         while msgs.len() >= 2 {
@@ -3669,7 +3841,9 @@ read(3, "root:x:0:0:...", 4096) = 1234"#;
         // Track file_list_callback calls
         let list_calls = Arc::new(Mutex::new(0u32));
         let lc = list_calls.clone();
-        agent.file_list_callback = Some(Arc::new(move || { *lc.lock().unwrap() += 1; }));
+        agent.file_list_callback = Some(Arc::new(move || {
+            *lc.lock().unwrap() += 1;
+        }));
 
         // Track file_content_callback calls
         let content_calls: Arc<Mutex<Vec<(String, String)>>> = Arc::new(Mutex::new(vec![]));
@@ -3695,7 +3869,8 @@ read(3, "root:x:0:0:...", 4096) = 1234"#;
         assert_eq!(on_disk, "# Replaced");
 
         // Test 2: search/replace
-        let args2 = serde_json::json!({"filename": "hello.md", "search": "Replaced", "replace": "Edited"});
+        let args2 =
+            serde_json::json!({"filename": "hello.md", "search": "Replaced", "replace": "Edited"});
         let result2 = agent.handle_markdown_tool("write_markdown", &args2).await;
         assert!(result2.unwrap().contains("updated: replaced"));
         assert_eq!(*list_calls.lock().unwrap(), 2);
@@ -3742,9 +3917,9 @@ read(3, "root:x:0:0:...", 4096) = 1234"#;
         let mut agent = Agent::new(config, provider, false, None);
         agent.markdown_dir = Some(md_dir);
 
-        let args = serde_json::json!({"filename": "test.md", "search": "nonexistent", "replace": "x"});
+        let args =
+            serde_json::json!({"filename": "test.md", "search": "nonexistent", "replace": "x"});
         let result = agent.handle_markdown_tool("write_markdown", &args).await;
         assert!(result.unwrap().contains("search text not found"));
     }
-
 }

@@ -1983,7 +1983,10 @@ model: different
     fn test_resolve_path_relative_becomes_absolute() {
         // Relative paths should become absolute (under cwd)
         let result = resolve_path("some/relative/path");
-        assert!(result.starts_with('/'), "relative path must become absolute");
+        assert!(
+            result.starts_with('/'),
+            "relative path must become absolute"
+        );
         assert!(result.ends_with("some/relative/path") || result.contains("some/relative/path"));
     }
 
@@ -1993,7 +1996,11 @@ model: different
         let home = std::env::var("HOME").unwrap_or_default();
         if !home.is_empty() {
             let result = resolve_path("~/docs");
-            assert!(!result.contains('~'), "tilde should be expanded, got {}", result);
+            assert!(
+                !result.contains('~'),
+                "tilde should be expanded, got {}",
+                result
+            );
             assert!(result.contains("docs"));
         }
     }
@@ -2091,7 +2098,9 @@ model: different
         let data = b"hello world this is test data";
         std::fs::write(&path, data).unwrap();
         let (b64, _) = load_image_as_base64(&path).unwrap();
-        let decoded = base64::engine::general_purpose::STANDARD.decode(&b64).unwrap();
+        let decoded = base64::engine::general_purpose::STANDARD
+            .decode(&b64)
+            .unwrap();
         assert_eq!(decoded, data);
         let _ = std::fs::remove_file(&path);
     }

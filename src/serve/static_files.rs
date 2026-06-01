@@ -5,16 +5,25 @@ use std::sync::LazyLock;
 
 static ASSETS: LazyLock<HashMap<&'static str, &'static str>> = LazyLock::new(|| {
     let mut m = HashMap::new();
-    m.insert("index.html",             include_str!("../../web/index.html"));
-    m.insert("favicon.svg",            include_str!("../../web/favicon.svg"));
-    m.insert("app.js",                 include_str!("../../web/app.js"));
-    m.insert("style.css",              include_str!("../../web/style.css"));
-    m.insert("marked.min.js",          include_str!("../../web/marked.min.js"));
-    m.insert("highlight.min.js",       include_str!("../../web/highlight.min.js"));
-    m.insert("highlight-dark.min.css", include_str!("../../web/highlight-dark.min.css"));
-    m.insert("katex.min.css",          include_str!("../../web/katex.min.css"));
-    m.insert("katex.min.js",           include_str!("../../web/katex.min.js"));
-    m.insert("katex-auto-render.min.js", include_str!("../../web/katex-auto-render.min.js"));
+    m.insert("index.html", include_str!("../../web/index.html"));
+    m.insert("favicon.svg", include_str!("../../web/favicon.svg"));
+    m.insert("app.js", include_str!("../../web/app.js"));
+    m.insert("style.css", include_str!("../../web/style.css"));
+    m.insert("marked.min.js", include_str!("../../web/marked.min.js"));
+    m.insert(
+        "highlight.min.js",
+        include_str!("../../web/highlight.min.js"),
+    );
+    m.insert(
+        "highlight-dark.min.css",
+        include_str!("../../web/highlight-dark.min.css"),
+    );
+    m.insert("katex.min.css", include_str!("../../web/katex.min.css"));
+    m.insert("katex.min.js", include_str!("../../web/katex.min.js"));
+    m.insert(
+        "katex-auto-render.min.js",
+        include_str!("../../web/katex-auto-render.min.js"),
+    );
     m
 });
 
@@ -40,57 +49,95 @@ mod tests {
     #[test]
     fn test_static_assets_present() {
         assert!(get("index.html").is_some(), "index.html missing");
-        assert!(get("app.js").is_some(),     "app.js missing");
-        assert!(get("style.css").is_some(),  "style.css missing");
-        assert!(get("favicon.svg").is_some(),"favicon.svg missing");
+        assert!(get("app.js").is_some(), "app.js missing");
+        assert!(get("style.css").is_some(), "style.css missing");
+        assert!(get("favicon.svg").is_some(), "favicon.svg missing");
         assert!(get("katex.min.css").is_some(), "katex.min.css missing");
         assert!(get("katex.min.js").is_some(), "katex.min.js missing");
-        assert!(get("katex-auto-render.min.js").is_some(), "katex-auto-render.min.js missing");
+        assert!(
+            get("katex-auto-render.min.js").is_some(),
+            "katex-auto-render.min.js missing"
+        );
     }
 
     #[test]
     fn test_katex_assets_valid() {
         let css = get("katex.min.css").unwrap();
-        assert!(css.contains(".katex"), "katex.min.css doesn't contain .katex selector");
+        assert!(
+            css.contains(".katex"),
+            "katex.min.css doesn't contain .katex selector"
+        );
         let js = get("katex.min.js").unwrap();
-        assert!(js.len() > 100_000, "katex.min.js suspiciously small: {} bytes", js.len());
+        assert!(
+            js.len() > 100_000,
+            "katex.min.js suspiciously small: {} bytes",
+            js.len()
+        );
         let ar = get("katex-auto-render.min.js").unwrap();
-        assert!(ar.contains("renderMathInElement"), "auto-render missing renderMathInElement");
+        assert!(
+            ar.contains("renderMathInElement"),
+            "auto-render missing renderMathInElement"
+        );
     }
 
     #[test]
     fn test_binary_assets_present() {
-        assert!(get_bytes("mermaid.min.js").is_some(), "mermaid.min.js missing");
+        assert!(
+            get_bytes("mermaid.min.js").is_some(),
+            "mermaid.min.js missing"
+        );
         let bytes = get_bytes("mermaid.min.js").unwrap();
-        assert!(bytes.len() > 1_000_000, "mermaid.min.js suspiciously small: {} bytes", bytes.len());
+        assert!(
+            bytes.len() > 1_000_000,
+            "mermaid.min.js suspiciously small: {} bytes",
+            bytes.len()
+        );
     }
 
     #[test]
     fn test_app_js_has_mermaid_retry() {
         let js = get("app.js").unwrap();
-        assert!(js.contains("mermaid-block"), "app.js missing mermaid-block class");
-        assert!(js.contains("doRender"), "app.js missing mermaid doRender retry logic");
+        assert!(
+            js.contains("mermaid-block"),
+            "app.js missing mermaid-block class"
+        );
+        assert!(
+            js.contains("doRender"),
+            "app.js missing mermaid doRender retry logic"
+        );
     }
 
     #[test]
     fn test_app_js_has_svg_postprocess() {
         let js = get("app.js").unwrap();
-        assert!(js.contains("postprocess"), "app.js missing SVG postprocess hook");
-        assert!(js.contains(r"<\/svg>"), "app.js SVG postprocess regex missing");
+        assert!(
+            js.contains("postprocess"),
+            "app.js missing SVG postprocess hook"
+        );
+        assert!(
+            js.contains(r"<\/svg>"),
+            "app.js SVG postprocess regex missing"
+        );
     }
 
     #[test]
     fn test_app_js_has_mermaid_block_renderer() {
         let js = get("app.js").unwrap();
         assert!(js.contains("mermaid"), "app.js missing mermaid references");
-        assert!(js.contains("data-src"), "app.js missing mermaid data-src attribute");
+        assert!(
+            js.contains("data-src"),
+            "app.js missing mermaid data-src attribute"
+        );
     }
 
     #[test]
     fn test_favicon_svg_content() {
         let svg = get("favicon.svg").unwrap();
         assert!(svg.contains("<svg"), "favicon.svg is not an SVG");
-        assert!(svg.contains("ᚱ") || svg.contains("&#"), "favicon.svg missing rune character");
+        assert!(
+            svg.contains("ᚱ") || svg.contains("&#"),
+            "favicon.svg missing rune character"
+        );
     }
 
     #[test]
@@ -102,102 +149,179 @@ mod tests {
     #[test]
     fn test_app_js_has_toggle_functions() {
         let js = get("app.js").unwrap();
-        assert!(js.contains("toggleEdit"),    "app.js missing toggleEdit()");
-        assert!(js.contains("togglePreview"), "app.js missing togglePreview()");
-        assert!(js.contains("applyPanelLayout"), "app.js missing applyPanelLayout()");
-        assert!(js.contains("showEdit"),      "app.js missing showEdit state");
-        assert!(js.contains("showPreview"),   "app.js missing showPreview state");
+        assert!(js.contains("toggleEdit"), "app.js missing toggleEdit()");
+        assert!(
+            js.contains("togglePreview"),
+            "app.js missing togglePreview()"
+        );
+        assert!(
+            js.contains("applyPanelLayout"),
+            "app.js missing applyPanelLayout()"
+        );
+        assert!(js.contains("showEdit"), "app.js missing showEdit state");
+        assert!(
+            js.contains("showPreview"),
+            "app.js missing showPreview state"
+        );
     }
 
     #[test]
     fn test_app_js_has_split_view() {
         let js = get("app.js").unwrap();
-        assert!(js.contains("split-view"), "app.js missing split-view class toggle");
-        assert!(js.contains("center-body"), "app.js missing center-body reference");
+        assert!(
+            js.contains("split-view"),
+            "app.js missing split-view class toggle"
+        );
+        assert!(
+            js.contains("center-body"),
+            "app.js missing center-body reference"
+        );
     }
 
     #[test]
     fn test_index_html_has_toggle_buttons() {
         let html = get("index.html").unwrap();
-        assert!(html.contains("toggleEdit()"),     "index.html missing toggleEdit()");
-        assert!(html.contains("togglePreview()"),  "index.html missing togglePreview()");
-        assert!(html.contains("center-body"),      "index.html missing center-body div");
+        assert!(
+            html.contains("toggleEdit()"),
+            "index.html missing toggleEdit()"
+        );
+        assert!(
+            html.contains("togglePreview()"),
+            "index.html missing togglePreview()"
+        );
+        assert!(
+            html.contains("center-body"),
+            "index.html missing center-body div"
+        );
     }
 
     #[test]
     fn test_style_has_split_view() {
         let css = get("style.css").unwrap();
-        assert!(css.contains("split-view"),  "style.css missing split-view styles");
-        assert!(css.contains("center-body"), "style.css missing center-body styles");
+        assert!(
+            css.contains("split-view"),
+            "style.css missing split-view styles"
+        );
+        assert!(
+            css.contains("center-body"),
+            "style.css missing center-body styles"
+        );
     }
 
     #[test]
     fn test_app_js_has_status_emoji() {
         let js = get("app.js").unwrap();
-        assert!(js.contains("STATUS_EMOJI"), "app.js missing STATUS_EMOJI map");
-        assert!(js.contains("thinking"),     "app.js STATUS_EMOJI missing thinking");
-        assert!(js.contains("typing"),       "app.js STATUS_EMOJI missing typing");
+        assert!(
+            js.contains("STATUS_EMOJI"),
+            "app.js missing STATUS_EMOJI map"
+        );
+        assert!(
+            js.contains("thinking"),
+            "app.js STATUS_EMOJI missing thinking"
+        );
+        assert!(js.contains("typing"), "app.js STATUS_EMOJI missing typing");
     }
 
     #[test]
     fn test_app_js_has_file_functions() {
         let js = get("app.js").unwrap();
-        assert!(js.contains("createFile"),   "app.js missing createFile");
-        assert!(js.contains("deleteCurrentFile"), "app.js missing deleteCurrentFile");
-        assert!(js.contains("switchFile"),   "app.js missing switchFile");
-        assert!(js.contains("renameCurrentFile"), "app.js missing renameCurrentFile");
-        assert!(js.contains("currentFilename"), "app.js missing currentFilename state");
-        assert!(js.contains("fileList"),     "app.js missing fileList state");
+        assert!(js.contains("createFile"), "app.js missing createFile");
+        assert!(
+            js.contains("deleteCurrentFile"),
+            "app.js missing deleteCurrentFile"
+        );
+        assert!(js.contains("switchFile"), "app.js missing switchFile");
+        assert!(
+            js.contains("renameCurrentFile"),
+            "app.js missing renameCurrentFile"
+        );
+        assert!(
+            js.contains("currentFilename"),
+            "app.js missing currentFilename state"
+        );
+        assert!(js.contains("fileList"), "app.js missing fileList state");
     }
 
     #[test]
     fn test_app_js_has_file_list_handler() {
         let js = get("app.js").unwrap();
-        assert!(js.contains("file_list"),   "app.js missing file_list handler");
-        assert!(js.contains("file_content"), "app.js missing file_content handler");
+        assert!(js.contains("file_list"), "app.js missing file_list handler");
+        assert!(
+            js.contains("file_content"),
+            "app.js missing file_content handler"
+        );
     }
 
     #[test]
     fn test_app_js_has_archive_search_functions() {
         let js = get("app.js").unwrap();
-        assert!(js.contains("showArchiveDialog"),  "missing showArchiveDialog");
-        assert!(js.contains("confirmArchive"),      "missing confirmArchive");
-        assert!(js.contains("showSearchDialog"),    "missing showSearchDialog");
-        assert!(js.contains("doSearch"),            "missing doSearch");
-        assert!(js.contains("renderSearchResults"), "missing renderSearchResults");
-        assert!(js.contains("chat/archive"),        "missing chat/archive api call");
-        assert!(js.contains("chat/search"),         "missing chat/search api call");
-        assert!(js.contains("archive_done"),        "missing archive_done handler");
-        assert!(js.contains("search_results"),      "missing search_results handler");
+        assert!(
+            js.contains("showArchiveDialog"),
+            "missing showArchiveDialog"
+        );
+        assert!(js.contains("confirmArchive"), "missing confirmArchive");
+        assert!(js.contains("showSearchDialog"), "missing showSearchDialog");
+        assert!(js.contains("doSearch"), "missing doSearch");
+        assert!(
+            js.contains("renderSearchResults"),
+            "missing renderSearchResults"
+        );
+        assert!(js.contains("chat/archive"), "missing chat/archive api call");
+        assert!(js.contains("chat/search"), "missing chat/search api call");
+        assert!(js.contains("archive_done"), "missing archive_done handler");
+        assert!(
+            js.contains("search_results"),
+            "missing search_results handler"
+        );
     }
 
     #[test]
     fn test_index_html_has_archive_search_ui() {
         let html = get("index.html").unwrap();
-        assert!(html.contains("btn-archive"),   "missing btn-archive");
-        assert!(html.contains("btn-search"),    "missing btn-search");
+        assert!(html.contains("btn-archive"), "missing btn-archive");
+        assert!(html.contains("btn-search"), "missing btn-search");
         assert!(html.contains("archive-modal"), "missing archive-modal");
-        assert!(html.contains("search-modal"),  "missing search-modal");
-        assert!(html.contains("search-input"),  "missing search-input");
+        assert!(html.contains("search-modal"), "missing search-modal");
+        assert!(html.contains("search-input"), "missing search-input");
     }
 
     #[test]
     fn test_app_js_has_logout_functions() {
         let js = get("app.js").unwrap();
-        assert!(js.contains("showLogoutDialog"),  "app.js missing showLogoutDialog");
-        assert!(js.contains("hideLogoutDialog"),  "app.js missing hideLogoutDialog");
-        assert!(js.contains("confirmLogout"),     "app.js missing confirmLogout");
-        assert!(js.contains("rune_nickname"),     "app.js missing rune_nickname localStorage key");
-        assert!(js.contains("rune_token"),        "app.js missing rune_token localStorage key");
+        assert!(
+            js.contains("showLogoutDialog"),
+            "app.js missing showLogoutDialog"
+        );
+        assert!(
+            js.contains("hideLogoutDialog"),
+            "app.js missing hideLogoutDialog"
+        );
+        assert!(js.contains("confirmLogout"), "app.js missing confirmLogout");
+        assert!(
+            js.contains("rune_nickname"),
+            "app.js missing rune_nickname localStorage key"
+        );
+        assert!(
+            js.contains("rune_token"),
+            "app.js missing rune_token localStorage key"
+        );
     }
 
     #[test]
     fn test_index_html_has_logout_ui() {
         let html = get("index.html").unwrap();
-        assert!(html.contains("logout-modal"),    "index.html missing logout-modal");
-        assert!(html.contains("btn-logout"),      "index.html missing btn-logout");
-        assert!(html.contains("confirmLogout"),   "index.html missing confirmLogout call");
-        assert!(html.contains("modal-actions"),   "index.html missing modal-actions");
+        assert!(
+            html.contains("logout-modal"),
+            "index.html missing logout-modal"
+        );
+        assert!(html.contains("btn-logout"), "index.html missing btn-logout");
+        assert!(
+            html.contains("confirmLogout"),
+            "index.html missing confirmLogout call"
+        );
+        assert!(
+            html.contains("modal-actions"),
+            "index.html missing modal-actions"
+        );
     }
-
 }

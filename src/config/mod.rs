@@ -95,7 +95,6 @@ pub struct NotesConfig {
     pub guest_token: Option<String>,
 }
 
-
 impl Default for PolicyConfig {
     fn default() -> Self {
         Self {
@@ -1398,7 +1397,10 @@ system_prompt = "You are an expert."
         assert_eq!(cfg.max_steps, Some(100));
         assert_eq!(cfg.token_budget, Some(500000));
         assert_eq!(cfg.timeout_secs, Some(60));
-        assert_eq!(cfg.base_url.as_deref(), Some("https://api.anthropic.com/v1"));
+        assert_eq!(
+            cfg.base_url.as_deref(),
+            Some("https://api.anthropic.com/v1")
+        );
         assert_eq!(cfg.trace.as_deref(), Some("/tmp/rune-trace"));
         assert_eq!(cfg.context_window, Some(200000));
         assert_eq!(cfg.compact_threshold, Some(0.9));
@@ -1468,12 +1470,16 @@ max_pids = 128
         let dir = std::env::temp_dir().join(format!("rune-cfg-srv-{}", std::process::id()));
         let _ = fs::create_dir_all(&dir);
         let path = dir.join("rune.toml");
-        fs::write(&path, r#"
+        fs::write(
+            &path,
+            r#"
 model = "gpt-4"
 [notes]
 port = 8080
 bind = "127.0.0.1"
-"#).unwrap();
+"#,
+        )
+        .unwrap();
         let partial = load_toml(&path).expect("should parse");
         let serve = partial.notes.unwrap();
         assert_eq!(serve.port, Some(8080));
@@ -1524,15 +1530,21 @@ bind = "127.0.0.1"
         let rune_dir = dir.join(".rune");
         let _ = fs::create_dir_all(&rune_dir);
         let config_path = rune_dir.join("rune.toml");
-        fs::write(&config_path, r#"
+        fs::write(
+            &config_path,
+            r#"
 [policy]
 mode = "confirm"
-"#).unwrap();
+"#,
+        )
+        .unwrap();
         persist_policy_array_at(&config_path, "allowed_commands", "git");
         persist_policy_array_at(&config_path, "allowed_commands", "cargo");
         persist_policy_array_at(&config_path, "allowed_domains", "github.com");
         let content = fs::read_to_string(&config_path).unwrap();
-        assert!(content.contains("\"git\"") || content.contains("'git'") || content.contains("git"));
+        assert!(
+            content.contains("\"git\"") || content.contains("'git'") || content.contains("git")
+        );
         assert!(content.contains("github.com"));
         let _ = fs::remove_dir_all(&dir);
     }
@@ -1544,7 +1556,7 @@ mode = "confirm"
         std::env::remove_var("HOME");
         let result = expand_tilde("~/skills");
         assert_eq!(result, "~/skills"); // unchanged since HOME absent
-        // Restore
+                                        // Restore
         if let Some(h) = original {
             std::env::set_var("HOME", h);
         }
@@ -1582,12 +1594,16 @@ mode = "confirm"
         let dir = std::env::temp_dir().join(format!("rune-cfg-cw-{}", std::process::id()));
         let _ = fs::create_dir_all(&dir);
         let path = dir.join("rune.toml");
-        fs::write(&path, r#"
+        fs::write(
+            &path,
+            r#"
 model = "gpt-4o"
 context_window = 32000
 compact_threshold = 0.75
 compact_keep_last = 4
-"#).unwrap();
+"#,
+        )
+        .unwrap();
         let partial = load_toml(&path).unwrap();
         assert_eq!(partial.context_window, Some(32000));
         assert_eq!(partial.compact_threshold, Some(0.75));
@@ -1671,10 +1687,14 @@ compact_keep_last = 4
         let dir = std::env::temp_dir().join(format!("rune-cfg-th-{}", std::process::id()));
         let _ = fs::create_dir_all(&dir);
         let path = dir.join("rune.toml");
-        fs::write(&path, r#"
+        fs::write(
+            &path,
+            r#"
 model = "claude-opus-4"
 thinking = "high"
-"#).unwrap();
+"#,
+        )
+        .unwrap();
         let partial = load_toml(&path).unwrap();
         assert_eq!(partial.thinking.as_deref(), Some("high"));
         let _ = fs::remove_dir_all(&dir);
@@ -1832,7 +1852,10 @@ allowed_files_ro = ["/etc/hostname", "/etc/resolv.conf"]
 allowed_files_rw = ["/tmp/output.log"]
 "#;
         let policy: PolicyConfig = toml::from_str(toml_str).unwrap();
-        assert_eq!(policy.allowed_files_ro, vec!["/etc/hostname", "/etc/resolv.conf"]);
+        assert_eq!(
+            policy.allowed_files_ro,
+            vec!["/etc/hostname", "/etc/resolv.conf"]
+        );
         assert_eq!(policy.allowed_files_rw, vec!["/tmp/output.log"]);
     }
 
@@ -1873,7 +1896,9 @@ allowed_commands = ["ls"]
         let dir = std::env::temp_dir().join(format!("rune-cfg-mcp-{}", std::process::id()));
         let _ = fs::create_dir_all(&dir);
         let path = dir.join("rune.toml");
-        fs::write(&path, r#"
+        fs::write(
+            &path,
+            r#"
 model = "gpt-4"
 
 [[mcp_servers]]
@@ -1881,7 +1906,9 @@ name = "filesystem"
 command = "npx"
 args = ["-y", "@modelcontextprotocol/server-filesystem", "/tmp"]
 required = false
-"#).unwrap();
+"#,
+        )
+        .unwrap();
         let partial = load_toml(&path).unwrap();
         let servers = partial.mcp_servers.unwrap();
         assert_eq!(servers.len(), 1);
@@ -1895,14 +1922,18 @@ required = false
         let dir = std::env::temp_dir().join(format!("rune-cfg-emb-{}", std::process::id()));
         let _ = fs::create_dir_all(&dir);
         let path = dir.join("rune.toml");
-        fs::write(&path, r#"
+        fs::write(
+            &path,
+            r#"
 model = "gpt-4"
 
 [embedding]
 enabled = false
 model = "nomic-embed-text"
 threshold = 0.4
-"#).unwrap();
+"#,
+        )
+        .unwrap();
         let partial = load_toml(&path).unwrap();
         let emb = partial.embedding.unwrap();
         assert!(!emb.enabled);
@@ -1985,6 +2016,4 @@ allowed_syscalls = ["ptrace", "bpf"]
         assert!(cfg.system_prompt.is_none());
         assert!(cfg.notes.is_none());
     }
-
-
 }

@@ -553,7 +553,11 @@ mod tests_extra {
         match result {
             Ok(_) => {}
             Err(e) => {
-                assert!(!e.contains("open(/dev/urandom) failed"), "open failed: {}", e);
+                assert!(
+                    !e.contains("open(/dev/urandom) failed"),
+                    "open failed: {}",
+                    e
+                );
             }
         }
     }

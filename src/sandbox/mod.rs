@@ -71,9 +71,7 @@ impl Default for SandboxConfig {
                 PathBuf::from("/proc"),
                 PathBuf::from("/sys"),
             ],
-            traverse_paths: vec![
-                PathBuf::from("/dev"),
-            ],
+            traverse_paths: vec![PathBuf::from("/dev")],
             timeout_secs: 30,
             uid: 0,
             gid: 0,
@@ -205,7 +203,10 @@ impl SandboxExecutor {
                 flags.push("--map-root-user");
                 flags.push("--mount");
                 active_layers.push(format!("tmpfs(/tmp,{}MB)", self.config.tmp_size_mb));
-                info!(size_mb = self.config.tmp_size_mb, "sandbox: isolated tmpfs enabled");
+                info!(
+                    size_mb = self.config.tmp_size_mb,
+                    "sandbox: isolated tmpfs enabled"
+                );
             }
             if use_unshare_net {
                 flags.push("--net");
@@ -592,25 +593,30 @@ mod tests {
             ..SandboxConfig::default()
         };
         let executor = SandboxExecutor::new(config);
-        
+
         // Write a marker file to host /tmp first
         let _ = std::fs::write("/tmp/rune_host_marker_test", "host");
-        
+
         // Inside sandbox, /tmp should be empty (isolated tmpfs)
         let result = executor
-            .run_shell_command("ls /tmp/rune_host_marker_test 2>&1; echo EXIT=$?; id; df /tmp 2>&1", None, None)
+            .run_shell_command(
+                "ls /tmp/rune_host_marker_test 2>&1; echo EXIT=$?; id; df /tmp 2>&1",
+                None,
+                None,
+            )
             .await
             .expect("should succeed");
-        
+
         // Clean up
         let _ = std::fs::remove_file("/tmp/rune_host_marker_test");
-        
-        
+
         // If tmpfs is working, the file should not exist inside the sandbox
         assert!(
             result.stdout.contains("No such file") || result.stdout.contains("EXIT=2"),
             "Expected /tmp isolation but got: {}\nLayers: {:?}\nDegraded: {}",
-            result.stdout, result.active_layers, result.degraded
+            result.stdout,
+            result.active_layers,
+            result.degraded
         );
     }
 
@@ -622,17 +628,22 @@ mod tests {
             ..SandboxConfig::default()
         };
         let executor = SandboxExecutor::new(config);
-        
+
         // Try to write 10MB — should fail with ENOSPC
         let result = executor
-            .run_shell_command("dd if=/dev/zero of=/tmp/bigfile bs=1M count=10 2>&1", None, None)
+            .run_shell_command(
+                "dd if=/dev/zero of=/tmp/bigfile bs=1M count=10 2>&1",
+                None,
+                None,
+            )
             .await
             .expect("should succeed");
-        
+
         assert!(
             result.stdout.contains("No space left") || result.stderr.contains("No space left"),
             "Expected space limit error but got stdout={} stderr={}",
-            result.stdout, result.stderr
+            result.stdout,
+            result.stderr
         );
     }
 
@@ -644,13 +655,14 @@ mod tests {
             ..SandboxConfig::default()
         };
         let executor = SandboxExecutor::new(config);
-        
+
         let result = executor
             .run_shell_command("echo ok", None, None)
             .await
             .expect("should succeed");
-        
-        assert!(!result.active_layers.iter().any(|l| l.contains("tmpfs")),
+
+        assert!(
+            !result.active_layers.iter().any(|l| l.contains("tmpfs")),
             "tmpfs layer should not be present when disabled: {:?}",
             result.active_layers
         );
@@ -665,7 +677,8 @@ mod tests {
             .await
             .expect("should succeed");
         assert!(
-            result.stdout.contains("Permission denied") || result.stdout.contains("No such file")
+            result.stdout.contains("Permission denied")
+                || result.stdout.contains("No such file")
                 || result.exit_code != 0,
             "P1 VULN: /proc/self/root escape succeeded! stdout={}",
             result.stdout
@@ -681,7 +694,8 @@ mod tests {
             .await
             .expect("should succeed");
         assert!(
-            result.stdout.contains("Permission denied") || result.stdout.contains("No such file")
+            result.stdout.contains("Permission denied")
+                || result.stdout.contains("No such file")
                 || result.exit_code != 0,
             "P1 VULN: /proc/self/cwd traversal escape succeeded! stdout={}",
             result.stdout
@@ -697,7 +711,8 @@ mod tests {
             .await
             .expect("should succeed");
         assert!(
-            result.stdout.contains("Permission denied") || result.stdout.contains("No such file")
+            result.stdout.contains("Permission denied")
+                || result.stdout.contains("No such file")
                 || result.exit_code != 0,
             "P1 VULN: ../ traversal escape succeeded! stdout={}",
             result.stdout
@@ -713,7 +728,8 @@ mod tests {
             .await
             .expect("should succeed");
         assert!(
-            result.stdout.contains("Permission denied") || result.stdout.contains("No such file")
+            result.stdout.contains("Permission denied")
+                || result.stdout.contains("No such file")
                 || result.exit_code != 0,
             "P1 VULN: /etc/passwd directly readable! stdout={}",
             result.stdout
@@ -729,7 +745,8 @@ mod tests {
             .await
             .expect("should succeed");
         assert!(
-            result.stdout.contains("Permission denied") || result.stdout.contains("No such file")
+            result.stdout.contains("Permission denied")
+                || result.stdout.contains("No such file")
                 || result.exit_code != 0,
             "P1 VULN: /etc/hostname readable! stdout={}",
             result.stdout
@@ -741,7 +758,11 @@ mod tests {
         // P1: /etc/ld.so.cache must be readable (dynamic linker needs it)
         let executor = SandboxExecutor::with_defaults();
         let result = executor
-            .run_shell_command("test -r /etc/ld.so.cache && echo READABLE || echo DENIED", None, None)
+            .run_shell_command(
+                "test -r /etc/ld.so.cache && echo READABLE || echo DENIED",
+                None,
+                None,
+            )
             .await
             .expect("should succeed");
         assert!(
@@ -759,17 +780,29 @@ mod tests {
             .run_shell_command("env", None, None)
             .await
             .expect("should succeed");
-        
+
         // Should have PATH, HOME, LANG, TERM
         assert!(result.stdout.contains("PATH="), "missing PATH");
         assert!(result.stdout.contains("HOME=/tmp"), "HOME should be /tmp");
         assert!(result.stdout.contains("LANG="), "missing LANG");
-        
+
         // Should NOT leak sensitive vars
-        assert!(!result.stdout.contains("MANAGERPID"), "P2 VULN: MANAGERPID leaked");
-        assert!(!result.stdout.contains("INVOCATION_ID"), "P2 VULN: INVOCATION_ID leaked");
-        assert!(!result.stdout.contains("JOURNAL_STREAM"), "P2 VULN: JOURNAL_STREAM leaked");
-        assert!(!result.stdout.contains("SYSTEMD_EXEC_PID"), "P2 VULN: SYSTEMD_EXEC_PID leaked");
+        assert!(
+            !result.stdout.contains("MANAGERPID"),
+            "P2 VULN: MANAGERPID leaked"
+        );
+        assert!(
+            !result.stdout.contains("INVOCATION_ID"),
+            "P2 VULN: INVOCATION_ID leaked"
+        );
+        assert!(
+            !result.stdout.contains("JOURNAL_STREAM"),
+            "P2 VULN: JOURNAL_STREAM leaked"
+        );
+        assert!(
+            !result.stdout.contains("SYSTEMD_EXEC_PID"),
+            "P2 VULN: SYSTEMD_EXEC_PID leaked"
+        );
     }
 
     #[tokio::test]
@@ -802,7 +835,6 @@ mod tests {
             result.stdout
         );
     }
-
 
     #[tokio::test]
     async fn test_sandbox_blocks_docker_socket() {
@@ -865,5 +897,4 @@ mod tests {
             result.stdout
         );
     }
-
 }

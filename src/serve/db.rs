@@ -5,7 +5,7 @@
 //!
 //! All blocking SQLite calls are wrapped in tokio::task::spawn_blocking.
 
-use rusqlite::{params, Connection, backup::Backup};
+use rusqlite::{backup::Backup, params, Connection};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 use std::sync::{Arc, Mutex};
@@ -16,7 +16,7 @@ use tracing::warn;
 pub struct ChatRecord {
     pub id: i64,
     pub note_id: String,
-    pub role: String,    // "user" | "assistant" | "system"
+    pub role: String,     // "user" | "assistant" | "system"
     pub nickname: String, // user nickname, or "ᚱᚢᚾᛖ" for assistant
     pub content: String,
     pub created_at: i64, // unix timestamp (seconds)
@@ -56,7 +56,8 @@ impl ChatDb {
     /// Open (or create) the chat database at the given path.
     pub fn open(path: &Path) -> anyhow::Result<Self> {
         let conn = Connection::open(path)?;
-        conn.execute_batch("
+        conn.execute_batch(
+            "
             PRAGMA journal_mode=WAL;
             PRAGMA synchronous=NORMAL;
             CREATE TABLE IF NOT EXISTS messages (
@@ -78,24 +79,32 @@ impl ChatDb {
                 created_at  INTEGER NOT NULL,
                 created_by  TEXT
             );
-        ")?;
+        ",
+        )?;
         // Add new columns to existing DBs (idempotent — errors ignored)
-        let _ = conn.execute_batch("
+        let _ = conn.execute_batch(
+            "
             ALTER TABLE messages ADD COLUMN model      TEXT;
             ALTER TABLE messages ADD COLUMN tokens_in  INTEGER;
             ALTER TABLE messages ADD COLUMN tokens_out INTEGER;
-        ");
+        ",
+        );
         let _ = conn.execute_batch("ALTER TABLE sessions ADD COLUMN public INTEGER DEFAULT 0;");
-        let _ = conn.execute_batch("
+        let _ = conn.execute_batch(
+            "
             CREATE TABLE IF NOT EXISTS file_visibility (
                 note_id  TEXT NOT NULL,
                 filename TEXT NOT NULL,
                 public   INTEGER NOT NULL DEFAULT 0,
                 PRIMARY KEY (note_id, filename)
             );
-        ");
+        ",
+        );
         let _ = conn.execute_batch("ALTER TABLE sessions ADD COLUMN model_override TEXT;");
-        Ok(Self { conn: Arc::new(Mutex::new(conn)), deferred_path: Arc::new(Mutex::new(None)) })
+        Ok(Self {
+            conn: Arc::new(Mutex::new(conn)),
+            deferred_path: Arc::new(Mutex::new(None)),
+        })
     }
 
     /// Open file if it exists, otherwise in-memory with deferred persistence.
@@ -104,7 +113,8 @@ impl ChatDb {
             Self::open(path)
         } else {
             let conn = Connection::open_in_memory()?;
-            conn.execute_batch("
+            conn.execute_batch(
+                "
                 PRAGMA journal_mode=WAL;
                 PRAGMA synchronous=NORMAL;
                 CREATE TABLE IF NOT EXISTS messages (
@@ -134,7 +144,8 @@ impl ChatDb {
                     public   INTEGER NOT NULL DEFAULT 0,
                     PRIMARY KEY (note_id, filename)
                 );
-            ")?;
+            ",
+            )?;
             Ok(ChatDb {
                 conn: Arc::new(Mutex::new(conn)),
                 deferred_path: Arc::new(Mutex::new(Some(path.to_path_buf()))),
@@ -160,10 +171,12 @@ impl ChatDb {
         // Use SQLite backup API to copy in-memory → file
         let conn = self.conn.lock().unwrap();
         let mut backup_conn = Connection::open(&path)?;
-        backup_conn.execute_batch("
+        backup_conn.execute_batch(
+            "
             PRAGMA journal_mode=WAL;
             PRAGMA synchronous=NORMAL;
-        ")?;
+        ",
+        )?;
         let backup = Backup::new(&*conn, &mut backup_conn)?;
         backup.run_to_completion(100, std::time::Duration::from_millis(10), None)?;
         drop(backup);
@@ -182,14 +195,26 @@ impl ChatDb {
     }
 
     /// Insert a message. Returns the new row id.
-    pub fn insert(&self, note_id: &str, role: &str, nickname: &str, content: &str) -> anyhow::Result<i64> {
+    pub fn insert(
+        &self,
+        note_id: &str,
+        role: &str,
+        nickname: &str,
+        content: &str,
+    ) -> anyhow::Result<i64> {
         self.insert_with_meta(note_id, role, nickname, content, None, None, None)
     }
 
     /// Insert a message with optional model/token metadata.
     pub fn insert_with_meta(
-        &self, note_id: &str, role: &str, nickname: &str, content: &str,
-        model: Option<&str>, tokens_in: Option<i32>, tokens_out: Option<i32>,
+        &self,
+        note_id: &str,
+        role: &str,
+        nickname: &str,
+        content: &str,
+        model: Option<&str>,
+        tokens_in: Option<i32>,
+        tokens_out: Option<i32>,
     ) -> anyhow::Result<i64> {
         let conn = self.conn.lock().unwrap();
         let ts = std::time::SystemTime::now()
@@ -212,23 +237,24 @@ impl ChatDb {
              FROM messages
              WHERE note_id = ?1
              ORDER BY id DESC
-             LIMIT ?2"
+             LIMIT ?2",
         )?;
-        let rows: Vec<ChatRecord> = stmt.query_map(params![note_id, limit as i64], |row| {
-            Ok(ChatRecord {
-                id:         row.get(0)?,
-                note_id: row.get(1)?,
-                role:       row.get(2)?,
-                nickname:   row.get(3)?,
-                content:    row.get(4)?,
-                created_at: row.get(5)?,
-                model:      row.get(6)?,
-                tokens_in:  row.get(7)?,
-                tokens_out: row.get(8)?,
-            })
-        })?
-        .filter_map(|r| r.ok())
-        .collect();
+        let rows: Vec<ChatRecord> = stmt
+            .query_map(params![note_id, limit as i64], |row| {
+                Ok(ChatRecord {
+                    id: row.get(0)?,
+                    note_id: row.get(1)?,
+                    role: row.get(2)?,
+                    nickname: row.get(3)?,
+                    content: row.get(4)?,
+                    created_at: row.get(5)?,
+                    model: row.get(6)?,
+                    tokens_in: row.get(7)?,
+                    tokens_out: row.get(8)?,
+                })
+            })?
+            .filter_map(|r| r.ok())
+            .collect();
         // Reverse so oldest first
         let mut rows = rows;
         rows.reverse();
@@ -236,39 +262,63 @@ impl ChatDb {
     }
 
     /// Async wrapper for insert (runs on blocking thread pool).
-    pub async fn insert_async(&self, note_id: String, role: String, nickname: String, content: String) {
-        self.insert_with_meta_async(note_id, role, nickname, content, None, None, None).await;
+    pub async fn insert_async(
+        &self,
+        note_id: String,
+        role: String,
+        nickname: String,
+        content: String,
+    ) {
+        self.insert_with_meta_async(note_id, role, nickname, content, None, None, None)
+            .await;
     }
 
     /// Async wrapper for insert_with_meta.
     pub async fn insert_with_meta_async(
         &self,
-        note_id: String, role: String, nickname: String, content: String,
-        model: Option<String>, tokens_in: Option<i32>, tokens_out: Option<i32>,
+        note_id: String,
+        role: String,
+        nickname: String,
+        content: String,
+        model: Option<String>,
+        tokens_in: Option<i32>,
+        tokens_out: Option<i32>,
     ) {
         let db = self.clone();
         tokio::task::spawn_blocking(move || {
             if let Err(e) = db.insert_with_meta(
-                &note_id, &role, &nickname, &content,
-                model.as_deref(), tokens_in, tokens_out,
+                &note_id,
+                &role,
+                &nickname,
+                &content,
+                model.as_deref(),
+                tokens_in,
+                tokens_out,
             ) {
                 warn!("Failed to persist chat message: {}", e);
             }
-        }).await.ok();
+        })
+        .await
+        .ok();
     }
 
     /// Async wrapper for load_recent.
     pub async fn load_recent_async(&self, note_id: String, limit: usize) -> Vec<ChatRecord> {
         let db = self.clone();
-        tokio::task::spawn_blocking(move || {
-            db.load_recent(&note_id, limit).unwrap_or_default()
-        }).await.unwrap_or_default()
+        tokio::task::spawn_blocking(move || db.load_recent(&note_id, limit).unwrap_or_default())
+            .await
+            .unwrap_or_default()
     }
 
     // ── Session CRUD ──────────────────────────────────────────────────────
 
     /// Create a new session. Returns Ok(()) or error if id already exists.
-    pub fn create_note(&self, id: &str, name: &str, created_by: Option<&str>) -> anyhow::Result<()> {
+    pub fn create_note(
+        &self,
+        id: &str,
+        name: &str,
+        created_by: Option<&str>,
+    ) -> anyhow::Result<()> {
         let conn = self.conn.lock().unwrap();
         let ts = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -287,16 +337,19 @@ impl ChatDb {
         let mut stmt = conn.prepare(
             "SELECT id, name, created_at, created_by, COALESCE(public, 0), model_override FROM sessions ORDER BY name ASC"
         )?;
-        let rows = stmt.query_map([], |row| {
-            Ok(NoteRecord {
-                id:         row.get(0)?,
-                name:       row.get(1)?,
-                created_at: row.get(2)?,
-                created_by: row.get(3)?,
-                public:     row.get::<_, i32>(4).unwrap_or(0) != 0,
-                model_override: row.get(5)?,
-            })
-        })?.filter_map(|r| r.ok()).collect();
+        let rows = stmt
+            .query_map([], |row| {
+                Ok(NoteRecord {
+                    id: row.get(0)?,
+                    name: row.get(1)?,
+                    created_at: row.get(2)?,
+                    created_by: row.get(3)?,
+                    public: row.get::<_, i32>(4).unwrap_or(0) != 0,
+                    model_override: row.get(5)?,
+                })
+            })?
+            .filter_map(|r| r.ok())
+            .collect();
         Ok(rows)
     }
 
@@ -331,10 +384,7 @@ impl ChatDb {
                 "UPDATE messages SET note_id = ?1 WHERE note_id = ?2",
                 params![new_name, id],
             )?;
-            conn.execute(
-                "DELETE FROM sessions WHERE id = ?1",
-                params![id],
-            )?;
+            conn.execute("DELETE FROM sessions WHERE id = ?1", params![id])?;
         } else {
             // Simple rename: update session row + re-tag messages
             conn.execute(
@@ -349,14 +399,10 @@ impl ChatDb {
         Ok(Some(new_name.to_string()))
     }
 
-
     /// Delete a session (metadata only; does NOT delete chat messages).
     pub fn delete_note(&self, id: &str) -> anyhow::Result<bool> {
         let conn = self.conn.lock().unwrap();
-        let changed = conn.execute(
-            "DELETE FROM sessions WHERE id = ?1",
-            params![id],
-        )?;
+        let changed = conn.execute("DELETE FROM sessions WHERE id = ?1", params![id])?;
         Ok(changed > 0)
     }
 
@@ -368,11 +414,11 @@ impl ChatDb {
         )?;
         let mut rows = stmt.query_map(params![id], |row| {
             Ok(NoteRecord {
-                id:         row.get(0)?,
-                name:       row.get(1)?,
+                id: row.get(0)?,
+                name: row.get(1)?,
                 created_at: row.get(2)?,
                 created_by: row.get(3)?,
-                public:     row.get::<_, i32>(4).unwrap_or(0) != 0,
+                public: row.get::<_, i32>(4).unwrap_or(0) != 0,
                 model_override: row.get(5)?,
             })
         })?;
@@ -399,7 +445,9 @@ impl ChatDb {
             "SELECT model_override FROM sessions WHERE id = ?1",
             params![id],
             |row| row.get::<_, Option<String>>(0),
-        ).ok().flatten()
+        )
+        .ok()
+        .flatten()
     }
 
     // ── Visibility ────────────────────────────────────────────────────────────
@@ -415,7 +463,12 @@ impl ChatDb {
     }
 
     /// Set file-level public flag.
-    pub fn set_file_public(&self, note_id: &str, filename: &str, public: bool) -> anyhow::Result<()> {
+    pub fn set_file_public(
+        &self,
+        note_id: &str,
+        filename: &str,
+        public: bool,
+    ) -> anyhow::Result<()> {
         let conn = self.conn.lock().unwrap();
         conn.execute(
             "INSERT INTO file_visibility (note_id, filename, public) VALUES (?1,?2,?3)
@@ -432,7 +485,9 @@ impl ChatDb {
             "SELECT public FROM file_visibility WHERE note_id = ?1 AND filename = ?2",
             params![note_id, filename],
             |row| row.get::<_, i32>(0),
-        ).unwrap_or(0) != 0
+        )
+        .unwrap_or(0)
+            != 0
     }
 
     /// List all public files for a note.
@@ -453,7 +508,7 @@ impl ChatDb {
     pub fn get_file_visibility(&self, note_id: &str) -> Vec<(String, bool)> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = match conn.prepare(
-            "SELECT filename, public FROM file_visibility WHERE note_id = ?1 ORDER BY filename ASC"
+            "SELECT filename, public FROM file_visibility WHERE note_id = ?1 ORDER BY filename ASC",
         ) {
             Ok(s) => s,
             Err(_) => return vec![],
@@ -473,21 +528,24 @@ impl ChatDb {
         // Load all messages for this session
         let mut stmt = conn.prepare(
             "SELECT id, note_id, role, nickname, content, created_at, model, tokens_in, tokens_out
-             FROM messages WHERE note_id = ?1 ORDER BY id ASC"
+             FROM messages WHERE note_id = ?1 ORDER BY id ASC",
         )?;
-        let records: Vec<ChatRecord> = stmt.query_map(params![note_id], |row| {
-            Ok(ChatRecord {
-                id:         row.get(0)?,
-                note_id: row.get(1)?,
-                role:       row.get(2)?,
-                nickname:   row.get(3)?,
-                content:    row.get(4)?,
-                created_at: row.get(5)?,
-                model:      row.get(6)?,
-                tokens_in:  row.get(7)?,
-                tokens_out: row.get(8)?,
-            })
-        })?.filter_map(|r| r.ok()).collect();
+        let records: Vec<ChatRecord> = stmt
+            .query_map(params![note_id], |row| {
+                Ok(ChatRecord {
+                    id: row.get(0)?,
+                    note_id: row.get(1)?,
+                    role: row.get(2)?,
+                    nickname: row.get(3)?,
+                    content: row.get(4)?,
+                    created_at: row.get(5)?,
+                    model: row.get(6)?,
+                    tokens_in: row.get(7)?,
+                    tokens_out: row.get(8)?,
+                })
+            })?
+            .filter_map(|r| r.ok())
+            .collect();
 
         if records.is_empty() {
             return Ok(0);
@@ -504,17 +562,19 @@ impl ChatDb {
         }
 
         // Delete archived messages from DB
-        conn.execute(
-            "DELETE FROM messages WHERE note_id = ?1",
-            params![note_id],
-        )?;
+        conn.execute("DELETE FROM messages WHERE note_id = ?1", params![note_id])?;
 
         Ok(records.len())
     }
 
     /// Full-text search across current DB + all JSONL archive files in archive_dir.
     /// Returns matching records sorted oldest first (archives first, then live).
-    pub fn search(&self, note_id: &str, query: &str, archive_dir: &Path) -> anyhow::Result<Vec<ChatRecord>> {
+    pub fn search(
+        &self,
+        note_id: &str,
+        query: &str,
+        archive_dir: &Path,
+    ) -> anyhow::Result<Vec<ChatRecord>> {
         let query_lower = query.to_lowercase();
         let mut results: Vec<ChatRecord> = Vec::new();
 
@@ -545,43 +605,57 @@ impl ChatDb {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
             "SELECT id, note_id, role, nickname, content, created_at, model, tokens_in, tokens_out
-             FROM messages WHERE note_id = ?1 ORDER BY id ASC"
+             FROM messages WHERE note_id = ?1 ORDER BY id ASC",
         )?;
-        let live: Vec<ChatRecord> = stmt.query_map(params![note_id], |row| {
-            Ok(ChatRecord {
-                id:         row.get(0)?,
-                note_id: row.get(1)?,
-                role:       row.get(2)?,
-                nickname:   row.get(3)?,
-                content:    row.get(4)?,
-                created_at: row.get(5)?,
-                model:      row.get(6)?,
-                tokens_in:  row.get(7)?,
-                tokens_out: row.get(8)?,
+        let live: Vec<ChatRecord> = stmt
+            .query_map(params![note_id], |row| {
+                Ok(ChatRecord {
+                    id: row.get(0)?,
+                    note_id: row.get(1)?,
+                    role: row.get(2)?,
+                    nickname: row.get(3)?,
+                    content: row.get(4)?,
+                    created_at: row.get(5)?,
+                    model: row.get(6)?,
+                    tokens_in: row.get(7)?,
+                    tokens_out: row.get(8)?,
+                })
+            })?
+            .filter_map(|r| r.ok())
+            .filter(|r| {
+                r.content.to_lowercase().contains(&query_lower)
+                    || r.nickname.to_lowercase().contains(&query_lower)
             })
-        })?.filter_map(|r| r.ok())
-          .filter(|r| r.content.to_lowercase().contains(&query_lower)
-                   || r.nickname.to_lowercase().contains(&query_lower))
-          .collect();
+            .collect();
         results.extend(live);
 
         Ok(results)
     }
 
     /// Async wrapper for archive.
-    pub async fn archive_async(&self, note_id: String, archive_path: std::path::PathBuf) -> anyhow::Result<usize> {
+    pub async fn archive_async(
+        &self,
+        note_id: String,
+        archive_path: std::path::PathBuf,
+    ) -> anyhow::Result<usize> {
         let db = self.clone();
-        tokio::task::spawn_blocking(move || {
-            db.archive(&note_id, &archive_path)
-        }).await?
+        tokio::task::spawn_blocking(move || db.archive(&note_id, &archive_path)).await?
     }
 
     /// Async wrapper for search.
-    pub async fn search_async(&self, note_id: String, query: String, archive_dir: std::path::PathBuf) -> Vec<ChatRecord> {
+    pub async fn search_async(
+        &self,
+        note_id: String,
+        query: String,
+        archive_dir: std::path::PathBuf,
+    ) -> Vec<ChatRecord> {
         let db = self.clone();
         tokio::task::spawn_blocking(move || {
-            db.search(&note_id, &query, &archive_dir).unwrap_or_default()
-        }).await.unwrap_or_default()
+            db.search(&note_id, &query, &archive_dir)
+                .unwrap_or_default()
+        })
+        .await
+        .unwrap_or_default()
     }
 }
 
@@ -598,7 +672,8 @@ mod tests {
     fn test_insert_and_load() {
         let db = in_memory_db();
         db.insert("default", "user", "alice", "hello").unwrap();
-        db.insert("default", "assistant", "ᚱᚢᚾᛖ", "hi there").unwrap();
+        db.insert("default", "assistant", "ᚱᚢᚾᛖ", "hi there")
+            .unwrap();
         let rows = db.load_recent("default", 10).unwrap();
         assert_eq!(rows.len(), 2);
         assert_eq!(rows[0].role, "user");
@@ -612,7 +687,8 @@ mod tests {
     fn test_load_recent_limit() {
         let db = in_memory_db();
         for i in 0..10 {
-            db.insert("default", "user", "bob", &format!("msg {}", i)).unwrap();
+            db.insert("default", "user", "bob", &format!("msg {}", i))
+                .unwrap();
         }
         let rows = db.load_recent("default", 5).unwrap();
         assert_eq!(rows.len(), 5);
@@ -635,7 +711,8 @@ mod tests {
     #[test]
     fn test_multiple_sessions() {
         let db = in_memory_db();
-        db.insert("room-a", "user", "alice", "hello room a").unwrap();
+        db.insert("room-a", "user", "alice", "hello room a")
+            .unwrap();
         db.insert("room-b", "user", "bob", "hello room b").unwrap();
         let a = db.load_recent("room-a", 10).unwrap();
         let b = db.load_recent("room-b", 10).unwrap();
@@ -701,7 +778,10 @@ mod tests {
         let archive_path = dir.path().join("arc.jsonl");
         let count = db.archive("default", &archive_path).unwrap();
         assert_eq!(count, 0);
-        assert!(!archive_path.exists(), "No file should be created for empty archive");
+        assert!(
+            !archive_path.exists(),
+            "No file should be created for empty archive"
+        );
     }
 
     #[test]
@@ -709,9 +789,12 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let db_path = dir.path().join("chat.db");
         let db = ChatDb::open(&db_path).unwrap();
-        db.insert("default", "user", "alice", "hello world").unwrap();
-        db.insert("default", "assistant", "ᚱᚢᚾᛖ", "goodbye").unwrap();
-        db.insert("default", "user", "alice", "hello again").unwrap();
+        db.insert("default", "user", "alice", "hello world")
+            .unwrap();
+        db.insert("default", "assistant", "ᚱᚢᚾᛖ", "goodbye")
+            .unwrap();
+        db.insert("default", "user", "alice", "hello again")
+            .unwrap();
 
         let arc_dir = dir.path().join("archives");
         let results = db.search("default", "hello", &arc_dir).unwrap();
@@ -730,15 +813,25 @@ mod tests {
         let arc_dir = dir.path().join("archives");
         std::fs::create_dir_all(&arc_dir).unwrap();
         let arc_path = arc_dir.join("old.jsonl");
-        let old_rec = ChatRecord { id: 1, note_id: "default".into(), role: "user".into(),
-            nickname: "bob".into(), content: "search me".into(), created_at: 1000,
-            model: None, tokens_in: None, tokens_out: None };
+        let old_rec = ChatRecord {
+            id: 1,
+            note_id: "default".into(),
+            role: "user".into(),
+            nickname: "bob".into(),
+            content: "search me".into(),
+            created_at: 1000,
+            model: None,
+            tokens_in: None,
+            tokens_out: None,
+        };
         let mut f = std::fs::File::create(&arc_path).unwrap();
         writeln!(f, "{}", serde_json::to_string(&old_rec).unwrap()).unwrap();
 
         // Live DB also has one match
-        db.insert("default", "user", "alice", "search me too").unwrap();
-        db.insert("default", "user", "alice", "nothing here").unwrap();
+        db.insert("default", "user", "alice", "search me too")
+            .unwrap();
+        db.insert("default", "user", "alice", "nothing here")
+            .unwrap();
 
         let results = db.search("default", "search me", &arc_dir).unwrap();
         assert_eq!(results.len(), 2, "Should find 1 archive + 1 live result");
@@ -747,7 +840,13 @@ mod tests {
     #[tokio::test]
     async fn test_insert_async_and_load_async() {
         let db = in_memory_db();
-        db.insert_async("default".into(), "user".into(), "alice".into(), "async msg".into()).await;
+        db.insert_async(
+            "default".into(),
+            "user".into(),
+            "alice".into(),
+            "async msg".into(),
+        )
+        .await;
         let rows = db.load_recent_async("default".into(), 10).await;
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].content, "async msg");
@@ -756,10 +855,19 @@ mod tests {
     #[test]
     fn test_insert_with_meta_persists_model_tokens() {
         let db = in_memory_db();
-        db.insert_with_meta("default", "assistant", "ᚱᚢᚾᛖ", "hello", Some("gpt-5-mini"), Some(100), Some(42)).unwrap();
+        db.insert_with_meta(
+            "default",
+            "assistant",
+            "ᚱᚢᚾᛖ",
+            "hello",
+            Some("gpt-5-mini"),
+            Some(100),
+            Some(42),
+        )
+        .unwrap();
         let rows = db.load_recent("default", 1).unwrap();
         assert_eq!(rows[0].model.as_deref(), Some("gpt-5-mini"));
-        assert_eq!(rows[0].tokens_in,  Some(100));
+        assert_eq!(rows[0].tokens_in, Some(100));
         assert_eq!(rows[0].tokens_out, Some(42));
     }
 
@@ -779,14 +887,27 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let db_path = dir.path().join("chat.db");
         let db = ChatDb::open(&db_path).unwrap();
-        db.insert_with_meta("default", "assistant", "ᚱᚢᚾᛖ", "reply", Some("gpt-4o"), Some(50), Some(25)).unwrap();
+        db.insert_with_meta(
+            "default",
+            "assistant",
+            "ᚱᚢᚾᛖ",
+            "reply",
+            Some("gpt-4o"),
+            Some(50),
+            Some(25),
+        )
+        .unwrap();
         let archive_path = dir.path().join("arc.jsonl");
         db.archive("default", &archive_path).unwrap();
         let file = std::fs::File::open(&archive_path).unwrap();
-        let line = std::io::BufReader::new(file).lines().next().unwrap().unwrap();
+        let line = std::io::BufReader::new(file)
+            .lines()
+            .next()
+            .unwrap()
+            .unwrap();
         let rec: ChatRecord = serde_json::from_str(&line).unwrap();
         assert_eq!(rec.model.as_deref(), Some("gpt-4o"));
-        assert_eq!(rec.tokens_in,  Some(50));
+        assert_eq!(rec.tokens_in, Some(50));
         assert_eq!(rec.tokens_out, Some(25));
     }
 
@@ -795,7 +916,8 @@ mod tests {
     #[test]
     fn test_create_and_list_notes() {
         let db = in_memory_db();
-        db.create_note("proj-a", "Project A", Some("admin")).unwrap();
+        db.create_note("proj-a", "Project A", Some("admin"))
+            .unwrap();
         db.create_note("proj-b", "Project B", None).unwrap();
         let sessions = db.list_notes().unwrap();
         assert_eq!(sessions.len(), 2);
@@ -866,7 +988,6 @@ mod tests {
         assert_eq!(db.rename_note("ghost", "anything").unwrap(), None);
     }
 
-
     #[test]
     fn test_delete_nonexistent_returns_false() {
         let db = in_memory_db();
@@ -888,7 +1009,8 @@ mod tests {
     #[test]
     fn test_note_model_persist_and_fallback() {
         let db = in_memory_db();
-        db.create_note("test-note", "Test Note", Some("tester")).unwrap();
+        db.create_note("test-note", "Test Note", Some("tester"))
+            .unwrap();
 
         // Initially no model override
         assert_eq!(db.get_note_model("test-note"), None);
@@ -899,7 +1021,10 @@ mod tests {
 
         // Update model override
         db.set_note_model("test-note", Some("claude-opus")).unwrap();
-        assert_eq!(db.get_note_model("test-note"), Some("claude-opus".to_string()));
+        assert_eq!(
+            db.get_note_model("test-note"),
+            Some("claude-opus".to_string())
+        );
 
         // Clear model override (fallback to default)
         db.set_note_model("test-note", None).unwrap();
@@ -924,5 +1049,4 @@ mod tests {
         assert_eq!(n1.model_override, Some("gpt-5".to_string()));
         assert_eq!(n2.model_override, None);
     }
-
 }

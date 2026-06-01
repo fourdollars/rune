@@ -329,7 +329,7 @@ function connect(noteId) {
         'chat_token', 'chat_done', 'chat_meta', 'chat_message',
         'status', 'system', 'users_update', 'error',
         'model_changed', 'approval_request', 'archive_done',
-        'search_results', 'dir_browse_result'
+        'search_results', 'dir_browse_result', 'auth_error'
     ];
 
     eventTypes.forEach(type => {
@@ -353,6 +353,16 @@ function connect(noteId) {
                     currentNoteId = '';
                     localStorage.removeItem('rune_note');
                     addSystemMessage('Note was deleted. Switching...');
+                    fetchNoteListAndConnect();
+                    return;
+                }
+                // Handle guest access to private note: clear saved note, switch to a visible one
+                if (msg.type === 'auth_error' && msg.message && msg.message.includes('private')) {
+                    if (evtSource) { evtSource.close(); evtSource = null; }
+                    isConnected = false;
+                    currentNoteId = '';
+                    localStorage.removeItem('rune_note');
+                    addSystemMessage('\u26d4 This note is private. Switching to an accessible note...');
                     fetchNoteListAndConnect();
                     return;
                 }
@@ -498,19 +508,14 @@ function handleMessage(msg) {
             addSystemMessage('🔄 Model switched to: ' + activeModel);
             break;
         case 'note_list':
-            // Preserve existing fileVisibility when refreshing notes
-            const prevVisibility = {};
-            notes.forEach(n => { if (n.fileVisibility) prevVisibility[n.id] = n.fileVisibility; });
+            // Always rebuild fileVisibility from authoritative public_files in SSE payload.
+            // Do NOT preserve stale prevVisibility — that caused visibility toggles from
+            // other notes to have no effect on the sidebar.
             notes = msg.notes || [];
             notes.forEach(n => {
-                if (prevVisibility[n.id]) {
-                    n.fileVisibility = prevVisibility[n.id];
-                } else {
-                    // Initialize from public_files in note_list SSE
-                    n.fileVisibility = {};
-                    (n.files || []).forEach(f => { n.fileVisibility[f] = false; });
-                    (n.public_files || []).forEach(f => { n.fileVisibility[f] = true; });
-                }
+                n.fileVisibility = {};
+                (n.files || []).forEach(f => { n.fileVisibility[f] = false; });
+                (n.public_files || []).forEach(f => { n.fileVisibility[f] = true; });
             });
             if (currentNoteId && !notes.find(s => s.id === currentNoteId)) {
                 currentNoteId = '';
@@ -1262,20 +1267,54 @@ function updateDocTitle(name) {
     const s = notes.find(x => x.id === currentNoteId);
     const noteName = s ? s.name : '';
     const file = (fileList && fileList.length > 0) ? currentFilename : null;
-    // Mobile header: show "{note name} - {filename}" (or just note name if no file)
-    const mfn = document.getElementById('mobile-filename');
-    if (mfn) {
-        if (noteName && file) mfn.textContent = noteName + ' - ' + file;
-        else if (noteName) mfn.textContent = noteName;
-        else mfn.textContent = file || '';
+
+    // Check public visibility for link generation
+    const notePublic = s && !!s.public;
+    const filePublic = notePublic && file && s.fileVisibility && !!s.fileVisibility[file];
+
+    function noteLink(label) {
+        if (!notePublic) return document.createTextNode(label);
+        const a = document.createElement('a');
+        a.href = '/notes/' + encodeURIComponent(currentNoteId) + '/';
+        a.target = '_blank'; a.rel = 'noopener';
+        a.className = 'title-public-link';
+        a.textContent = label;
+        return a;
     }
+    function fileLink(label) {
+        const slug = (label || '').replace(/\.md$/, '');
+        if (!filePublic) return document.createTextNode(label);
+        const a = document.createElement('a');
+        a.href = '/notes/' + encodeURIComponent(currentNoteId) + '/' + encodeURIComponent(slug);
+        a.target = '_blank'; a.rel = 'noopener';
+        a.className = 'title-public-link';
+        a.textContent = label;
+        return a;
+    }
+
+    // Build innerHTML fragment for an element
+    function buildTitleNodes(el) {
+        el.innerHTML = '';
+        if (noteName && file) {
+            el.appendChild(noteLink(noteName));
+            const sep = document.createElement('span');
+            sep.innerHTML = ' – ';
+            el.appendChild(sep);
+            el.appendChild(fileLink(file));
+        } else if (noteName) {
+            el.appendChild(noteLink(noteName));
+        } else if (file) {
+            el.appendChild(fileLink(file));
+        }
+    }
+
+    // Mobile header
+    const mfn = document.getElementById('mobile-filename');
+    if (mfn) buildTitleNodes(mfn);
+
     // Desktop split-view title bar
     const splitTitle = document.getElementById('split-title');
-    if (splitTitle) {
-        if (noteName && file) splitTitle.textContent = noteName + ' - ' + file;
-        else if (noteName) splitTitle.textContent = noteName;
-        else splitTitle.textContent = file || '';
-    }
+    if (splitTitle) buildTitleNodes(splitTitle);
 }
 
 function updatePageTitle() {
