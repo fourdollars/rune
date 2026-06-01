@@ -123,9 +123,10 @@ impl ChatDb {
                 CREATE TABLE IF NOT EXISTS sessions (
                     id          TEXT PRIMARY KEY,
                     name        TEXT NOT NULL,
-                        created_at  INTEGER NOT NULL,
+                    created_at  INTEGER NOT NULL,
                     created_by  TEXT,
-                    public      INTEGER DEFAULT 0
+                    public      INTEGER DEFAULT 0,
+                    model_override TEXT
                 );
                 CREATE TABLE IF NOT EXISTS file_visibility (
                     note_id  TEXT NOT NULL,
@@ -165,14 +166,13 @@ impl ChatDb {
         ")?;
         let backup = Backup::new(&*conn, &mut backup_conn)?;
         backup.run_to_completion(100, std::time::Duration::from_millis(10), None)?;
-        // Replace connection with file-based one
         drop(backup);
+        // Checkpoint WAL to ensure data is visible to new connections
+        backup_conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);")?;
         drop(conn);
-        // Reopen from file and swap
-        let new_conn = Connection::open(&path)?;
-        new_conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL;")?;
+        // Use the backup connection directly (already has all data)
         let mut conn_guard = self.conn.lock().unwrap();
-        *conn_guard = new_conn;
+        *conn_guard = backup_conn;
         Ok(())
     }
 

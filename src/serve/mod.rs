@@ -166,6 +166,8 @@ pub async fn run(config: RuneConfig, opts: NotesOptions) {
                 }
             }
         }
+        // Persist DB to disk if any notes were discovered
+        let _ = chat_db.ensure_persistent();
     }
 
     // Parse comma-separated model list from config
