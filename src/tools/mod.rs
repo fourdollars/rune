@@ -158,10 +158,10 @@ impl ToolRegistry {
                 .map(PathBuf::from)
                 .collect()
         };
-        // Always ensure essential system paths are accessible (required for exec)
-        // Note: /etc is NOT included wholesale — only specific files via SandboxConfig defaults.
+        // Always ensure essential system paths are accessible (required for exec + DNS)
+        // /etc is safe: sandbox mounts /tmp/.etc over /etc, hiding sensitive files.
         // /proc and /sys are denied. /run is traverse-only (for systemd-run scope).
-        for p in &["/bin", "/usr", "/lib", "/lib64"] {
+        for p in &["/bin", "/usr", "/lib", "/lib64", "/etc"] {
             let pb = PathBuf::from(p);
             if !read_only.contains(&pb) {
                 read_only.push(pb);

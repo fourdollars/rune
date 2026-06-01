@@ -55,16 +55,12 @@ impl Default for SandboxConfig {
                 PathBuf::from("/usr"),
                 PathBuf::from("/lib"),
                 PathBuf::from("/lib64"),
-                // Only essential /etc files (not entire /etc — prevents passwd/hostname leaks)
-                PathBuf::from("/etc/ld.so.cache"),
-                PathBuf::from("/etc/ld.so.conf"),
-                PathBuf::from("/etc/ld.so.conf.d"),
-                PathBuf::from("/etc/nsswitch.conf"),
-                PathBuf::from("/etc/resolv.conf"),
-                PathBuf::from("/etc/ssl"),
-                PathBuf::from("/etc/ca-certificates"),
-                PathBuf::from("/etc/alternatives"),
-                PathBuf::from("/etc/locale.alias"),
+                // Allow /etc read access for DNS resolution and dynamic linking.
+                // Security: sensitive files (/etc/passwd, /etc/hostname) are NOT exposed
+                // because sandbox mounts /tmp/.etc over /etc — only files explicitly
+                // copied into /tmp/.etc are visible (resolv.conf, nsswitch.conf,
+                // ld.so.cache, ssl certs, etc).
+                PathBuf::from("/etc"),
             ],
             denied_paths: vec![
                 PathBuf::from("/root"),
