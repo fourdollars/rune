@@ -97,6 +97,9 @@ pub struct Agent {
     /// Callback fired after a markdown file is written/created (for serve mode).
     /// Lets the caller (chat_handler) push a fresh file-list SSE event to the UI.
     pub file_list_callback: Option<Arc<dyn Fn() + Send + Sync>>,
+    /// Callback fired after a markdown file content is changed (for serve mode).
+    /// Broadcasts file_content SSE event so other users see the update in real-time.
+    pub file_content_callback: Option<Arc<dyn Fn(String, String) + Send + Sync>>,
 }
 
 impl Agent {
@@ -211,6 +214,7 @@ impl Agent {
             markdown_dir: None,
             user_name: None,
             file_list_callback: None,
+            file_content_callback: None,
         }
     }
 
@@ -1175,6 +1179,7 @@ impl Agent {
                         return Some(format!("Error writing {}: {}", fname, e));
                     }
                     if let Some(cb) = &self.file_list_callback { cb(); }
+                    if let Some(cb) = &self.file_content_callback { cb(fname.clone(), full_content.to_string()); }
                     Some(format!("{} updated (full replace)", fname))
                 } else if let (Some(search_str), Some(replace_str)) = (search, replace) {
                     match tokio::fs::read_to_string(&file_path).await {
@@ -1185,6 +1190,7 @@ impl Agent {
                                     return Some(format!("Error writing {}: {}", fname, e));
                                 }
                                 if let Some(cb) = &self.file_list_callback { cb(); }
+                                if let Some(cb) = &self.file_content_callback { cb(fname.clone(), updated.clone()); }
                                 Some(format!("{} updated: replaced '{}...'", fname, char_preview(search_str, 40)))
                             } else {
                                 Some(format!("Error: search text not found in {}", fname))

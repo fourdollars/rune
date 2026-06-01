@@ -1379,6 +1379,19 @@ async fn handle_chat_message(
         tokio::spawn(async move { broadcast_file_list(&s, &n).await; });
     }));
 
+    // Broadcast file content changes to all users in the room (real-time sync)
+    let state_for_content = state.clone();
+    let note_id_for_content = note_id.clone();
+    agent.file_content_callback = Some(Arc::new(move |filename: String, content: String| {
+        let s = state_for_content.clone();
+        let n = note_id_for_content.clone();
+        tokio::spawn(async move {
+            let room = s.get_or_create_room(&n).await;
+            let fc = SseMsg::FileContent { note_id: n, filename, content };
+            broadcast_to_room(&room, &fc);
+        });
+    }));
+
     // Set system prompt: per-note override > global config > default
     let system_prompt = {
         let room_prompt = room.system_prompt.read().await;
