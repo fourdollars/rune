@@ -877,9 +877,10 @@ pub async fn model_switch_handler(
     let msg = SseMsg::ModelChanged { model: req.model.clone() };
 
     if let Some(ref note_id) = req.note_id {
-        // Per-note model override
+        // Per-note model override — persist to DB
         let room = state.get_or_create_room(note_id).await;
         *room.model_override.write().await = Some(req.model.clone());
+        let _ = state.chat_db.set_note_model(note_id, Some(&req.model));
         broadcast_to_room(&room, &msg);
     } else {
         // Global default model — broadcast to all rooms

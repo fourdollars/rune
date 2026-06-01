@@ -40,6 +40,8 @@ pub struct NoteRecord {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub created_by: Option<String>,
     pub public: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model_override: Option<String>,
 }
 
 /// Thread-safe SQLite connection wrapper.
@@ -92,6 +94,7 @@ impl ChatDb {
                 PRIMARY KEY (note_id, filename)
             );
         ");
+        let _ = conn.execute_batch("ALTER TABLE sessions ADD COLUMN model_override TEXT;");
         Ok(Self { conn: Arc::new(Mutex::new(conn)), deferred_path: Arc::new(Mutex::new(None)) })
     }
 
@@ -282,7 +285,7 @@ impl ChatDb {
     pub fn list_notes(&self) -> anyhow::Result<Vec<NoteRecord>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT id, name, created_at, created_by, COALESCE(public, 0) FROM sessions ORDER BY name ASC"
+            "SELECT id, name, created_at, created_by, COALESCE(public, 0), model_override FROM sessions ORDER BY name ASC"
         )?;
         let rows = stmt.query_map([], |row| {
             Ok(NoteRecord {
@@ -291,6 +294,7 @@ impl ChatDb {
                 created_at: row.get(2)?,
                 created_by: row.get(3)?,
                 public:     row.get::<_, i32>(4).unwrap_or(0) != 0,
+                model_override: row.get(5)?,
             })
         })?.filter_map(|r| r.ok()).collect();
         Ok(rows)
@@ -360,7 +364,7 @@ impl ChatDb {
     pub fn get_session(&self, id: &str) -> anyhow::Result<Option<NoteRecord>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT id, name, created_at, created_by, COALESCE(public, 0) FROM sessions WHERE id = ?1"
+            "SELECT id, name, created_at, created_by, COALESCE(public, 0), model_override FROM sessions WHERE id = ?1"
         )?;
         let mut rows = stmt.query_map(params![id], |row| {
             Ok(NoteRecord {
@@ -369,11 +373,34 @@ impl ChatDb {
                 created_at: row.get(2)?,
                 created_by: row.get(3)?,
                 public:     row.get::<_, i32>(4).unwrap_or(0) != 0,
+                model_override: row.get(5)?,
             })
         })?;
         Ok(rows.next().and_then(|r| r.ok()))
     }
     // ── End Session CRUD ─────────────────────────────────────────────────
+
+    // ── Per-Note Model Override ───────────────────────────────────────────────
+
+    /// Set per-note model override. Pass None to clear (fallback to global default).
+    pub fn set_note_model(&self, id: &str, model: Option<&str>) -> anyhow::Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE sessions SET model_override = ?1 WHERE id = ?2",
+            params![model, id],
+        )?;
+        Ok(())
+    }
+
+    /// Get per-note model override. Returns None if not set (use global default).
+    pub fn get_note_model(&self, id: &str) -> Option<String> {
+        let conn = self.conn.lock().unwrap();
+        conn.query_row(
+            "SELECT model_override FROM sessions WHERE id = ?1",
+            params![id],
+            |row| row.get::<_, Option<String>>(0),
+        ).ok().flatten()
+    }
 
     // ── Visibility ────────────────────────────────────────────────────────────
 
@@ -858,4 +885,44 @@ mod tests {
         let db = in_memory_db();
         assert!(db.get_session("nope").unwrap().is_none());
     }
+    #[test]
+    fn test_note_model_persist_and_fallback() {
+        let db = in_memory_db();
+        db.create_note("test-note", "Test Note", Some("tester")).unwrap();
+
+        // Initially no model override
+        assert_eq!(db.get_note_model("test-note"), None);
+
+        // Set model override
+        db.set_note_model("test-note", Some("gpt-5.5")).unwrap();
+        assert_eq!(db.get_note_model("test-note"), Some("gpt-5.5".to_string()));
+
+        // Update model override
+        db.set_note_model("test-note", Some("claude-opus")).unwrap();
+        assert_eq!(db.get_note_model("test-note"), Some("claude-opus".to_string()));
+
+        // Clear model override (fallback to default)
+        db.set_note_model("test-note", None).unwrap();
+        assert_eq!(db.get_note_model("test-note"), None);
+
+        // Non-existent note returns None
+        assert_eq!(db.get_note_model("no-such-note"), None);
+    }
+
+    #[test]
+    fn test_note_model_in_list_notes() {
+        let db = in_memory_db();
+        db.create_note("n1", "Note 1", None).unwrap();
+        db.create_note("n2", "Note 2", None).unwrap();
+
+        db.set_note_model("n1", Some("gpt-5")).unwrap();
+
+        let notes = db.list_notes().unwrap();
+        let n1 = notes.iter().find(|n| n.id == "n1").unwrap();
+        let n2 = notes.iter().find(|n| n.id == "n2").unwrap();
+
+        assert_eq!(n1.model_override, Some("gpt-5".to_string()));
+        assert_eq!(n2.model_override, None);
+    }
+
 }

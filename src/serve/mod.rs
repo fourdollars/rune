@@ -87,6 +87,10 @@ impl ServerState {
             return Arc::clone(room);
         }
         let room = Arc::new(NoteRoom::new(note_id.to_string()));
+        // Load persisted model_override from DB (fallback to None = global default)
+        if let Some(model) = self.chat_db.get_note_model(note_id) {
+            *room.model_override.write().await = Some(model);
+        }
         rooms.insert(note_id.to_string(), Arc::clone(&room));
         room
     }
