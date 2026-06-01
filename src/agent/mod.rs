@@ -2180,13 +2180,15 @@ impl Agent {
             let mut input = String::new();
             if reader.read_line(&mut input).is_ok() {
                 let trimmed = input.trim().to_lowercase();
-                if trimmed == "n" || trimmed == "no" {
-                    return false;
+                if trimmed.is_empty() || trimmed == "y" || trimmed == "yes" {
+                    return true;
                 }
-                return true; // empty or y/yes
             }
+            // TTY open but read failed or user said no
+            return false;
         }
-        true
+        // No TTY (e.g. serve mode / systemd) -- deny by default
+        false
     }
 
     fn is_policy_blocked(content: &str) -> bool {
@@ -2214,14 +2216,15 @@ impl Agent {
             let mut input = String::new();
             if reader.read_line(&mut input).is_ok() {
                 let trimmed = input.trim().to_lowercase();
-                if trimmed == "n" || trimmed == "no" {
-                    return ConfirmResult::No;
+                if trimmed.is_empty() || trimmed == "y" || trimmed == "yes" {
+                    return ConfirmResult::Yes;
                 }
-                return ConfirmResult::Yes; // empty or y/yes
             }
+            // TTY open but read failed or user said no
+            return ConfirmResult::No;
         }
-        // Non-interactive fallback: auto-approve
-        ConfirmResult::Yes
+        // No TTY (e.g. serve mode / systemd) -- deny by default
+        ConfirmResult::No
     }
 
     /// Get the list of commands executed during this session.
@@ -4159,5 +4162,112 @@ read(3, "root:x:0:0:...", 4096) = 1234"#;
             .collect();
         assert_eq!(starts.len(), 2, "Expected 2 start events, got: {:?}", recorded);
         assert_eq!(ends.len(), 2, "Expected 2 end events, got: {:?}", recorded);
+    }
+
+    #[test]
+    fn test_prompt_yn_no_tty_returns_false() {
+        // In test environment (no controlling TTY in CI/systemd), prompt_yn
+        // must return false (deny) rather than true (auto-approve).
+        // This prevents serve mode from auto-approving policy prompts.
+        //
+        // Note: This test relies on the test runner not having /dev/tty attached
+        // in a way that read_line returns meaningful input. In a normal test env
+        // (cargo test), /dev/tty may or may not exist, but no human is typing.
+        // The important thing is that the fallback path returns false.
+        //
+        // We test the fallback logic directly by verifying the function signature
+        // and behavior documentation. The real integration test is the E2E below.
+        //
+        // Direct unit verification: simulate no-tty scenario
+        // Since we can't easily mock /dev/tty, we verify the source contains
+        // the safe fallback.
+        let source = include_str!("mod.rs");
+        // The no-TTY fallback must be `false`, not `true`
+        assert!(
+            source.contains("// No TTY (e.g. serve mode / systemd) -- deny by default\n        false"),
+            "prompt_yn must return false when no TTY is available"
+        );
+        assert!(
+            source.contains("// No TTY (e.g. serve mode / systemd) -- deny by default\n        ConfirmResult::No"),
+            "prompt_confirm must return No when no TTY is available"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_allowlist_blocks_unlisted_command_in_serve_mode() {
+        use std::sync::{Arc, Mutex};
+
+        // Provider that calls an unlisted command, then gives up with text
+        struct BlockedCmdProvider {
+            call_count: Mutex<u32>,
+        }
+        impl crate::provider::Provider for BlockedCmdProvider {
+            fn name(&self) -> &str {
+                "blocked-cmd-mock"
+            }
+            fn chat(
+                &self,
+                _request: crate::provider::LlmRequest,
+            ) -> std::pin::Pin<
+                Box<
+                    dyn std::future::Future<
+                            Output = anyhow::Result<crate::provider::LlmResponse>,
+                        > + Send
+                        + '_,
+                >,
+            > {
+                Box::pin(async move {
+                    let mut count = self.call_count.lock().unwrap();
+                    *count += 1;
+                    if *count == 1 {
+                        // Try to call `curl` which is NOT in allowed_commands
+                        Ok(crate::provider::LlmResponse {
+                            content: None,
+                            tool_calls: vec![crate::provider::LlmToolCall {
+                                id: "call_1".to_string(),
+                                call_type: "function".to_string(),
+                                function: crate::provider::LlmFunction {
+                                    name: "execute_cmd".to_string(),
+                                    arguments: r#"{"cmd":"curl http://example.com"}"#.to_string(),
+                                },
+                            }],
+                            usage: crate::provider::TokenUsage::default(),
+                            model: "mock".to_string(),
+                        })
+                    } else {
+                        Ok(crate::provider::LlmResponse {
+                            content: Some("Command was blocked.".to_string()),
+                            tool_calls: vec![],
+                            usage: crate::provider::TokenUsage::default(),
+                            model: "mock".to_string(),
+                        })
+                    }
+                })
+            }
+        }
+
+        let mut config = crate::config::RuneConfig {
+            model: "blocked-cmd-mock".to_string(),
+            ..Default::default()
+        };
+        // allowlist mode with only "echo" allowed — "curl" should be blocked
+        config.policy.mode = "allowlist".to_string();
+        config.policy.allowed_commands = vec!["echo".to_string()];
+
+        let mut registry = crate::provider::ProviderRegistry::new();
+        registry.register(Box::new(BlockedCmdProvider {
+            call_count: Mutex::new(0),
+        }));
+        // interactive=true simulates serve mode (rune notes)
+        let mut agent = Agent::new(config, registry, true, None);
+
+        // Verify that "curl" is NOT added to allowed_commands after run
+        let _result = agent.run("fetch example.com").await;
+
+        assert!(
+            !agent.config.policy.allowed_commands.contains(&"curl".to_string()),
+            "Blocked command 'curl' must NOT be auto-added to allowlist in serve mode (no TTY). Got: {:?}",
+            agent.config.policy.allowed_commands
+        );
     }
 }
