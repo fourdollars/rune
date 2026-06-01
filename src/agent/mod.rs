@@ -3950,4 +3950,214 @@ read(3, "root:x:0:0:...", 4096) = 1234"#;
         let result = agent.handle_markdown_tool("write_markdown", &args).await;
         assert!(result.unwrap().contains("search text not found"));
     }
+    #[tokio::test]
+    async fn test_tool_status_callback_sequential_emits_start_and_end() {
+        use std::sync::{Arc, Mutex};
+
+        // A provider that returns a single tool call on first invocation,
+        // then a plain text response on second.
+        struct ToolCallProvider {
+            call_count: Mutex<u32>,
+        }
+        impl crate::provider::Provider for ToolCallProvider {
+            fn name(&self) -> &str {
+                "tool-call-mock"
+            }
+            fn chat(
+                &self,
+                _request: crate::provider::LlmRequest,
+            ) -> std::pin::Pin<
+                Box<
+                    dyn std::future::Future<
+                            Output = anyhow::Result<crate::provider::LlmResponse>,
+                        > + Send
+                        + '_,
+                >,
+            > {
+                Box::pin(async move {
+                    let mut count = self.call_count.lock().unwrap();
+                    *count += 1;
+                    if *count == 1 {
+                        // First call: return a single tool call (sequential path)
+                        Ok(crate::provider::LlmResponse {
+                            content: None,
+                            tool_calls: vec![crate::provider::LlmToolCall {
+                                id: "call_1".to_string(),
+                                call_type: "function".to_string(),
+                                function: crate::provider::LlmFunction {
+                                    name: "execute_cmd".to_string(),
+                                    arguments: r#"{"cmd":"echo hello"}"#.to_string(),
+                                },
+                            }],
+                            usage: crate::provider::TokenUsage::default(),
+                            model: "mock".to_string(),
+                        })
+                    } else {
+                        // Second call: return normal response (done)
+                        Ok(crate::provider::LlmResponse {
+                            content: Some("Command executed successfully.".to_string()),
+                            tool_calls: vec![],
+                            usage: crate::provider::TokenUsage::default(),
+                            model: "mock".to_string(),
+                        })
+                    }
+                })
+            }
+        }
+
+        let mut config = crate::config::RuneConfig {
+            model: "tool-call-mock".to_string(),
+            ..Default::default()
+        };
+        // Unrestricted mode so execute_cmd is allowed without policy checks
+        config.policy.mode = "unrestricted".to_string();
+
+        let mut registry = crate::provider::ProviderRegistry::new();
+        registry.register(Box::new(ToolCallProvider {
+            call_count: Mutex::new(0),
+        }));
+        let mut agent = Agent::new(config, registry, false, None);
+
+        // Track tool_status_callback events
+        let events: Arc<Mutex<Vec<(String, String)>>> = Arc::new(Mutex::new(Vec::new()));
+        let events_clone = Arc::clone(&events);
+        agent.tool_status_callback = Some(Arc::new(move |name: &str, state: &str| {
+            events_clone
+                .lock()
+                .unwrap()
+                .push((name.to_string(), state.to_string()));
+        }));
+
+        // Run agent — should execute `echo hello` in sequential path
+        let _result = agent.run("run echo hello").await;
+
+        // Verify: must have both start and end for execute_cmd
+        let recorded = events.lock().unwrap().clone();
+        assert!(
+            recorded.contains(&("execute_cmd".to_string(), "start".to_string())),
+            "Missing tool_status start event. Got: {:?}",
+            recorded
+        );
+        assert!(
+            recorded.contains(&("execute_cmd".to_string(), "end".to_string())),
+            "Missing tool_status end event. Got: {:?}",
+            recorded
+        );
+
+        // Verify ordering: start before end
+        let start_idx = recorded
+            .iter()
+            .position(|e| e == &("execute_cmd".to_string(), "start".to_string()))
+            .unwrap();
+        let end_idx = recorded
+            .iter()
+            .position(|e| e == &("execute_cmd".to_string(), "end".to_string()))
+            .unwrap();
+        assert!(
+            start_idx < end_idx,
+            "start must come before end. start={}, end={}",
+            start_idx,
+            end_idx
+        );
+    }
+
+    #[tokio::test]
+    async fn test_tool_status_callback_parallel_emits_start_and_end() {
+        use std::sync::{Arc, Mutex};
+
+        // A provider that returns TWO tool calls (parallel path), then text.
+        struct ParallelToolProvider {
+            call_count: Mutex<u32>,
+        }
+        impl crate::provider::Provider for ParallelToolProvider {
+            fn name(&self) -> &str {
+                "parallel-mock"
+            }
+            fn chat(
+                &self,
+                _request: crate::provider::LlmRequest,
+            ) -> std::pin::Pin<
+                Box<
+                    dyn std::future::Future<
+                            Output = anyhow::Result<crate::provider::LlmResponse>,
+                        > + Send
+                        + '_,
+                >,
+            > {
+                Box::pin(async move {
+                    let mut count = self.call_count.lock().unwrap();
+                    *count += 1;
+                    if *count == 1 {
+                        // Two tool calls → parallel path
+                        Ok(crate::provider::LlmResponse {
+                            content: None,
+                            tool_calls: vec![
+                                crate::provider::LlmToolCall {
+                                    id: "call_a".to_string(),
+                                    call_type: "function".to_string(),
+                                    function: crate::provider::LlmFunction {
+                                        name: "execute_cmd".to_string(),
+                                        arguments: r#"{"cmd":"echo one"}"#.to_string(),
+                                    },
+                                },
+                                crate::provider::LlmToolCall {
+                                    id: "call_b".to_string(),
+                                    call_type: "function".to_string(),
+                                    function: crate::provider::LlmFunction {
+                                        name: "execute_cmd".to_string(),
+                                        arguments: r#"{"cmd":"echo two"}"#.to_string(),
+                                    },
+                                },
+                            ],
+                            usage: crate::provider::TokenUsage::default(),
+                            model: "mock".to_string(),
+                        })
+                    } else {
+                        Ok(crate::provider::LlmResponse {
+                            content: Some("Both done.".to_string()),
+                            tool_calls: vec![],
+                            usage: crate::provider::TokenUsage::default(),
+                            model: "mock".to_string(),
+                        })
+                    }
+                })
+            }
+        }
+
+        let mut config = crate::config::RuneConfig {
+            model: "parallel-mock".to_string(),
+            ..Default::default()
+        };
+        config.policy.mode = "unrestricted".to_string();
+
+        let mut registry = crate::provider::ProviderRegistry::new();
+        registry.register(Box::new(ParallelToolProvider {
+            call_count: Mutex::new(0),
+        }));
+        let mut agent = Agent::new(config, registry, false, None);
+
+        let events: Arc<Mutex<Vec<(String, String)>>> = Arc::new(Mutex::new(Vec::new()));
+        let events_clone = Arc::clone(&events);
+        agent.tool_status_callback = Some(Arc::new(move |name: &str, state: &str| {
+            events_clone
+                .lock()
+                .unwrap()
+                .push((name.to_string(), state.to_string()));
+        }));
+
+        let _result = agent.run("run echo one and echo two").await;
+
+        let recorded = events.lock().unwrap().clone();
+        // Parallel: 2 starts, then 2 ends
+        let starts: Vec<_> = recorded
+            .iter()
+            .filter(|e| e.1 == "start")
+            .collect();
+        let ends: Vec<_> = recorded
+            .iter()
+            .filter(|e| e.1 == "end")
+            .collect();
+        assert_eq!(starts.len(), 2, "Expected 2 start events, got: {:?}", recorded);
+        assert_eq!(ends.len(), 2, "Expected 2 end events, got: {:?}", recorded);
+    }
 }
