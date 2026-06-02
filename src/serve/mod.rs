@@ -1549,7 +1549,7 @@ mod tests {
             guest_token: None,
             files: Arc::new(RwLock::new(std::collections::HashMap::new())),
             active_file: Arc::new(RwLock::new(String::new())),
-            models: models.clone(),
+            models: Arc::new(RwLock::new(models.clone())),
             rooms: Arc::new(RwLock::new(HashMap::new())),
             global_default_model: Arc::new(RwLock::new(first_model.clone())),
             admin_broadcast_tx,
