@@ -51,6 +51,8 @@ pub struct NoteRoom {
     /// Current AI task status for this room ("idle", "thinking", "typing").
     /// Used by SSE reconnect to restore correct status even when streaming_tokens is empty.
     pub active_status: Arc<TokioRwLock<String>>,
+    /// Per-note thinking override; None = fall back to config.thinking
+    pub thinking_override: TokioRwLock<Option<String>>,
 }
 
 impl NoteRoom {
@@ -64,6 +66,7 @@ impl NoteRoom {
             system_prompt: TokioRwLock::new(None),
             streaming_tokens: Arc::new(TokioRwLock::new(String::new())),
             active_status: Arc::new(TokioRwLock::new("idle".to_string())),
+            thinking_override: TokioRwLock::new(None),
         }
     }
 }
@@ -129,6 +132,8 @@ pub enum SseMsg {
     ModelList { models: Vec<String>, active: String },
     #[serde(rename = "model_changed")]
     ModelChanged { model: String },
+    #[serde(rename = "thinking_changed")]
+    ThinkingChanged { thinking: String },
     #[serde(rename = "approval_request")]
     ApprovalRequest { id: String, detail: String },
     #[serde(rename = "archive_done")]
@@ -243,6 +248,12 @@ pub struct ModelSwitchReq {
     pub model: String,
     /// If provided, sets per-note override; otherwise sets global default.
     pub note_id: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ThinkingSwitchReq {
+    pub note_id: String,
+    pub thinking: String, // "off"|"low"|"medium"|"high"
 }
 
 #[derive(Debug, Deserialize)]
@@ -494,6 +505,10 @@ pub async fn events_handler(
         models: state.models.read().await.iter().map(|m| m.id.clone()).collect(),
         active: effective,
     });
+
+    // Send current thinking level for this note
+    let thinking = state.effective_thinking(&note_id).await.unwrap_or_else(|| "off".to_string());
+    init_msgs.push(SseMsg::ThinkingChanged { thinking });
 
     // Note list — guests only see public notes
     let visible_notes = if is_guest {
@@ -1053,6 +1068,26 @@ pub async fn model_switch_handler(
         }
     }
     Json(ApiResponse::success())
+}
+
+pub async fn thinking_switch_handler(
+    State(state): State<ServerState>,
+    Json(req): Json<ThinkingSwitchReq>,
+) -> Json<serde_json::Value> {
+    let room = state.get_or_create_room(&req.note_id).await;
+    let thinking_val = if req.thinking == "off" { None } else { Some(req.thinking.clone()) };
+
+    // Update room
+    *room.thinking_override.write().await = thinking_val.clone();
+
+    // Persist to DB
+    state.chat_db.set_note_thinking(&req.note_id, thinking_val.as_deref());
+
+    // Broadcast to room
+    let msg = SseMsg::ThinkingChanged { thinking: req.thinking.clone() };
+    broadcast_to_room(&room, &msg);
+
+    Json(serde_json::json!({"ok": true, "thinking": req.thinking}))
 }
 
 pub async fn archive_handler(
@@ -1800,6 +1835,7 @@ async fn handle_chat_message(
     // Build agent
     let mut cfg = config.clone();
     cfg.model = active_model.clone();
+    cfg.thinking = state.effective_thinking(&note_id).await;
     let mut agent = Agent::new(cfg, provider, true, embedding);
     agent.set_serve_mode(true);
     agent.token_callback = Some(token_callback);
@@ -2307,7 +2343,7 @@ mod tests {
     #[test]
     fn test_sse_msg_model_list() {
         let msg = SseMsg::ModelList {
-            models: vec!["gpt-4".into(), "claude".into()],
+            models: Arc::new(RwLock::new(vec!["gpt-4".into(), "claude".into()])),
             active: "gpt-4".into(),
         };
         let json = serde_json::to_string(&msg).unwrap();
@@ -2376,7 +2412,7 @@ mod tests {
             guest_token: None,
             files: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
             active_file: Arc::new(tokio::sync::RwLock::new(String::new())),
-            models: Arc::new(tokio::sync::RwLock::new(vec![ModelInfo { id: "test-model".into(), context_window: None, reasoning_efforts: vec![] }])),
+            models: Arc::new(RwLock::new(vec![ModelInfo { id: "test-model".into(), context_window: None, reasoning_efforts: vec![] }])),
             rooms: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
             global_default_model: Arc::new(tokio::sync::RwLock::new("test-model".into())),
             admin_broadcast_tx,
@@ -3067,7 +3103,7 @@ mod integration_tests {
     async fn test_file_visibility_change_broadcasts_note_list_to_all_rooms() {
         // Regression test: changing file visibility on note B while subscribed to note A
         // must update the note_list in note A's room so the sidebar reflects the change.
-        use tokio::sync::{broadcast, RwLock};
+        use tokio::sync::broadcast;
 
         let tmp = tempfile::tempdir().unwrap();
         let (admin_broadcast_tx, _) = broadcast::channel(256);

@@ -474,6 +474,45 @@ impl ChatDb {
 
     // ── Visibility ────────────────────────────────────────────────────────────
 
+    // ── Per-Note Thinking Override ────────────────────────────────────────────
+
+    /// Set per-note thinking override. Pass None to clear (fall back to config.thinking).
+    pub fn set_note_thinking(&self, note_id: &str, thinking: Option<&str>) {
+        let conn = self.conn.lock().unwrap();
+        let _ = conn.execute(
+            "CREATE TABLE IF NOT EXISTS note_settings (note_id TEXT PRIMARY KEY, thinking TEXT)",
+            [],
+        );
+        if let Some(t) = thinking {
+            let _ = conn.execute(
+                "INSERT OR REPLACE INTO note_settings (note_id, thinking) VALUES (?1, ?2)",
+                params![note_id, t],
+            );
+        } else {
+            let _ = conn.execute(
+                "DELETE FROM note_settings WHERE note_id = ?1",
+                params![note_id],
+            );
+        }
+    }
+
+    /// Get per-note thinking override. Returns None if not set.
+    pub fn get_note_thinking(&self, note_id: &str) -> Option<String> {
+        let conn = self.conn.lock().unwrap();
+        let _ = conn.execute(
+            "CREATE TABLE IF NOT EXISTS note_settings (note_id TEXT PRIMARY KEY, thinking TEXT)",
+            [],
+        );
+        conn.query_row(
+            "SELECT thinking FROM note_settings WHERE note_id = ?1",
+            params![note_id],
+            |row| row.get(0),
+        )
+        .ok()
+    }
+
+    // ── Visibility ────────────────────────────────────────────────────────────
+
     /// Set note-level public flag. Returns new state.
     pub fn set_note_public(&self, id: &str, public: bool) -> anyhow::Result<bool> {
         let conn = self.conn.lock().unwrap();

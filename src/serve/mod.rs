@@ -92,6 +92,10 @@ impl ServerState {
         if let Some(model) = self.chat_db.get_note_model(note_id) {
             *room.model_override.write().await = Some(model);
         }
+        // Load persisted thinking_override from DB
+        if let Some(thinking) = self.chat_db.get_note_thinking(note_id) {
+            *room.thinking_override.write().await = Some(thinking);
+        }
         rooms.insert(note_id.to_string(), Arc::clone(&room));
         room
     }
@@ -104,6 +108,16 @@ impl ServerState {
             return m.clone();
         }
         self.global_default_model.read().await.clone()
+    }
+
+    /// Effective thinking for a note: per-note override if set, else config.thinking.
+    pub async fn effective_thinking(&self, note_id: &str) -> Option<String> {
+        let room = self.get_or_create_room(note_id).await;
+        let override_val = room.thinking_override.read().await;
+        if let Some(ref t) = *override_val {
+            return Some(t.clone());
+        }
+        self.config.thinking.clone()
     }
 }
 
@@ -322,6 +336,7 @@ pub async fn run(config: RuneConfig, opts: NotesOptions) {
                 "/api/note/rename",
                 "/api/note/delete",
                 "/api/model/switch",
+                "/api/model/thinking",
                 "/api/note/visibility",
                 "/api/file/visibility",
             ];
@@ -352,6 +367,7 @@ pub async fn run(config: RuneConfig, opts: NotesOptions) {
         .route("/api/note/delete", post(api::note_delete_handler))
         .route("/api/note/switch", post(api::note_switch_handler))
         .route("/api/model/switch", post(api::model_switch_handler))
+        .route("/api/model/thinking", post(api::thinking_switch_handler))
         .route("/api/chat/archive", post(api::archive_handler))
         .route("/api/chat/search", post(api::search_handler))
         .route("/api/approval", post(api::approval_handler))
@@ -773,6 +789,7 @@ mod tests {
                     "/api/note/rename",
                     "/api/note/delete",
                     "/api/model/switch",
+                "/api/model/thinking",
                     "/api/note/visibility",
                     "/api/file/visibility",
                 ];
@@ -875,6 +892,7 @@ mod tests {
                     "/api/note/rename",
                     "/api/note/delete",
                     "/api/model/switch",
+                "/api/model/thinking",
                     "/api/note/visibility",
                     "/api/file/visibility",
                 ];
@@ -984,6 +1002,7 @@ mod tests {
                     "/api/note/rename",
                     "/api/note/delete",
                     "/api/model/switch",
+                "/api/model/thinking",
                     "/api/note/visibility",
                     "/api/file/visibility",
                 ];
@@ -1093,6 +1112,7 @@ mod tests {
                     "/api/note/rename",
                     "/api/note/delete",
                     "/api/model/switch",
+                "/api/model/thinking",
                     "/api/note/visibility",
                     "/api/file/visibility",
                 ];
@@ -1190,6 +1210,7 @@ mod tests {
                     "/api/note/rename",
                     "/api/note/delete",
                     "/api/model/switch",
+                "/api/model/thinking",
                     "/api/note/visibility",
                     "/api/file/visibility",
                 ];
@@ -1287,6 +1308,7 @@ mod tests {
                     "/api/note/rename",
                     "/api/note/delete",
                     "/api/model/switch",
+                "/api/model/thinking",
                     "/api/note/visibility",
                     "/api/file/visibility",
                 ];
@@ -1384,6 +1406,7 @@ mod tests {
                     "/api/note/rename",
                     "/api/note/delete",
                     "/api/model/switch",
+                "/api/model/thinking",
                     "/api/note/visibility",
                     "/api/file/visibility",
                 ];
@@ -1526,7 +1549,7 @@ mod tests {
             guest_token: None,
             files: Arc::new(RwLock::new(std::collections::HashMap::new())),
             active_file: Arc::new(RwLock::new(String::new())),
-            models: Arc::new(RwLock::new(models.clone())),
+            models: models.clone(),
             rooms: Arc::new(RwLock::new(HashMap::new())),
             global_default_model: Arc::new(RwLock::new(first_model.clone())),
             admin_broadcast_tx,
