@@ -850,7 +850,7 @@ function attachMetaToLastAssistant(model, tokIn, tokOut, ctxTokens, ctxWindow, s
     // Run stats go at the tail of the message body
     const totalTok = (tokIn||0) + (tokOut||0);
     if (steps || totalTok || toolCalls) {
-        const body = target.querySelector('.msg-body');
+        const body = target.querySelector('.body');
         if (body) {
             // Remove old stats footer if any
             const oldStats = body.querySelector('.run-stats');
