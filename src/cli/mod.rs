@@ -1355,8 +1355,9 @@ pub async fn run() {
         }
     }
 
-    // Non-interactive (pipe/prompt) mode defaults to allowlist policy unless explicitly overridden
-    if (!stdin_is_terminal || cfg.cli_prompt.is_some()) && cfg.policy.mode == "confirm" {
+    // Non-interactive (pipe) mode defaults to allowlist policy unless explicitly overridden
+    // Positional prompt mode keeps the configured policy (user is at the terminal)
+    if !stdin_is_terminal && cfg.policy.mode == "confirm" {
         eprintln!(
             "  {} pipe mode: defaulting policy to allowlist (use --unrestricted to disable)",
             "ℹ".dimmed()
