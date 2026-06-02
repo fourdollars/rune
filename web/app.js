@@ -859,6 +859,8 @@ function attachMetaToLastAssistant(model, tokIn, tokOut, ctxTokens, ctxWindow, s
             stats.className = 'run-stats';
             stats.textContent = `⚡ ${steps||0} steps | ${totalTok} tokens | ${toolCalls||0} tool calls`;
             body.appendChild(stats);
+            // Auto-scroll to show the stats line
+            chatMessages.scrollTop = chatMessages.scrollHeight;
         }
     }
     // Update context overlay
