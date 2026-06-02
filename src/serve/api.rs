@@ -71,6 +71,15 @@ impl NoteRoom {
     }
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ModelListEntry {
+    pub id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub context_window: Option<u64>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub reasoning_efforts: Vec<String>,
+}
+
 // ─── SSE Event types (server→client) ──────────────────────────────────────
 
 #[derive(Debug, Serialize, Clone)]
@@ -129,7 +138,7 @@ pub enum SseMsg {
     #[serde(rename = "note_switched")]
     NoteSwitched { note_id: String },
     #[serde(rename = "model_list")]
-    ModelList { models: Vec<String>, active: String },
+    ModelList { models: Vec<ModelListEntry>, active: String, thinking: String },
     #[serde(rename = "model_changed")]
     ModelChanged { model: String },
     #[serde(rename = "thinking_changed")]
@@ -499,16 +508,19 @@ pub async fn events_handler(
     // Auth result
     init_msgs.push(SseMsg::AuthResult { is_admin, is_guest });
 
-    // Model list — show effective model for this note
+    // Model list — show effective model and metadata for this note
     let effective = state.effective_model(&note_id).await;
-    init_msgs.push(SseMsg::ModelList {
-        models: state.models.read().await.iter().map(|m| m.id.clone()).collect(),
-        active: effective,
-    });
-
-    // Send current thinking level for this note
     let thinking = state.effective_thinking(&note_id).await.unwrap_or_else(|| "off".to_string());
-    init_msgs.push(SseMsg::ThinkingChanged { thinking });
+    let model_entries: Vec<ModelListEntry> = state.models.read().await.iter().map(|m| ModelListEntry {
+        id: m.id.clone(),
+        context_window: m.context_window,
+        reasoning_efforts: m.reasoning_efforts.clone(),
+    }).collect();
+    init_msgs.push(SseMsg::ModelList {
+        models: model_entries,
+        active: effective,
+        thinking,
+    });
 
     // Note list — guests only see public notes
     let visible_notes = if is_guest {
@@ -2343,11 +2355,18 @@ mod tests {
     #[test]
     fn test_sse_msg_model_list() {
         let msg = SseMsg::ModelList {
-            models: vec!["gpt-4".into(), "claude".into()],
+            models: vec![
+                ModelListEntry { id: "gpt-4".into(), context_window: Some(128000), reasoning_efforts: vec![] },
+                ModelListEntry { id: "claude".into(), context_window: Some(200000), reasoning_efforts: vec!["low".into(), "medium".into(), "high".into()] },
+            ],
             active: "gpt-4".into(),
+            thinking: "off".into(),
         };
         let json = serde_json::to_string(&msg).unwrap();
         assert!(json.contains(r#""type":"model_list""#));
+        assert!(json.contains(r#""context_window":128000"#));
+        assert!(json.contains(r#""reasoning_efforts":["low","medium","high"]"#));
+        assert!(json.contains(r#""thinking":"off""#));
     }
 
     #[test]

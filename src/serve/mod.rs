@@ -258,9 +258,14 @@ pub async fn run(config: RuneConfig, opts: NotesOptions) {
                             // Broadcast updated model list to all connected rooms
                             let rooms = state_clone.rooms.read().await;
                             for (_, room) in rooms.iter() {
-                                let model_ids: Vec<String> = new_models.iter().map(|m| m.id.clone()).collect();
+                                let model_entries: Vec<crate::serve::api::ModelListEntry> = new_models.iter().map(|m| crate::serve::api::ModelListEntry {
+                                    id: m.id.clone(),
+                                    context_window: m.context_window,
+                                    reasoning_efforts: m.reasoning_efforts.clone(),
+                                }).collect();
                                 let active = state_clone.effective_model(&room.note_id).await;
-                                let msg = crate::serve::api::SseMsg::ModelList { models: model_ids, active };
+                                let thinking = state_clone.effective_thinking(&room.note_id).await.unwrap_or_else(|| "off".to_string());
+                                let msg = crate::serve::api::SseMsg::ModelList { models: model_entries, active, thinking };
                                 crate::serve::api::broadcast_to_room(room, &msg);
                             }
                         }
