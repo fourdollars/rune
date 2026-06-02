@@ -12,6 +12,7 @@ mod static_files;
 pub use db::ChatDb;
 
 use crate::config::RuneConfig;
+use crate::provider::ModelInfo;
 use crate::serve::api::NoteRoom;
 use axum::{
     extract::ConnectInfo,
@@ -53,7 +54,7 @@ pub struct ServerState {
     /// Currently active filename shown in the editor.
     pub active_file: Arc<RwLock<String>>,
     /// All available models (parsed from config.model by comma).
-    pub models: Vec<String>,
+    pub models: Vec<ModelInfo>,
     /// Per-note rooms: isolated SSE channel + model + cancel token per note.
     pub rooms: Arc<RwLock<HashMap<String, Arc<NoteRoom>>>>,
     /// Global default model (used when a note has no per-note override).
@@ -171,11 +172,12 @@ pub async fn run(config: RuneConfig, opts: NotesOptions) {
     }
 
     // Parse comma-separated model list from config
-    let mut models: Vec<String> = config
+    let mut models: Vec<ModelInfo> = config
         .model
         .split(',')
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty())
+        .map(|id| ModelInfo { id, context_window: None, reasoning_efforts: vec![] })
         .collect();
 
     // Auto-discover models from provider if none configured
@@ -190,24 +192,24 @@ pub async fn run(config: RuneConfig, opts: NotesOptions) {
                     }
                     Ok(_) => {
                         eprintln!("  ⚠ Provider returned no models, using default");
-                        models = vec![config.model.clone()];
+                        models = vec![ModelInfo { id: config.model.clone(), context_window: None, reasoning_efforts: vec![] }];
                     }
                     Err(e) => {
                         eprintln!("  ⚠ Failed to discover models: {}", e);
-                        models = vec![config.model.clone()];
+                        models = vec![ModelInfo { id: config.model.clone(), context_window: None, reasoning_efforts: vec![] }];
                     }
                 }
             }
             Err(e) => {
                 eprintln!("  ⚠ Cannot build provider for model discovery: {}", e);
-                models = vec![config.model.clone()];
+                models = vec![ModelInfo { id: config.model.clone(), context_window: None, reasoning_efforts: vec![] }];
             }
         }
     }
 
     let first_model = models
         .first()
-        .cloned()
+        .map(|m| m.id.clone())
         .unwrap_or_else(|| config.model.clone());
 
     let state = ServerState {
@@ -1476,15 +1478,16 @@ mod tests {
         let db = ChatDb::open(std::path::Path::new(":memory:")).expect("in-memory db");
 
         let config = RuneConfig::default();
-        let models: Vec<String> = config
+        let models: Vec<ModelInfo> = config
             .model
             .split(',')
             .map(|s| s.trim().to_string())
             .filter(|s| !s.is_empty())
+            .map(|id| ModelInfo { id, context_window: None, reasoning_efforts: vec![] })
             .collect();
         let first_model = models
             .first()
-            .cloned()
+            .map(|m| m.id.clone())
             .unwrap_or_else(|| config.model.clone());
 
         let state = ServerState {
@@ -1524,7 +1527,7 @@ mod tests {
             guest_token: None,
             files: Arc::new(RwLock::new(std::collections::HashMap::new())),
             active_file: Arc::new(RwLock::new("main.md".into())),
-            models: vec!["gpt-4o".into()],
+            models: vec![ModelInfo { id: "gpt-4o".into(), context_window: None, reasoning_efforts: vec![] }],
             rooms: Arc::new(RwLock::new(HashMap::new())),
             global_default_model: Arc::new(RwLock::new("gpt-4o".into())),
             admin_broadcast_tx,

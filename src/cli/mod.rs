@@ -1297,8 +1297,8 @@ pub async fn run() {
     if cfg.model.is_empty() {
         let registry = init_provider(&cfg);
         if let Ok(models) = registry.list_models().await {
-            if let Some(first) = models.into_iter().find(|m: &String| !m.contains("embedding") && !m.contains("trajectory")) {
-                cfg.model = first;
+            if let Some(first) = models.into_iter().find(|m| !m.id.contains("embedding") && !m.id.contains("trajectory")) {
+                cfg.model = first.id;
             }
         }
         // Final fallback

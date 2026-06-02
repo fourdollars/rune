@@ -7,7 +7,7 @@
 use crate::agent::{Agent, StopReason};
 use crate::config::RuneConfig;
 use crate::embedding::EmbeddingEngine;
-use crate::provider::{CopilotProvider, GeminiProvider, OpenAiProvider, ProviderRegistry};
+use crate::provider::{CopilotProvider, GeminiProvider, ModelInfo, OpenAiProvider, ProviderRegistry};
 use crate::serve::ServerState;
 use axum::{
     extract::{Query, State},
@@ -491,7 +491,7 @@ pub async fn events_handler(
     // Model list — show effective model for this note
     let effective = state.effective_model(&note_id).await;
     init_msgs.push(SseMsg::ModelList {
-        models: state.models.clone(),
+        models: state.models.iter().map(|m| m.id.clone()).collect(),
         active: effective,
     });
 
@@ -1030,7 +1030,7 @@ pub async fn model_switch_handler(
     State(state): State<ServerState>,
     Json(req): Json<ModelSwitchReq>,
 ) -> Json<ApiResponse> {
-    if !state.models.contains(&req.model) {
+    if !state.models.iter().any(|m| m.id == req.model) {
         return Json(ApiResponse::err(format!("Unknown model: {}", req.model)));
     }
 
@@ -2376,7 +2376,7 @@ mod tests {
             guest_token: None,
             files: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
             active_file: Arc::new(tokio::sync::RwLock::new(String::new())),
-            models: vec!["test-model".into()],
+            models: vec![ModelInfo { id: "test-model".into(), context_window: None, reasoning_efforts: vec![] }],
             rooms: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
             global_default_model: Arc::new(tokio::sync::RwLock::new("test-model".into())),
             admin_broadcast_tx,
@@ -2445,7 +2445,7 @@ mod integration_tests {
             guest_token: None,
             files: Arc::new(RwLock::new(std::collections::HashMap::new())),
             active_file: Arc::new(RwLock::new(String::new())),
-            models: vec!["gpt-5-mini".into(), "claude-sonnet-4.6".into()],
+            models: vec![ModelInfo { id: "gpt-5-mini".into(), context_window: None, reasoning_efforts: vec![] }, ModelInfo { id: "claude-sonnet-4.6".into(), context_window: None, reasoning_efforts: vec![] }],
             rooms: Arc::new(RwLock::new(std::collections::HashMap::new())),
             global_default_model: Arc::new(RwLock::new("gpt-5-mini".into())),
             admin_broadcast_tx,
@@ -3085,7 +3085,7 @@ mod integration_tests {
             guest_token: None,
             files: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
             active_file: Arc::new(tokio::sync::RwLock::new(String::new())),
-            models: vec!["m1".into()],
+            models: vec![ModelInfo { id: "m1".into(), context_window: None, reasoning_efforts: vec![] }],
             rooms: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
             global_default_model: Arc::new(tokio::sync::RwLock::new("m1".into())),
             admin_broadcast_tx,
@@ -3134,6 +3134,7 @@ mod isolation_tests {
     use tempfile::TempDir;
     use tokio::sync::{broadcast, RwLock};
     use tokio_util::sync::CancellationToken;
+    use crate::serve::ModelInfo;
 
     fn make_state() -> (ServerState, TempDir) {
         let tmp = tempfile::tempdir().unwrap();
@@ -3147,7 +3148,7 @@ mod isolation_tests {
             guest_token: None,
             files: Arc::new(RwLock::new(HashMap::new())),
             active_file: Arc::new(RwLock::new(String::new())),
-            models: vec!["gpt-5-mini".into(), "claude-sonnet-4.6".into()],
+            models: vec![ModelInfo { id: "gpt-5-mini".into(), context_window: None, reasoning_efforts: vec![] }, ModelInfo { id: "claude-sonnet-4.6".into(), context_window: None, reasoning_efforts: vec![] }],
             rooms: Arc::new(RwLock::new(HashMap::new())),
             global_default_model: Arc::new(RwLock::new("gpt-5-mini".into())),
             admin_broadcast_tx,
@@ -3415,7 +3416,7 @@ mod isolation_tests {
             guest_token: None,
             files: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
             active_file: Arc::new(tokio::sync::RwLock::new(String::new())),
-            models: vec!["gpt-5-mini".into(), "claude-sonnet-4.6".into()],
+            models: vec![ModelInfo { id: "gpt-5-mini".into(), context_window: None, reasoning_efforts: vec![] }, ModelInfo { id: "claude-sonnet-4.6".into(), context_window: None, reasoning_efforts: vec![] }],
             rooms: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
             global_default_model: Arc::new(tokio::sync::RwLock::new("gpt-5-mini".into())),
             admin_broadcast_tx,
@@ -3471,7 +3472,7 @@ mod isolation_tests {
             guest_token: None,
             files: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
             active_file: Arc::new(tokio::sync::RwLock::new(String::new())),
-            models: vec!["m1".into()],
+            models: vec![ModelInfo { id: "m1".into(), context_window: None, reasoning_efforts: vec![] }],
             rooms: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
             global_default_model: Arc::new(tokio::sync::RwLock::new("m1".into())),
             admin_broadcast_tx,
@@ -3522,7 +3523,7 @@ mod isolation_tests {
             guest_token: Some("guest-tok".into()),
             files: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
             active_file: Arc::new(tokio::sync::RwLock::new(String::new())),
-            models: vec!["m1".into()],
+            models: vec![ModelInfo { id: "m1".into(), context_window: None, reasoning_efforts: vec![] }],
             rooms: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
             global_default_model: Arc::new(tokio::sync::RwLock::new("m1".into())),
             admin_broadcast_tx,
@@ -3571,7 +3572,7 @@ mod isolation_tests {
             guest_token: Some("guest-tok".into()),
             files: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
             active_file: Arc::new(tokio::sync::RwLock::new(String::new())),
-            models: vec!["m1".into()],
+            models: vec![ModelInfo { id: "m1".into(), context_window: None, reasoning_efforts: vec![] }],
             rooms: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
             global_default_model: Arc::new(tokio::sync::RwLock::new("m1".into())),
             admin_broadcast_tx,
@@ -3633,7 +3634,7 @@ mod isolation_tests {
             guest_token: None,
             files: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
             active_file: Arc::new(tokio::sync::RwLock::new(String::new())),
-            models: vec!["m1".into()],
+            models: vec![ModelInfo { id: "m1".into(), context_window: None, reasoning_efforts: vec![] }],
             rooms: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
             global_default_model: Arc::new(tokio::sync::RwLock::new("m1".into())),
             admin_broadcast_tx,
@@ -3698,7 +3699,7 @@ mod isolation_tests {
             guest_token: None,
             files: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
             active_file: Arc::new(tokio::sync::RwLock::new(String::new())),
-            models: vec!["m1".into()],
+            models: vec![ModelInfo { id: "m1".into(), context_window: None, reasoning_efforts: vec![] }],
             rooms: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
             global_default_model: Arc::new(tokio::sync::RwLock::new("m1".into())),
             admin_broadcast_tx,

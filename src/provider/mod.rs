@@ -336,12 +336,20 @@ async fn stream_openai_compatible_response(
     })
 }
 
+/// Metadata about an available model.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ModelInfo {
+    pub id: String,
+    pub context_window: Option<u64>,
+    pub reasoning_efforts: Vec<String>,
+}
+
 /// Provider trait.
 pub trait Provider: Send + Sync {
     fn name(&self) -> &str;
 
     /// List available models from this provider. Default: empty (not supported).
-    fn list_models(&self) -> Pin<Box<dyn Future<Output = Result<Vec<String>>> + Send + '_>> {
+    fn list_models(&self) -> Pin<Box<dyn Future<Output = Result<Vec<ModelInfo>>> + Send + '_>> {
         Box::pin(async { Ok(Vec::new()) })
     }
 
@@ -639,7 +647,7 @@ impl Provider for CopilotProvider {
         &self.provider_name
     }
 
-    fn list_models(&self) -> Pin<Box<dyn Future<Output = Result<Vec<String>>> + Send + '_>> {
+    fn list_models(&self) -> Pin<Box<dyn Future<Output = Result<Vec<ModelInfo>>> + Send + '_>> {
         Box::pin(async move {
             let (token, endpoint) = self.get_token().await?;
             let url = format!("{}/models", endpoint.trim_end_matches('/'));
@@ -664,22 +672,36 @@ impl Provider for CopilotProvider {
             let v: serde_json::Value = serde_json::from_str(&body)
                 .map_err(|e| anyhow!("failed to parse models: {}", e))?;
 
-            let models: Vec<String> = v
+            let mut models: Vec<ModelInfo> = v
                 .get("data")
                 .or_else(|| v.get("models"))
                 .and_then(|d| d.as_array())
                 .map(|arr| {
                     arr.iter()
                         .filter_map(|m| {
-                            m.get("id")
+                            let id = m.get("id")
                                 .or_else(|| m.get("name"))
                                 .and_then(|id| id.as_str())
-                                .map(|s| s.to_string())
+                                .map(|s| s.to_string())?;
+                            let context_window = m
+                                .pointer("/capabilities/limits/max_context_window_tokens")
+                                .and_then(|v| v.as_u64());
+                            let reasoning_efforts = m
+                                .pointer("/capabilities/supports/reasoning_effort")
+                                .and_then(|v| v.as_array())
+                                .map(|arr| {
+                                    arr.iter()
+                                        .filter_map(|e| e.as_str().map(|s| s.to_string()))
+                                        .collect()
+                                })
+                                .unwrap_or_default();
+                            Some(ModelInfo { id, context_window, reasoning_efforts })
                         })
                         .collect()
                 })
                 .unwrap_or_default();
 
+            models.sort_by(|a, b| a.id.cmp(&b.id));
             Ok(models)
         })
     }
@@ -1397,7 +1419,7 @@ impl ProviderRegistry {
     }
 
     /// List available models from the default provider.
-    pub async fn list_models(&self) -> Result<Vec<String>> {
+    pub async fn list_models(&self) -> Result<Vec<ModelInfo>> {
         if self.providers.is_empty() {
             return Err(anyhow!("no providers registered"));
         }
@@ -3077,7 +3099,8 @@ mod provider_tests {
             .unwrap();
         let result = rt.block_on(p.list_models());
         assert!(result.is_ok());
-        assert!(result.unwrap().is_empty());
+        let models: Vec<ModelInfo> = result.unwrap();
+        assert!(models.is_empty());
     }
 
     #[test]
@@ -3095,33 +3118,55 @@ mod provider_tests {
             .unwrap();
         let result = rt.block_on(reg.list_models());
         assert!(result.is_ok());
-        assert!(result.unwrap().is_empty());
+        let models: Vec<ModelInfo> = result.unwrap();
+        assert!(models.is_empty());
     }
 
     #[test]
     fn test_copilot_models_json_parsing_data_array() {
-        // Simulate the JSON response format from Copilot /models endpoint
-        let json = r#"{"data":[{"id":"gpt-5-mini"},{"id":"claude-sonnet-4.6"},{"id":"gemini-3.5-flash"}]}"#;
+        // Simulate the JSON response format from Copilot /models endpoint with metadata
+        let json = r#"{"data":[
+            {"id":"gpt-5-mini","capabilities":{"limits":{"max_context_window_tokens":16384},"supports":{}}},
+            {"id":"claude-sonnet-4.6","capabilities":{"limits":{"max_context_window_tokens":200000},"supports":{"reasoning_effort":["low","medium","high"]}}},
+            {"id":"gemini-3.5-flash","capabilities":{"limits":{},"supports":{}}}
+        ]}"#;
         let v: serde_json::Value = serde_json::from_str(json).unwrap();
-        let models: Vec<String> = v
+        let mut models: Vec<ModelInfo> = v
             .get("data")
             .or_else(|| v.get("models"))
             .and_then(|d| d.as_array())
             .map(|arr| {
                 arr.iter()
                     .filter_map(|m| {
-                        m.get("id")
+                        let id = m.get("id")
                             .or_else(|| m.get("name"))
                             .and_then(|id| id.as_str())
-                            .map(|s| s.to_string())
+                            .map(|s| s.to_string())?;
+                        let context_window = m
+                            .pointer("/capabilities/limits/max_context_window_tokens")
+                            .and_then(|v| v.as_u64());
+                        let reasoning_efforts = m
+                            .pointer("/capabilities/supports/reasoning_effort")
+                            .and_then(|v| v.as_array())
+                            .map(|arr| arr.iter().filter_map(|e| e.as_str().map(|s| s.to_string())).collect())
+                            .unwrap_or_default();
+                        Some(ModelInfo { id, context_window, reasoning_efforts })
                     })
                     .collect()
             })
             .unwrap_or_default();
+        models.sort_by(|a, b| a.id.cmp(&b.id));
         assert_eq!(models.len(), 3);
-        assert_eq!(models[0], "gpt-5-mini");
-        assert_eq!(models[1], "claude-sonnet-4.6");
-        assert_eq!(models[2], "gemini-3.5-flash");
+        // sorted alphabetically
+        assert_eq!(models[0].id, "claude-sonnet-4.6");
+        assert_eq!(models[0].context_window, Some(200000));
+        assert_eq!(models[0].reasoning_efforts, vec!["low", "medium", "high"]);
+        assert_eq!(models[1].id, "gemini-3.5-flash");
+        assert_eq!(models[1].context_window, None);
+        assert!(models[1].reasoning_efforts.is_empty());
+        assert_eq!(models[2].id, "gpt-5-mini");
+        assert_eq!(models[2].context_window, Some(16384));
+        assert!(models[2].reasoning_efforts.is_empty());
     }
 
     #[test]
@@ -3129,41 +3174,54 @@ mod provider_tests {
         // Alternative format: "models" key with "name" field
         let json = r#"{"models":[{"name":"model-a"},{"name":"model-b"}]}"#;
         let v: serde_json::Value = serde_json::from_str(json).unwrap();
-        let models: Vec<String> = v
+        let mut models: Vec<ModelInfo> = v
             .get("data")
             .or_else(|| v.get("models"))
             .and_then(|d| d.as_array())
             .map(|arr| {
                 arr.iter()
                     .filter_map(|m| {
-                        m.get("id")
+                        let id = m.get("id")
                             .or_else(|| m.get("name"))
                             .and_then(|id| id.as_str())
-                            .map(|s| s.to_string())
+                            .map(|s| s.to_string())?;
+                        let context_window = m
+                            .pointer("/capabilities/limits/max_context_window_tokens")
+                            .and_then(|v| v.as_u64());
+                        let reasoning_efforts = m
+                            .pointer("/capabilities/supports/reasoning_effort")
+                            .and_then(|v| v.as_array())
+                            .map(|arr| arr.iter().filter_map(|e| e.as_str().map(|s| s.to_string())).collect())
+                            .unwrap_or_default();
+                        Some(ModelInfo { id, context_window, reasoning_efforts })
                     })
                     .collect()
             })
             .unwrap_or_default();
+        models.sort_by(|a, b| a.id.cmp(&b.id));
         assert_eq!(models.len(), 2);
-        assert_eq!(models[0], "model-a");
-        assert_eq!(models[1], "model-b");
+        assert_eq!(models[0].id, "model-a");
+        assert_eq!(models[1].id, "model-b");
+        assert!(models[0].context_window.is_none());
+        assert!(models[0].reasoning_efforts.is_empty());
     }
 
     #[test]
     fn test_copilot_models_json_parsing_empty_response() {
         let json = r#"{"data":[]}"#;
         let v: serde_json::Value = serde_json::from_str(json).unwrap();
-        let models: Vec<String> = v
+        let models: Vec<ModelInfo> = v
             .get("data")
             .or_else(|| v.get("models"))
             .and_then(|d| d.as_array())
             .map(|arr| {
                 arr.iter()
                     .filter_map(|m| {
-                        m.get("id")
+                        let id = m.get("id")
                             .or_else(|| m.get("name"))
                             .and_then(|id| id.as_str())
-                            .map(|s| s.to_string())
+                            .map(|s| s.to_string())?;
+                        Some(ModelInfo { id, context_window: None, reasoning_efforts: vec![] })
                     })
                     .collect()
             })
@@ -3176,17 +3234,18 @@ mod provider_tests {
         // Neither "data" nor "models" key — should return empty
         let json = r#"{"error":"something"}"#;
         let v: serde_json::Value = serde_json::from_str(json).unwrap();
-        let models: Vec<String> = v
+        let models: Vec<ModelInfo> = v
             .get("data")
             .or_else(|| v.get("models"))
             .and_then(|d| d.as_array())
             .map(|arr| {
                 arr.iter()
                     .filter_map(|m| {
-                        m.get("id")
+                        let id = m.get("id")
                             .or_else(|| m.get("name"))
                             .and_then(|id| id.as_str())
-                            .map(|s| s.to_string())
+                            .map(|s| s.to_string())?;
+                        Some(ModelInfo { id, context_window: None, reasoning_efforts: vec![] })
                     })
                     .collect()
             })
