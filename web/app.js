@@ -514,13 +514,15 @@ function handleMessage(msg) {
             break;
         case 'model_changed':
             activeModel = msg.model || '';
+            currentThinking = msg.thinking || 'off';
             updateModelIndicator();
             updateThinkingSelect();
-            addSystemMessage('🔄 Model switched to: ' + activeModel);
+            addSystemMessage('🔄 Model switched to: ' + activeModel + ' ' + currentThinking);
             break;
         case 'thinking_changed':
             currentThinking = msg.thinking || 'off';
             updateThinkingSelect();
+            addSystemMessage("🔄 Thinking switched to: " + currentThinking);
             break;
         case 'note_list':
             // Always rebuild fileVisibility from authoritative public_files in SSE payload.

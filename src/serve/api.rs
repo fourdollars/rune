@@ -140,7 +140,7 @@ pub enum SseMsg {
     #[serde(rename = "model_list")]
     ModelList { models: Vec<ModelListEntry>, active: String, thinking: String },
     #[serde(rename = "model_changed")]
-    ModelChanged { model: String },
+    ModelChanged { model: String, thinking: String },
     #[serde(rename = "thinking_changed")]
     ThinkingChanged { thinking: String },
     #[serde(rename = "approval_request")]
@@ -1057,25 +1057,60 @@ pub async fn model_switch_handler(
     State(state): State<ServerState>,
     Json(req): Json<ModelSwitchReq>,
 ) -> Json<ApiResponse> {
-    if !state.models.read().await.iter().any(|m| m.id == req.model) {
+    let models = state.models.read().await;
+    let new_model_info = models.iter().find(|m| m.id == req.model);
+    if new_model_info.is_none() {
         return Json(ApiResponse::err(format!("Unknown model: {}", req.model)));
     }
-
-    let msg = SseMsg::ModelChanged {
-        model: req.model.clone(),
-    };
+    let new_efforts = new_model_info.unwrap().reasoning_efforts.clone();
+    drop(models);
 
     if let Some(ref note_id) = req.note_id {
-        // Per-note model override — persist to DB
         let room = state.get_or_create_room(note_id).await;
         *room.model_override.write().await = Some(req.model.clone());
         let _ = state.chat_db.set_note_model(note_id, Some(&req.model));
+
+        // Thinking fallback: use effective thinking (per-note override > config), check if supported
+        let current_effective = state.effective_thinking(note_id).await;
+        let effective_thinking = if let Some(ref t) = current_effective {
+            if new_efforts.contains(t) {
+                t.clone()
+            } else {
+                // Not supported by new model — reset per-note override to None
+                *room.thinking_override.write().await = None;
+                state.chat_db.set_note_thinking(note_id, None);
+                "off".to_string()
+            }
+        } else {
+            "off".to_string()
+        };
+
+        let msg = SseMsg::ModelChanged {
+            model: req.model.clone(),
+            thinking: effective_thinking,
+        };
         broadcast_to_room(&room, &msg);
     } else {
-        // Global default model — broadcast to all rooms
+        // Global default model
         *state.global_default_model.write().await = req.model.clone();
         let rooms = state.rooms.read().await;
         for room in rooms.values() {
+            let current_effective = state.effective_thinking(&room.note_id).await;
+            let effective_thinking = if let Some(ref t) = current_effective {
+                if new_efforts.contains(t) {
+                    t.clone()
+                } else {
+                    *room.thinking_override.write().await = None;
+                    state.chat_db.set_note_thinking(&room.note_id, None);
+                    "off".to_string()
+                }
+            } else {
+                "off".to_string()
+            };
+            let msg = SseMsg::ModelChanged {
+                model: req.model.clone(),
+                thinking: effective_thinking,
+            };
             broadcast_to_room(room, &msg);
         }
     }
