@@ -1907,6 +1907,7 @@ async fn handle_chat_message(
     broadcast_to_room(&room, &done);
 
     // Broadcast run statistics
+    let meta_model = active_model.clone();
     let meta = SseMsg::ChatMeta {
         model: active_model,
         tokens_in: agent.tokens_in() as u32,
@@ -1921,14 +1922,19 @@ async fn handle_chat_message(
     // Process result
     match &stop_reason {
         StopReason::FinalAnswer(answer) => {
-            // Save assistant response
+            // Save assistant response with run statistics
             state
                 .chat_db
-                .insert_async(
+                .insert_with_meta_async(
                     note_id.clone(),
                     "assistant".to_string(),
                     "ᚱᚢᚾᛖ".to_string(),
                     answer.clone(),
+                    Some(meta_model.clone()),
+                    Some(agent.tokens_in() as i32),
+                    Some(agent.tokens_out() as i32),
+                    Some(agent.step_count() as i32),
+                    Some(agent.tool_call_count() as i32),
                 )
                 .await;
         }

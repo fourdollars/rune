@@ -746,14 +746,11 @@ function replayHistory(messages) {
             const nameSpan = document.createElement('span');
             nameSpan.textContent = 'ᚱᚢᚾᛖ';
             sender.appendChild(nameSpan);
-            // Attach model + token meta if available
-            if (m.model || m.tokens_in || m.tokens_out) {
+            // Model in header
+            if (m.model) {
                 const meta = document.createElement('span');
                 meta.className = 'msg-meta';
-                let parts = [];
-                if (m.model) parts.push(m.model);
-                if (m.tokens_in || m.tokens_out) parts.push(`↑${m.tokens_in||0} ↓${m.tokens_out||0}`);
-                meta.textContent = parts.join(' · ');
+                meta.textContent = m.model;
                 sender.appendChild(meta);
             }
             const timeSpan = document.createElement('span');
@@ -766,6 +763,14 @@ function replayHistory(messages) {
                 body.innerHTML = marked.parse(m.content);
             } else {
                 body.textContent = m.content;
+            }
+            // Run stats at message tail
+            const totalTok = (m.tokens_in||0) + (m.tokens_out||0);
+            if (m.steps || totalTok || m.tool_calls) {
+                const stats = document.createElement('div');
+                stats.className = 'run-stats';
+                stats.textContent = `⚡ ${m.steps||0} steps | ${totalTok} tokens | ${m.tool_calls||0} tool calls`;
+                body.appendChild(stats);
             }
             div.appendChild(sender);
             div.appendChild(body);

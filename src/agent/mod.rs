@@ -2836,6 +2836,8 @@ read(3, "root:x:0:0:...", 4096) = 1234"#;
                 model: None,
                 tokens_in: None,
                 tokens_out: None,
+                steps: None,
+                tool_calls: None,
             },
             ChatRecord {
                 id: 2,
@@ -2847,6 +2849,8 @@ read(3, "root:x:0:0:...", 4096) = 1234"#;
                 model: None,
                 tokens_in: None,
                 tokens_out: None,
+                steps: None,
+                tool_calls: None,
             },
         ];
         // Verify filtering: tool_call roles should be excluded
