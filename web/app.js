@@ -1248,18 +1248,18 @@ function showModelDialog() {
         const badgeContainer = document.createElement('span');
         badgeContainer.className = 'model-badges';
         
-        if (m.context_window) {
-            const ctxBadge = document.createElement('span');
-            ctxBadge.className = 'model-ctx-badge';
-            ctxBadge.textContent = formatContextWindow(m.context_window);
-            badgeContainer.appendChild(ctxBadge);
-        }
-        
         if (m.reasoning_efforts && m.reasoning_efforts.length > 0) {
             const reasonBadge = document.createElement('span');
             reasonBadge.className = 'model-reasoning-badge';
             reasonBadge.textContent = m.reasoning_efforts.join(' | ');
             badgeContainer.appendChild(reasonBadge);
+        }
+        
+        if (m.context_window) {
+            const ctxBadge = document.createElement('span');
+            ctxBadge.className = 'model-ctx-badge';
+            ctxBadge.textContent = formatContextWindow(m.context_window);
+            badgeContainer.appendChild(ctxBadge);
         }
         
         btn.appendChild(badgeContainer);

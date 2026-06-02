@@ -35,6 +35,9 @@ pub struct ChatRecord {
     /// Number of tool calls made (assistant only).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tool_calls: Option<i32>,
+    /// Thinking/reasoning level used (assistant only, None = off).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub thinking: Option<String>,
 }
 
 /// A stored session entry.
@@ -77,7 +80,8 @@ impl ChatDb {
                 tokens_in   INTEGER,
                 tokens_out  INTEGER,
                 steps       INTEGER,
-                tool_calls  INTEGER
+                tool_calls  INTEGER,
+                thinking    TEXT
             );
             CREATE INDEX IF NOT EXISTS idx_messages_session
                 ON messages(note_id, id);
@@ -101,6 +105,7 @@ impl ChatDb {
             "
             ALTER TABLE messages ADD COLUMN steps      INTEGER;
             ALTER TABLE messages ADD COLUMN tool_calls INTEGER;
+            ALTER TABLE messages ADD COLUMN thinking   TEXT;
         ",
         );
         let _ = conn.execute_batch("ALTER TABLE sessions ADD COLUMN public INTEGER DEFAULT 0;");
@@ -140,7 +145,10 @@ impl ChatDb {
                     created_at  INTEGER NOT NULL,
                     model       TEXT,
                     tokens_in   INTEGER,
-                    tokens_out  INTEGER
+                    tokens_out  INTEGER,
+                    steps       INTEGER,
+                    tool_calls  INTEGER,
+                    thinking    TEXT
                 );
                 CREATE INDEX IF NOT EXISTS idx_messages_session
                     ON messages(note_id, id);
@@ -216,7 +224,7 @@ impl ChatDb {
         nickname: &str,
         content: &str,
     ) -> anyhow::Result<i64> {
-        self.insert_with_meta(note_id, role, nickname, content, None, None, None, None, None)
+        self.insert_with_meta(note_id, role, nickname, content, None, None, None, None, None, None)
     }
 
     /// Insert a message with optional model/token metadata.
@@ -231,6 +239,7 @@ impl ChatDb {
         tokens_out: Option<i32>,
         steps: Option<i32>,
         tool_calls: Option<i32>,
+        thinking: Option<&str>,
     ) -> anyhow::Result<i64> {
         let conn = self.conn.lock().unwrap();
         let ts = std::time::SystemTime::now()
@@ -238,9 +247,9 @@ impl ChatDb {
             .unwrap_or_default()
             .as_secs() as i64;
         conn.execute(
-            "INSERT INTO messages (note_id, role, nickname, content, created_at, model, tokens_in, tokens_out, steps, tool_calls)
-             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10)",
-            params![note_id, role, nickname, content, ts, model, tokens_in, tokens_out, steps, tool_calls],
+            "INSERT INTO messages (note_id, role, nickname, content, created_at, model, tokens_in, tokens_out, steps, tool_calls, thinking)
+             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11)",
+            params![note_id, role, nickname, content, ts, model, tokens_in, tokens_out, steps, tool_calls, thinking],
         )?;
         Ok(conn.last_insert_rowid())
     }
@@ -249,7 +258,7 @@ impl ChatDb {
     pub fn load_recent(&self, note_id: &str, limit: usize) -> anyhow::Result<Vec<ChatRecord>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT id, note_id, role, nickname, content, created_at, model, tokens_in, tokens_out, steps, tool_calls
+            "SELECT id, note_id, role, nickname, content, created_at, model, tokens_in, tokens_out, steps, tool_calls, thinking
              FROM messages
              WHERE note_id = ?1
              ORDER BY id DESC
@@ -269,6 +278,7 @@ impl ChatDb {
                     tokens_out: row.get(8)?,
                     steps: row.get(9)?,
                     tool_calls: row.get(10)?,
+                    thinking: row.get(11).ok().flatten(),
                 })
             })?
             .filter_map(|r| r.ok())
@@ -287,7 +297,7 @@ impl ChatDb {
         nickname: String,
         content: String,
     ) {
-        self.insert_with_meta_async(note_id, role, nickname, content, None, None, None, None, None)
+        self.insert_with_meta_async(note_id, role, nickname, content, None, None, None, None, None, None)
             .await;
     }
 
@@ -303,6 +313,7 @@ impl ChatDb {
         tokens_out: Option<i32>,
         steps: Option<i32>,
         tool_calls: Option<i32>,
+        thinking: Option<String>,
     ) {
         let db = self.clone();
         tokio::task::spawn_blocking(move || {
@@ -316,6 +327,7 @@ impl ChatDb {
                 tokens_out,
                 steps,
                 tool_calls,
+                thinking.as_deref(),
             ) {
                 warn!("Failed to persist chat message: {}", e);
             }
@@ -588,7 +600,7 @@ impl ChatDb {
         let conn = self.conn.lock().unwrap();
         // Load all messages for this session
         let mut stmt = conn.prepare(
-            "SELECT id, note_id, role, nickname, content, created_at, model, tokens_in, tokens_out, steps, tool_calls
+            "SELECT id, note_id, role, nickname, content, created_at, model, tokens_in, tokens_out, steps, tool_calls, thinking
              FROM messages WHERE note_id = ?1 ORDER BY id ASC",
         )?;
         let records: Vec<ChatRecord> = stmt
@@ -605,6 +617,7 @@ impl ChatDb {
                     tokens_out: row.get(8)?,
                     steps: row.get(9)?,
                     tool_calls: row.get(10)?,
+                    thinking: row.get(11).ok().flatten(),
                 })
             })?
             .filter_map(|r| r.ok())
@@ -667,7 +680,7 @@ impl ChatDb {
         // 2. Search live DB
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT id, note_id, role, nickname, content, created_at, model, tokens_in, tokens_out, steps, tool_calls
+            "SELECT id, note_id, role, nickname, content, created_at, model, tokens_in, tokens_out, steps, tool_calls, thinking
              FROM messages WHERE note_id = ?1 ORDER BY id ASC",
         )?;
         let live: Vec<ChatRecord> = stmt
@@ -684,6 +697,7 @@ impl ChatDb {
                     tokens_out: row.get(8)?,
                     steps: row.get(9)?,
                     tool_calls: row.get(10)?,
+                    thinking: row.get(11).ok().flatten(),
                 })
             })?
             .filter_map(|r| r.ok())

@@ -92,6 +92,8 @@ pub enum SseMsg {
     #[serde(rename = "chat_meta")]
     ChatMeta {
         model: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        thinking: Option<String>,
         tokens_in: u32,
         tokens_out: u32,
         context_tokens: u32,
@@ -1882,7 +1884,8 @@ async fn handle_chat_message(
     // Build agent
     let mut cfg = config.clone();
     cfg.model = active_model.clone();
-    cfg.thinking = state.effective_thinking(&note_id).await;
+    let effective_thinking_level = state.effective_thinking(&note_id).await;
+    cfg.thinking = effective_thinking_level.clone();
     let mut agent = Agent::new(cfg, provider, true, embedding);
     agent.set_serve_mode(true);
     agent.token_callback = Some(token_callback);
@@ -1991,8 +1994,10 @@ async fn handle_chat_message(
 
     // Broadcast run statistics
     let meta_model = active_model.clone();
+    let meta_thinking = effective_thinking_level.clone().filter(|t| t != "off");
     let meta = SseMsg::ChatMeta {
         model: active_model,
+        thinking: meta_thinking.clone(),
         tokens_in: agent.tokens_in() as u32,
         tokens_out: agent.tokens_out() as u32,
         context_tokens: agent.total_context_tokens() as u32,
@@ -2018,6 +2023,7 @@ async fn handle_chat_message(
                     Some(agent.tokens_out() as i32),
                     Some(agent.step_count() as i32),
                     Some(agent.tool_call_count() as i32),
+                    meta_thinking,
                 )
                 .await;
         }
@@ -2347,6 +2353,7 @@ mod tests {
     fn test_sse_msg_chat_meta() {
         let msg = SseMsg::ChatMeta {
             model: "gpt-4".into(),
+            thinking: Some("high".into()),
             tokens_in: 100,
             tokens_out: 50,
             context_tokens: 1000,
