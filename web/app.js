@@ -1185,34 +1185,39 @@ function updateModelIndicator() {
 }
 
 function updateThinkingSelect() {
-    const select = document.getElementById('thinking-select');
-    if (!select) return;
+    const selects = [
+        document.getElementById('thinking-select'),
+        document.getElementById('mobile-thinking-select')
+    ].filter(Boolean);
+    if (selects.length === 0) return;
 
     // Find current model's reasoning_efforts
     const currentModelObj = availableModels.find(m => (m.id || m) === activeModel);
     const efforts = (currentModelObj && currentModelObj.reasoning_efforts) || [];
 
     if (!isAdmin || efforts.length === 0) {
-        select.style.display = 'none';
+        selects.forEach(s => s.style.display = 'none');
         return;
     }
 
     // Build options: always include "off" plus the model's supported efforts
-    select.innerHTML = '';
-    const offOpt = document.createElement('option');
-    offOpt.value = 'off';
-    offOpt.textContent = 'off';
-    select.appendChild(offOpt);
+    selects.forEach(select => {
+        select.innerHTML = '';
+        const offOpt = document.createElement('option');
+        offOpt.value = 'off';
+        offOpt.textContent = 'off';
+        select.appendChild(offOpt);
 
-    efforts.forEach(level => {
-        const opt = document.createElement('option');
-        opt.value = level;
-        opt.textContent = level;
-        select.appendChild(opt);
+        efforts.forEach(level => {
+            const opt = document.createElement('option');
+            opt.value = level;
+            opt.textContent = level;
+            select.appendChild(opt);
+        });
+
+        select.value = currentThinking || 'off';
+        select.style.display = '';
     });
-
-    select.value = currentThinking || 'off';
-    select.style.display = '';
 }
 
 function switchThinking(level) {

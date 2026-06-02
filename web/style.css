@@ -1874,3 +1874,14 @@ pre.hljs-pre:hover .copy-btn {
 .thinking-select:hover {
     border-color: var(--accent, #007acc);
 }
+
+/* Mobile thinking select */
+.mobile-thinking-select {
+    font-size: 11px;
+    padding: 2px 4px;
+    margin-left: 0;
+}
+.mobile-thinking-wrapper {
+    display: flex;
+    align-items: center;
+}
