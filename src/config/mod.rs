@@ -167,7 +167,7 @@ pub struct RuneConfig {
 impl Default for RuneConfig {
     fn default() -> Self {
         Self {
-            model: "gpt-4".to_string(),
+            model: String::new(),
             api_key: None,
             provider: None,
             skills_dir: "./skills".to_string(),
@@ -1003,7 +1003,7 @@ mod config_tests {
     #[test]
     fn test_rune_config_default() {
         let c = RuneConfig::default();
-        assert_eq!(c.model, "gpt-4");
+        assert_eq!(c.model, "");
         assert!(c.api_key.is_none());
         assert_eq!(c.skills_dir, "./skills");
         assert_eq!(c.log_level, "error");

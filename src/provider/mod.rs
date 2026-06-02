@@ -3063,4 +3063,135 @@ mod provider_tests {
         assert!(result.unwrap_err().to_string().contains("no providers"));
     }
 
+    #[test]
+    fn test_openai_provider_list_models_returns_empty_by_default() {
+        // OpenAI provider uses the default trait impl which returns empty Vec
+        let p = OpenAiProvider::new(
+            "openai".to_string(),
+            "sk-fake".to_string(),
+            None,
+        );
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let result = rt.block_on(p.list_models());
+        assert!(result.is_ok());
+        assert!(result.unwrap().is_empty());
+    }
+
+    #[test]
+    fn test_registry_list_models_delegates_to_default_provider() {
+        // A registry with an OpenAI provider should return empty (default impl)
+        let mut reg = ProviderRegistry::new();
+        reg.register(Box::new(OpenAiProvider::new(
+            "openai".to_string(),
+            "sk-fake".to_string(),
+            None,
+        )));
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let result = rt.block_on(reg.list_models());
+        assert!(result.is_ok());
+        assert!(result.unwrap().is_empty());
+    }
+
+    #[test]
+    fn test_copilot_models_json_parsing_data_array() {
+        // Simulate the JSON response format from Copilot /models endpoint
+        let json = r#"{"data":[{"id":"gpt-5-mini"},{"id":"claude-sonnet-4.6"},{"id":"gemini-3.5-flash"}]}"#;
+        let v: serde_json::Value = serde_json::from_str(json).unwrap();
+        let models: Vec<String> = v
+            .get("data")
+            .or_else(|| v.get("models"))
+            .and_then(|d| d.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|m| {
+                        m.get("id")
+                            .or_else(|| m.get("name"))
+                            .and_then(|id| id.as_str())
+                            .map(|s| s.to_string())
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        assert_eq!(models.len(), 3);
+        assert_eq!(models[0], "gpt-5-mini");
+        assert_eq!(models[1], "claude-sonnet-4.6");
+        assert_eq!(models[2], "gemini-3.5-flash");
+    }
+
+    #[test]
+    fn test_copilot_models_json_parsing_models_array() {
+        // Alternative format: "models" key with "name" field
+        let json = r#"{"models":[{"name":"model-a"},{"name":"model-b"}]}"#;
+        let v: serde_json::Value = serde_json::from_str(json).unwrap();
+        let models: Vec<String> = v
+            .get("data")
+            .or_else(|| v.get("models"))
+            .and_then(|d| d.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|m| {
+                        m.get("id")
+                            .or_else(|| m.get("name"))
+                            .and_then(|id| id.as_str())
+                            .map(|s| s.to_string())
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        assert_eq!(models.len(), 2);
+        assert_eq!(models[0], "model-a");
+        assert_eq!(models[1], "model-b");
+    }
+
+    #[test]
+    fn test_copilot_models_json_parsing_empty_response() {
+        let json = r#"{"data":[]}"#;
+        let v: serde_json::Value = serde_json::from_str(json).unwrap();
+        let models: Vec<String> = v
+            .get("data")
+            .or_else(|| v.get("models"))
+            .and_then(|d| d.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|m| {
+                        m.get("id")
+                            .or_else(|| m.get("name"))
+                            .and_then(|id| id.as_str())
+                            .map(|s| s.to_string())
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        assert!(models.is_empty());
+    }
+
+    #[test]
+    fn test_copilot_models_json_parsing_no_data_key() {
+        // Neither "data" nor "models" key — should return empty
+        let json = r#"{"error":"something"}"#;
+        let v: serde_json::Value = serde_json::from_str(json).unwrap();
+        let models: Vec<String> = v
+            .get("data")
+            .or_else(|| v.get("models"))
+            .and_then(|d| d.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|m| {
+                        m.get("id")
+                            .or_else(|| m.get("name"))
+                            .and_then(|id| id.as_str())
+                            .map(|s| s.to_string())
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        assert!(models.is_empty());
+    }
+
 }

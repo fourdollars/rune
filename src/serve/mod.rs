@@ -1641,4 +1641,29 @@ mod tests {
             "expected early return when no tokens, got timeout"
         );
     }
+
+    #[test]
+    fn test_model_list_empty_triggers_discovery_path() {
+        // Verify: empty model string → empty Vec after split/filter
+        let model_str = "";
+        let models: Vec<String> = model_str
+            .split(',')
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect();
+        assert!(models.is_empty(), "empty model config should yield empty list");
+    }
+
+    #[test]
+    fn test_model_list_populated_skips_discovery() {
+        let model_str = "gpt-5-mini, claude-sonnet-4.6";
+        let models: Vec<String> = model_str
+            .split(',')
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect();
+        assert_eq!(models.len(), 2);
+        assert_eq!(models[0], "gpt-5-mini");
+        assert_eq!(models[1], "claude-sonnet-4.6");
+    }
 }

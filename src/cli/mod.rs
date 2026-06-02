@@ -1293,6 +1293,20 @@ pub async fn run() {
         }
     }
 
+    // If model is still empty, try auto-discovery from provider
+    if cfg.model.is_empty() {
+        let registry = init_provider(&cfg);
+        if let Ok(models) = registry.list_models().await {
+            if let Some(first) = models.into_iter().find(|m: &String| !m.contains("embedding") && !m.contains("trajectory")) {
+                cfg.model = first;
+            }
+        }
+        // Final fallback
+        if cfg.model.is_empty() {
+            cfg.model = "gpt-4".to_string();
+        }
+    }
+
     let provider = init_provider(&cfg);
     let stdin_is_terminal = std::io::stdin().is_terminal();
 
