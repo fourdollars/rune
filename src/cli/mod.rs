@@ -1296,7 +1296,7 @@ pub async fn run() {
     let provider = init_provider(&cfg);
     let stdin_is_terminal = std::io::stdin().is_terminal();
 
-    if stdin_is_terminal && !is_json_mode(&cfg) {
+    if stdin_is_terminal && !is_json_mode(&cfg) && cfg.cli_prompt.is_none() {
         print_banner();
     }
 
@@ -1351,13 +1351,14 @@ pub async fn run() {
         }
     }
 
-    // Non-interactive (pipe) mode defaults to allowlist policy unless explicitly overridden
-    // Positional prompt mode keeps the configured policy (user is at the terminal)
-    if !stdin_is_terminal && cfg.policy.mode == "confirm" {
-        eprintln!(
-            "  {} pipe mode: defaulting policy to allowlist (use --unrestricted to disable)",
-            "ℹ".dimmed()
-        );
+    // Non-interactive (pipe/prompt) mode defaults to allowlist policy unless explicitly overridden
+    if (!stdin_is_terminal || cfg.cli_prompt.is_some()) && cfg.policy.mode == "confirm" {
+        if !is_json_mode(&cfg) {
+            eprintln!(
+                "  {} one-shot mode: defaulting policy to allowlist (use --unrestricted to disable)",
+                "ℹ".dimmed()
+            );
+        }
         cfg.policy.mode = "allowlist".to_string();
     }
 
@@ -1435,7 +1436,9 @@ pub async fn run() {
     // Auto-load AGENTS.md from current directory if present (with confirmation in interactive mode)
     if let Ok(agents_content) = std::fs::read_to_string("AGENTS.md") {
         if !agents_content.trim().is_empty() {
-            let should_load = if stdin_is_terminal {
+            let should_load = if !stdin_is_terminal || cfg.cli_prompt.is_some() {
+                true // Always load in pipe/prompt mode
+            } else {
                 eprint!(
                     "  {} Found AGENTS.md in current directory. Load? [Y/n] ",
                     "📚"
@@ -1444,8 +1447,6 @@ pub async fn run() {
                 let mut input = String::new();
                 let _ = std::io::stdin().read_line(&mut input);
                 !input.trim().eq_ignore_ascii_case("n")
-            } else {
-                true // Always load in pipe mode
             };
             if should_load {
                 sys_prompt.push_str("\n\n[Project Context: AGENTS.md]\n");
