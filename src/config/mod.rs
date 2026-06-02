@@ -159,6 +159,9 @@ pub struct RuneConfig {
     /// Notes mode configuration ([notes] section in rune.toml).
     #[serde(default)]
     pub notes: NotesConfig,
+    /// CLI positional prompt (for one-shot mode). Not from config file.
+    #[serde(skip)]
+    pub cli_prompt: Option<String>,
 }
 
 impl Default for RuneConfig {
@@ -186,6 +189,7 @@ impl Default for RuneConfig {
             system_prompt: None,
             preload_skills: Vec::new(),
             notes: NotesConfig::default(),
+            cli_prompt: None,
         }
     }
 }
@@ -332,6 +336,10 @@ struct CliArgs {
     /// Custom system prompt (replaces default, AGENTS.md still appended)
     #[arg(long, env = "RUNE_SYSTEM_PROMPT", help_heading = "Advanced")]
     system_prompt: Option<String>,
+
+    /// Prompt to send (one-shot mode). Alternative to piping stdin.
+    #[arg(trailing_var_arg = true, help_heading = "Input")]
+    prompt: Vec<String>,
 }
 
 fn parse_boolish(value: &str) -> Option<bool> {
@@ -638,6 +646,7 @@ pub fn load() -> anyhow::Result<RuneConfig> {
             .or_else(|| lc.and_then(|c| c.notes.clone()))
             .or_else(|| uc.and_then(|c| c.notes.clone()))
             .unwrap_or_default(),
+        cli_prompt: if cli.prompt.is_empty() { None } else { Some(cli.prompt.join(" ")) },
     };
 
     // Post-processing: expand ~ in all path-like config fields
@@ -830,6 +839,7 @@ pub fn load_without_clap() -> anyhow::Result<RuneConfig> {
             .or_else(|| lc.and_then(|c| c.notes.clone()))
             .or_else(|| uc.and_then(|c| c.notes.clone()))
             .unwrap_or_default(),
+        cli_prompt: None,
     };
 
     Ok(cfg)

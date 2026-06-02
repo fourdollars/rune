@@ -1799,6 +1799,7 @@ async fn handle_chat_message(
     let mut cfg = config.clone();
     cfg.model = active_model.clone();
     let mut agent = Agent::new(cfg, provider, true, embedding);
+    agent.set_serve_mode(true);
     agent.token_callback = Some(token_callback);
     agent.approval_callback = Some(approval_callback);
 

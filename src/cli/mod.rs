@@ -1288,7 +1288,19 @@ fn resolve_path(path: &str) -> String {
 
 /// Main CLI entry point.
 pub async fn run() {
-    let cfg = config::load().unwrap_or_default();
+    let mut cfg = config::load().unwrap_or_default();
+
+    // Normalize model: use first from comma-separated list (full list is for serve mode UI only)
+    if cfg.model.contains(',') {
+        cfg.model = cfg
+            .model
+            .split(',')
+            .next()
+            .unwrap_or(&cfg.model)
+            .trim()
+            .to_string();
+    }
+
     let provider = init_provider(&cfg);
     let stdin_is_terminal = std::io::stdin().is_terminal();
 
@@ -1347,8 +1359,8 @@ pub async fn run() {
         }
     }
 
-    // Non-interactive (pipe) mode defaults to allowlist policy unless explicitly overridden
-    if !stdin_is_terminal && cfg.policy.mode == "confirm" {
+    // Non-interactive (pipe/prompt) mode defaults to allowlist policy unless explicitly overridden
+    if (!stdin_is_terminal || cfg.cli_prompt.is_some()) && cfg.policy.mode == "confirm" {
         eprintln!(
             "  {} pipe mode: defaulting policy to allowlist (use --unrestricted to disable)",
             "ℹ".dimmed()
@@ -1468,6 +1480,15 @@ pub async fn run() {
         if let Some(ref path) = history_path {
             let _ = ed.load_history(path);
         }
+    }
+
+    // One-shot mode: rune "prompt" (positional argument)
+    if let Some(ref prompt) = cfg.cli_prompt {
+        let result = execute_prompt(&mut agent, prompt).await;
+        if !matches!(result, StopReason::FinalAnswer(_)) {
+            std::process::exit(1);
+        }
+        return;
     }
 
     if !stdin_is_terminal {

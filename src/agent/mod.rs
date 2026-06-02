@@ -235,6 +235,11 @@ impl Agent {
     /// Set the system prompt.
 
     /// Attach an MCP manager for external tool dispatch.
+    /// Enable serve-mode tools (search_chat, list/read/write_markdown).
+    pub fn set_serve_mode(&mut self, enabled: bool) {
+        self.tools.set_serve_mode(enabled);
+    }
+
     pub fn set_mcp_manager(&mut self, mgr: Arc<TokioMutex<McpManager>>) {
         self.mcp_manager = Some(mgr);
     }

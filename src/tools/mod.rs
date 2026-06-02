@@ -43,6 +43,7 @@ impl ToolOutput {
 
 /// Tool registry — all tools execute through the sandbox.
 pub struct ToolRegistry {
+    serve_mode: bool,
     policy_mode: String,
     policy_allowed_commands: Vec<String>,
     policy_allowed_syscalls: Vec<String>,
@@ -59,6 +60,7 @@ pub struct ToolRegistry {
 impl ToolRegistry {
     pub fn new(allowed_dirs: Vec<PathBuf>) -> Self {
         Self {
+            serve_mode: false,
             allowed_dirs,
             allowed_domains: Vec::new(),
             policy_mode: "confirm".to_string(),
@@ -71,6 +73,11 @@ impl ToolRegistry {
             policy_allowed_files_rw: Vec::new(),
             tmp_size_mb: 100,
         }
+    }
+
+    /// Enable serve-mode tools (search_chat, list/read/write_markdown).
+    pub fn set_serve_mode(&mut self, enabled: bool) {
+        self.serve_mode = enabled;
     }
 
     /// Set allowed network domains (for fetch_url / execute_cmd network access).
@@ -327,7 +334,7 @@ stderr: {}",
 
     /// Return tool definitions as JSON (for LLM function calling schema).
     pub fn tool_definitions(&self) -> Vec<serde_json::Value> {
-        vec![
+        let mut tools = vec![
             serde_json::json!({
                 "type": "function",
                 "function": {
@@ -406,8 +413,12 @@ stderr: {}",
                         "required": ["pid"]
                     }
                 }
-            }),
-            serde_json::json!({
+            })
+        ];
+
+        // Serve-mode only tools (search_chat, markdown tools)
+        if self.serve_mode {
+            tools.push(serde_json::json!({
                 "type": "function",
                 "function": {
                     "name": "search_chat",
@@ -420,8 +431,8 @@ stderr: {}",
                         "required": ["query"]
                     }
                 }
-            }),
-            serde_json::json!({
+            }));
+            tools.push(serde_json::json!({
                 "type": "function",
                 "function": {
                     "name": "list_markdown",
@@ -432,8 +443,8 @@ stderr: {}",
                         "required": []
                     }
                 }
-            }),
-            serde_json::json!({
+            }));
+            tools.push(serde_json::json!({
                 "type": "function",
                 "function": {
                     "name": "read_markdown",
@@ -446,8 +457,8 @@ stderr: {}",
                         "required": []
                     }
                 }
-            }),
-            serde_json::json!({
+            }));
+            tools.push(serde_json::json!({
                 "type": "function",
                 "function": {
                     "name": "write_markdown",
@@ -463,9 +474,12 @@ stderr: {}",
                         "required": []
                     }
                 }
-            }),
-        ]
+            }));
+        }
+
+        tools
     }
+
 
     // ── All tools go through sandbox ─────────────────────────────────
 
@@ -1350,10 +1364,11 @@ mod tests {
         );
     }
 
-    /// Ensure the new markdown tools are present in the schema.
+    /// Ensure the new markdown tools are present in the schema (serve mode only).
     #[test]
     fn test_tool_schema_has_markdown_tools() {
-        let registry = ToolRegistry::new(vec![]);
+        let mut registry = ToolRegistry::new(vec![]);
+        registry.set_serve_mode(true);
         let schema = serde_json::to_string(&registry.tool_definitions()).unwrap();
         assert!(
             schema.contains("list_markdown"),
@@ -1371,7 +1386,8 @@ mod tests {
 
     #[test]
     fn test_tool_schema_has_search_chat() {
-        let registry = ToolRegistry::new(vec![]);
+        let mut registry = ToolRegistry::new(vec![]);
+        registry.set_serve_mode(true);
         let schema = serde_json::to_string(&registry.tool_definitions()).unwrap();
         assert!(
             schema.contains("search_chat"),
@@ -1380,6 +1396,29 @@ mod tests {
         assert!(
             schema.contains("\"query\""),
             "search_chat schema missing 'query' param"
+        );
+    }
+
+    /// CLI mode (serve_mode=false) should NOT expose serve-only tools.
+    #[test]
+    fn test_cli_mode_no_serve_tools() {
+        let registry = ToolRegistry::new(vec![]);
+        let schema = serde_json::to_string(&registry.tool_definitions()).unwrap();
+        assert!(
+            !schema.contains("search_chat"),
+            "CLI mode should not have search_chat"
+        );
+        assert!(
+            !schema.contains("list_markdown"),
+            "CLI mode should not have list_markdown"
+        );
+        assert!(
+            !schema.contains("read_markdown"),
+            "CLI mode should not have read_markdown"
+        );
+        assert!(
+            !schema.contains("write_markdown"),
+            "CLI mode should not have write_markdown"
         );
     }
 }
