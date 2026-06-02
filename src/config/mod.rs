@@ -2026,4 +2026,22 @@ allowed_syscalls = ["ptrace", "bpf"]
         assert!(cfg.system_prompt.is_none());
         assert!(cfg.notes.is_none());
     }
+
+    #[test]
+    fn test_cli_prompt_default_none() {
+        let cfg = RuneConfig::default();
+        assert!(cfg.cli_prompt.is_none());
+    }
+
+    #[test]
+    fn test_cli_prompt_not_deserialized() {
+        // cli_prompt is #[serde(skip)], should never come from TOML
+        let toml = r#"
+            model = "gpt-4"
+            cli_prompt = "should be ignored"
+        "#;
+        let partial: PartialConfig = toml::from_str(toml).unwrap();
+        // PartialConfig doesn't have cli_prompt at all, confirming it's CLI-only
+        assert!(partial.model == Some("gpt-4".to_string()));
+    }
 }

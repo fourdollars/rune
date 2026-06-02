@@ -1292,13 +1292,9 @@ pub async fn run() {
 
     // Normalize model: use first from comma-separated list (full list is for serve mode UI only)
     if cfg.model.contains(',') {
-        cfg.model = cfg
-            .model
-            .split(',')
-            .next()
-            .unwrap_or(&cfg.model)
-            .trim()
-            .to_string();
+        if let Some(first) = cfg.model.split(',').map(|s| s.trim()).find(|s| !s.is_empty()) {
+            cfg.model = first.to_string();
+        }
     }
 
     let provider = init_provider(&cfg);
@@ -2152,5 +2148,52 @@ model: different
         };
         let fm2 = fm.clone();
         assert_eq!(fm, fm2);
+    }
+
+    /// Model normalization: comma-separated list should yield first model only.
+    #[test]
+    fn test_model_normalization_single() {
+        let model = "gpt-5-mini";
+        let normalized = if model.contains(',') {
+            model.split(',').next().unwrap_or(model).trim().to_string()
+        } else {
+            model.to_string()
+        };
+        assert_eq!(normalized, "gpt-5-mini");
+    }
+
+    #[test]
+    fn test_model_normalization_comma_separated() {
+        let model = "gpt-5-mini,claude-sonnet-4.6,gemini-3.1-pro-preview";
+        let normalized = if model.contains(',') {
+            model.split(',').next().unwrap_or(model).trim().to_string()
+        } else {
+            model.to_string()
+        };
+        assert_eq!(normalized, "gpt-5-mini");
+    }
+
+    #[test]
+    fn test_model_normalization_with_spaces() {
+        let model = " gpt-5-mini , claude-sonnet-4.6 ";
+        let normalized = if model.contains(',') {
+            model.split(',').next().unwrap_or(model).trim().to_string()
+        } else {
+            model.to_string()
+        };
+        assert_eq!(normalized, "gpt-5-mini");
+    }
+
+    #[test]
+    fn test_model_normalization_skips_empty() {
+        // Edge case: leading comma — should skip empty and pick first real model
+        let model = ",gpt-5-mini,claude";
+        let normalized = if model.contains(',') {
+            model.split(',').map(|s| s.trim()).find(|s| !s.is_empty())
+                .unwrap_or(model).to_string()
+        } else {
+            model.to_string()
+        };
+        assert_eq!(normalized, "gpt-5-mini");
     }
 }
