@@ -1475,32 +1475,40 @@ pub async fn run() {
         }
     }
 
-    // One-shot mode: rune "prompt" (positional argument)
-    if let Some(ref prompt) = cfg.cli_prompt {
-        let result = execute_prompt(&mut agent, prompt).await;
-        if !matches!(result, StopReason::FinalAnswer(_)) {
-            std::process::exit(1);
-        }
-        return;
-    }
+    // One-shot modes: pipe, positional prompt, or both combined
+    if !stdin_is_terminal || cfg.cli_prompt.is_some() {
+        let mut combined = String::new();
 
-    if !stdin_is_terminal {
-        use tokio::io::{self, AsyncReadExt};
-
-        let mut input = String::new();
-        let mut stdin = io::stdin();
-        if let Err(e) = stdin.read_to_string(&mut input).await {
-            eprintln!("{} {}", "Read error:".red(), e);
-            std::process::exit(1);
+        // Read piped stdin if available
+        if !stdin_is_terminal {
+            use tokio::io::{self, AsyncReadExt};
+            let mut stdin_buf = String::new();
+            let mut stdin = io::stdin();
+            if let Err(e) = stdin.read_to_string(&mut stdin_buf).await {
+                eprintln!("{} {}", "Read error:".red(), e);
+                std::process::exit(1);
+            }
+            combined = stdin_buf.trim().to_string();
         }
 
-        let input = input.trim();
-        if input.is_empty() {
-            eprintln!("{}", "No piped input received on stdin.".red());
+        // Combine: pipe content + positional prompt
+        if let Some(ref prompt) = cfg.cli_prompt {
+            if combined.is_empty() {
+                combined = prompt.clone();
+            } else {
+                // Pipe content as context, prompt as instruction
+                combined = format!("{}
+
+{}", combined, prompt);
+            }
+        }
+
+        if combined.is_empty() {
+            eprintln!("{}", "No input received (pipe or prompt).".red());
             std::process::exit(1);
         }
 
-        let result = execute_prompt(&mut agent, input).await;
+        let result = execute_prompt(&mut agent, &combined).await;
         if !matches!(result, StopReason::FinalAnswer(_)) {
             std::process::exit(1);
         }
