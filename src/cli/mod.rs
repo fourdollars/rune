@@ -2202,4 +2202,90 @@ model: different
         };
         assert_eq!(normalized, "gpt-5-mini");
     }
+
+    /// Positional prompt combined with pipe input should concatenate them.
+    #[test]
+    fn test_pipe_and_prompt_combined() {
+        let pipe_content = "diff --git a/foo.rs b/foo.rs\n+added line";
+        let prompt = "Summarize changes";
+
+        // Simulate the combining logic from run()
+        let combined = if pipe_content.is_empty() {
+            prompt.to_string()
+        } else {
+            format!("{}\n\n{}", pipe_content, prompt)
+        };
+
+        assert!(combined.contains("diff --git"));
+        assert!(combined.contains("Summarize changes"));
+        assert!(combined.contains("\n\n")); // separator between pipe and prompt
+    }
+
+    /// When only prompt is provided (no pipe), combined = prompt only.
+    #[test]
+    fn test_prompt_only_no_pipe() {
+        let pipe_content = "";
+        let prompt = "What tools can you use?";
+
+        let combined = if pipe_content.is_empty() {
+            prompt.to_string()
+        } else {
+            format!("{}\n\n{}", pipe_content, prompt)
+        };
+
+        assert_eq!(combined, "What tools can you use?");
+    }
+
+    /// One-shot mode (cli_prompt set) should default policy to allowlist.
+    #[test]
+    fn test_one_shot_policy_defaults_to_allowlist() {
+        let mut cfg = crate::config::RuneConfig::default();
+        cfg.policy.mode = "confirm".to_string();
+        cfg.cli_prompt = Some("hello".to_string());
+        let stdin_is_terminal = true; // positional prompt, terminal attached
+
+        // Replicate the logic from run()
+        if (!stdin_is_terminal || cfg.cli_prompt.is_some()) && cfg.policy.mode == "confirm" {
+            cfg.policy.mode = "allowlist".to_string();
+        }
+
+        assert_eq!(cfg.policy.mode, "allowlist");
+    }
+
+    /// Interactive mode (no prompt) should NOT override policy.
+    #[test]
+    fn test_interactive_keeps_confirm_policy() {
+        let mut cfg = crate::config::RuneConfig::default();
+        cfg.policy.mode = "confirm".to_string();
+        cfg.cli_prompt = None;
+        let stdin_is_terminal = true;
+
+        if (!stdin_is_terminal || cfg.cli_prompt.is_some()) && cfg.policy.mode == "confirm" {
+            cfg.policy.mode = "allowlist".to_string();
+        }
+
+        assert_eq!(cfg.policy.mode, "confirm"); // unchanged
+    }
+
+    /// Banner should be suppressed in one-shot prompt mode.
+    #[test]
+    fn test_banner_suppressed_in_prompt_mode() {
+        let stdin_is_terminal = true;
+        let json_mode = false;
+        let cli_prompt: Option<String> = Some("hello".to_string());
+
+        let should_show_banner = stdin_is_terminal && !json_mode && cli_prompt.is_none();
+        assert!(!should_show_banner);
+    }
+
+    /// Banner should show in normal interactive mode.
+    #[test]
+    fn test_banner_shown_in_interactive_mode() {
+        let stdin_is_terminal = true;
+        let json_mode = false;
+        let cli_prompt: Option<String> = None;
+
+        let should_show_banner = stdin_is_terminal && !json_mode && cli_prompt.is_none();
+        assert!(should_show_banner);
+    }
 }
