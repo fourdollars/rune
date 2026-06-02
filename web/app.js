@@ -415,7 +415,7 @@ function handleMessage(msg) {
             appendToLastAssistant(msg.content);
             break;
         case 'chat_meta':
-            attachMetaToLastAssistant(msg.model, msg.tokens_in, msg.tokens_out, msg.context_tokens, msg.context_window, msg.steps, msg.tool_calls);
+            attachMetaToLastAssistant(msg.model, msg.tokens_in, msg.tokens_out, msg.context_tokens, msg.context_window, msg.steps, msg.tool_calls, msg.thinking);
             break;
         case 'chat_done':
             finalizeAssistantMessage();
@@ -760,7 +760,7 @@ function replayHistory(messages) {
             if (m.model) {
                 const meta = document.createElement('span');
                 meta.className = 'msg-meta';
-                meta.textContent = m.model;
+                meta.textContent = (m.thinking && m.thinking !== 'off') ? `${m.model} ${m.thinking}` : m.model;
                 sender.appendChild(meta);
             }
             const timeSpan = document.createElement('span');
@@ -845,7 +845,7 @@ function finalizeAssistantMessage() {
     currentAssistantDiv = null;
 }
 
-function attachMetaToLastAssistant(model, tokIn, tokOut, ctxTokens, ctxWindow, steps, toolCalls) {
+function attachMetaToLastAssistant(model, tokIn, tokOut, ctxTokens, ctxWindow, steps, toolCalls, thinking) {
     const target = currentAssistantDiv || chatMessages.querySelector('.chat-msg.assistant:last-child');
     if (!target) return;
     const sender = target.querySelector('.sender');
@@ -857,7 +857,7 @@ function attachMetaToLastAssistant(model, tokIn, tokOut, ctxTokens, ctxWindow, s
     if (model) {
         const meta = document.createElement('span');
         meta.className = 'msg-meta';
-        meta.textContent = model;
+        meta.textContent = (thinking && thinking !== 'off') ? `${model} ${thinking}` : model;
         const timeEl = sender.querySelector('.msg-time');
         if (timeEl) sender.insertBefore(meta, timeEl);
         else sender.appendChild(meta);

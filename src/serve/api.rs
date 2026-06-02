@@ -1075,12 +1075,12 @@ pub async fn model_switch_handler(
         // Thinking fallback: use effective thinking (per-note override > config), check if supported
         let current_effective = state.effective_thinking(note_id).await;
         let effective_thinking = if let Some(ref t) = current_effective {
-            if new_efforts.contains(t) {
+            if t == "off" || new_efforts.contains(t) {
                 t.clone()
             } else {
-                // Not supported by new model — reset per-note override to None
-                *room.thinking_override.write().await = None;
-                state.chat_db.set_note_thinking(note_id, None);
+                // Not supported by new model — fallback to off
+                *room.thinking_override.write().await = Some("off".to_string());
+                state.chat_db.set_note_thinking(note_id, Some("off"));
                 "off".to_string()
             }
         } else {
@@ -1099,11 +1099,11 @@ pub async fn model_switch_handler(
         for room in rooms.values() {
             let current_effective = state.effective_thinking(&room.note_id).await;
             let effective_thinking = if let Some(ref t) = current_effective {
-                if new_efforts.contains(t) {
+                if t == "off" || new_efforts.contains(t) {
                     t.clone()
                 } else {
-                    *room.thinking_override.write().await = None;
-                    state.chat_db.set_note_thinking(&room.note_id, None);
+                    *room.thinking_override.write().await = Some("off".to_string());
+                    state.chat_db.set_note_thinking(&room.note_id, Some("off"));
                     "off".to_string()
                 }
             } else {
@@ -1124,7 +1124,7 @@ pub async fn thinking_switch_handler(
     Json(req): Json<ThinkingSwitchReq>,
 ) -> Json<serde_json::Value> {
     let room = state.get_or_create_room(&req.note_id).await;
-    let thinking_val = if req.thinking == "off" { None } else { Some(req.thinking.clone()) };
+    let thinking_val = Some(req.thinking.clone());
 
     // Update room
     *room.thinking_override.write().await = thinking_val.clone();
