@@ -171,12 +171,40 @@ pub async fn run(config: RuneConfig, opts: NotesOptions) {
     }
 
     // Parse comma-separated model list from config
-    let models: Vec<String> = config
+    let mut models: Vec<String> = config
         .model
         .split(',')
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty())
         .collect();
+
+    // Auto-discover models from provider if none configured
+    if models.is_empty() {
+        eprintln!("  ℹ No models configured, discovering from provider...");
+        match crate::serve::api::build_provider_pub(&config) {
+            Ok(registry) => {
+                match registry.list_models().await {
+                    Ok(discovered) if !discovered.is_empty() => {
+                        eprintln!("  ✓ Discovered {} models from provider", discovered.len());
+                        models = discovered;
+                    }
+                    Ok(_) => {
+                        eprintln!("  ⚠ Provider returned no models, using default");
+                        models = vec![config.model.clone()];
+                    }
+                    Err(e) => {
+                        eprintln!("  ⚠ Failed to discover models: {}", e);
+                        models = vec![config.model.clone()];
+                    }
+                }
+            }
+            Err(e) => {
+                eprintln!("  ⚠ Cannot build provider for model discovery: {}", e);
+                models = vec![config.model.clone()];
+            }
+        }
+    }
+
     let first_model = models
         .first()
         .cloned()

@@ -1976,6 +1976,11 @@ async fn handle_chat_message(
 
 // ─── Provider/Embedding builders (from ws.rs) ──────────────────────────────
 
+/// Public wrapper for build_provider (used by serve startup for model discovery).
+pub fn build_provider_pub(config: &RuneConfig) -> anyhow::Result<ProviderRegistry> {
+    build_provider(config)
+}
+
 fn build_provider(config: &RuneConfig) -> anyhow::Result<ProviderRegistry> {
     let mut registry = ProviderRegistry::new();
 

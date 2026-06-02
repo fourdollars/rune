@@ -339,6 +339,12 @@ async fn stream_openai_compatible_response(
 /// Provider trait.
 pub trait Provider: Send + Sync {
     fn name(&self) -> &str;
+
+    /// List available models from this provider. Default: empty (not supported).
+    fn list_models(&self) -> Pin<Box<dyn Future<Output = Result<Vec<String>>> + Send + '_>> {
+        Box::pin(async { Ok(Vec::new()) })
+    }
+
     fn chat(
         &self,
         request: LlmRequest,
@@ -631,6 +637,51 @@ impl CopilotProvider {
 impl Provider for CopilotProvider {
     fn name(&self) -> &str {
         &self.provider_name
+    }
+
+    fn list_models(&self) -> Pin<Box<dyn Future<Output = Result<Vec<String>>> + Send + '_>> {
+        Box::pin(async move {
+            let (token, endpoint) = self.get_token().await?;
+            let url = format!("{}/models", endpoint.trim_end_matches('/'));
+            let client = Client::new();
+            let response = client
+                .get(&url)
+                .bearer_auth(&token)
+                .header("User-Agent", "rune/0.1.0")
+                .header("Copilot-Integration-Id", "vscode-chat")
+                .timeout(std::time::Duration::from_secs(15))
+                .send()
+                .await
+                .map_err(|e| anyhow!("failed to list models: {}", e))?;
+
+            if !response.status().is_success() {
+                let body = response.text().await.unwrap_or_default();
+                return Err(anyhow!("list models failed: {}", &body[..body.len().min(200)]));
+            }
+
+            let body = response.text().await
+                .map_err(|e| anyhow!("failed to read models response: {}", e))?;
+            let v: serde_json::Value = serde_json::from_str(&body)
+                .map_err(|e| anyhow!("failed to parse models: {}", e))?;
+
+            let models: Vec<String> = v
+                .get("data")
+                .or_else(|| v.get("models"))
+                .and_then(|d| d.as_array())
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|m| {
+                            m.get("id")
+                                .or_else(|| m.get("name"))
+                                .and_then(|id| id.as_str())
+                                .map(|s| s.to_string())
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
+
+            Ok(models)
+        })
     }
 
     fn chat(
@@ -1343,6 +1394,15 @@ impl ProviderRegistry {
 
     pub fn is_empty(&self) -> bool {
         self.providers.is_empty()
+    }
+
+    /// List available models from the default provider.
+    pub async fn list_models(&self) -> Result<Vec<String>> {
+        if self.providers.is_empty() {
+            return Err(anyhow!("no providers registered"));
+        }
+        let idx = self.default_provider.min(self.providers.len() - 1);
+        self.providers[idx].list_models().await
     }
 
     /// Call default provider, fallback only on transient failure.
@@ -2980,4 +3040,27 @@ mod provider_tests {
         let result = finalize_tool_calls(states);
         assert_eq!(result.len(), 1, "valid nested JSON should be kept");
     }
+
+    #[test]
+    fn test_copilot_provider_list_models_method_exists() {
+        // Verify the list_models method is callable (compile-time check).
+        // Actual API call tested via integration test.
+        let p = CopilotProvider::new("ghu_fake_token".to_string());
+        assert_eq!(p.name(), "github-copilot");
+        // list_models() returns a Future — just ensure it compiles.
+        let _fut = p.list_models();
+    }
+
+    #[test]
+    fn test_provider_registry_list_models_empty_registry() {
+        let reg = ProviderRegistry::new();
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let result = rt.block_on(reg.list_models());
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("no providers"));
+    }
+
 }
