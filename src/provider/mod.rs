@@ -679,6 +679,21 @@ impl Provider for CopilotProvider {
                 .map(|arr| {
                     arr.iter()
                         .filter_map(|m| {
+                            // Only include models enabled for model picker
+                            let picker_enabled = m
+                                .get("model_picker_enabled")
+                                .and_then(|v| v.as_bool())
+                                .unwrap_or(false);
+                            if !picker_enabled { return None; }
+
+                            // Must have supported_endpoints (i.e. usable for chat)
+                            let has_endpoints = m
+                                .get("supported_endpoints")
+                                .and_then(|v| v.as_array())
+                                .map(|arr| !arr.is_empty())
+                                .unwrap_or(false);
+                            if !has_endpoints { return None; }
+
                             let id = m.get("id")
                                 .or_else(|| m.get("name"))
                                 .and_then(|id| id.as_str())
@@ -3126,9 +3141,9 @@ mod provider_tests {
     fn test_copilot_models_json_parsing_data_array() {
         // Simulate the JSON response format from Copilot /models endpoint with metadata
         let json = r#"{"data":[
-            {"id":"gpt-5-mini","capabilities":{"limits":{"max_context_window_tokens":16384},"supports":{}}},
-            {"id":"claude-sonnet-4.6","capabilities":{"limits":{"max_context_window_tokens":200000},"supports":{"reasoning_effort":["low","medium","high"]}}},
-            {"id":"gemini-3.5-flash","capabilities":{"limits":{},"supports":{}}}
+            {"id":"gpt-5-mini","model_picker_enabled":true,"supported_endpoints":["chat"],"capabilities":{"limits":{"max_context_window_tokens":16384},"supports":{}}},
+            {"id":"claude-sonnet-4.6","model_picker_enabled":true,"supported_endpoints":["chat"],"capabilities":{"limits":{"max_context_window_tokens":200000},"supports":{"reasoning_effort":["low","medium","high"]}}},
+            {"id":"gemini-3.5-flash","model_picker_enabled":true,"supported_endpoints":["chat"],"capabilities":{"limits":{},"supports":{}}}
         ]}"#;
         let v: serde_json::Value = serde_json::from_str(json).unwrap();
         let mut models: Vec<ModelInfo> = v
@@ -3138,6 +3153,17 @@ mod provider_tests {
             .map(|arr| {
                 arr.iter()
                     .filter_map(|m| {
+                        let picker_enabled = m
+                            .get("model_picker_enabled")
+                            .and_then(|v| v.as_bool())
+                            .unwrap_or(false);
+                        if !picker_enabled { return None; }
+                        let has_endpoints = m
+                            .get("supported_endpoints")
+                            .and_then(|v| v.as_array())
+                            .map(|arr| !arr.is_empty())
+                            .unwrap_or(false);
+                        if !has_endpoints { return None; }
                         let id = m.get("id")
                             .or_else(|| m.get("name"))
                             .and_then(|id| id.as_str())
@@ -3172,7 +3198,7 @@ mod provider_tests {
     #[test]
     fn test_copilot_models_json_parsing_models_array() {
         // Alternative format: "models" key with "name" field
-        let json = r#"{"models":[{"name":"model-a"},{"name":"model-b"}]}"#;
+        let json = r#"{"models":[{"name":"model-a","model_picker_enabled":true,"supported_endpoints":["chat"]},{"name":"model-b","model_picker_enabled":true,"supported_endpoints":["chat"]}]}"#;
         let v: serde_json::Value = serde_json::from_str(json).unwrap();
         let mut models: Vec<ModelInfo> = v
             .get("data")
@@ -3181,6 +3207,17 @@ mod provider_tests {
             .map(|arr| {
                 arr.iter()
                     .filter_map(|m| {
+                        let picker_enabled = m
+                            .get("model_picker_enabled")
+                            .and_then(|v| v.as_bool())
+                            .unwrap_or(false);
+                        if !picker_enabled { return None; }
+                        let has_endpoints = m
+                            .get("supported_endpoints")
+                            .and_then(|v| v.as_array())
+                            .map(|arr| !arr.is_empty())
+                            .unwrap_or(false);
+                        if !has_endpoints { return None; }
                         let id = m.get("id")
                             .or_else(|| m.get("name"))
                             .and_then(|id| id.as_str())
