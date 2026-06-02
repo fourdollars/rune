@@ -84,6 +84,8 @@ pub enum SseMsg {
         tokens_out: u32,
         context_tokens: u32,
         context_window: u32,
+        steps: u32,
+        tool_calls: u32,
     },
     #[serde(rename = "chat_message")]
     ChatMessage { nickname: String, content: String },
@@ -1904,6 +1906,18 @@ async fn handle_chat_message(
     let done = SseMsg::ChatDone {};
     broadcast_to_room(&room, &done);
 
+    // Broadcast run statistics
+    let meta = SseMsg::ChatMeta {
+        model: active_model,
+        tokens_in: agent.tokens_in() as u32,
+        tokens_out: agent.tokens_out() as u32,
+        context_tokens: agent.total_context_tokens() as u32,
+        context_window: agent.config.context_window as u32,
+        steps: agent.step_count() as u32,
+        tool_calls: agent.tool_call_count() as u32,
+    };
+    broadcast_to_room(&room, &meta);
+
     // Process result
     match &stop_reason {
         StopReason::FinalAnswer(answer) => {
@@ -2243,6 +2257,8 @@ mod tests {
             tokens_out: 50,
             context_tokens: 1000,
             context_window: 128000,
+            steps: 3,
+            tool_calls: 2,
         };
         let json = serde_json::to_string(&msg).unwrap();
         assert!(json.contains(r#""type":"chat_meta""#));

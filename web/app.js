@@ -414,7 +414,7 @@ function handleMessage(msg) {
             appendToLastAssistant(msg.content);
             break;
         case 'chat_meta':
-            attachMetaToLastAssistant(msg.model, msg.tokens_in, msg.tokens_out, msg.context_tokens, msg.context_window);
+            attachMetaToLastAssistant(msg.model, msg.tokens_in, msg.tokens_out, msg.context_tokens, msg.context_window, msg.steps, msg.tool_calls);
             break;
         case 'chat_done':
             finalizeAssistantMessage();
@@ -830,7 +830,7 @@ function finalizeAssistantMessage() {
     currentAssistantDiv = null;
 }
 
-function attachMetaToLastAssistant(model, tokIn, tokOut, ctxTokens, ctxWindow) {
+function attachMetaToLastAssistant(model, tokIn, tokOut, ctxTokens, ctxWindow, steps, toolCalls) {
     const target = currentAssistantDiv || chatMessages.querySelector('.chat-msg.assistant:last-child');
     if (!target) return;
     const sender = target.querySelector('.sender');
@@ -838,12 +838,15 @@ function attachMetaToLastAssistant(model, tokIn, tokOut, ctxTokens, ctxWindow) {
     // Remove old meta if any
     const oldMeta = sender.querySelector('.msg-meta');
     if (oldMeta) oldMeta.remove();
-    if (!model && !tokIn && !tokOut) return;
+    if (!model && !tokIn && !tokOut && !steps) return;
     const meta = document.createElement('span');
     meta.className = 'msg-meta';
     let parts = [];
     if (model) parts.push(model);
-    if (tokIn || tokOut) parts.push(`↑${tokIn||0} ↓${tokOut||0}`);
+    const totalTok = (tokIn||0) + (tokOut||0);
+    if (steps || totalTok || toolCalls) {
+        parts.push(`⚡ ${steps||0} steps · ${totalTok} tokens · ${toolCalls||0} tool calls`);
+    }
     meta.textContent = parts.join(' · ');
     // Insert before .msg-time if present
     const timeEl = sender.querySelector('.msg-time');

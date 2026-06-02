@@ -328,6 +328,12 @@ impl Agent {
     pub fn tokens_used(&self) -> u32 {
         self.tokens_used
     }
+    pub fn tokens_in(&self) -> u32 {
+        self.tokens_in
+    }
+    pub fn tokens_out(&self) -> u32 {
+        self.tokens_out
+    }
     pub fn step_count(&self) -> u32 {
         self.step_count
     }
