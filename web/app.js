@@ -329,7 +329,7 @@ function connect(noteId) {
         'history', 'file_list', 'file_content', 'file_deleted',
         'chat_token', 'chat_done', 'chat_meta', 'chat_message',
         'status', 'tool_status', 'system', 'users_update', 'error',
-        'model_changed', 'approval_request', 'archive_done',
+        'model_changed', 'thinking_changed', 'approval_request', 'archive_done',
         'search_results', 'dir_browse_result', 'auth_error'
     ];
 
@@ -522,7 +522,7 @@ function handleMessage(msg) {
         case 'thinking_changed':
             currentThinking = msg.thinking || 'off';
             updateThinkingSelect();
-            addSystemMessage("🔄 Thinking switched to: " + currentThinking);
+            addSystemMessage("🔄 Model switched to: " + activeModel + " " + currentThinking);
             break;
         case 'note_list':
             // Always rebuild fileVisibility from authoritative public_files in SSE payload.
