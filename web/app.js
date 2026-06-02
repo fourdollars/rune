@@ -838,20 +838,29 @@ function attachMetaToLastAssistant(model, tokIn, tokOut, ctxTokens, ctxWindow, s
     // Remove old meta if any
     const oldMeta = sender.querySelector('.msg-meta');
     if (oldMeta) oldMeta.remove();
-    if (!model && !tokIn && !tokOut && !steps) return;
-    const meta = document.createElement('span');
-    meta.className = 'msg-meta';
-    let parts = [];
-    if (model) parts.push(model);
+    // Model stays in header
+    if (model) {
+        const meta = document.createElement('span');
+        meta.className = 'msg-meta';
+        meta.textContent = model;
+        const timeEl = sender.querySelector('.msg-time');
+        if (timeEl) sender.insertBefore(meta, timeEl);
+        else sender.appendChild(meta);
+    }
+    // Run stats go at the tail of the message body
     const totalTok = (tokIn||0) + (tokOut||0);
     if (steps || totalTok || toolCalls) {
-        parts.push(`⚡ ${steps||0} steps · ${totalTok} tokens · ${toolCalls||0} tool calls`);
+        const body = target.querySelector('.msg-body');
+        if (body) {
+            // Remove old stats footer if any
+            const oldStats = body.querySelector('.run-stats');
+            if (oldStats) oldStats.remove();
+            const stats = document.createElement('div');
+            stats.className = 'run-stats';
+            stats.textContent = `⚡ ${steps||0} steps | ${totalTok} tokens | ${toolCalls||0} tool calls`;
+            body.appendChild(stats);
+        }
     }
-    meta.textContent = parts.join(' · ');
-    // Insert before .msg-time if present
-    const timeEl = sender.querySelector('.msg-time');
-    if (timeEl) sender.insertBefore(meta, timeEl);
-    else sender.appendChild(meta);
     // Update context overlay
     if (ctxWindow && ctxWindow > 0) updateContextOverlay(ctxTokens || 0, ctxWindow);
 }

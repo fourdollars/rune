@@ -1489,6 +1489,15 @@ pre.hljs-pre:hover .copy-btn {
     opacity: 0.75;
     white-space: nowrap;
 }
+.run-stats {
+    font-size: 11px;
+    color: var(--text-muted, #777);
+    opacity: 0.6;
+    margin-top: 8px;
+    padding-top: 4px;
+    border-top: 1px solid var(--border, #333);
+    font-family: monospace;
+}
 .msg-time {
     margin-left: auto;
     font-size: 10px;
