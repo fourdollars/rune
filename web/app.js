@@ -30,7 +30,6 @@ let dirBrowserTargetInput = null;
 let settingsNoteId = null;
 
 let activeModel = '';
-let currentThinking = 'off';
 
 // --- DOM refs ---
 const preview = document.getElementById('preview');
@@ -1269,9 +1268,6 @@ function formatContextWindow(tokens) {
     return tokens.toString();
 }
 
-function updateThinkingSelect() {
-    // Implemented in Task 6
-}
 
 function hideModelDialog() {
     document.getElementById('model-modal').classList.add('hidden');
