@@ -105,9 +105,9 @@ impl ChatDb {
             "
             ALTER TABLE messages ADD COLUMN steps      INTEGER;
             ALTER TABLE messages ADD COLUMN tool_calls INTEGER;
-            ALTER TABLE messages ADD COLUMN thinking   TEXT;
         ",
         );
+        let _ = conn.execute_batch("ALTER TABLE messages ADD COLUMN thinking TEXT;");
         let _ = conn.execute_batch("ALTER TABLE sessions ADD COLUMN public INTEGER DEFAULT 0;");
         let _ = conn.execute_batch(
             "
