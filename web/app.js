@@ -1201,13 +1201,13 @@ function updateThinkingSelect() {
     select.innerHTML = '';
     const offOpt = document.createElement('option');
     offOpt.value = 'off';
-    offOpt.textContent = '💭 off';
+    offOpt.textContent = 'off';
     select.appendChild(offOpt);
 
     efforts.forEach(level => {
         const opt = document.createElement('option');
         opt.value = level;
-        opt.textContent = '💭 ' + level;
+        opt.textContent = level;
         select.appendChild(opt);
     });
 
@@ -1251,7 +1251,7 @@ function showModelDialog() {
         if (m.reasoning_efforts && m.reasoning_efforts.length > 0) {
             const reasonBadge = document.createElement('span');
             reasonBadge.className = 'model-reasoning-badge';
-            reasonBadge.textContent = '💭 ' + m.reasoning_efforts.join('|');
+            reasonBadge.textContent = m.reasoning_efforts.join(' | ');
             badgeContainer.appendChild(reasonBadge);
         }
         
