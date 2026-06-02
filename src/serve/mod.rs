@@ -54,7 +54,7 @@ pub struct ServerState {
     /// Currently active filename shown in the editor.
     pub active_file: Arc<RwLock<String>>,
     /// All available models (parsed from config.model by comma).
-    pub models: Vec<ModelInfo>,
+    pub models: Arc<RwLock<Vec<ModelInfo>>>,
     /// Per-note rooms: isolated SSE channel + model + cancel token per note.
     pub rooms: Arc<RwLock<HashMap<String, Arc<NoteRoom>>>>,
     /// Global default model (used when a note has no per-note override).
@@ -219,13 +219,42 @@ pub async fn run(config: RuneConfig, opts: NotesOptions) {
         guest_token: opts.guest_token.clone(),
         files: Arc::new(RwLock::new(initial_files)),
         active_file: Arc::new(RwLock::new(String::new())),
-        models,
+        models: Arc::new(RwLock::new(models)),
         rooms: Arc::new(RwLock::new(HashMap::new())),
         global_default_model: Arc::new(RwLock::new(first_model)),
         admin_broadcast_tx,
         chat_db,
         data_dir: data_dir(),
     };
+
+    // Background model refresh (every 30 minutes)
+    {
+        let state_clone = state.clone();
+        let config_clone = config.clone();
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(std::time::Duration::from_secs(1800));
+            interval.tick().await; // skip first immediate tick
+            loop {
+                interval.tick().await;
+                if let Ok(registry) = crate::serve::api::build_provider_pub(&config_clone) {
+                    if let Ok(new_models) = registry.list_models().await {
+                        if !new_models.is_empty() {
+                            eprintln!("  ✓ Model refresh: {} models discovered", new_models.len());
+                            *state_clone.models.write().await = new_models.clone();
+                            // Broadcast updated model list to all connected rooms
+                            let rooms = state_clone.rooms.read().await;
+                            for (_, room) in rooms.iter() {
+                                let model_ids: Vec<String> = new_models.iter().map(|m| m.id.clone()).collect();
+                                let active = state_clone.effective_model(&room.note_id).await;
+                                let msg = crate::serve::api::SseMsg::ModelList { models: model_ids, active };
+                                crate::serve::api::broadcast_to_room(room, &msg);
+                            }
+                        }
+                    }
+                }
+            }
+        });
+    }
 
     // Auth middleware for POST API endpoints
     async fn auth_middleware(
@@ -1497,7 +1526,7 @@ mod tests {
             guest_token: None,
             files: Arc::new(RwLock::new(std::collections::HashMap::new())),
             active_file: Arc::new(RwLock::new(String::new())),
-            models: models.clone(),
+            models: Arc::new(RwLock::new(models.clone())),
             rooms: Arc::new(RwLock::new(HashMap::new())),
             global_default_model: Arc::new(RwLock::new(first_model.clone())),
             admin_broadcast_tx,
@@ -1527,7 +1556,7 @@ mod tests {
             guest_token: None,
             files: Arc::new(RwLock::new(std::collections::HashMap::new())),
             active_file: Arc::new(RwLock::new("main.md".into())),
-            models: vec![ModelInfo { id: "gpt-4o".into(), context_window: None, reasoning_efforts: vec![] }],
+            models: Arc::new(RwLock::new(vec![ModelInfo { id: "gpt-4o".into(), context_window: None, reasoning_efforts: vec![] }])),
             rooms: Arc::new(RwLock::new(HashMap::new())),
             global_default_model: Arc::new(RwLock::new("gpt-4o".into())),
             admin_broadcast_tx,
@@ -1557,7 +1586,7 @@ mod tests {
             guest_token: None,
             files: Arc::new(RwLock::new(std::collections::HashMap::new())),
             active_file: Arc::new(RwLock::new(String::new())),
-            models: vec![],
+            models: Arc::new(RwLock::new(vec![])),
             rooms: Arc::new(RwLock::new(HashMap::new())),
             global_default_model: Arc::new(RwLock::new(String::new())),
             admin_broadcast_tx,
