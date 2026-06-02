@@ -904,6 +904,7 @@ mod tests {
             tokens_out: None,
             steps: None,
             tool_calls: None,
+            thinking: None,
         };
         let mut f = std::fs::File::create(&arc_path).unwrap();
         writeln!(f, "{}", serde_json::to_string(&old_rec).unwrap()).unwrap();
@@ -946,6 +947,7 @@ mod tests {
             Some(42),
             Some(3),
             Some(2),
+            None,
         )
         .unwrap();
         let rows = db.load_recent("default", 1).unwrap();
@@ -982,6 +984,7 @@ mod tests {
             Some(25),
             Some(1),
             Some(0),
+            None,
         )
         .unwrap();
         let archive_path = dir.path().join("arc.jsonl");

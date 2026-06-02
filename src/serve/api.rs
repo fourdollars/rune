@@ -2001,7 +2001,7 @@ async fn handle_chat_message(
         tokens_in: agent.tokens_in() as u32,
         tokens_out: agent.tokens_out() as u32,
         context_tokens: agent.total_context_tokens() as u32,
-        context_window: agent.config.context_window as u32,
+        context_window: state.models.read().await.iter().find(|m| m.id == meta_model).and_then(|m| m.context_window).unwrap_or(agent.config.context_window as u64) as u32,
         steps: agent.step_count() as u32,
         tool_calls: agent.tool_call_count() as u32,
     };
