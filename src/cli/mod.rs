@@ -57,16 +57,12 @@ fn print_banner() {
         "ᛟ".blue(),
     );
 
-    println!();
     println!("{}", rune_border);
     println!("{}", line2.magenta());
-    println!("{}", line3.magenta());
     println!("{}", line4.bright_cyan().bold());
-    println!("{}", line5.magenta());
     println!("{}", line6.white());
     println!("{}", line7.dimmed());
     println!("{}", line8.green());
-    println!("{}", line9.magenta());
     println!("{}", line10.magenta());
     println!("{}", rune_border2);
     println!();
