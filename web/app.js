@@ -29,6 +29,7 @@ let dirBrowserTargetInput = null;
 let settingsNoteId = null;
 
 let activeModel = '';
+let currentThinking = 'off';
 
 // --- DOM refs ---
 const preview = document.getElementById('preview');
@@ -505,9 +506,11 @@ function handleMessage(msg) {
             }
             break;
         case 'model_list':
-            availableModels = msg.models || [];
+            availableModels = msg.models || [];  // [{id, context_window, reasoning_efforts}, ...]
             activeModel = msg.active || '';
+            currentThinking = msg.thinking || 'off';
             updateModelIndicator();
+            updateThinkingSelect();
             break;
         case 'model_changed':
             activeModel = msg.model || '';
@@ -1183,12 +1186,48 @@ function showModelDialog() {
     listEl.innerHTML = '';
     availableModels.forEach(m => {
         const btn = document.createElement('button');
-        btn.className = 'model-option' + (m === activeModel ? ' active' : '');
-        btn.textContent = m;
-        btn.onclick = () => { switchModel(m); hideModelDialog(); };
+        const modelId = m.id || m;
+        btn.className = 'model-option' + (modelId === activeModel ? ' active' : '');
+        
+        // Model name
+        const nameSpan = document.createElement('span');
+        nameSpan.className = 'model-option-name';
+        nameSpan.textContent = modelId;
+        btn.appendChild(nameSpan);
+        
+        // Metadata badges
+        const badgeContainer = document.createElement('span');
+        badgeContainer.className = 'model-badges';
+        
+        if (m.context_window) {
+            const ctxBadge = document.createElement('span');
+            ctxBadge.className = 'model-ctx-badge';
+            ctxBadge.textContent = formatContextWindow(m.context_window);
+            badgeContainer.appendChild(ctxBadge);
+        }
+        
+        if (m.reasoning_efforts && m.reasoning_efforts.length > 0) {
+            const reasonBadge = document.createElement('span');
+            reasonBadge.className = 'model-reasoning-badge';
+            reasonBadge.textContent = '💭 ' + m.reasoning_efforts.join('|');
+            badgeContainer.appendChild(reasonBadge);
+        }
+        
+        btn.appendChild(badgeContainer);
+        btn.onclick = () => { switchModel(modelId); hideModelDialog(); };
         listEl.appendChild(btn);
     });
     document.getElementById('model-modal').classList.remove('hidden');
+}
+
+function formatContextWindow(tokens) {
+    if (tokens >= 1000000) return (tokens / 1000000).toFixed(0) + 'M';
+    if (tokens >= 1000) return (tokens / 1000).toFixed(0) + 'K';
+    return tokens.toString();
+}
+
+function updateThinkingSelect() {
+    // Implemented in Task 6
 }
 
 function hideModelDialog() {

@@ -1834,3 +1834,28 @@ pre.hljs-pre:hover .copy-btn {
     .mobile-file-icon { font-size: 14px; }
     .mobile-file-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 }
+
+/* Task 5: Model dialog metadata badges */
+.model-option {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+}
+.model-option-name {
+    flex: 1;
+    text-align: left;
+}
+.model-badges {
+    display: flex;
+    gap: 4px;
+    align-items: center;
+}
+.model-ctx-badge, .model-reasoning-badge {
+    font-size: 0.7rem;
+    padding: 1px 5px;
+    border-radius: 3px;
+    background: var(--bg-secondary);
+    color: var(--text-muted);
+    white-space: nowrap;
+}
