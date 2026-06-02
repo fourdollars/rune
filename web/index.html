@@ -217,6 +217,9 @@
                     <h3><a href="/notes/" target="_blank" rel="noopener" class="title-link" id="rune-title"><span class="rune-char">ᚱ</span><span class="rune-char">ᚢ</span><span class="rune-char">ᚾ</span><span class="rune-char">ᛖ</span></a><span id="status-indicator" class="status idle">● idle</span></h3>
                     <div id="model-indicator" class="model-indicator" style="display:none">
                         <span id="model-name" class="model-name" onclick="showModelDialog()" title="Switch model"></span>
+                        <select id="thinking-select" class="thinking-select" onchange="switchThinking(this.value)" title="Thinking level" style="display:none">
+                            <option value="off">💭 off</option>
+                        </select>
                     </div>
                     <div class="chat-header-actions">
                         <button id="btn-search" class="chat-action-btn" onclick="showSearchDialog()" title="Search chat history">🔍</button>

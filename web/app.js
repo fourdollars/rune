@@ -21,6 +21,7 @@ let myToken = '';
 let isAdmin = false;
 let isGuest = false;
 let availableModels = [];
+let currentThinking = 'off';
 
 // --- Note state ---
 let notes = [];
@@ -515,7 +516,12 @@ function handleMessage(msg) {
         case 'model_changed':
             activeModel = msg.model || '';
             updateModelIndicator();
+            updateThinkingSelect();
             addSystemMessage('🔄 Model switched to: ' + activeModel);
+            break;
+        case 'thinking_changed':
+            currentThinking = msg.thinking || 'off';
+            updateThinkingSelect();
             break;
         case 'note_list':
             // Always rebuild fileVisibility from authoritative public_files in SSE payload.
@@ -1177,6 +1183,43 @@ function updateModelIndicator() {
     indicator.style.display = 'flex';
     // Admin can click the name to switch; show pointer cursor
     nameEl.style.cursor = (isAdmin && availableModels.length > 1) ? 'pointer' : 'default';
+}
+
+function updateThinkingSelect() {
+    const select = document.getElementById('thinking-select');
+    if (!select) return;
+
+    // Find current model's reasoning_efforts
+    const currentModelObj = availableModels.find(m => (m.id || m) === activeModel);
+    const efforts = (currentModelObj && currentModelObj.reasoning_efforts) || [];
+
+    if (!isAdmin || efforts.length === 0) {
+        select.style.display = 'none';
+        return;
+    }
+
+    // Build options: always include "off" plus the model's supported efforts
+    select.innerHTML = '';
+    const offOpt = document.createElement('option');
+    offOpt.value = 'off';
+    offOpt.textContent = '💭 off';
+    select.appendChild(offOpt);
+
+    efforts.forEach(level => {
+        const opt = document.createElement('option');
+        opt.value = level;
+        opt.textContent = '💭 ' + level;
+        select.appendChild(opt);
+    });
+
+    select.value = currentThinking || 'off';
+    select.style.display = '';
+}
+
+function switchThinking(level) {
+    if (isConnected) {
+        api('model/thinking', { note_id: currentNoteId, thinking: level });
+    }
 }
 
 function showModelDialog() {
