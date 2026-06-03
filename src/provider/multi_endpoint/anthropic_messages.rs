@@ -9,12 +9,13 @@ use tracing::{debug, warn};
 
 use super::super::{LlmFunction, LlmMessage, LlmRequest, LlmResponse, LlmToolCall, TokenUsage};
 
-/// Map thinking level string to budget_tokens.
-fn thinking_budget(level: &str) -> Option<u32> {
+/// Map thinking level string to Anthropic effort value (for output_config).
+/// Returns None for "off"/"none"/unknown → no thinking block sent.
+fn thinking_effort(level: &str) -> Option<&'static str> {
     match level.to_lowercase().as_str() {
-        "low" => Some(1024),
-        "medium" => Some(4096),
-        "high" => Some(16384),
+        "low" => Some("low"),
+        "medium" => Some("medium"),
+        "high" => Some("high"),
         _ => None,
     }
 }
@@ -175,14 +176,11 @@ pub fn build_anthropic_payload(req: &LlmRequest, stream: bool) -> Result<Value> 
     }
 
     if let Some(ref thinking) = req.thinking {
-        if let Some(budget) = thinking_budget(thinking) {
-            payload.as_object_mut().unwrap().insert(
-                "thinking".to_string(),
-                json!({
-                    "type": "enabled",
-                    "budget_tokens": budget
-                }),
-            );
+        if let Some(effort) = thinking_effort(thinking) {
+            let obj = payload.as_object_mut().unwrap();
+            // New Claude API: thinking.type="adaptive" + output_config.effort
+            obj.insert("thinking".to_string(), json!({ "type": "adaptive" }));
+            obj.insert("output_config".to_string(), json!({ "effort": effort }));
         }
     }
 
