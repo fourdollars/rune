@@ -211,9 +211,9 @@ pub async fn stream_responses_api(
     let mut buffer = String::new();
 
     let mut content_text = String::new();
-    // Track function calls by item_id
-    let mut fc_meta: BTreeMap<String, (String, String)> = BTreeMap::new(); // item_id -> (call_id, name)
-    let mut fc_args: BTreeMap<String, String> = BTreeMap::new(); // item_id -> accumulated arguments
+    // Track function calls by output_index (stable integer, unlike obfuscated item_id)
+    let mut fc_meta: BTreeMap<u64, (String, String)> = BTreeMap::new(); // output_index -> (call_id, name)
+    let mut fc_args: BTreeMap<u64, String> = BTreeMap::new(); // output_index -> accumulated arguments
     let mut usage: Option<TokenUsage> = None;
     let mut model = String::from("unknown");
 
@@ -269,23 +269,21 @@ pub async fn stream_responses_api(
                     }
                 }
                 "response.function_call_arguments.delta" => {
-                    if let Some(item_id) = parsed.get("item_id").and_then(|v| v.as_str()) {
+                    // item_id is obfuscated and rotated per-delta; use output_index instead.
+                    if let Some(output_index) = parsed.get("output_index").and_then(|v| v.as_u64())
+                    {
                         if let Some(delta) = parsed.get("delta").and_then(|d| d.as_str()) {
-                            fc_args
-                                .entry(item_id.to_string())
-                                .or_default()
-                                .push_str(delta);
+                            fc_args.entry(output_index).or_default().push_str(delta);
                         }
                     }
                 }
                 "response.output_item.added" => {
                     if let Some(item) = parsed.get("item") {
                         if item.get("type").and_then(|t| t.as_str()) == Some("function_call") {
-                            let item_id = item
-                                .get("id")
-                                .and_then(|v| v.as_str())
-                                .unwrap_or("")
-                                .to_string();
+                            let output_index = parsed
+                                .get("output_index")
+                                .and_then(|v| v.as_u64())
+                                .unwrap_or(0);
                             let call_id = item
                                 .get("call_id")
                                 .and_then(|v| v.as_str())
@@ -296,8 +294,8 @@ pub async fn stream_responses_api(
                                 .and_then(|v| v.as_str())
                                 .unwrap_or("")
                                 .to_string();
-                            fc_meta.insert(item_id.clone(), (call_id, name));
-                            fc_args.entry(item_id).or_default();
+                            fc_meta.insert(output_index, (call_id, name));
+                            fc_args.entry(output_index).or_default();
                         }
                     }
                 }
@@ -336,8 +334,8 @@ pub async fn stream_responses_api(
 
     // Assemble tool calls
     let mut tool_calls: Vec<LlmToolCall> = Vec::new();
-    for (item_id, (call_id, name)) in &fc_meta {
-        let arguments = fc_args.get(item_id).cloned().unwrap_or_default();
+    for (output_index, (call_id, name)) in &fc_meta {
+        let arguments = fc_args.get(output_index).cloned().unwrap_or_default();
         tool_calls.push(LlmToolCall {
             id: call_id.clone(),
             call_type: "function".to_string(),
