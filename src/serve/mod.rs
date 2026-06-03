@@ -191,32 +191,50 @@ pub async fn run(config: RuneConfig, opts: NotesOptions) {
         .split(',')
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty())
-        .map(|id| ModelInfo { id, context_window: None, reasoning_efforts: vec![] })
+        .map(|id| ModelInfo {
+            id,
+            context_window: None,
+            reasoning_efforts: vec![],
+            supported_endpoints: vec![],
+        })
         .collect();
 
     // Auto-discover models from provider if none configured
     if models.is_empty() {
         eprintln!("  ℹ No models configured, discovering from provider...");
         match crate::serve::api::build_provider_pub(&config) {
-            Ok(registry) => {
-                match registry.list_models().await {
-                    Ok(discovered) if !discovered.is_empty() => {
-                        eprintln!("  ✓ Discovered {} models from provider", discovered.len());
-                        models = discovered;
-                    }
-                    Ok(_) => {
-                        eprintln!("  ⚠ Provider returned no models, using default");
-                        models = vec![ModelInfo { id: config.model.clone(), context_window: None, reasoning_efforts: vec![] }];
-                    }
-                    Err(e) => {
-                        eprintln!("  ⚠ Failed to discover models: {}", e);
-                        models = vec![ModelInfo { id: config.model.clone(), context_window: None, reasoning_efforts: vec![] }];
-                    }
+            Ok(registry) => match registry.list_models().await {
+                Ok(discovered) if !discovered.is_empty() => {
+                    eprintln!("  ✓ Discovered {} models from provider", discovered.len());
+                    models = discovered;
                 }
-            }
+                Ok(_) => {
+                    eprintln!("  ⚠ Provider returned no models, using default");
+                    models = vec![ModelInfo {
+                        id: config.model.clone(),
+                        context_window: None,
+                        reasoning_efforts: vec![],
+                        supported_endpoints: vec![],
+                    }];
+                }
+                Err(e) => {
+                    eprintln!("  ⚠ Failed to discover models: {}", e);
+                    models = vec![ModelInfo {
+                        id: config.model.clone(),
+                        context_window: None,
+                        reasoning_efforts: vec![],
+                        supported_endpoints: vec![],
+                    }];
+                }
+            },
             Err(e) => {
                 eprintln!("  ⚠ Cannot build provider for model discovery: {}", e);
-                models = vec![ModelInfo { id: config.model.clone(), context_window: None, reasoning_efforts: vec![] }];
+                models = vec![ModelInfo {
+                    id: config.model.clone(),
+                    context_window: None,
+                    reasoning_efforts: vec![],
+                    supported_endpoints: vec![],
+                }];
             }
         }
     }
@@ -258,14 +276,25 @@ pub async fn run(config: RuneConfig, opts: NotesOptions) {
                             // Broadcast updated model list to all connected rooms
                             let rooms = state_clone.rooms.read().await;
                             for (_, room) in rooms.iter() {
-                                let model_entries: Vec<crate::serve::api::ModelListEntry> = new_models.iter().map(|m| crate::serve::api::ModelListEntry {
-                                    id: m.id.clone(),
-                                    context_window: m.context_window,
-                                    reasoning_efforts: m.reasoning_efforts.clone(),
-                                }).collect();
+                                let model_entries: Vec<crate::serve::api::ModelListEntry> =
+                                    new_models
+                                        .iter()
+                                        .map(|m| crate::serve::api::ModelListEntry {
+                                            id: m.id.clone(),
+                                            context_window: m.context_window,
+                                            reasoning_efforts: m.reasoning_efforts.clone(),
+                                        })
+                                        .collect();
                                 let active = state_clone.effective_model(&room.note_id).await;
-                                let thinking = state_clone.effective_thinking(&room.note_id).await.unwrap_or_else(|| "off".to_string());
-                                let msg = crate::serve::api::SseMsg::ModelList { models: model_entries, active, thinking };
+                                let thinking = state_clone
+                                    .effective_thinking(&room.note_id)
+                                    .await
+                                    .unwrap_or_else(|| "off".to_string());
+                                let msg = crate::serve::api::SseMsg::ModelList {
+                                    models: model_entries,
+                                    active,
+                                    thinking,
+                                };
                                 crate::serve::api::broadcast_to_room(room, &msg);
                             }
                         }
@@ -794,7 +823,7 @@ mod tests {
                     "/api/note/rename",
                     "/api/note/delete",
                     "/api/model/switch",
-                "/api/model/thinking",
+                    "/api/model/thinking",
                     "/api/note/visibility",
                     "/api/file/visibility",
                 ];
@@ -897,7 +926,7 @@ mod tests {
                     "/api/note/rename",
                     "/api/note/delete",
                     "/api/model/switch",
-                "/api/model/thinking",
+                    "/api/model/thinking",
                     "/api/note/visibility",
                     "/api/file/visibility",
                 ];
@@ -1007,7 +1036,7 @@ mod tests {
                     "/api/note/rename",
                     "/api/note/delete",
                     "/api/model/switch",
-                "/api/model/thinking",
+                    "/api/model/thinking",
                     "/api/note/visibility",
                     "/api/file/visibility",
                 ];
@@ -1117,7 +1146,7 @@ mod tests {
                     "/api/note/rename",
                     "/api/note/delete",
                     "/api/model/switch",
-                "/api/model/thinking",
+                    "/api/model/thinking",
                     "/api/note/visibility",
                     "/api/file/visibility",
                 ];
@@ -1215,7 +1244,7 @@ mod tests {
                     "/api/note/rename",
                     "/api/note/delete",
                     "/api/model/switch",
-                "/api/model/thinking",
+                    "/api/model/thinking",
                     "/api/note/visibility",
                     "/api/file/visibility",
                 ];
@@ -1313,7 +1342,7 @@ mod tests {
                     "/api/note/rename",
                     "/api/note/delete",
                     "/api/model/switch",
-                "/api/model/thinking",
+                    "/api/model/thinking",
                     "/api/note/visibility",
                     "/api/file/visibility",
                 ];
@@ -1411,7 +1440,7 @@ mod tests {
                     "/api/note/rename",
                     "/api/note/delete",
                     "/api/model/switch",
-                "/api/model/thinking",
+                    "/api/model/thinking",
                     "/api/note/visibility",
                     "/api/file/visibility",
                 ];
@@ -1540,7 +1569,12 @@ mod tests {
             .split(',')
             .map(|s| s.trim().to_string())
             .filter(|s| !s.is_empty())
-            .map(|id| ModelInfo { id, context_window: None, reasoning_efforts: vec![] })
+            .map(|id| ModelInfo {
+                id,
+                context_window: None,
+                reasoning_efforts: vec![],
+                supported_endpoints: vec![],
+            })
             .collect();
         let first_model = models
             .first()
@@ -1584,7 +1618,12 @@ mod tests {
             guest_token: None,
             files: Arc::new(RwLock::new(std::collections::HashMap::new())),
             active_file: Arc::new(RwLock::new("main.md".into())),
-            models: Arc::new(RwLock::new(vec![ModelInfo { id: "gpt-4o".into(), context_window: None, reasoning_efforts: vec![] }])),
+            models: Arc::new(RwLock::new(vec![ModelInfo {
+                id: "gpt-4o".into(),
+                context_window: None,
+                reasoning_efforts: vec![],
+                supported_endpoints: vec![],
+            }])),
             rooms: Arc::new(RwLock::new(HashMap::new())),
             global_default_model: Arc::new(RwLock::new("gpt-4o".into())),
             admin_broadcast_tx,
@@ -1711,7 +1750,10 @@ mod tests {
             .map(|s| s.trim().to_string())
             .filter(|s| !s.is_empty())
             .collect();
-        assert!(models.is_empty(), "empty model config should yield empty list");
+        assert!(
+            models.is_empty(),
+            "empty model config should yield empty list"
+        );
     }
 
     #[test]

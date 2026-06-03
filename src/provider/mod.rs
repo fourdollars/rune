@@ -3,11 +3,17 @@ use futures::StreamExt;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::future::Future;
 use std::pin::Pin;
 use tokio::sync::mpsc::Sender;
 use tracing::{debug, info, warn};
+
+mod multi_endpoint;
+use multi_endpoint::{
+    build_request_payload, build_request_payload_value, is_retriable_endpoint_error,
+    parse_response_by_endpoint, stream_anthropic_messages, stream_responses_api,
+};
 
 /// LLM request payload.
 #[derive(Debug, Clone, Serialize)]
@@ -342,6 +348,7 @@ pub struct ModelInfo {
     pub id: String,
     pub context_window: Option<u64>,
     pub reasoning_efforts: Vec<String>,
+    pub supported_endpoints: Vec<String>,
 }
 
 /// Provider trait.
@@ -550,6 +557,8 @@ pub struct CopilotProvider {
     pub pat: String, // GitHub PAT (ghu_...)
     pub provider_name: String,
     token_cache: std::sync::Mutex<Option<(String, String, u64)>>, // (token, endpoint, expires_at)
+    /// model_id → supported HTTP endpoints (ws: filtered out).
+    model_endpoints: std::sync::Mutex<HashMap<String, Vec<String>>>,
 }
 
 impl CopilotProvider {
@@ -558,6 +567,33 @@ impl CopilotProvider {
             pat,
             provider_name: "github-copilot".to_string(),
             token_cache: std::sync::Mutex::new(None),
+            model_endpoints: std::sync::Mutex::new(HashMap::new()),
+        }
+    }
+
+    /// Get HTTP endpoints for a model (skips ws:). Falls back to ["/chat/completions"].
+    fn get_endpoints(&self, model_id: &str) -> Vec<String> {
+        let cache = self.model_endpoints.lock().unwrap();
+        cache
+            .get(model_id)
+            .cloned()
+            .unwrap_or_else(|| vec!["/chat/completions".to_string()])
+    }
+
+    /// Map short endpoint name from API to URL path suffix.
+    fn endpoint_to_path(endpoint: &str) -> &str {
+        match endpoint {
+            "chat" | "/chat/completions" => "/chat/completions",
+            "responses" | "/responses" => "/responses",
+            "messages" | "/v1/messages" => "/v1/messages",
+            other => {
+                // If it starts with '/' treat as literal path, otherwise unknown → chat
+                if other.starts_with('/') {
+                    other
+                } else {
+                    "/chat/completions"
+                }
+            }
         }
     }
 
@@ -664,10 +700,15 @@ impl Provider for CopilotProvider {
 
             if !response.status().is_success() {
                 let body = response.text().await.unwrap_or_default();
-                return Err(anyhow!("list models failed: {}", &body[..body.len().min(200)]));
+                return Err(anyhow!(
+                    "list models failed: {}",
+                    &body[..body.len().min(200)]
+                ));
             }
 
-            let body = response.text().await
+            let body = response
+                .text()
+                .await
                 .map_err(|e| anyhow!("failed to read models response: {}", e))?;
             let v: serde_json::Value = serde_json::from_str(&body)
                 .map_err(|e| anyhow!("failed to parse models: {}", e))?;
@@ -684,7 +725,9 @@ impl Provider for CopilotProvider {
                                 .get("model_picker_enabled")
                                 .and_then(|v| v.as_bool())
                                 .unwrap_or(false);
-                            if !picker_enabled { return None; }
+                            if !picker_enabled {
+                                return None;
+                            }
 
                             // Must have supported_endpoints (i.e. usable for chat)
                             let has_endpoints = m
@@ -692,9 +735,12 @@ impl Provider for CopilotProvider {
                                 .and_then(|v| v.as_array())
                                 .map(|arr| !arr.is_empty())
                                 .unwrap_or(false);
-                            if !has_endpoints { return None; }
+                            if !has_endpoints {
+                                return None;
+                            }
 
-                            let id = m.get("id")
+                            let id = m
+                                .get("id")
                                 .or_else(|| m.get("name"))
                                 .and_then(|id| id.as_str())
                                 .map(|s| s.to_string())?;
@@ -710,13 +756,41 @@ impl Provider for CopilotProvider {
                                         .collect()
                                 })
                                 .unwrap_or_default();
-                            Some(ModelInfo { id, context_window, reasoning_efforts })
+                            let supported_endpoints: Vec<String> = m
+                                .get("supported_endpoints")
+                                .and_then(|v| v.as_array())
+                                .map(|arr| {
+                                    arr.iter()
+                                        .filter_map(|e| e.as_str())
+                                        .filter(|s| !s.starts_with("ws:"))
+                                        .map(|s| s.to_string())
+                                        .collect()
+                                })
+                                .unwrap_or_default();
+                            Some(ModelInfo {
+                                id,
+                                context_window,
+                                reasoning_efforts,
+                                supported_endpoints,
+                            })
                         })
                         .collect()
                 })
                 .unwrap_or_default();
 
             models.sort_by(|a, b| a.id.cmp(&b.id));
+
+            // Populate model_endpoints cache
+            {
+                let mut cache = self.model_endpoints.lock().unwrap();
+                cache.clear();
+                for m in &models {
+                    if !m.supported_endpoints.is_empty() {
+                        cache.insert(m.id.clone(), m.supported_endpoints.clone());
+                    }
+                }
+            }
+
             Ok(models)
         })
     }
@@ -726,74 +800,84 @@ impl Provider for CopilotProvider {
         request: LlmRequest,
     ) -> Pin<Box<dyn Future<Output = Result<LlmResponse>> + Send + '_>> {
         Box::pin(async move {
-            let (token, endpoint) = self.get_token().await?;
+            let (token, base_endpoint) = self.get_token().await?;
+            let endpoints = self.get_endpoints(&request.model);
 
-            let payload = serde_json::to_string(&request)
-                .map_err(|e| anyhow!("failed to serialize request: {}", e))?;
+            let mut last_error = None;
+            for ep in &endpoints {
+                let path = Self::endpoint_to_path(ep);
+                let url = format!("{}{}", base_endpoint.trim_end_matches('/'), path);
 
-            let url = format!("{}/chat/completions", endpoint.trim_end_matches('/'));
+                let payload = build_request_payload(&request, path)?;
 
-            let client = Client::new();
-            let response = client
-                .post(&url)
-                .bearer_auth(&token)
-                .header("Content-Type", "application/json")
-                .header("User-Agent", "rune/0.1.0")
-                .header("editor-version", "vscode/1.96.0")
-                .timeout(std::time::Duration::from_secs(120))
-                .body(payload)
-                .send()
-                .await
-                .map_err(|e| anyhow!("HTTP request failed: {}", e))?;
+                debug!(url = %url, model = %request.model, endpoint_path = %path, "sending Copilot request");
 
-            let status = response.status();
-            let stdout = response
-                .text()
-                .await
-                .map_err(|e| anyhow!("failed to read response body: {}", e))?;
+                let client = Client::new();
+                let result = client
+                    .post(&url)
+                    .bearer_auth(&token)
+                    .header("Content-Type", "application/json")
+                    .header("User-Agent", "rune/0.1.0")
+                    .header("editor-version", "vscode/1.96.0")
+                    .timeout(std::time::Duration::from_secs(120))
+                    .body(payload)
+                    .send()
+                    .await;
 
-            if !status.is_success() {
-                return Err(anyhow!(
-                    "Copilot API request failed ({}): {}",
-                    status,
-                    &stdout[..stdout.len().min(500)]
-                ));
+                let response = match result {
+                    Ok(r) => r,
+                    Err(e) => {
+                        let err = anyhow!("HTTP request failed: {}", e);
+                        if is_retriable_endpoint_error(&err) && endpoints.len() > 1 {
+                            warn!(model = %request.model, endpoint = %path, error = %e, "endpoint failed, trying next");
+                            last_error = Some(err);
+                            continue;
+                        }
+                        return Err(err);
+                    }
+                };
+
+                let status = response.status();
+                let stdout = response
+                    .text()
+                    .await
+                    .map_err(|e| anyhow!("failed to read response body: {}", e))?;
+
+                if !status.is_success() {
+                    let err = anyhow!(
+                        "Copilot API request failed ({}): {}",
+                        status,
+                        &stdout[..stdout.len().min(500)]
+                    );
+                    if is_retriable_endpoint_error(&err) && endpoints.len() > 1 {
+                        warn!(model = %request.model, endpoint = %path, status = %status, "endpoint returned error, trying next");
+                        last_error = Some(err);
+                        continue;
+                    }
+                    return Err(err);
+                }
+
+                let v: serde_json::Value = serde_json::from_str(&stdout).map_err(|e| {
+                    anyhow!(
+                        "failed to parse response: {}\nraw: {}",
+                        e,
+                        &stdout[..stdout.len().min(500)]
+                    )
+                })?;
+
+                if let Some(err_obj) = v.get("error") {
+                    let msg = err_obj
+                        .get("message")
+                        .and_then(|m| m.as_str())
+                        .unwrap_or("unknown error");
+                    return Err(anyhow!("Copilot API error: {}", msg));
+                }
+
+                return parse_response_by_endpoint(&v, path);
             }
 
-            let v: serde_json::Value = serde_json::from_str(&stdout).map_err(|e| {
-                anyhow!(
-                    "failed to parse response: {}\nraw: {}",
-                    e,
-                    &stdout[..stdout.len().min(500)]
-                )
-            })?;
-
-            if let Some(err) = v.get("error") {
-                let msg = err
-                    .get("message")
-                    .and_then(|m| m.as_str())
-                    .unwrap_or("unknown error");
-                return Err(anyhow!("Copilot API error: {}", msg));
-            }
-
-            let model = v
-                .get("model")
-                .and_then(|m| m.as_str())
-                .unwrap_or("")
-                .to_string();
-            let (content, tool_calls) = parse_choices(&v);
-
-            let usage = v
-                .get("usage")
-                .and_then(|u| serde_json::from_value::<TokenUsage>(u.clone()).ok())
-                .unwrap_or_default();
-
-            Ok(LlmResponse {
-                content,
-                tool_calls,
-                usage,
-                model,
-            })
+            Err(last_error
+                .unwrap_or_else(|| anyhow!("no available endpoints for model {}", request.model)))
         })
     }
 
@@ -805,26 +889,48 @@ impl Provider for CopilotProvider {
         let request = request.clone();
 
         Box::pin(async move {
-            let (token, endpoint) = self.get_token().await?;
-            let client = Client::new();
-            let mut payload = serde_json::to_value(&request)
-                .map_err(|e| anyhow!("failed to serialize request: {}", e))?;
-            if let Value::Object(ref mut map) = payload {
-                map.insert("stream".to_string(), Value::Bool(true));
-            } else {
-                return Err(anyhow!("request payload must be an object"));
+            let (token, base_endpoint) = self.get_token().await?;
+            let endpoints = self.get_endpoints(&request.model);
+
+            let mut last_error = None;
+            for ep in &endpoints {
+                let path = Self::endpoint_to_path(ep);
+                let url = format!("{}{}", base_endpoint.trim_end_matches('/'), path);
+
+                let payload_value = build_request_payload_value(&request, path, true)?;
+
+                debug!(url = %url, model = %request.model, endpoint_path = %path, "sending Copilot streaming request");
+
+                let client = Client::new();
+                let builder = client
+                    .post(&url)
+                    .bearer_auth(&token)
+                    .header("User-Agent", "rune/0.1.0")
+                    .header("editor-version", "vscode/1.96.0")
+                    .header("Accept", "text/event-stream")
+                    .json(&payload_value);
+
+                let result = match path {
+                    "/responses" => stream_responses_api(builder, tx.clone()).await,
+                    "/v1/messages" => stream_anthropic_messages(builder, tx.clone()).await,
+                    _ => stream_openai_compatible_response(builder, tx.clone()).await,
+                };
+
+                match result {
+                    Ok(resp) => return Ok(resp),
+                    Err(e) => {
+                        if is_retriable_endpoint_error(&e) && endpoints.len() > 1 {
+                            warn!(model = %request.model, endpoint = %path, error = %e, "streaming endpoint failed, trying next");
+                            last_error = Some(e);
+                            continue;
+                        }
+                        return Err(e);
+                    }
+                }
             }
 
-            let url = format!("{}/chat/completions", endpoint.trim_end_matches('/'));
-            let builder = client
-                .post(url)
-                .bearer_auth(token)
-                .header("User-Agent", "rune/0.1.0")
-                .header("editor-version", "vscode/1.96.0")
-                .header("Accept", "text/event-stream")
-                .json(&payload);
-
-            stream_openai_compatible_response(builder, tx).await
+            Err(last_error
+                .unwrap_or_else(|| anyhow!("no available endpoints for model {}", request.model)))
         })
     }
 }
@@ -3000,7 +3106,7 @@ mod tests {
 #[cfg(test)]
 mod provider_tests {
     use super::*;
-    use std::collections::BTreeMap;
+    use std::collections::{BTreeMap, HashMap};
 
     fn make_state(name: &str, args: &str) -> StreamingToolCallState {
         StreamingToolCallState {
@@ -3103,11 +3209,7 @@ mod provider_tests {
     #[test]
     fn test_openai_provider_list_models_returns_empty_by_default() {
         // OpenAI provider uses the default trait impl which returns empty Vec
-        let p = OpenAiProvider::new(
-            "openai".to_string(),
-            "sk-fake".to_string(),
-            None,
-        );
+        let p = OpenAiProvider::new("openai".to_string(), "sk-fake".to_string(), None);
         let rt = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()
@@ -3157,14 +3259,19 @@ mod provider_tests {
                             .get("model_picker_enabled")
                             .and_then(|v| v.as_bool())
                             .unwrap_or(false);
-                        if !picker_enabled { return None; }
+                        if !picker_enabled {
+                            return None;
+                        }
                         let has_endpoints = m
                             .get("supported_endpoints")
                             .and_then(|v| v.as_array())
                             .map(|arr| !arr.is_empty())
                             .unwrap_or(false);
-                        if !has_endpoints { return None; }
-                        let id = m.get("id")
+                        if !has_endpoints {
+                            return None;
+                        }
+                        let id = m
+                            .get("id")
                             .or_else(|| m.get("name"))
                             .and_then(|id| id.as_str())
                             .map(|s| s.to_string())?;
@@ -3174,9 +3281,18 @@ mod provider_tests {
                         let reasoning_efforts = m
                             .pointer("/capabilities/supports/reasoning_effort")
                             .and_then(|v| v.as_array())
-                            .map(|arr| arr.iter().filter_map(|e| e.as_str().map(|s| s.to_string())).collect())
+                            .map(|arr| {
+                                arr.iter()
+                                    .filter_map(|e| e.as_str().map(|s| s.to_string()))
+                                    .collect()
+                            })
                             .unwrap_or_default();
-                        Some(ModelInfo { id, context_window, reasoning_efforts })
+                        Some(ModelInfo {
+                            id,
+                            context_window,
+                            reasoning_efforts,
+                            supported_endpoints: vec![],
+                        })
                     })
                     .collect()
             })
@@ -3211,14 +3327,19 @@ mod provider_tests {
                             .get("model_picker_enabled")
                             .and_then(|v| v.as_bool())
                             .unwrap_or(false);
-                        if !picker_enabled { return None; }
+                        if !picker_enabled {
+                            return None;
+                        }
                         let has_endpoints = m
                             .get("supported_endpoints")
                             .and_then(|v| v.as_array())
                             .map(|arr| !arr.is_empty())
                             .unwrap_or(false);
-                        if !has_endpoints { return None; }
-                        let id = m.get("id")
+                        if !has_endpoints {
+                            return None;
+                        }
+                        let id = m
+                            .get("id")
                             .or_else(|| m.get("name"))
                             .and_then(|id| id.as_str())
                             .map(|s| s.to_string())?;
@@ -3228,9 +3349,18 @@ mod provider_tests {
                         let reasoning_efforts = m
                             .pointer("/capabilities/supports/reasoning_effort")
                             .and_then(|v| v.as_array())
-                            .map(|arr| arr.iter().filter_map(|e| e.as_str().map(|s| s.to_string())).collect())
+                            .map(|arr| {
+                                arr.iter()
+                                    .filter_map(|e| e.as_str().map(|s| s.to_string()))
+                                    .collect()
+                            })
                             .unwrap_or_default();
-                        Some(ModelInfo { id, context_window, reasoning_efforts })
+                        Some(ModelInfo {
+                            id,
+                            context_window,
+                            reasoning_efforts,
+                            supported_endpoints: vec![],
+                        })
                     })
                     .collect()
             })
@@ -3254,11 +3384,17 @@ mod provider_tests {
             .map(|arr| {
                 arr.iter()
                     .filter_map(|m| {
-                        let id = m.get("id")
+                        let id = m
+                            .get("id")
                             .or_else(|| m.get("name"))
                             .and_then(|id| id.as_str())
                             .map(|s| s.to_string())?;
-                        Some(ModelInfo { id, context_window: None, reasoning_efforts: vec![] })
+                        Some(ModelInfo {
+                            id,
+                            context_window: None,
+                            reasoning_efforts: vec![],
+                            supported_endpoints: vec![],
+                        })
                     })
                     .collect()
             })
@@ -3278,16 +3414,21 @@ mod provider_tests {
             .map(|arr| {
                 arr.iter()
                     .filter_map(|m| {
-                        let id = m.get("id")
+                        let id = m
+                            .get("id")
                             .or_else(|| m.get("name"))
                             .and_then(|id| id.as_str())
                             .map(|s| s.to_string())?;
-                        Some(ModelInfo { id, context_window: None, reasoning_efforts: vec![] })
+                        Some(ModelInfo {
+                            id,
+                            context_window: None,
+                            reasoning_efforts: vec![],
+                            supported_endpoints: vec![],
+                        })
                     })
                     .collect()
             })
             .unwrap_or_default();
         assert!(models.is_empty());
     }
-
 }
