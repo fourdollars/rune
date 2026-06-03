@@ -559,6 +559,8 @@ pub struct CopilotProvider {
     token_cache: std::sync::Mutex<Option<(String, String, u64)>>, // (token, endpoint, expires_at)
     /// model_id → supported HTTP endpoints (ws: filtered out).
     model_endpoints: std::sync::Mutex<HashMap<String, Vec<String>>>,
+    /// model_id → reasoning_efforts supported (e.g. ["low","medium","high"]).
+    model_reasoning: std::sync::Mutex<HashMap<String, Vec<String>>>,
 }
 
 impl CopilotProvider {
@@ -568,7 +570,24 @@ impl CopilotProvider {
             provider_name: "github-copilot".to_string(),
             token_cache: std::sync::Mutex::new(None),
             model_endpoints: std::sync::Mutex::new(HashMap::new()),
+            model_reasoning: std::sync::Mutex::new(HashMap::new()),
         }
+    }
+
+    /// Lazily fetch /models once if the endpoint cache is empty, so that
+    /// CLI/server entry paths that pass an explicit --model never see an
+    /// unpopulated cache (which would force /chat/completions fallback for
+    /// responses-only / messages-only models).
+    async fn warm_caches_if_needed(&self) -> Result<()> {
+        let empty = {
+            let cache = self.model_endpoints.lock().unwrap();
+            cache.is_empty()
+        };
+        if empty {
+            // list_models() populates both caches as a side effect.
+            let _ = self.list_models().await?;
+        }
+        Ok(())
     }
 
     /// Get HTTP endpoints for a model (skips ws:). Falls back to ["/chat/completions"].
@@ -578,6 +597,30 @@ impl CopilotProvider {
             .get(model_id)
             .cloned()
             .unwrap_or_else(|| vec!["/chat/completions".to_string()])
+    }
+
+    /// True when the model advertises reasoning_effort support via /models.
+    /// Unknown models (cache miss) return true to preserve prior behaviour
+    /// (i.e. let the API decide).
+    fn model_supports_reasoning(&self, model_id: &str) -> bool {
+        let cache = self.model_reasoning.lock().unwrap();
+        match cache.get(model_id) {
+            Some(efforts) => !efforts.is_empty(),
+            None => true,
+        }
+    }
+
+    /// Strip thinking from the request when the model does not support reasoning_effort.
+    /// Avoids 400s like "Reasoning effort 'high' not supported by claude-haiku-4.5".
+    fn normalize_thinking(&self, mut request: LlmRequest) -> LlmRequest {
+        if let Some(ref t) = request.thinking {
+            if t != "none" && t != "off" && !self.model_supports_reasoning(&request.model) {
+                debug!(model = %request.model, thinking = %t,
+                    "stripping thinking: model does not support reasoning_effort");
+                request.thinking = None;
+            }
+        }
+        request
     }
 
     /// Map short endpoint name from API to URL path suffix.
@@ -791,6 +834,15 @@ impl Provider for CopilotProvider {
                 }
             }
 
+            // Populate model_reasoning cache (used to gate thinking/reasoning_effort)
+            {
+                let mut cache = self.model_reasoning.lock().unwrap();
+                cache.clear();
+                for m in &models {
+                    cache.insert(m.id.clone(), m.reasoning_efforts.clone());
+                }
+            }
+
             Ok(models)
         })
     }
@@ -800,6 +852,10 @@ impl Provider for CopilotProvider {
         request: LlmRequest,
     ) -> Pin<Box<dyn Future<Output = Result<LlmResponse>> + Send + '_>> {
         Box::pin(async move {
+            // Lazy cache warm + thinking gating before dispatch.
+            self.warm_caches_if_needed().await?;
+            let request = self.normalize_thinking(request);
+
             let (token, base_endpoint) = self.get_token().await?;
             let endpoints = self.get_endpoints(&request.model);
 
@@ -889,6 +945,10 @@ impl Provider for CopilotProvider {
         let request = request.clone();
 
         Box::pin(async move {
+            // Lazy cache warm + thinking gating before dispatch.
+            self.warm_caches_if_needed().await?;
+            let request = self.normalize_thinking(request);
+
             let (token, base_endpoint) = self.get_token().await?;
             let endpoints = self.get_endpoints(&request.model);
 
@@ -3100,6 +3160,149 @@ mod tests {
         // Note: parse_choices doesn't trim, but "   " is non-empty so it returns
         let (content, _) = parse_choices(&v);
         assert_eq!(content, Some("   ".to_string()));
+    }
+
+    // ---------- Regression tests for multi-endpoint cache + thinking gating ----------
+    //
+    // These tests cover the bug found by integration testing on 2026-06-03:
+    //   1. model_endpoints cache was never populated when callers passed an
+    //      explicit --model (only auto-discovery via list_models warmed it),
+    //      so /responses-only models incorrectly fell back to /chat/completions.
+    //   2. thinking/reasoning_effort was forwarded to models that don't support
+    //      it (e.g. claude-haiku-4.5), causing 400s.
+    // The fix adds warm_caches_if_needed() and normalize_thinking().
+
+    fn copilot_with_cached_models(
+        endpoints_map: Vec<(&str, Vec<&str>)>,
+        reasoning_map: Vec<(&str, Vec<&str>)>,
+    ) -> CopilotProvider {
+        let provider = CopilotProvider::new("ghu_test".to_string());
+        {
+            let mut cache = provider.model_endpoints.lock().unwrap();
+            for (id, eps) in endpoints_map {
+                cache.insert(id.to_string(), eps.into_iter().map(String::from).collect());
+            }
+        }
+        {
+            let mut cache = provider.model_reasoning.lock().unwrap();
+            for (id, efforts) in reasoning_map {
+                cache.insert(
+                    id.to_string(),
+                    efforts.into_iter().map(String::from).collect(),
+                );
+            }
+        }
+        provider
+    }
+
+    #[test]
+    fn test_get_endpoints_cache_hit_routes_to_responses() {
+        let provider = copilot_with_cached_models(vec![("gpt-5.5", vec!["/responses"])], vec![]);
+        let eps = provider.get_endpoints("gpt-5.5");
+        assert_eq!(eps, vec!["/responses".to_string()]);
+    }
+
+    #[test]
+    fn test_get_endpoints_cache_miss_falls_back_to_chat() {
+        let provider = copilot_with_cached_models(vec![], vec![]);
+        let eps = provider.get_endpoints("unknown-model");
+        assert_eq!(eps, vec!["/chat/completions".to_string()]);
+    }
+
+    #[test]
+    fn test_get_endpoints_preserves_api_ordering_for_fallback() {
+        let provider = copilot_with_cached_models(
+            vec![("claude-opus-4.8", vec!["/v1/messages", "/chat/completions"])],
+            vec![],
+        );
+        let eps = provider.get_endpoints("claude-opus-4.8");
+        assert_eq!(eps[0], "/v1/messages");
+        assert_eq!(eps[1], "/chat/completions");
+    }
+
+    #[test]
+    fn test_endpoint_to_path_normalizes_short_names() {
+        assert_eq!(
+            CopilotProvider::endpoint_to_path("chat"),
+            "/chat/completions"
+        );
+        assert_eq!(CopilotProvider::endpoint_to_path("responses"), "/responses");
+        assert_eq!(
+            CopilotProvider::endpoint_to_path("messages"),
+            "/v1/messages"
+        );
+        assert_eq!(
+            CopilotProvider::endpoint_to_path("/responses"),
+            "/responses"
+        );
+        // ws: filtered earlier in list_models, but if it slips through fall back to chat.
+        assert_eq!(
+            CopilotProvider::endpoint_to_path("unknown"),
+            "/chat/completions"
+        );
+    }
+
+    #[test]
+    fn test_model_supports_reasoning_via_cache() {
+        let provider = copilot_with_cached_models(
+            vec![],
+            vec![
+                ("claude-sonnet-4.6", vec!["low", "medium", "high"]),
+                ("claude-haiku-4.5", vec![]),
+            ],
+        );
+        assert!(provider.model_supports_reasoning("claude-sonnet-4.6"));
+        assert!(!provider.model_supports_reasoning("claude-haiku-4.5"));
+        // Cache miss: assume true (let API decide).
+        assert!(provider.model_supports_reasoning("unknown"));
+    }
+
+    #[test]
+    fn test_normalize_thinking_strips_when_unsupported() {
+        let provider = copilot_with_cached_models(vec![], vec![("claude-haiku-4.5", vec![])]);
+        let req = LlmRequest {
+            model: "claude-haiku-4.5".to_string(),
+            messages: vec![],
+            tools: None,
+            max_tokens: None,
+            thinking: Some("high".to_string()),
+        };
+        let normalized = provider.normalize_thinking(req);
+        assert_eq!(normalized.thinking, None);
+    }
+
+    #[test]
+    fn test_normalize_thinking_preserves_when_supported() {
+        let provider = copilot_with_cached_models(
+            vec![],
+            vec![("claude-sonnet-4.6", vec!["low", "medium", "high"])],
+        );
+        let req = LlmRequest {
+            model: "claude-sonnet-4.6".to_string(),
+            messages: vec![],
+            tools: None,
+            max_tokens: None,
+            thinking: Some("high".to_string()),
+        };
+        let normalized = provider.normalize_thinking(req);
+        assert_eq!(normalized.thinking, Some("high".to_string()));
+    }
+
+    #[test]
+    fn test_normalize_thinking_ignores_off_and_none_sentinels() {
+        let provider = copilot_with_cached_models(vec![], vec![("claude-haiku-4.5", vec![])]);
+        for sentinel in ["off", "none"] {
+            let req = LlmRequest {
+                model: "claude-haiku-4.5".to_string(),
+                messages: vec![],
+                tools: None,
+                max_tokens: None,
+                thinking: Some(sentinel.to_string()),
+            };
+            let normalized = provider.normalize_thinking(req);
+            // sentinels pass through unchanged; payload builder skips them.
+            assert_eq!(normalized.thinking, Some(sentinel.to_string()));
+        }
     }
 }
 
