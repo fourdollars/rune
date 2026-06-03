@@ -600,13 +600,15 @@ impl CopilotProvider {
     }
 
     /// True when the model advertises reasoning_effort support via /models.
-    /// Unknown models (cache miss) return true to preserve prior behaviour
-    /// (i.e. let the API decide).
+    /// Cache miss returns false: after warm_caches_if_needed() the cache is
+    /// authoritative for picker_enabled models. A miss means the user passed
+    /// a model that Copilot has retired (picker_enabled=false), so any
+    /// reasoning_effort would 400 anyway.
     fn model_supports_reasoning(&self, model_id: &str) -> bool {
         let cache = self.model_reasoning.lock().unwrap();
         match cache.get(model_id) {
             Some(efforts) => !efforts.is_empty(),
-            None => true,
+            None => false,
         }
     }
 
@@ -3253,8 +3255,9 @@ mod tests {
         );
         assert!(provider.model_supports_reasoning("claude-sonnet-4.6"));
         assert!(!provider.model_supports_reasoning("claude-haiku-4.5"));
-        // Cache miss: assume true (let API decide).
-        assert!(provider.model_supports_reasoning("unknown"));
+        // Cache miss: assume not supported (after warm_caches_if_needed the cache is
+        // authoritative; a miss means the model is not picker_enabled).
+        assert!(!provider.model_supports_reasoning("unknown"));
     }
 
     #[test]
