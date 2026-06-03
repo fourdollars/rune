@@ -436,7 +436,7 @@ stderr: {}",
                 "type": "function",
                 "function": {
                     "name": "list_markdown",
-                    "description": "List all available markdown files and show which one is currently active.",
+                    "description": "List all available markdown files from the database (not the filesystem) and show which one is currently active.",
                     "parameters": {
                         "type": "object",
                         "properties": {},
@@ -448,7 +448,7 @@ stderr: {}",
                 "type": "function",
                 "function": {
                     "name": "read_markdown",
-                    "description": "Read a markdown file. Defaults to the currently active file if no filename is given.",
+                    "description": "Read a markdown file from the database (not the filesystem). Defaults to the currently active file if no filename is given.",
                     "parameters": {
                         "type": "object",
                         "properties": {
@@ -462,7 +462,7 @@ stderr: {}",
                 "type": "function",
                 "function": {
                     "name": "write_markdown",
-                    "description": "Edit a markdown file. Use 'content' for full replacement, or 'search'+'replace' for targeted edits. Defaults to the active file if no filename is given.",
+                    "description": "Edit a markdown file in the database (not the filesystem). Use 'content' for full replacement, or 'search'+'replace' for targeted edits. Defaults to the active file if no filename is given.",
                     "parameters": {
                         "type": "object",
                         "properties": {

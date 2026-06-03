@@ -1199,6 +1199,9 @@ impl Agent {
             .and_then(|v| v.as_str())
             .map(|s| s.to_string());
         let fname = if let Some(f) = fname_arg {
+            if f.contains('/') || f.contains('\\') {
+                return Some("Error: filename cannot contain path separators".to_string());
+            }
             f
         } else {
             // Find first .md file as default
