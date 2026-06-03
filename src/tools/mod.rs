@@ -413,7 +413,7 @@ stderr: {}",
                         "required": ["pid"]
                     }
                 }
-            })
+            }),
         ];
 
         // Serve-mode only tools (search_chat, markdown tools)
@@ -479,7 +479,6 @@ stderr: {}",
 
         tools
     }
-
 
     // ── All tools go through sandbox ─────────────────────────────────
 

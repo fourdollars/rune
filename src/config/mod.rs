@@ -646,7 +646,11 @@ pub fn load() -> anyhow::Result<RuneConfig> {
             .or_else(|| lc.and_then(|c| c.notes.clone()))
             .or_else(|| uc.and_then(|c| c.notes.clone()))
             .unwrap_or_default(),
-        cli_prompt: if cli.prompt.is_empty() { None } else { Some(cli.prompt.join(" ")) },
+        cli_prompt: if cli.prompt.is_empty() {
+            None
+        } else {
+            Some(cli.prompt.join(" "))
+        },
     };
 
     // Post-processing: expand ~ in all path-like config fields

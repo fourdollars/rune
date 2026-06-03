@@ -1288,7 +1288,12 @@ pub async fn run() {
 
     // Normalize model: use first from comma-separated list (full list is for serve mode UI only)
     if cfg.model.contains(',') {
-        if let Some(first) = cfg.model.split(',').map(|s| s.trim()).find(|s| !s.is_empty()) {
+        if let Some(first) = cfg
+            .model
+            .split(',')
+            .map(|s| s.trim())
+            .find(|s| !s.is_empty())
+        {
             cfg.model = first.to_string();
         }
     }
@@ -1297,7 +1302,10 @@ pub async fn run() {
     if cfg.model.is_empty() {
         let registry = init_provider(&cfg);
         if let Ok(models) = registry.list_models().await {
-            if let Some(first) = models.into_iter().find(|m| !m.id.contains("embedding") && !m.id.contains("trajectory")) {
+            if let Some(first) = models
+                .into_iter()
+                .find(|m| !m.id.contains("embedding") && !m.id.contains("trajectory"))
+            {
                 cfg.model = first.id;
             }
         }
@@ -1512,9 +1520,12 @@ pub async fn run() {
                 combined = prompt.clone();
             } else {
                 // Pipe content as context, prompt as instruction
-                combined = format!("{}
+                combined = format!(
+                    "{}
 
-{}", combined, prompt);
+{}",
+                    combined, prompt
+                );
             }
         }
 
@@ -2209,8 +2220,12 @@ model: different
         // Edge case: leading comma — should skip empty and pick first real model
         let model = ",gpt-5-mini,claude";
         let normalized = if model.contains(',') {
-            model.split(',').map(|s| s.trim()).find(|s| !s.is_empty())
-                .unwrap_or(model).to_string()
+            model
+                .split(',')
+                .map(|s| s.trim())
+                .find(|s| !s.is_empty())
+                .unwrap_or(model)
+                .to_string()
         } else {
             model.to_string()
         };

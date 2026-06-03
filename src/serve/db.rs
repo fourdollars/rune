@@ -224,7 +224,9 @@ impl ChatDb {
         nickname: &str,
         content: &str,
     ) -> anyhow::Result<i64> {
-        self.insert_with_meta(note_id, role, nickname, content, None, None, None, None, None, None)
+        self.insert_with_meta(
+            note_id, role, nickname, content, None, None, None, None, None, None,
+        )
     }
 
     /// Insert a message with optional model/token metadata.
@@ -297,8 +299,10 @@ impl ChatDb {
         nickname: String,
         content: String,
     ) {
-        self.insert_with_meta_async(note_id, role, nickname, content, None, None, None, None, None, None)
-            .await;
+        self.insert_with_meta_async(
+            note_id, role, nickname, content, None, None, None, None, None, None,
+        )
+        .await;
     }
 
     /// Async wrapper for insert_with_meta.

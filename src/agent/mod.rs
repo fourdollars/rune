@@ -4342,7 +4342,11 @@ read(3, "root:x:0:0:...", 4096) = 1234"#;
 
         // Command must NOT be auto-added
         assert!(
-            !agent.config.policy.allowed_commands.contains(&"cargo".to_string()),
+            !agent
+                .config
+                .policy
+                .allowed_commands
+                .contains(&"cargo".to_string()),
             "Blocked command must not be auto-added in allowlist mode"
         );
     }
@@ -4378,7 +4382,8 @@ read(3, "root:x:0:0:...", 4096) = 1234"#;
                                 call_type: "function".to_string(),
                                 function: crate::provider::LlmFunction {
                                     name: "fetch_url".to_string(),
-                                    arguments: r#"{"url":"https://evil.example.com/api"}"#.to_string(),
+                                    arguments: r#"{"url":"https://evil.example.com/api"}"#
+                                        .to_string(),
                                 },
                             }],
                             usage: crate::provider::TokenUsage::default(),
@@ -4386,7 +4391,9 @@ read(3, "root:x:0:0:...", 4096) = 1234"#;
                         })
                     } else {
                         Ok(crate::provider::LlmResponse {
-                            content: Some("Domain not allowed, I cannot fetch that URL.".to_string()),
+                            content: Some(
+                                "Domain not allowed, I cannot fetch that URL.".to_string(),
+                            ),
                             tool_calls: vec![],
                             usage: crate::provider::TokenUsage::default(),
                             model: "mock".to_string(),
@@ -4415,14 +4422,21 @@ read(3, "root:x:0:0:...", 4096) = 1234"#;
         match &result {
             StopReason::FinalAnswer(_) => {} // Good: soft-failed, LLM adapted
             StopReason::Error(e) => {
-                panic!("allowlist mode should soft-fail domain blocks. Got Error: {}", e);
+                panic!(
+                    "allowlist mode should soft-fail domain blocks. Got Error: {}",
+                    e
+                );
             }
             other => panic!("Unexpected StopReason: {:?}", other),
         }
 
         // Domain must NOT be auto-added
         assert!(
-            !agent.config.policy.allowed_domains.contains(&"evil.example.com".to_string()),
+            !agent
+                .config
+                .policy
+                .allowed_domains
+                .contains(&"evil.example.com".to_string()),
             "Blocked domain must not be auto-added in allowlist mode"
         );
     }
@@ -4513,7 +4527,11 @@ read(3, "root:x:0:0:...", 4096) = 1234"#;
 
         // After approval, command should be added to allowed_commands
         assert!(
-            agent.config.policy.allowed_commands.contains(&"cargo".to_string()),
+            agent
+                .config
+                .policy
+                .allowed_commands
+                .contains(&"cargo".to_string()),
             "After approval, 'cargo' should be added to allowed_commands"
         );
     }
@@ -4609,7 +4627,11 @@ read(3, "root:x:0:0:...", 4096) = 1234"#;
 
         // Command must NOT be added
         assert!(
-            !agent.config.policy.allowed_commands.contains(&"cargo".to_string()),
+            !agent
+                .config
+                .policy
+                .allowed_commands
+                .contains(&"cargo".to_string()),
             "Denied command must not be added to allowed_commands"
         );
     }
