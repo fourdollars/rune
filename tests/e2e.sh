@@ -80,7 +80,7 @@ OUT=$(printf "" | $RUNE --json 2>&1)
 EC=$?
 set -e
 assert_exit_code "$EC" 1 "empty pipe exits with code 1"
-assert_contains "$OUT" "No piped input" "empty pipe shows error message"
+assert_contains "$OUT" "No input received" "empty pipe shows error message"
 
 # ── Test 4: Pipe mode — no banner ────────────────────────
 echo "▸ Pipe mode — no banner"
