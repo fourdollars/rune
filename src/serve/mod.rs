@@ -142,6 +142,46 @@ impl Default for NotesOptions {
     }
 }
 
+async fn auto_detect_openrouter_model() -> String {
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(5))
+        .build()
+        .unwrap_or_default();
+    if let Ok(resp) = client
+        .get("https://openrouter.ai/api/v1/models")
+        .send()
+        .await
+    {
+        #[derive(serde::Deserialize)]
+        struct TempResponse {
+            data: Vec<TempModel>,
+        }
+        #[derive(serde::Deserialize)]
+        struct TempModel {
+            id: String,
+        }
+        if let Ok(body) = resp.json::<TempResponse>().await {
+            let model_ids: Vec<String> = body.data.into_iter().map(|m| m.id).collect();
+            let model_set: std::collections::HashSet<String> = model_ids.iter().cloned().collect();
+            let mut filtered = Vec::new();
+            for m in &model_ids {
+                if !m.ends_with(":free") {
+                    let free = format!("{}:free", m);
+                    if model_set.contains(&free) {
+                        filtered.push(m.clone());
+                    }
+                }
+            }
+            filtered.sort();
+            if let Some(first) = filtered.first() {
+                return first.clone();
+            }
+        }
+    }
+    // Fallback if network fails
+    "openai/gpt-4o-mini".to_string()
+}
+
 /// Start the serve mode.
 pub async fn run(config: RuneConfig, opts: NotesOptions) {
     // Refuse to start without at least one token configured (early return; safe in tests)
@@ -185,24 +225,46 @@ pub async fn run(config: RuneConfig, opts: NotesOptions) {
         let _ = chat_db.ensure_persistent();
     }
 
-    // Parse comma-separated model list from config
-    let mut models: Vec<ModelInfo> = config
+    // Determine the serve model, auto-detecting from OpenRouter if it is empty/none
+    let serve_model = if let Some(ref m) = config.notes.model {
+        if m.is_empty() {
+            auto_detect_openrouter_model().await
+        } else {
+            m.clone()
+        }
+    } else {
+        auto_detect_openrouter_model().await
+    };
+
+    // Parse comma-separated model list from serve_model
+    let mut models: Vec<ModelInfo> = if config
+        .notes
         .model
-        .split(',')
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty())
-        .map(|id| ModelInfo {
-            id,
-            context_window: None,
-            reasoning_efforts: vec![],
-            supported_endpoints: vec![],
-        })
-        .collect();
+        .as_ref()
+        .map(|m| m.is_empty())
+        .unwrap_or(true)
+    {
+        Vec::new()
+    } else {
+        serve_model
+            .split(',')
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .map(|id| ModelInfo {
+                id,
+                context_window: None,
+                reasoning_efforts: vec![],
+                supported_endpoints: vec![],
+            })
+            .collect()
+    };
 
     // Auto-discover models from provider if none configured
     if models.is_empty() {
         eprintln!("  ℹ No models configured, discovering from provider...");
-        match crate::serve::api::build_provider_pub(&config) {
+        let mut config_for_discovery = config.clone();
+        config_for_discovery.model = serve_model.clone();
+        match crate::serve::api::build_provider_pub(&config_for_discovery) {
             Ok(registry) => match registry.list_models().await {
                 Ok(discovered) if !discovered.is_empty() => {
                     eprintln!("  ✓ Discovered {} models from provider", discovered.len());
@@ -211,7 +273,7 @@ pub async fn run(config: RuneConfig, opts: NotesOptions) {
                 Ok(_) => {
                     eprintln!("  ⚠ Provider returned no models, using default");
                     models = vec![ModelInfo {
-                        id: config.model.clone(),
+                        id: serve_model.clone(),
                         context_window: None,
                         reasoning_efforts: vec![],
                         supported_endpoints: vec![],
@@ -220,7 +282,7 @@ pub async fn run(config: RuneConfig, opts: NotesOptions) {
                 Err(e) => {
                     eprintln!("  ⚠ Failed to discover models: {}", e);
                     models = vec![ModelInfo {
-                        id: config.model.clone(),
+                        id: serve_model.clone(),
                         context_window: None,
                         reasoning_efforts: vec![],
                         supported_endpoints: vec![],
@@ -230,7 +292,7 @@ pub async fn run(config: RuneConfig, opts: NotesOptions) {
             Err(e) => {
                 eprintln!("  ⚠ Cannot build provider for model discovery: {}", e);
                 models = vec![ModelInfo {
-                    id: config.model.clone(),
+                    id: serve_model.clone(),
                     context_window: None,
                     reasoning_efforts: vec![],
                     supported_endpoints: vec![],
@@ -242,7 +304,7 @@ pub async fn run(config: RuneConfig, opts: NotesOptions) {
     let first_model = models
         .first()
         .map(|m| m.id.clone())
-        .unwrap_or_else(|| config.model.clone());
+        .unwrap_or_else(|| serve_model.clone());
 
     let state = ServerState {
         config: config.clone(),
@@ -745,6 +807,46 @@ mod tests {
             .cloned()
             .unwrap_or_else(|| config_model.clone());
         assert_eq!(first, "fallback-model");
+    }
+
+    #[tokio::test]
+    async fn test_serve_model_selection_empty_or_none() {
+        let mut config = RuneConfig::default();
+        config.notes.model = Some("".to_string());
+        let serve_model = if let Some(ref m) = config.notes.model {
+            if m.is_empty() {
+                auto_detect_openrouter_model().await
+            } else {
+                m.clone()
+            }
+        } else {
+            auto_detect_openrouter_model().await
+        };
+        assert!(!serve_model.is_empty());
+
+        config.notes.model = None;
+        let serve_model_none = if let Some(ref m) = config.notes.model {
+            if m.is_empty() {
+                auto_detect_openrouter_model().await
+            } else {
+                m.clone()
+            }
+        } else {
+            auto_detect_openrouter_model().await
+        };
+        assert!(!serve_model_none.is_empty());
+
+        config.notes.model = Some("my-custom-serve-model".to_string());
+        let serve_model_explicit = if let Some(ref m) = config.notes.model {
+            if m.is_empty() {
+                auto_detect_openrouter_model().await
+            } else {
+                m.clone()
+            }
+        } else {
+            auto_detect_openrouter_model().await
+        };
+        assert_eq!(serve_model_explicit, "my-custom-serve-model");
     }
 
     // ──────────────────────────────────────────────

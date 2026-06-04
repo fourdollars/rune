@@ -93,6 +93,8 @@ pub struct NotesConfig {
     pub admin_token: Option<String>,
     /// Guest token: read-only access. Cannot chat, create, edit, or delete anything.
     pub guest_token: Option<String>,
+    /// Model to use for notes mode. If not set or empty, defaults to auto-detecting the first OpenRouter model.
+    pub model: Option<String>,
 }
 
 impl Default for PolicyConfig {

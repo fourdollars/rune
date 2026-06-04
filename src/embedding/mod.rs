@@ -160,6 +160,7 @@ pub fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
 
 /// Embedding provider — calls /v1/embeddings endpoint.
 /// Supports Copilot token refresh when copilot_pat is set.
+#[derive(Debug)]
 pub struct EmbeddingEngine {
     pub config: EmbeddingConfig,
     client: reqwest::Client,

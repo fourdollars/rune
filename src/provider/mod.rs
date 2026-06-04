@@ -406,6 +406,7 @@ pub struct OpenAiProvider {
     pub api_key: String,
     pub base_url: String,
     pub provider_name: String,
+    pub reasoning_models: std::sync::Mutex<std::collections::HashSet<String>>,
 }
 
 impl OpenAiProvider {
@@ -421,7 +422,37 @@ impl OpenAiProvider {
             api_key,
             base_url: base,
             provider_name: name,
+            reasoning_models: std::sync::Mutex::new(std::collections::HashSet::new()),
         }
+    }
+
+    fn supports_reasoning(&self, model: &str) -> bool {
+        {
+            let cache = self.reasoning_models.lock().unwrap();
+            if !cache.is_empty() {
+                return cache.contains(model);
+            }
+        }
+        let m = model.to_lowercase();
+        m.contains("/o1")
+            || m.contains("/o3")
+            || m.contains("-r1")
+            || m.contains("reasoning")
+            || m.contains("thinking")
+            || m.contains("claude-3-7-sonnet")
+    }
+
+    fn normalize_thinking(&self, mut request: LlmRequest) -> LlmRequest {
+        if self.provider_name == "openrouter" || self.base_url.contains("openrouter.ai") {
+            if let Some(ref t) = request.thinking {
+                if t != "none" && t != "off" && !self.supports_reasoning(&request.model) {
+                    debug!(model = %request.model, thinking = %t,
+                        "stripping thinking: model does not support reasoning on OpenRouter");
+                    request.thinking = None;
+                }
+            }
+        }
+        request
     }
 }
 
@@ -430,12 +461,111 @@ impl Provider for OpenAiProvider {
         &self.provider_name
     }
 
+    fn list_models(&self) -> Pin<Box<dyn Future<Output = Result<Vec<ModelInfo>>> + Send + '_>> {
+        let is_openrouter =
+            self.provider_name == "openrouter" || self.base_url.contains("openrouter.ai");
+        let api_key = self.api_key.clone();
+        let base_url = self.base_url.clone();
+
+        Box::pin(async move {
+            if !is_openrouter {
+                return Ok(Vec::new());
+            }
+
+            let url = format!("{}/models", base_url.trim_end_matches('/'));
+            let client = Client::new();
+            let response = client
+                .get(&url)
+                .bearer_auth(&api_key)
+                .timeout(std::time::Duration::from_secs(15))
+                .send()
+                .await
+                .map_err(|e| anyhow!("failed to list OpenRouter models: {}", e))?;
+
+            if !response.status().is_success() {
+                let body = response.text().await.unwrap_or_default();
+                return Err(anyhow!(
+                    "list OpenRouter models failed: {}",
+                    &body[..body.len().min(200)]
+                ));
+            }
+
+            #[derive(serde::Deserialize)]
+            struct OpenRouterModelInfo {
+                id: String,
+                context_length: Option<usize>,
+                supported_parameters: Option<Vec<String>>,
+            }
+
+            #[derive(serde::Deserialize)]
+            struct OpenRouterModelsList {
+                data: Vec<OpenRouterModelInfo>,
+            }
+
+            let body = response
+                .text()
+                .await
+                .map_err(|e| anyhow!("failed to read OpenRouter models response: {}", e))?;
+
+            let list: OpenRouterModelsList = serde_json::from_str(&body)
+                .map_err(|e| anyhow!("failed to parse OpenRouter models list: {}", e))?;
+
+            let mut models = Vec::new();
+            let mut reasoning_set = std::collections::HashSet::new();
+
+            for m in list.data {
+                let supports_reasoning = if let Some(ref params) = m.supported_parameters {
+                    params.iter().any(|p| p.to_lowercase() == "reasoning")
+                } else {
+                    false
+                };
+
+                let reasoning_efforts = if supports_reasoning {
+                    reasoning_set.insert(m.id.clone());
+                    vec![
+                        "minimal".to_string(),
+                        "low".to_string(),
+                        "medium".to_string(),
+                        "high".to_string(),
+                        "xhigh".to_string(),
+                    ]
+                } else {
+                    Vec::new()
+                };
+
+                models.push(ModelInfo {
+                    id: m.id,
+                    context_window: m.context_length.map(|l| l as u64),
+                    reasoning_efforts,
+                    supported_endpoints: vec!["/chat/completions".to_string()],
+                });
+            }
+
+            models.sort_by(|a, b| a.id.cmp(&b.id));
+
+            // Populate the reasoning_models cache
+            {
+                let mut cache = self.reasoning_models.lock().unwrap();
+                *cache = reasoning_set;
+            }
+
+            Ok(models)
+        })
+    }
+
     fn chat(
         &self,
         request: LlmRequest,
     ) -> Pin<Box<dyn Future<Output = Result<LlmResponse>> + Send + '_>> {
         let api_key = self.api_key.clone();
         let base_url = self.base_url.clone();
+        let is_openrouter =
+            self.provider_name == "openrouter" || self.base_url.contains("openrouter.ai");
+
+        let mut request = request;
+        if is_openrouter {
+            request = self.normalize_thinking(request);
+        }
 
         Box::pin(async move {
             // Build the full request payload using serde
@@ -443,9 +573,35 @@ impl Provider for OpenAiProvider {
                 .map_err(|e| anyhow!("failed to serialize request: {}", e))?;
 
             // Inject thinking/reasoning_effort if set
-            if let Some(ref thinking) = request.thinking {
-                if thinking != "none" {
-                    payload_value["reasoning_effort"] = serde_json::Value::String(thinking.clone());
+            if is_openrouter {
+                if let Some(ref thinking) = request.thinking {
+                    let reasoning_obj = if thinking == "off" || thinking == "none" {
+                        serde_json::json!({
+                            "enabled": false
+                        })
+                    } else {
+                        let (effort, max_tokens) = match thinking.as_str() {
+                            "minimal" => ("minimal", Some(1024)),
+                            "low" => ("low", Some(1024)),
+                            "medium" => ("medium", Some(2048)),
+                            "high" => ("high", Some(4096)),
+                            "xhigh" => ("xhigh", Some(8192)),
+                            _ => ("medium", Some(2048)),
+                        };
+                        serde_json::json!({
+                            "enabled": true,
+                            "effort": effort,
+                            "max_tokens": max_tokens
+                        })
+                    };
+                    payload_value["reasoning"] = reasoning_obj;
+                }
+            } else {
+                if let Some(ref thinking) = request.thinking {
+                    if thinking != "none" {
+                        payload_value["reasoning_effort"] =
+                            serde_json::Value::String(thinking.clone());
+                    }
                 }
             }
 
@@ -540,7 +696,13 @@ impl Provider for OpenAiProvider {
     ) -> Pin<Box<dyn Future<Output = Result<LlmResponse>> + Send + '_>> {
         let api_key = self.api_key.clone();
         let base_url = self.base_url.clone();
-        let request = request.clone();
+        let is_openrouter =
+            self.provider_name == "openrouter" || self.base_url.contains("openrouter.ai");
+
+        let mut request = request.clone();
+        if is_openrouter {
+            request = self.normalize_thinking(request);
+        }
 
         Box::pin(async move {
             let client = Client::new();
@@ -548,6 +710,40 @@ impl Provider for OpenAiProvider {
                 .map_err(|e| anyhow!("failed to serialize request: {}", e))?;
             if let Value::Object(ref mut map) = payload {
                 map.insert("stream".to_string(), Value::Bool(true));
+
+                if is_openrouter {
+                    if let Some(ref thinking) = request.thinking {
+                        let reasoning_obj = if thinking == "off" || thinking == "none" {
+                            serde_json::json!({
+                                "enabled": false
+                            })
+                        } else {
+                            let (effort, max_tokens) = match thinking.as_str() {
+                                "minimal" => ("minimal", Some(1024)),
+                                "low" => ("low", Some(1024)),
+                                "medium" => ("medium", Some(2048)),
+                                "high" => ("high", Some(4096)),
+                                "xhigh" => ("xhigh", Some(8192)),
+                                _ => ("medium", Some(2048)),
+                            };
+                            serde_json::json!({
+                                "enabled": true,
+                                "effort": effort,
+                                "max_tokens": max_tokens
+                            })
+                        };
+                        map.insert("reasoning".to_string(), reasoning_obj);
+                    }
+                } else {
+                    if let Some(ref thinking) = request.thinking {
+                        if thinking != "none" {
+                            map.insert(
+                                "reasoning_effort".to_string(),
+                                Value::String(thinking.clone()),
+                            );
+                        }
+                    }
+                }
             } else {
                 return Err(anyhow!("request payload must be an object"));
             }
@@ -3443,6 +3639,52 @@ mod provider_tests {
         assert!(result.is_ok());
         let models: Vec<ModelInfo> = result.unwrap();
         assert!(models.is_empty());
+    }
+
+    #[test]
+    fn test_openrouter_supports_reasoning() {
+        let p = OpenAiProvider::new("openrouter".to_string(), "sk-fake".to_string(), None);
+        // Fallbacks
+        assert!(p.supports_reasoning("openai/o1-mini"));
+        assert!(p.supports_reasoning("openai/o3-mini"));
+        assert!(p.supports_reasoning("deepseek/deepseek-r1"));
+        assert!(p.supports_reasoning("anthropic/claude-3-7-sonnet"));
+        assert!(!p.supports_reasoning("openai/gpt-4o-mini"));
+
+        // Cache behavior
+        {
+            let mut cache = p.reasoning_models.lock().unwrap();
+            cache.insert("my-special-model".to_string());
+        }
+        // Once cache is populated, only items in cache match
+        assert!(p.supports_reasoning("my-special-model"));
+        assert!(!p.supports_reasoning("openai/o1-mini"));
+    }
+
+    #[test]
+    fn test_openrouter_normalize_thinking() {
+        let p = OpenAiProvider::new("openrouter".to_string(), "sk-fake".to_string(), None);
+        // Fallback model supporting reasoning preserves thinking
+        let req = LlmRequest {
+            model: "openai/o1-mini".to_string(),
+            messages: vec![],
+            tools: None,
+            max_tokens: None,
+            thinking: Some("high".to_string()),
+        };
+        let normalized = p.normalize_thinking(req);
+        assert_eq!(normalized.thinking, Some("high".to_string()));
+
+        // Fallback model NOT supporting reasoning strips thinking
+        let req2 = LlmRequest {
+            model: "openai/gpt-4o-mini".to_string(),
+            messages: vec![],
+            tools: None,
+            max_tokens: None,
+            thinking: Some("high".to_string()),
+        };
+        let normalized2 = p.normalize_thinking(req2);
+        assert_eq!(normalized2.thinking, None);
     }
 
     #[test]

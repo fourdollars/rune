@@ -22,6 +22,7 @@ pub struct Skill {
     pub source_path: PathBuf,
 }
 
+#[derive(Debug, Clone)]
 pub struct SkillLoader {
     pub search_paths: Vec<PathBuf>,
 }
@@ -203,6 +204,7 @@ impl SkillLoader {
             }
         }
 
+        store.entries.retain(|e| seen.contains(&e.key));
         store.model = model;
         store.save(&store_path)?;
         Ok(store)
@@ -699,5 +701,65 @@ mod tests {
         assert!(names.contains(&"f".to_string()));
 
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn test_index_skills_prunes_deleted_skills() {
+        use crate::embedding::{EmbeddingConfig, VectorEntry};
+        let temp_home = std::env::temp_dir().join(format!("rune-home-{}", std::process::id()));
+        let orig_home = std::env::var("HOME").ok();
+        std::env::set_var("HOME", &temp_home);
+
+        let skill_dir = temp_home.join(".rune").join("skills");
+        let active_skill = skill_dir.join("active-skill");
+        fs::create_dir_all(&active_skill).unwrap();
+        fs::write(
+            active_skill.join("SKILL.md"),
+            "---\nname: active-skill\ndescription: active\n---\nbody",
+        )
+        .unwrap();
+
+        // 1. Manually write a mock skills.json containing both an active and a deleted skill
+        let store_path = SkillLoader::vector_store_path();
+        fs::create_dir_all(store_path.parent().unwrap()).unwrap();
+
+        let store = VectorStore {
+            model: "text-embedding-3-small".to_string(),
+            dimensions: 3,
+            entries: vec![
+                VectorEntry {
+                    key: "active-skill".to_string(),
+                    text: "active-skill: active".to_string(),
+                    vector: vec![0.1, 0.2, 0.3],
+                    updated_at: 12345,
+                },
+                VectorEntry {
+                    key: "deleted-skill".to_string(),
+                    text: "deleted-skill: old desc".to_string(),
+                    vector: vec![0.4, 0.5, 0.6],
+                    updated_at: 12345,
+                },
+            ],
+        };
+        store.save(&store_path).unwrap();
+
+        // 2. Load and run index_skills with loader configured with temp_home/.rune/skills
+        let loader = SkillLoader::new(vec![skill_dir.clone()]);
+        let engine = EmbeddingEngine::new(EmbeddingConfig::default());
+
+        // This should prune "deleted-skill" because it is not discoverable,
+        // and it shouldn't hit the network for "active-skill" because its text hasn't changed.
+        let result_store = loader.index_skills(&engine).await.unwrap();
+
+        assert_eq!(result_store.entries.len(), 1);
+        assert_eq!(result_store.entries[0].key, "active-skill");
+
+        // Restore HOME env
+        if let Some(h) = orig_home {
+            std::env::set_var("HOME", h);
+        } else {
+            std::env::remove_var("HOME");
+        }
+        let _ = fs::remove_dir_all(&temp_home);
     }
 }

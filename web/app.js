@@ -754,7 +754,7 @@ function replayHistory(messages) {
             const sender = document.createElement('div');
             sender.className = 'sender';
             const nameSpan = document.createElement('span');
-            nameSpan.textContent = 'ᚱᚢᚾᛖ';
+            nameSpan.textContent = 'ᚱ';
             sender.appendChild(nameSpan);
             // Model in header
             if (m.model) {
@@ -810,7 +810,7 @@ function appendToLastAssistant(token) {
         const sender = document.createElement('div');
         sender.className = 'sender';
         const nameSpan = document.createElement('span');
-        nameSpan.textContent = 'ᚱᚢᚾᛖ';
+        nameSpan.textContent = 'ᚱ';
         const timeSpan = document.createElement('span');
         timeSpan.className = 'msg-time';
         timeSpan.textContent = fmtTime(null);

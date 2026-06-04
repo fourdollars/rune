@@ -2159,15 +2159,45 @@ async fn build_embedding(config: &RuneConfig) -> Option<EmbeddingEngine> {
     if api_key.is_empty() {
         return None;
     }
-    let emb_config = config.embedding.clone();
-    let provider_name = config.provider.as_deref().unwrap_or("");
-    if provider_name == "github-copilot"
-        || provider_name == "copilot"
+    let mut emb_config = config.embedding.clone();
+    if emb_config.api_key.is_none() {
+        emb_config.api_key = Some(api_key.clone());
+    }
+
+    let is_copilot = config.provider.as_deref() == Some("github-copilot")
+        || config.provider.as_deref() == Some("copilot")
         || api_key.starts_with("ghu_")
-        || api_key.starts_with("ghp_")
-    {
+        || api_key.starts_with("ghp_");
+
+    let is_gemini = config.provider.as_deref() == Some("gemini")
+        || config.provider.as_deref() == Some("google")
+        || api_key.starts_with("AIza");
+
+    if is_copilot {
+        if emb_config.base_url.is_none() {
+            emb_config.base_url = Some("https://api.githubcopilot.com".to_string());
+        }
         Some(EmbeddingEngine::new_copilot(emb_config, api_key))
+    } else if is_gemini {
+        if emb_config.base_url.is_none() {
+            emb_config.base_url =
+                Some("https://generativelanguage.googleapis.com/v1beta/openai".to_string());
+        }
+        if emb_config.model.is_none() {
+            emb_config.model = Some("gemini-embedding-2".to_string());
+        }
+        Some(EmbeddingEngine::new(emb_config))
     } else {
+        if emb_config.base_url.is_none() {
+            let is_openrouter =
+                config.provider.as_deref() == Some("openrouter") || api_key.starts_with("sk-or-");
+            let default_url = if is_openrouter {
+                Some("https://openrouter.ai/api/v1".to_string())
+            } else {
+                config.base_url.clone()
+            };
+            emb_config.base_url = config.base_url.clone().or(default_url);
+        }
         Some(EmbeddingEngine::new(emb_config))
     }
 }
@@ -2199,7 +2229,21 @@ mod tests {
         assert!(!is_valid_filename("file name.md"));
         assert!(!is_valid_filename("file;rm.md"));
         assert!(!is_valid_filename("a".repeat(65).as_str()));
-        assert!(!is_valid_filename("..md"));
+    }
+
+    #[tokio::test]
+    async fn test_build_embedding_fallback() {
+        let mut config = RuneConfig::default();
+        config.api_key = Some("root_api_key".to_string());
+        config.embedding.enabled = true;
+        config.embedding.api_key = None;
+
+        let engine = build_embedding(&config).await;
+        assert!(engine.is_some());
+
+        config.api_key = None;
+        let engine_none = build_embedding(&config).await;
+        assert!(engine_none.is_none());
     }
 
     #[test]

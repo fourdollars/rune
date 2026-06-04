@@ -634,20 +634,49 @@ impl Agent {
         }
 
         // No explicit refs — try semantic search if embeddings enabled
-        if let Some(ref engine) = self.embedding {
+        let engine_opt = self.embedding.clone();
+        if let Some(engine) = engine_opt {
             if self.config.embedding.enabled {
                 let threshold = self.config.embedding.threshold;
                 let max_skills = self.config.embedding.max_skills.max(1);
                 match self
                     .skill_loader
-                    .semantic_search(engine, user_input, threshold, max_skills)
+                    .semantic_search(&engine, user_input, threshold, max_skills)
                     .await
                 {
                     Ok(results) if !results.is_empty() => {
+                        let mut failed_any = false;
                         for (_score, name) in &results {
                             info!(skill = %name, score = _score, "semantic matched skill");
                             eprintln!("  {} Semantic skill match: {}", "🔎".dimmed(), name.green());
-                            self.load_and_inject_skill(name);
+                            if !self.load_and_inject_skill(name) {
+                                failed_any = true;
+                            }
+                        }
+                        if failed_any {
+                            let loader = self.skill_loader.clone();
+                            let engine_clone = engine.clone();
+                            eprintln!(
+                                "  {} Rebuilding skill vector index in the background...",
+                                "🔄".yellow()
+                            );
+                            tokio::spawn(async move {
+                                match loader.index_skills(&engine_clone).await {
+                                    Ok(_) => {
+                                        eprintln!(
+                                            "  {} Skill vector index rebuild complete.",
+                                            "✓".green()
+                                        );
+                                    }
+                                    Err(e) => {
+                                        eprintln!(
+                                            "  {} Skill vector index rebuild failed: {}",
+                                            "⚠".red(),
+                                            e
+                                        );
+                                    }
+                                }
+                            });
                         }
                     }
                     Err(e) => {
@@ -660,7 +689,8 @@ impl Agent {
     }
 
     /// Load a skill by name and inject it as a system message.
-    fn load_and_inject_skill(&mut self, name: &str) {
+    /// Returns true if loaded successfully, false if the skill was not found or failed to load.
+    fn load_and_inject_skill(&mut self, name: &str) -> bool {
         match self.skill_loader.load(name) {
             Ok(skill) => {
                 info!(skill = %name, "loaded skill");
@@ -689,10 +719,12 @@ impl Agent {
                     tool_call_id: None,
                     content_parts: None,
                 });
+                true
             }
             Err(e) => {
                 warn!(skill = %name, error = %e, "failed to load skill");
                 eprintln!("  {} Skill '{}' not found: {}", "⚠".yellow(), name, e);
+                false
             }
         }
     }
@@ -1057,9 +1089,39 @@ impl Agent {
             });
         }
 
+        let mut clean_messages = Vec::new();
+        let mut system_contents = Vec::new();
+
+        for m in &self.messages {
+            if m.role == "system" {
+                if let Some(ref content) = m.content {
+                    if !content.is_empty() {
+                        system_contents.push(content.clone());
+                    }
+                }
+            } else {
+                clean_messages.push(m.clone());
+            }
+        }
+
+        if !system_contents.is_empty() {
+            let combined = system_contents.join("\n\n");
+            clean_messages.insert(
+                0,
+                LlmMessage {
+                    role: "system".to_string(),
+                    name: None,
+                    content: Some(combined),
+                    tool_calls: None,
+                    tool_call_id: None,
+                    content_parts: None,
+                },
+            );
+        }
+
         LlmRequest {
             model: self.config.model.clone(),
-            messages: self.messages.clone(),
+            messages: clean_messages,
             tools: if tool_defs.is_empty() {
                 None
             } else {
@@ -3340,6 +3402,37 @@ read(3, "root:x:0:0:...", 4096) = 1234"#;
     }
 
     #[tokio::test]
+    async fn test_load_and_inject_skill_success_and_failure() {
+        use std::fs;
+        let temp_dir = tempfile::tempdir().unwrap();
+        let skills_dir = temp_dir.path().join("skills");
+        let skill_path = skills_dir.join("test-skill-1").join("SKILL.md");
+        fs::create_dir_all(skill_path.parent().unwrap()).unwrap();
+        fs::write(
+            &skill_path,
+            "---\nname: test-skill-1\ndescription: test desc\n---\nbody content",
+        )
+        .unwrap();
+
+        let config = crate::config::RuneConfig {
+            model: "mock-model".to_string(),
+            skills_dir: skills_dir.to_str().unwrap().to_string(),
+            ..Default::default()
+        };
+        let mut registry = crate::provider::ProviderRegistry::new();
+        registry.register(Box::new(MockProvider));
+        let mut agent = Agent::new(config, registry, false, None);
+
+        // Success case
+        let success = agent.load_and_inject_skill("test-skill-1");
+        assert!(success);
+
+        // Failure case
+        let failure = agent.load_and_inject_skill("nonexistent-skill");
+        assert!(!failure);
+    }
+
+    #[tokio::test]
     async fn test_agent_new_interactive_flag() {
         let config = crate::config::RuneConfig::default();
         let mut registry = crate::provider::ProviderRegistry::new();
@@ -4668,5 +4761,44 @@ read(3, "root:x:0:0:...", 4096) = 1234"#;
             }
             other => panic!("Unexpected StopReason: {:?}", other),
         }
+    }
+
+    #[tokio::test]
+    async fn test_build_llm_request_consolidates_system_messages() {
+        let mut agent = make_test_agent();
+        // Set first system prompt
+        agent.set_system_prompt("System Prompt 1");
+        // Push user message
+        agent.messages.push(crate::provider::LlmMessage {
+            role: "user".to_string(),
+            name: None,
+            content: Some("User Message".to_string()),
+            tool_calls: None,
+            tool_call_id: None,
+            content_parts: None,
+        });
+        // Push another system message (simulating a skill)
+        agent.messages.push(crate::provider::LlmMessage {
+            role: "system".to_string(),
+            name: None,
+            content: Some("System Prompt 2 (Skill)".to_string()),
+            tool_calls: None,
+            tool_call_id: None,
+            content_parts: None,
+        });
+
+        let req = agent.build_llm_request();
+        // The messages sent to LLM should have only one system message, and it should be at index 0.
+        let system_count = req.messages.iter().filter(|m| m.role == "system").count();
+        assert_eq!(system_count, 1);
+        assert_eq!(req.messages[0].role, "system");
+
+        let content = req.messages[0].content.as_ref().unwrap();
+        assert!(content.contains("System Prompt 1"));
+        assert!(content.contains("System Prompt 2 (Skill)"));
+
+        // Non-system message should remain in its original relative order (now at index 1)
+        assert_eq!(req.messages[1].role, "user");
+        assert_eq!(req.messages[1].content.as_ref().unwrap(), "User Message");
     }
 }

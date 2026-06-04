@@ -15,6 +15,14 @@ struct ExistingConfig {
     policy_section: Option<String>,
     /// Raw [embedding] section to preserve (includes header)
     embedding_section: Option<String>,
+    /// Raw [notes] section to preserve (includes header)
+    notes_section: Option<String>,
+    notes_port: Option<u16>,
+    notes_bind: Option<String>,
+    notes_admin_token: Option<String>,
+    notes_user_token: Option<String>,
+    notes_guest_token: Option<String>,
+    notes_model: Option<String>,
 }
 
 /// Extract a raw TOML section (from [header] line to next [header] or EOF).
@@ -59,6 +67,13 @@ fn load_existing_config(path: &std::path::Path) -> ExistingConfig {
             embedding_enabled: None,
             policy_section: None,
             embedding_section: None,
+            notes_section: None,
+            notes_port: None,
+            notes_bind: None,
+            notes_admin_token: None,
+            notes_user_token: None,
+            notes_guest_token: None,
+            notes_model: None,
         };
     }
     let content = std::fs::read_to_string(&path).unwrap_or_default();
@@ -66,6 +81,8 @@ fn load_existing_config(path: &std::path::Path) -> ExistingConfig {
 
     let policy_section = extract_toml_section(&content, "[policy]");
     let embedding_section = extract_toml_section(&content, "[embedding]");
+    let notes_section = extract_toml_section(&content, "[notes]");
+    let notes_table = table.get("notes").and_then(|v| v.as_table());
 
     ExistingConfig {
         provider: table
@@ -99,6 +116,31 @@ fn load_existing_config(path: &std::path::Path) -> ExistingConfig {
             .and_then(|v| v.as_bool()),
         policy_section,
         embedding_section,
+        notes_section,
+        notes_port: notes_table
+            .and_then(|t| t.get("port"))
+            .and_then(|v| v.as_integer())
+            .map(|i| i as u16),
+        notes_bind: notes_table
+            .and_then(|t| t.get("bind"))
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string()),
+        notes_admin_token: notes_table
+            .and_then(|t| t.get("admin_token"))
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string()),
+        notes_user_token: notes_table
+            .and_then(|t| t.get("user_token"))
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string()),
+        notes_guest_token: notes_table
+            .and_then(|t| t.get("guest_token"))
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string()),
+        notes_model: notes_table
+            .and_then(|t| t.get("model"))
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string()),
     }
 }
 
@@ -929,6 +971,157 @@ pub async fn run_setup(config_path_override: Option<String>) {
     };
     println!();
 
+    // 6c. Enable notes?
+    println!("{}", "6c. Enable Notes (serve mode)?".bold());
+    let notes_default = existing.notes_section.is_some();
+    let notes_prompt = if notes_default {
+        "  Enable notes? [Y/n]: "
+    } else {
+        "  Enable notes? [y/N]: "
+    };
+    let notes_choice = prompt(notes_prompt).unwrap_or_default();
+    let enable_notes = if notes_choice.trim().is_empty() {
+        notes_default
+    } else {
+        !notes_choice.trim().eq_ignore_ascii_case("n")
+    };
+    println!();
+
+    let mut notes_port = 9527;
+    let mut notes_bind = "127.0.0.1".to_string();
+    let mut notes_admin_token = "adminCHANGE_ME".to_string();
+    let mut notes_user_token = "userCHANGE_ME".to_string();
+    let mut notes_guest_token = "guestCHANGE_ME".to_string();
+    let mut notes_model = "".to_string();
+
+    if enable_notes {
+        println!("  Enter config values for [notes] section:");
+
+        let port_default = existing.notes_port.unwrap_or(9527);
+        let port_prompt = format!("  Port [{}]: ", port_default);
+        let port_input = prompt(&port_prompt).unwrap_or_default();
+        notes_port = if port_input.trim().is_empty() {
+            port_default
+        } else {
+            port_input.trim().parse().unwrap_or(9527)
+        };
+
+        let bind_default = existing.notes_bind.as_deref().unwrap_or("127.0.0.1");
+        let bind_prompt = format!("  Bind address [{}]: ", bind_default);
+        let bind_input = prompt(&bind_prompt).unwrap_or_default();
+        notes_bind = if bind_input.trim().is_empty() {
+            bind_default.to_string()
+        } else {
+            bind_input.trim().to_string()
+        };
+
+        let admin_default = existing
+            .notes_admin_token
+            .as_deref()
+            .unwrap_or("adminCHANGE_ME");
+        let admin_prompt = format!("  Admin token [{}]: ", admin_default);
+        let admin_input = prompt(&admin_prompt).unwrap_or_default();
+        notes_admin_token = if admin_input.trim().is_empty() {
+            admin_default.to_string()
+        } else {
+            admin_input.trim().to_string()
+        };
+
+        let user_default = existing
+            .notes_user_token
+            .as_deref()
+            .unwrap_or("userCHANGE_ME");
+        let user_prompt = format!("  User token [{}]: ", user_default);
+        let user_input = prompt(&user_prompt).unwrap_or_default();
+        notes_user_token = if user_input.trim().is_empty() {
+            user_default.to_string()
+        } else {
+            user_input.trim().to_string()
+        };
+
+        let guest_default = existing
+            .notes_guest_token
+            .as_deref()
+            .unwrap_or("guestCHANGE_ME");
+        let guest_prompt = format!("  Guest token [{}]: ", guest_default);
+        let guest_input = prompt(&guest_prompt).unwrap_or_default();
+        notes_guest_token = if guest_input.trim().is_empty() {
+            guest_default.to_string()
+        } else {
+            guest_input.trim().to_string()
+        };
+
+        let model_default = existing.notes_model.as_deref().unwrap_or("");
+        if provider_choice.trim() == "4" {
+            println!("  Select a model for notes:");
+            if let Some(ref models) = openrouter_models {
+                for (i, model) in models.iter().enumerate() {
+                    println!("   {} {}", format!("[{}]", i + 1).cyan(), model);
+                }
+                println!("   {} Custom", format!("[{}]", models.len() + 1).cyan());
+            } else {
+                println!("   {} openai/gpt-4o-mini", "[1]".cyan());
+                println!("   {} anthropic/claude-3.5-sonnet", "[2]".cyan());
+                println!("   {} google/gemini-pro", "[3]".cyan());
+                println!("   {} Custom", "[4]".cyan());
+            }
+            println!();
+        }
+
+        let model_prompt = if model_default.is_empty() {
+            "  Model for notes (Enter for auto-detect): ".to_string()
+        } else {
+            format!("  Model for notes (Enter={}): ", model_default)
+        };
+        let model_input = prompt(&model_prompt).unwrap_or_default();
+        let notes_model_choice = model_input.trim();
+
+        notes_model = if notes_model_choice.is_empty() && !model_default.is_empty() {
+            model_default.to_string()
+        } else if provider_choice.trim() == "4" {
+            if let Some(ref models) = openrouter_models {
+                if notes_model_choice.is_empty() {
+                    "".to_string()
+                } else if let Ok(idx) = notes_model_choice.parse::<usize>() {
+                    if idx > 0 && idx <= models.len() {
+                        models[idx - 1].clone()
+                    } else if idx == models.len() + 1 {
+                        let custom = prompt("  Model name: ")
+                            .unwrap_or_default()
+                            .trim()
+                            .to_string();
+                        custom
+                    } else {
+                        notes_model_choice.to_string()
+                    }
+                } else {
+                    notes_model_choice.to_string()
+                }
+            } else {
+                match notes_model_choice {
+                    "1" => "openai/gpt-4o-mini".to_string(),
+                    "2" => "anthropic/claude-3.5-sonnet".to_string(),
+                    "3" => "google/gemini-pro".to_string(),
+                    "" => "".to_string(),
+                    _ => {
+                        let custom = prompt("  Model name: ")
+                            .unwrap_or_default()
+                            .trim()
+                            .to_string();
+                        custom
+                    }
+                }
+            }
+        } else {
+            if notes_model_choice.is_empty() {
+                "".to_string()
+            } else {
+                notes_model_choice.to_string()
+            }
+        };
+        println!();
+    }
+
     // 7. Build config — preserve existing [policy] and [embedding] sections
     let config_path = target_config_path.clone();
     let config_dir = config_path
@@ -982,6 +1175,26 @@ pub async fn run_setup(config_path_override: Option<String>) {
             toml_content.push_str("enabled = true\n");
             toml_content.push_str(&format!("model = \"{}\"\n", emb_model_str));
             toml_content.push_str("threshold = 0.3\n");
+        }
+    }
+
+    // Notes section
+    if enable_notes {
+        if !toml_content.ends_with("\n\n") {
+            if toml_content.ends_with('\n') {
+                toml_content.push('\n');
+            } else {
+                toml_content.push_str("\n\n");
+            }
+        }
+        toml_content.push_str("[notes]\n");
+        toml_content.push_str(&format!("port = {}\n", notes_port));
+        toml_content.push_str(&format!("bind = \"{}\"\n", notes_bind));
+        toml_content.push_str(&format!("admin_token = \"{}\"\n", notes_admin_token));
+        toml_content.push_str(&format!("user_token = \"{}\"\n", notes_user_token));
+        toml_content.push_str(&format!("guest_token = \"{}\"\n", notes_guest_token));
+        if !notes_model.is_empty() {
+            toml_content.push_str(&format!("model = \"{}\"\n", notes_model));
         }
     }
 
@@ -1126,10 +1339,30 @@ api_key = "sk-custom-embed-key"
     }
 
     #[test]
+    fn test_extract_toml_section_notes() {
+        let content = r#"model = "gpt-4o"
+
+[notes]
+port = 9527
+bind = "127.0.0.1"
+admin_token = "adminCHANGE_ME"
+user_token = "userCHANGE_ME"
+guest_token = "guestCHANGE_ME"
+model = "google/gemini-2.5-pro"
+"#;
+        let section = extract_toml_section(content, "[notes]").unwrap();
+        assert!(section.contains("[notes]"));
+        assert!(section.contains("port = 9527"));
+        assert!(section.contains("bind = \"127.0.0.1\""));
+        assert!(section.contains("model = \"google/gemini-2.5-pro\""));
+    }
+
+    #[test]
     fn test_extract_toml_section_missing() {
         let content = "model = \"gpt-4o\"\napi_key = \"test\"\n";
         assert!(extract_toml_section(content, "[policy]").is_none());
         assert!(extract_toml_section(content, "[embedding]").is_none());
+        assert!(extract_toml_section(content, "[notes]").is_none());
     }
 
     #[test]
