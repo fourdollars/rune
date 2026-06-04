@@ -236,6 +236,105 @@ async fn github_device_flow() -> Option<String> {
     }
 }
 
+#[derive(serde::Deserialize, Clone)]
+struct OpenRouterPricing {
+    prompt: Option<String>,
+    completion: Option<String>,
+}
+
+#[derive(serde::Deserialize)]
+struct OpenRouterModelsResponse {
+    data: Vec<OpenRouterModel>,
+}
+
+#[derive(serde::Deserialize)]
+struct OpenRouterModel {
+    id: String,
+    pricing: Option<OpenRouterPricing>,
+}
+
+async fn fetch_openrouter_models() -> Option<Vec<String>> {
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(5))
+        .build()
+        .ok()?;
+    let resp = client
+        .get("https://openrouter.ai/api/v1/models")
+        .send()
+        .await
+        .ok()?;
+    let body: OpenRouterModelsResponse = resp.json().await.ok()?;
+
+    let model_ids: Vec<String> = body.data.into_iter().map(|m| m.id).collect();
+    let model_set: std::collections::HashSet<String> = model_ids.iter().cloned().collect();
+
+    let mut filtered = Vec::new();
+    for m in &model_ids {
+        if !m.ends_with(":free") {
+            let free = format!("{}:free", m);
+            if model_set.contains(&free) {
+                filtered.push(m.clone());
+            }
+        }
+    }
+    filtered.sort();
+    Some(filtered)
+}
+
+async fn fetch_openrouter_embedding_models() -> Option<(Vec<String>, String)> {
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(5))
+        .build()
+        .ok()?;
+    let resp = client
+        .get("https://openrouter.ai/api/v1/embeddings/models")
+        .send()
+        .await
+        .ok()?;
+    let body: OpenRouterModelsResponse = resp.json().await.ok()?;
+
+    if body.data.is_empty() {
+        return None;
+    }
+
+    let mut sorted_data = body.data;
+    sorted_data.sort_by(|a, b| a.id.cmp(&b.id));
+
+    let mut min_sum: Option<f64> = None;
+    let mut default_model: Option<String> = None;
+
+    for m in &sorted_data {
+        let (prompt_price, completion_price) = if let Some(ref pricing) = m.pricing {
+            let p = pricing
+                .prompt
+                .as_deref()
+                .unwrap_or("0.0")
+                .parse::<f64>()
+                .unwrap_or(0.0);
+            let c = pricing
+                .completion
+                .as_deref()
+                .unwrap_or("0.0")
+                .parse::<f64>()
+                .unwrap_or(0.0);
+            (p, c)
+        } else {
+            (0.0, 0.0)
+        };
+        let sum = prompt_price + completion_price;
+        if min_sum.is_none() || Some(sum) < min_sum {
+            min_sum = Some(sum);
+            default_model = Some(m.id.clone());
+        }
+    }
+
+    let model_ids: Vec<String> = sorted_data.into_iter().map(|m| m.id).collect();
+    let def_model =
+        default_model.unwrap_or_else(|| "nvidia/llama-nemotron-embed-vl-1b-v2:free".to_string());
+
+    Some((model_ids, def_model))
+}
+
 /// Interactive setup wizard for Rune configuration.
 pub async fn run_setup(config_path_override: Option<String>) {
     // Determine target config file path
@@ -326,7 +425,7 @@ pub async fn run_setup(config_path_override: Option<String>) {
             "OpenAI API key (starts with sk-)",
         ),
         "4" => (
-            Some("https://openrouter.ai/api/v1".to_string()),
+            None,
             "OpenRouter",
             "openrouter",
             "OpenRouter key (starts with sk-or-)",
@@ -352,7 +451,14 @@ pub async fn run_setup(config_path_override: Option<String>) {
         }
     };
 
-    let base_url_display = base_url.as_deref().unwrap_or("(auto — Copilot endpoint)");
+    let default_url_display = if provider_id == "github-copilot" {
+        "(auto — Copilot endpoint)"
+    } else if provider_id == "openrouter" {
+        "(auto — OpenRouter endpoint)"
+    } else {
+        "(auto)"
+    };
+    let base_url_display = base_url.as_deref().unwrap_or(default_url_display);
     println!(
         "  {} Selected: {} ({})",
         "✓".green(),
@@ -490,6 +596,19 @@ pub async fn run_setup(config_path_override: Option<String>) {
     if let Some(ref m) = existing.model {
         println!("   {}", format!("(current: {})", m).dimmed());
     }
+
+    let mut openrouter_models = None;
+    if provider_choice.trim() == "4" {
+        print!("  Fetching models from OpenRouter...");
+        let _ = io::stdout().flush();
+        if let Some(models) = fetch_openrouter_models().await {
+            println!(" Done.");
+            openrouter_models = Some(models);
+        } else {
+            println!(" Failed. Using defaults.");
+        }
+    }
+
     match provider_choice.trim() {
         "1" => {
             println!(
@@ -512,10 +631,17 @@ pub async fn run_setup(config_path_override: Option<String>) {
             println!("   {} Custom", "[4]".cyan());
         }
         "4" => {
-            println!("   {} openai/gpt-4o-mini", "[1]".cyan());
-            println!("   {} anthropic/claude-3.5-sonnet", "[2]".cyan());
-            println!("   {} google/gemini-pro", "[3]".cyan());
-            println!("   {} Custom", "[4]".cyan());
+            if let Some(ref models) = openrouter_models {
+                for (i, model) in models.iter().enumerate() {
+                    println!("   {} {}", format!("[{}]", i + 1).cyan(), model);
+                }
+                println!("   {} Custom", format!("[{}]", models.len() + 1).cyan());
+            } else {
+                println!("   {} openai/gpt-4o-mini", "[1]".cyan());
+                println!("   {} anthropic/claude-3.5-sonnet", "[2]".cyan());
+                println!("   {} google/gemini-pro", "[3]".cyan());
+                println!("   {} Custom", "[4]".cyan());
+            }
         }
         _ => {
             println!("   {} Enter model name", "[1]".cyan());
@@ -541,9 +667,56 @@ pub async fn run_setup(config_path_override: Option<String>) {
             ("3", "1") => "gpt-4o-mini".to_string(),
             ("3", "2") => "gpt-4o".to_string(),
             ("3", "3") => "gpt-4-turbo".to_string(),
-            ("4", "1") => "openai/gpt-4o-mini".to_string(),
-            ("4", "2") => "anthropic/claude-3.5-sonnet".to_string(),
-            ("4", "3") => "google/gemini-pro".to_string(),
+            ("4", choice) => {
+                if let Some(ref models) = openrouter_models {
+                    if choice.is_empty() {
+                        let custom = prompt("  Model name: ")
+                            .unwrap_or_default()
+                            .trim()
+                            .to_string();
+                        if custom.is_empty() {
+                            "".to_string()
+                        } else {
+                            custom
+                        }
+                    } else if let Ok(idx) = choice.parse::<usize>() {
+                        if idx > 0 && idx <= models.len() {
+                            models[idx - 1].clone()
+                        } else if idx == models.len() + 1 {
+                            let custom = prompt("  Model name: ")
+                                .unwrap_or_default()
+                                .trim()
+                                .to_string();
+                            if custom.is_empty() {
+                                "".to_string()
+                            } else {
+                                custom
+                            }
+                        } else {
+                            choice.to_string()
+                        }
+                    } else {
+                        choice.to_string()
+                    }
+                } else {
+                    match choice {
+                        "1" => "openai/gpt-4o-mini".to_string(),
+                        "2" => "anthropic/claude-3.5-sonnet".to_string(),
+                        "3" => "google/gemini-pro".to_string(),
+                        _ => {
+                            let custom = prompt("  Model name: ")
+                                .unwrap_or_default()
+                                .trim()
+                                .to_string();
+                            if custom.is_empty() {
+                                "".to_string()
+                            } else {
+                                custom
+                            }
+                        }
+                    }
+                }
+            }
             (_, choice) if !choice.is_empty() && !["3", "4"].contains(&choice) => {
                 choice.to_string()
             }
@@ -560,82 +733,15 @@ pub async fn run_setup(config_path_override: Option<String>) {
             }
         }
     };
-    println!("  {} Model: {}", "✓".green(), model.green());
-    println!();
-
-    // 4. Skills directory
-    println!("{}", "4. Skills directory:".bold());
-    let skills_default = existing.skills_dir.as_deref().unwrap_or("./skills");
-    let skills_input = prompt(&format!("  Path [{}]: ", skills_default)).unwrap_or_default();
-    let skills_dir = if skills_input.trim().is_empty() {
-        skills_default.to_string()
+    if model.is_empty() {
+        println!("  {} Model: not set", "✓".green());
     } else {
-        skills_input.trim().to_string()
-    };
-    println!("  {} Skills dir: {}", "✓".green(), skills_dir);
-    println!();
-
-    // 5. Embedding
-    println!("{}", "5. Enable semantic features (embedding)?".bold());
-    println!("   Embedding enables:");
-    println!("   • Automatic skill matching (no @name needed)");
-    println!("   • Smart context compaction (keeps relevant history)");
-    println!();
-    let emb_default = existing.embedding_enabled.unwrap_or(true);
-    let emb_prompt = if emb_default {
-        "  Enable embedding? [Y/n]: "
-    } else {
-        "  Enable embedding? [y/N]: "
-    };
-    let emb_choice = prompt(emb_prompt).unwrap_or_default();
-    let embedding_enabled = if emb_choice.trim().is_empty() {
-        emb_default
-    } else {
-        !emb_choice.trim().eq_ignore_ascii_case("n")
-    };
-    if embedding_enabled {
-        println!("  {} Embedding enabled", "✓".green());
-    } else {
-        println!(
-            "  {} Embedding disabled (can enable later in rune.toml)",
-            "ℹ".dimmed()
-        );
+        println!("  {} Model: {}", "✓".green(), model.green());
     }
-
-    // 5b. Embedding model (only if enabled)
-    let embedding_model = if embedding_enabled {
-        let default_emb_model = match provider_choice.trim() {
-            "1" => "text-embedding-3-small",
-            "2" => "gemini-embedding-2",
-            "4" => "nvidia/llama-nemotron-embed-vl-1b-v2:free",
-            _ => "text-embedding-3-small",
-        };
-        // Check existing config for model
-        let current_emb_model = existing.embedding_section.as_ref().and_then(|s| {
-            s.lines()
-                .find(|l| l.trim().starts_with("model"))
-                .and_then(|l| l.split('"').nth(1))
-                .map(|s| s.to_string())
-        });
-        let emb_model_default = current_emb_model.as_deref().unwrap_or(default_emb_model);
-        println!();
-        println!("   {}", "Embedding model:".bold());
-        let emb_model_prompt = format!("  Model [{}]: ", emb_model_default);
-        let emb_model_input = prompt(&emb_model_prompt).unwrap_or_default();
-        let model = if emb_model_input.trim().is_empty() {
-            emb_model_default.to_string()
-        } else {
-            emb_model_input.trim().to_string()
-        };
-        println!("  {} Embedding model: {}", "✓".green(), model.cyan());
-        Some(model)
-    } else {
-        None
-    };
     println!();
 
-    // 6. Thinking level
-    println!("{}", "6. Thinking (reasoning effort):".bold());
+    // 4. Thinking level
+    println!("{}", "4. Thinking (reasoning effort):".bold());
     println!("   {} off     — no extended reasoning", "[1]".cyan());
     println!("   {} low     — minimal reasoning", "[2]".cyan());
     println!("   {} medium  — balanced", "[3]".cyan());
@@ -666,6 +772,163 @@ pub async fn run_setup(config_path_override: Option<String>) {
     println!("  {} Thinking: {}", "✓".green(), thinking.cyan());
     println!();
 
+    // 5. Skills directory
+    println!("{}", "5. Skills directory:".bold());
+    let skills_default = existing.skills_dir.as_deref().unwrap_or("./skills");
+    let skills_input = prompt(&format!("  Path [{}]: ", skills_default)).unwrap_or_default();
+    let skills_dir = if skills_input.trim().is_empty() {
+        skills_default.to_string()
+    } else {
+        skills_input.trim().to_string()
+    };
+    println!("  {} Skills dir: {}", "✓".green(), skills_dir);
+    println!();
+
+    // 6. Enable semantic features (embedding)?
+    println!("{}", "6. Enable semantic features (embedding)?".bold());
+    println!("   Embedding enables:");
+    println!("   • Automatic skill matching (no @name needed)");
+    println!("   • Smart context compaction (keeps relevant history)");
+    println!();
+    let emb_default = existing.embedding_enabled.unwrap_or(true);
+    let emb_prompt = if emb_default {
+        "  Enable embedding? [Y/n]: "
+    } else {
+        "  Enable embedding? [y/N]: "
+    };
+    let emb_choice = prompt(emb_prompt).unwrap_or_default();
+    let embedding_enabled = if emb_choice.trim().is_empty() {
+        emb_default
+    } else {
+        !emb_choice.trim().eq_ignore_ascii_case("n")
+    };
+    if embedding_enabled {
+        println!("  {} Embedding enabled", "✓".green());
+    } else {
+        println!(
+            "  {} Embedding disabled (can enable later in rune.toml)",
+            "ℹ".dimmed()
+        );
+    }
+
+    // 6b. Embedding model (only if enabled)
+    let embedding_model = if embedding_enabled {
+        let mut openrouter_emb_models = None;
+        if provider_choice.trim() == "4" {
+            print!("  Fetching embedding models from OpenRouter...");
+            let _ = io::stdout().flush();
+            if let Some(res) = fetch_openrouter_embedding_models().await {
+                println!(" Done.");
+                openrouter_emb_models = Some(res);
+            } else {
+                println!(" Failed. Using defaults.");
+            }
+        }
+
+        let default_emb_model = match provider_choice.trim() {
+            "1" => "text-embedding-3-small".to_string(),
+            "2" => "gemini-embedding-2".to_string(),
+            "4" => {
+                if let Some((_, ref def)) = openrouter_emb_models {
+                    def.clone()
+                } else {
+                    "nvidia/llama-nemotron-embed-vl-1b-v2:free".to_string()
+                }
+            }
+            _ => "text-embedding-3-small".to_string(),
+        };
+        // Check existing config for model
+        let current_emb_model = existing.embedding_section.as_ref().and_then(|s| {
+            s.lines()
+                .find(|l| l.trim().starts_with("model"))
+                .and_then(|l| l.split('"').nth(1))
+                .map(|s| s.to_string())
+        });
+        let emb_model_default = current_emb_model.as_deref().unwrap_or(&default_emb_model);
+        println!();
+        println!("   {}", "Embedding model:".bold());
+
+        if provider_choice.trim() == "4" {
+            if let Some((ref models, _)) = openrouter_emb_models {
+                for (i, model) in models.iter().enumerate() {
+                    println!("   {} {}", format!("[{}]", i + 1).cyan(), model);
+                }
+                println!("   {} Custom", format!("[{}]", models.len() + 1).cyan());
+            } else {
+                println!(
+                    "   {} nvidia/llama-nemotron-embed-vl-1b-v2:free",
+                    "[1]".cyan()
+                );
+                println!("   {} Custom", "[2]".cyan());
+            }
+        }
+
+        let emb_model_prompt = format!(
+            "  Select or type model name (Enter={}): ",
+            emb_model_default
+        );
+        let emb_model_input = prompt(&emb_model_prompt).unwrap_or_default();
+        let model = if emb_model_input.trim().is_empty() {
+            emb_model_default.to_string()
+        } else {
+            let choice = emb_model_input.trim();
+            if provider_choice.trim() == "4" {
+                if let Some((ref models, _)) = openrouter_emb_models {
+                    if let Ok(idx) = choice.parse::<usize>() {
+                        if idx > 0 && idx <= models.len() {
+                            models[idx - 1].clone()
+                        } else if idx == models.len() + 1 {
+                            let custom = prompt("  Model name: ")
+                                .unwrap_or_default()
+                                .trim()
+                                .to_string();
+                            if custom.is_empty() {
+                                "".to_string()
+                            } else {
+                                custom
+                            }
+                        } else {
+                            choice.to_string()
+                        }
+                    } else {
+                        choice.to_string()
+                    }
+                } else {
+                    match choice {
+                        "1" => "nvidia/llama-nemotron-embed-vl-1b-v2:free".to_string(),
+                        _ => {
+                            let custom = prompt("  Model name: ")
+                                .unwrap_or_default()
+                                .trim()
+                                .to_string();
+                            if custom.is_empty() {
+                                "".to_string()
+                            } else {
+                                custom
+                            }
+                        }
+                    }
+                }
+            } else {
+                choice.to_string()
+            }
+        };
+
+        if model.is_empty() {
+            println!(
+                "  {} Embedding model: not set (embedding disabled)",
+                "✓".green()
+            );
+            None
+        } else {
+            println!("  {} Embedding model: {}", "✓".green(), model.cyan());
+            Some(model)
+        }
+    } else {
+        None
+    };
+    println!();
+
     // 7. Build config — preserve existing [policy] and [embedding] sections
     let config_path = target_config_path.clone();
     let config_dir = config_path
@@ -674,7 +937,9 @@ pub async fn run_setup(config_path_override: Option<String>) {
         .unwrap_or_else(|| PathBuf::from("."));
 
     let mut toml_content = String::new();
-    toml_content.push_str(&format!("model = \"{}\"\n", model));
+    if !model.is_empty() {
+        toml_content.push_str(&format!("model = \"{}\"\n", model));
+    }
     toml_content.push_str(&format!("provider = \"{}\"\n", provider_id));
     if !api_key.is_empty() {
         toml_content.push_str(&format!("api_key = \"{}\"\n", api_key));
@@ -701,7 +966,7 @@ pub async fn run_setup(config_path_override: Option<String>) {
     }
 
     // Embedding section
-    if embedding_enabled {
+    if embedding_enabled && embedding_model.is_some() {
         let emb_model_str = embedding_model
             .as_deref()
             .unwrap_or("text-embedding-3-small");
@@ -1127,6 +1392,55 @@ allowed_domains = ["example.com"]"#;
     }
 
     #[test]
+    fn test_model_not_written_when_empty() {
+        let model = "";
+        let mut c = String::new();
+        if !model.is_empty() {
+            c.push_str(&format!("model = \"{}\"\n", model));
+        }
+        assert!(!c.contains("model"));
+    }
+
+    #[test]
+    fn test_model_written_when_set() {
+        let model = "openai/gpt-4o-mini";
+        let mut c = String::new();
+        if !model.is_empty() {
+            c.push_str(&format!("model = \"{}\"\n", model));
+        }
+        assert!(c.contains("model = \"openai/gpt-4o-mini\""));
+    }
+
+    #[test]
+    fn test_embedding_section_not_written_when_model_is_none() {
+        let embedding_enabled = true;
+        let embedding_model: Option<String> = None;
+        let mut toml_content = String::new();
+        if embedding_enabled && embedding_model.is_some() {
+            let emb_model_str = embedding_model.as_deref().unwrap();
+            toml_content.push_str("\n[embedding]\n");
+            toml_content.push_str("enabled = true\n");
+            toml_content.push_str(&format!("model = \"{}\"\n", emb_model_str));
+        }
+        assert!(!toml_content.contains("[embedding]"));
+    }
+
+    #[test]
+    fn test_embedding_section_written_when_model_is_some() {
+        let embedding_enabled = true;
+        let embedding_model: Option<String> = Some("text-embedding-3-small".to_string());
+        let mut toml_content = String::new();
+        if embedding_enabled && embedding_model.is_some() {
+            let emb_model_str = embedding_model.as_deref().unwrap();
+            toml_content.push_str("\n[embedding]\n");
+            toml_content.push_str("enabled = true\n");
+            toml_content.push_str(&format!("model = \"{}\"\n", emb_model_str));
+        }
+        assert!(toml_content.contains("[embedding]"));
+        assert!(toml_content.contains("model = \"text-embedding-3-small\""));
+    }
+
+    #[test]
     fn test_base_url_not_written_when_none() {
         let base_url: Option<String> = None;
         let mut c = String::new();
@@ -1164,5 +1478,107 @@ allowed_domains = ["example.com"]"#;
             c.push_str(&format!("api_key = \"{}\"\n", api_key));
         }
         assert!(c.contains("ghu_test123"));
+    }
+
+    #[test]
+    fn test_openrouter_models_filtering() {
+        let raw_response = r#"{
+            "data": [
+                {"id": "meta-llama/llama-3.3-70b-instruct"},
+                {"id": "meta-llama/llama-3.3-70b-instruct:free"},
+                {"id": "google/gemini-2.0-flash"},
+                {"id": "google/gemini-2.0-flash:free"},
+                {"id": "openai/gpt-4o-mini"},
+                {"id": "deepseek/deepseek-chat"}
+            ]
+        }"#;
+
+        let body: OpenRouterModelsResponse = serde_json::from_str(raw_response).unwrap();
+        let model_ids: Vec<String> = body.data.into_iter().map(|m| m.id).collect();
+        let model_set: std::collections::HashSet<String> = model_ids.iter().cloned().collect();
+
+        let mut filtered = Vec::new();
+        for m in &model_ids {
+            if !m.ends_with(":free") {
+                let free = format!("{}:free", m);
+                if model_set.contains(&free) {
+                    filtered.push(m.clone());
+                }
+            }
+        }
+        filtered.sort();
+
+        assert_eq!(filtered.len(), 2);
+        assert_eq!(filtered[0], "google/gemini-2.0-flash");
+        assert_eq!(filtered[1], "meta-llama/llama-3.3-70b-instruct");
+    }
+
+    #[test]
+    fn test_openrouter_embedding_models_sorting_and_default() {
+        let raw_response = r#"{
+            "data": [
+                {
+                    "id": "openai/text-embedding-3-small",
+                    "pricing": {"prompt": "0.00000002", "completion": "0.0"}
+                },
+                {
+                    "id": "google/gemini-embedding-2",
+                    "pricing": {"prompt": "0.0000002", "completion": "0.0"}
+                },
+                {
+                    "id": "nvidia/llama-nemotron-embed-vl-1b-v2:free",
+                    "pricing": {"prompt": "0.0", "completion": "0.0"}
+                },
+                {
+                    "id": "another/free-model",
+                    "pricing": {"prompt": "0.0", "completion": "0.0"}
+                }
+            ]
+        }"#;
+
+        let body: OpenRouterModelsResponse = serde_json::from_str(raw_response).unwrap();
+
+        let mut sorted_data = body.data;
+        sorted_data.sort_by(|a, b| a.id.cmp(&b.id));
+
+        let mut min_sum: Option<f64> = None;
+        let mut default_model: Option<String> = None;
+
+        for m in &sorted_data {
+            let (prompt_price, completion_price) = if let Some(ref pricing) = m.pricing {
+                let p = pricing
+                    .prompt
+                    .as_deref()
+                    .unwrap_or("0.0")
+                    .parse::<f64>()
+                    .unwrap_or(0.0);
+                let c = pricing
+                    .completion
+                    .as_deref()
+                    .unwrap_or("0.0")
+                    .parse::<f64>()
+                    .unwrap_or(0.0);
+                (p, c)
+            } else {
+                (0.0, 0.0)
+            };
+            let sum = prompt_price + completion_price;
+            if min_sum.is_none() || Some(sum) < min_sum {
+                min_sum = Some(sum);
+                default_model = Some(m.id.clone());
+            }
+        }
+
+        let model_ids: Vec<String> = sorted_data.into_iter().map(|m| m.id).collect();
+        assert_eq!(model_ids.len(), 4);
+        assert_eq!(model_ids[0], "another/free-model");
+        assert_eq!(model_ids[1], "google/gemini-embedding-2");
+        assert_eq!(model_ids[2], "nvidia/llama-nemotron-embed-vl-1b-v2:free");
+        assert_eq!(model_ids[3], "openai/text-embedding-3-small");
+
+        // The default model should be the cheapest one (sum = 0.0).
+        // Since both "another/free-model" and "nvidia/llama-nemotron-embed-vl-1b-v2:free" have sum = 0.0,
+        // "another/free-model" should be chosen because it comes first alphabetically.
+        assert_eq!(default_model.unwrap(), "another/free-model");
     }
 }
