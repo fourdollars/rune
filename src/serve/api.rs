@@ -1412,7 +1412,7 @@ const PUBLIC_PREVIEW_HTML: &str = r#"<!DOCTYPE html>
 </head>
 <body>
 <div class="container">
-  <div class="meta"><a href="/notes/{{NOTE}}/" style="color:inherit;text-decoration:none;opacity:1" onmouseover="this.style.textDecoration='underline'" onmouseout="this.style.textDecoration='none'">{{NOTE_LABEL}}</a> / {{FILE_LABEL}}</div>
+  <div class="meta"><a href="/public/{{NOTE}}/" style="color:inherit;text-decoration:none;opacity:1" onmouseover="this.style.textDecoration='underline'" onmouseout="this.style.textDecoration='none'">{{NOTE_LABEL}}</a> / {{FILE_LABEL}}</div>
   <div id="loading">Loading…</div>
   <div id="content" style="display:none"></div>
 </div>
@@ -1495,7 +1495,7 @@ pub async fn public_notes_list_handler(
         ));
         for fname in &public_files {
             let slug = fname.strip_suffix(".md").unwrap_or(fname);
-            let url = format!("/notes/{}/{}", url_encode(&note.id), url_encode(slug));
+            let url = format!("/public/{}/{}", url_encode(&note.id), url_encode(slug));
             items.push_str(&format!(
                 "<li><a href='{}'>{}</a></li>",
                 url,
@@ -1588,7 +1588,7 @@ pub async fn public_note_index_handler(
     let mut items = String::new();
     for fname in &public_files {
         let slug = fname.strip_suffix(".md").unwrap_or(fname);
-        let url = format!("/notes/{}/{}", url_encode(&note_id), url_encode(slug));
+        let url = format!("/public/{}/{}", url_encode(&note_id), url_encode(slug));
         items.push_str(&format!(
             "<li><a href='{}'>{}</a></li>",
             url,
@@ -1642,7 +1642,7 @@ pub async fn public_note_index_handler(
 </head>
 <body>
 <div class="container">
-  <a href="/notes/" class="back">← All Notes</a>
+  <a href="/public/" class="back">← All Notes</a>
   <h1>&#128193; {name}</h1>
   {items}
   <footer>Wrought by <a href="https://fourdollars.github.io/rune/">ᚱᚢᚾᛖ</a></footer>
@@ -3888,11 +3888,11 @@ mod isolation_tests {
 
         let app = Router::new()
             .route(
-                "/notes/{note}/",
+                "/public/{note}/",
                 get(crate::serve::api::public_note_index_handler),
             )
             .route(
-                "/notes/{note}",
+                "/public/{note}",
                 get(crate::serve::api::public_note_index_handler),
             )
             .with_state(state);
@@ -3900,7 +3900,7 @@ mod isolation_tests {
         // With trailing slash
         let req = axum::http::Request::builder()
             .method("GET")
-            .uri("/notes/main/")
+            .uri("/public/main/")
             .body(Body::empty())
             .unwrap();
         let resp = app.clone().oneshot(req).await.unwrap();
@@ -3917,7 +3917,7 @@ mod isolation_tests {
         // Without trailing slash
         let req = axum::http::Request::builder()
             .method("GET")
-            .uri("/notes/main")
+            .uri("/public/main")
             .body(Body::empty())
             .unwrap();
         let resp = app.oneshot(req).await.unwrap();
@@ -3958,17 +3958,131 @@ mod isolation_tests {
 
         let app = Router::new()
             .route(
-                "/notes/{note}/",
+                "/public/{note}/",
                 get(crate::serve::api::public_note_index_handler),
             )
             .with_state(state);
 
         let req = axum::http::Request::builder()
             .method("GET")
-            .uri("/notes/secret/")
+            .uri("/public/secret/")
             .body(Body::empty())
             .unwrap();
         let resp = app.oneshot(req).await.unwrap();
         assert_eq!(resp.status(), axum::http::StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn test_public_notes_list_handler_shows_public_notes() {
+        use axum::body::Body;
+        use axum::{routing::get, Router};
+        use http_body_util::BodyExt;
+        use tower::ServiceExt;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let (admin_broadcast_tx, _) = broadcast::channel(256);
+        let db = crate::serve::db::ChatDb::open(&tmp.path().join("t.db")).unwrap();
+        let _ = db.create_note("pub-note", "pub-note", None);
+        let _ = db.set_note_public("pub-note", true);
+        let _ = db.set_file_public("pub-note", "hello.md", true);
+        let _ = db.create_note("priv-note", "priv-note", None);
+        // priv-note stays private
+
+        let state = crate::serve::ServerState {
+            config: crate::config::RuneConfig::default(),
+            user_token: None,
+            admin_token: Some("admin".into()),
+            guest_token: None,
+            files: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
+            active_file: Arc::new(tokio::sync::RwLock::new(String::new())),
+            models: Arc::new(tokio::sync::RwLock::new(vec![ModelInfo {
+                id: "m1".into(),
+                context_window: None,
+                reasoning_efforts: vec![],
+                supported_endpoints: vec![],
+            }])),
+            rooms: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
+            global_default_model: Arc::new(tokio::sync::RwLock::new("m1".into())),
+            admin_broadcast_tx,
+            chat_db: db,
+            data_dir: tmp.path().join(".rune"),
+        };
+
+        let app = Router::new()
+            .route("/public", get(crate::serve::api::public_notes_list_handler))
+            .route("/public/", get(crate::serve::api::public_notes_list_handler))
+            .with_state(state);
+
+        let req = axum::http::Request::builder()
+            .method("GET")
+            .uri("/public/")
+            .body(Body::empty())
+            .unwrap();
+        let resp = app.clone().oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), axum::http::StatusCode::OK);
+        let body = String::from_utf8_lossy(&resp.into_body().collect().await.unwrap().to_bytes())
+            .to_string();
+        assert!(body.contains("pub-note"), "Should list public note");
+        assert!(!body.contains("priv-note"), "Should NOT list private note");
+        // Links must use /public/ prefix
+        assert!(body.contains("/public/"), "Links must use /public/ prefix");
+        assert!(!body.contains("/notes/"), "Links must NOT use /notes/ prefix");
+    }
+
+    #[tokio::test]
+    async fn test_public_preview_handler_uses_public_route() {
+        use axum::body::Body;
+        use axum::{routing::get, Router};
+        use http_body_util::BodyExt;
+        use tower::ServiceExt;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let (admin_broadcast_tx, _) = broadcast::channel(256);
+        let db = crate::serve::db::ChatDb::open(&tmp.path().join("t.db")).unwrap();
+        let _ = db.create_note("mynote", "mynote", None);
+        let _ = db.set_note_public("mynote", true);
+        let _ = db.set_file_public("mynote", "doc.md", true);
+
+        // Create the actual markdown file so the handler can serve it
+        let md_dir = tmp.path().join(".rune").join("notes").join("mynote").join("markdown");
+        std::fs::create_dir_all(&md_dir).unwrap();
+        std::fs::write(md_dir.join("doc.md"), "# Hello").unwrap();
+
+        let state = crate::serve::ServerState {
+            config: crate::config::RuneConfig::default(),
+            user_token: None,
+            admin_token: Some("admin".into()),
+            guest_token: None,
+            files: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
+            active_file: Arc::new(tokio::sync::RwLock::new(String::new())),
+            models: Arc::new(tokio::sync::RwLock::new(vec![ModelInfo {
+                id: "m1".into(),
+                context_window: None,
+                reasoning_efforts: vec![],
+                supported_endpoints: vec![],
+            }])),
+            rooms: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
+            global_default_model: Arc::new(tokio::sync::RwLock::new("m1".into())),
+            admin_broadcast_tx,
+            chat_db: db,
+            data_dir: tmp.path().join(".rune"),
+        };
+
+        let app = Router::new()
+            .route("/public/{note}/{file}", get(crate::serve::api::public_preview_handler))
+            .with_state(state);
+
+        let req = axum::http::Request::builder()
+            .method("GET")
+            .uri("/public/mynote/doc")
+            .body(Body::empty())
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), axum::http::StatusCode::OK);
+        let body = String::from_utf8_lossy(&resp.into_body().collect().await.unwrap().to_bytes())
+            .to_string();
+        // Preview HTML must link back to /public/, not /notes/
+        assert!(body.contains("/public/"), "Preview must use /public/ back-link");
+        assert!(!body.contains("/notes/"), "Preview must NOT use /notes/ back-link");
     }
 }

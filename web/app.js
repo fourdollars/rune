@@ -3,6 +3,58 @@
 
 'use strict';
 
+// --- URL Routing helpers ---
+// Parse /notes/{note}/{file} from pathname; strip trailing .md
+function parseNotesUrl() {
+    const path = window.location.pathname;
+    // Strip .md suffix and redirect to clean URL
+    if (path.endsWith('.md')) {
+        const clean = path.slice(0, -3);
+        history.replaceState(null, '', clean);
+        return parseNotesUrlFromPath(clean);
+    }
+    return parseNotesUrlFromPath(path);
+}
+function parseNotesUrlFromPath(path) {
+    const m = path.match(/^\/notes\/([^\/]+)\/([^\/]+)$/);
+    if (m) return { noteId: decodeURIComponent(m[1]), file: decodeURIComponent(m[2]) };
+    const m2 = path.match(/^\/notes\/([^\/]+)\/?$/);
+    if (m2) return { noteId: decodeURIComponent(m2[1]), file: null };
+    return { noteId: null, file: null };
+}
+function updateBrowserUrl(noteId, filename) {
+    if (!noteId) return;
+    const slug = filename ? filename.replace(/\.md$/, '') : null;
+    const url = slug
+        ? '/notes/' + encodeURIComponent(noteId) + '/' + encodeURIComponent(slug)
+        : '/notes/' + encodeURIComponent(noteId) + '/';
+    if (window.location.pathname !== url) {
+        history.pushState({ noteId, filename }, '', url);
+    }
+}
+
+// Pending note/file from URL (set before auth, consumed after login)
+let _pendingNoteId = null;
+let _pendingFile   = null;
+
+(function initRouting() {
+    const parsed = parseNotesUrl();
+    if (parsed.noteId) {
+        _pendingNoteId = parsed.noteId;
+        _pendingFile   = parsed.file;
+    }
+    // Handle browser back/forward
+    window.addEventListener('popstate', (e) => {
+        if (e.state && e.state.noteId) {
+            if (e.state.noteId !== currentNoteId) {
+                switchNote(e.state.noteId, e.state.filename || null);
+            } else if (e.state.filename && e.state.filename !== currentFilename) {
+                switchFile(e.state.filename);
+            }
+        }
+    });
+})();
+
 // --- State ---
 let showEdit    = true;
 let showPreview = true;
@@ -239,6 +291,13 @@ function submitNickname() {
     } catch {}
     document.getElementById('nickname-modal').classList.add('hidden');
     loggedOut = false;
+    // If URL contains a specific note/file, use it as the initial target
+    if (_pendingNoteId) {
+        localStorage.setItem('rune_note', _pendingNoteId);
+        if (_pendingFile) localStorage.setItem('rune_file', _pendingFile + '.md');
+        _pendingNoteId = null;
+        _pendingFile   = null;
+    }
     connect();
 }
 
@@ -480,6 +539,12 @@ function handleMessage(msg) {
         case 'auth_result':
             isAdmin = msg.is_admin;
             isGuest = !!msg.is_guest;
+            // If auth failed (no valid token) and user is not logged-out intentionally,
+            // redirect to /public/ for unauthenticated browsing
+            if (!isAdmin && !isGuest && !msg.ok && !loggedOut) {
+                window.location.href = '/public/';
+                break;
+            }
             // Rainbow title for admin
             const runeTitle = document.getElementById('rune-title');
             if (runeTitle && isAdmin) {
@@ -1464,6 +1529,7 @@ async function switchFile(name) {
     if (showPreview) renderPreview();
     updateDocTitle(currentFilename);
     try { localStorage.setItem('rune_file', currentFilename); } catch {}
+    updateBrowserUrl(currentNoteId, currentFilename);
 }
 
 function renameCurrentFile(newName) {
@@ -1908,9 +1974,8 @@ async function switchNote(sessionId, forceFile = null) {
         updateDocTitle('');
     }
     try { localStorage.setItem('rune_file', currentFilename); } catch {}
+    updateBrowserUrl(currentNoteId, currentFilename);
 }
-
-// --- New Note Dialog ---
 
 function showNewNoteDialog() {
     document.getElementById('new-note-modal').classList.remove('hidden');

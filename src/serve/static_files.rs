@@ -324,4 +324,35 @@ mod tests {
             "index.html missing modal-actions"
         );
     }
+
+    #[test]
+    fn test_app_js_has_url_routing() {
+        let js = get("app.js").unwrap();
+        assert!(js.contains("parseNotesUrl"), "app.js missing parseNotesUrl");
+        assert!(js.contains("updateBrowserUrl"), "app.js missing updateBrowserUrl");
+        assert!(js.contains("_pendingNoteId"), "app.js missing _pendingNoteId");
+        assert!(js.contains("_pendingFile"), "app.js missing _pendingFile");
+        assert!(js.contains("popstate"), "app.js missing popstate listener");
+        assert!(js.contains("history.pushState"), "app.js missing history.pushState");
+        assert!(js.contains("history.replaceState"), "app.js missing history.replaceState for .md redirect");
+    }
+
+    #[test]
+    fn test_app_js_routing_in_switch_functions() {
+        let js = get("app.js").unwrap();
+        // switchNote and switchFile must call updateBrowserUrl
+        // Check they each contain updateBrowserUrl (not just that it's defined)
+        let switch_note_pos = js.find("async function switchNote").expect("switchNote missing");
+        let switch_file_pos = js.find("async function switchFile").expect("switchFile missing");
+        let next_fn_after_note = js[switch_note_pos + 20..].find("\nasync function ").map(|p| switch_note_pos + 20 + p).unwrap_or(js.len());
+        let next_fn_after_file = js[switch_file_pos + 20..].find("\nasync function ").map(|p| switch_file_pos + 20 + p).unwrap_or(js.len());
+        assert!(
+            js[switch_note_pos..next_fn_after_note].contains("updateBrowserUrl"),
+            "switchNote must call updateBrowserUrl"
+        );
+        assert!(
+            js[switch_file_pos..next_fn_after_file].contains("updateBrowserUrl"),
+            "switchFile must call updateBrowserUrl"
+        );
+    }
 }

@@ -484,12 +484,18 @@ pub async fn run(config: RuneConfig, opts: NotesOptions) {
         .route("/favicon.svg", get(favicon_handler))
         .route("/assets/{*path}", get(static_handler))
         .route("/assets-bin/{*path}", get(binary_asset_handler))
+        // SPA routes — authenticated editor (client-side routing handles note/file within)
+        .route("/notes", get(index_handler))
+        .route("/notes/", get(index_handler))
+        .route("/notes/{note}", get(index_handler))
+        .route("/notes/{note}/", get(index_handler))
+        .route("/notes/{note}/{file}", get(index_handler))
         // Public (no-auth) routes
-        .route("/notes", get(api::public_notes_list_handler))
-        .route("/notes/", get(api::public_notes_list_handler))
-        .route("/notes/{note}/", get(api::public_note_index_handler))
-        .route("/notes/{note}", get(api::public_note_index_handler))
-        .route("/notes/{note}/{file}", get(api::public_preview_handler))
+        .route("/public", get(api::public_notes_list_handler))
+        .route("/public/", get(api::public_notes_list_handler))
+        .route("/public/{note}/", get(api::public_note_index_handler))
+        .route("/public/{note}", get(api::public_note_index_handler))
+        .route("/public/{note}/{file}", get(api::public_preview_handler))
         .route(
             "/api/public/raw/{note}/{file}",
             get(api::public_raw_handler),
