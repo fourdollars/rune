@@ -739,11 +739,20 @@ pre.hljs-pre:hover .copy-btn {
 }
 /* Light mode: use github-light code block background */
 @media (prefers-color-scheme: light) {
+    /* Code block: noticeably darker than white container (#fff),
+       creates depth: page(#f6f8fa) > card(#fff) > code(#e8ecf0) */
     #preview pre.hljs-pre {
-        background: #f6f8fa;
+        background: #e8ecf0;
+        border: 1px solid #d0d7de;
     }
     .chat-msg .body pre.hljs-pre {
-        background: #f6f8fa;
+        background: #e8ecf0;
+        border: 1px solid #d0d7de;
+    }
+    /* Also override .hljs background set by github.min.css */
+    #preview pre.hljs-pre code.hljs,
+    .chat-msg .body pre.hljs-pre code.hljs {
+        background: transparent;
     }
 }
 

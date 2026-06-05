@@ -1368,7 +1368,8 @@ const PUBLIC_PREVIEW_HTML: &str = r#"<!DOCTYPE html>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>{{TITLE}}</title>
-<link rel="stylesheet" href="/assets/highlight-dark.min.css" id="hl-style">
+<link rel="stylesheet" href="/assets/highlight-dark.min.css" media="(prefers-color-scheme: dark)">
+<link rel="stylesheet" href="/assets/highlight-light.min.css" media="(prefers-color-scheme: light)">
 <style>
   :root { color-scheme: light dark; }
   @media (prefers-color-scheme: dark) {
@@ -1384,8 +1385,9 @@ const PUBLIC_PREVIEW_HTML: &str = r#"<!DOCTYPE html>
     body { background: #f6f8fa; color: #24292e; }
     .container { background: #fff; border: 1px solid #e1e4e8; }
     a { color: #0366d6; }
-    code { background: #f6f8fa; color: #24292e; }
-    pre { background: #f6f8fa; border: 1px solid #e1e4e8; }
+    code { background: #eef0f3; color: #24292e; border: 1px solid #d0d7de; }
+    pre { background: #e8ecf0; border: 1px solid #d0d7de; }
+    pre code { background: transparent; border: none; }
     h1,h2,h3,h4 { color: #24292e; border-bottom: 1px solid #eaecef; }
     blockquote { border-left: 4px solid #dfe2e5; color: #6a737d; background: #f6f8fa; }
   }
@@ -4027,6 +4029,22 @@ mod isolation_tests {
         // Links must use /public/ prefix
         assert!(body.contains("/public/"), "Links must use /public/ prefix");
         assert!(!body.contains("/notes/"), "Links must NOT use /notes/ prefix");
+    }
+
+    #[test]
+    fn test_public_preview_html_highlight_dark_has_media() {
+        assert!(
+            PUBLIC_PREVIEW_HTML.contains(r#"highlight-dark.min.css" media="(prefers-color-scheme: dark)""#),
+            "PUBLIC_PREVIEW_HTML: highlight-dark must have media=(prefers-color-scheme: dark)"
+        );
+    }
+
+    #[test]
+    fn test_public_preview_html_highlight_light_has_media() {
+        assert!(
+            PUBLIC_PREVIEW_HTML.contains(r#"highlight-light.min.css" media="(prefers-color-scheme: light)""#),
+            "PUBLIC_PREVIEW_HTML: highlight-light.min.css must be loaded for light mode"
+        );
     }
 
     #[tokio::test]
