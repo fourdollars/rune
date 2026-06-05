@@ -412,7 +412,7 @@ pub async fn run(config: RuneConfig, opts: NotesOptions) {
         }
 
         // Guest: block all mutations (only allow read-only endpoints)
-        if guest_ok {
+        if guest_ok && req.method() != axum::http::Method::GET {
             let path = req.uri().path().to_string();
             let allowed_guest_paths =
                 ["/api/note/switch", "/api/file/switch", "/api/system-prompt"];
@@ -920,7 +920,7 @@ mod tests {
             }
 
             // Guest: block all mutations (only allow read-only endpoints)
-            if guest_ok {
+            if guest_ok && req.method() != axum::http::Method::GET {
                 let path = req.uri().path().to_string();
                 let allowed_guest_paths =
                     ["/api/note/switch", "/api/file/switch", "/api/system-prompt"];
@@ -1036,7 +1036,7 @@ mod tests {
             }
 
             // Guest: block all mutations (only allow read-only endpoints)
-            if guest_ok {
+            if guest_ok && req.method() != axum::http::Method::GET {
                 let path = req.uri().path().to_string();
                 let allowed_guest_paths =
                     ["/api/note/switch", "/api/file/switch", "/api/system-prompt"];
@@ -1146,7 +1146,7 @@ mod tests {
             }
 
             // Guest: block all mutations (only allow read-only endpoints)
-            if guest_ok {
+            if guest_ok && req.method() != axum::http::Method::GET {
                 let path = req.uri().path().to_string();
                 let allowed_guest_paths =
                     ["/api/note/switch", "/api/file/switch", "/api/system-prompt"];
@@ -1256,7 +1256,7 @@ mod tests {
             }
 
             // Guest: block all mutations (only allow read-only endpoints)
-            if guest_ok {
+            if guest_ok && req.method() != axum::http::Method::GET {
                 let path = req.uri().path().to_string();
                 let allowed_guest_paths =
                     ["/api/note/switch", "/api/file/switch", "/api/system-prompt"];
@@ -1354,7 +1354,7 @@ mod tests {
             }
 
             // Guest: block all mutations (only allow read-only endpoints)
-            if guest_ok {
+            if guest_ok && req.method() != axum::http::Method::GET {
                 let path = req.uri().path().to_string();
                 let allowed_guest_paths =
                     ["/api/note/switch", "/api/file/switch", "/api/system-prompt"];
@@ -1452,7 +1452,7 @@ mod tests {
             }
 
             // Guest: block all mutations (only allow read-only endpoints)
-            if guest_ok {
+            if guest_ok && req.method() != axum::http::Method::GET {
                 let path = req.uri().path().to_string();
                 let allowed_guest_paths =
                     ["/api/note/switch", "/api/file/switch", "/api/system-prompt"];
@@ -1550,7 +1550,7 @@ mod tests {
             }
 
             // Guest: block all mutations (only allow read-only endpoints)
-            if guest_ok {
+            if guest_ok && req.method() != axum::http::Method::GET {
                 let path = req.uri().path().to_string();
                 let allowed_guest_paths =
                     ["/api/note/switch", "/api/file/switch", "/api/system-prompt"];
