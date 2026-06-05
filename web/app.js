@@ -147,7 +147,8 @@ function highlightMarkdownEditor(text) {
         } else {
             codeHtml = escapeHtmlEditor(code);
         }
-        result += codeHtml;
+        // Wrap code body in a block-level span for background styling
+        result += `<span class="editor-code-block">${codeHtml}</span>`;
 
         // Closing fence
         result += `<span class="hljs-meta">${ticksEsc}</span>`;

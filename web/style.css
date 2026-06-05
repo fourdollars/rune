@@ -786,6 +786,22 @@ pre.hljs-pre:hover .copy-btn {
     color: #6272a4;   /* fence ticks + language label */
 }
 
+/* Code block body: distinct background for depth */
+#editor-highlight .editor-code-block {
+    display: block;
+    background: var(--bg-surface);   /* dark: #11111b, deeper than bg-primary */
+    border-left: 2px solid var(--accent-dim);
+    margin: 0 -24px;                  /* bleed to editor padding edges */
+    padding: 0 24px;
+}
+
+@media (prefers-color-scheme: light) {
+    #editor-highlight .editor-code-block {
+        background: #e8ecf0;          /* same as Preview/Chat code block */
+        border-left-color: #d0d7de;
+    }
+}
+
 /* Light mode: GitHub Light palette for editor syntax */
 @media (prefers-color-scheme: light) {
     #editor-highlight .hljs-section,
