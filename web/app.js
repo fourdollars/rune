@@ -836,6 +836,7 @@ function replayHistory(messages) {
             body.className = 'body';
             if (typeof marked !== 'undefined') {
                 body.innerHTML = marked.parse(m.content);
+                renderChatMath(body);
             } else {
                 body.textContent = m.content;
             }
@@ -856,6 +857,20 @@ function replayHistory(messages) {
     }
     addSystemMessage('── current ──');
     chatMessages.scrollTop = chatMessages.scrollHeight;
+}
+
+function renderChatMath(el) {
+    if (typeof renderMathInElement !== 'undefined') {
+        renderMathInElement(el, {
+            delimiters: [
+                {left: '$$', right: '$$', display: true},
+                {left: '$', right: '$', display: false},
+                {left: '\\(', right: '\\)', display: false},
+                {left: '\\[', right: '\\]', display: true}
+            ],
+            throwOnError: false
+        });
+    }
 }
 
 function updateOnlineCount(count) {
@@ -904,6 +919,7 @@ function appendToLastAssistant(token) {
 function finalizeAssistantMessage() {
     if (currentAssistantEl && typeof marked !== 'undefined') {
         currentAssistantEl.innerHTML = marked.parse(currentAssistantText);
+        renderChatMath(currentAssistantEl);
     }
     currentAssistantEl = null;
     currentAssistantText = '';

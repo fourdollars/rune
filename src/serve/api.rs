@@ -120,7 +120,7 @@ pub enum SseMsg {
         messages: Vec<crate::serve::db::ChatRecord>,
     },
     #[serde(rename = "auth_result")]
-    AuthResult { is_admin: bool, is_guest: bool },
+    AuthResult { ok: bool, is_admin: bool, is_guest: bool },
     #[serde(rename = "file_list")]
     FileList {
         files: Vec<FileEntry>,
@@ -514,7 +514,7 @@ pub async fn events_handler(
     let mut init_msgs = Vec::new();
 
     // Auth result
-    init_msgs.push(SseMsg::AuthResult { is_admin, is_guest });
+    init_msgs.push(SseMsg::AuthResult { ok: true, is_admin, is_guest });
 
     // Model list — show effective model and metadata for this note
     let effective = state.effective_model(&note_id).await;
