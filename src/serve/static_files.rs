@@ -378,4 +378,71 @@ mod tests {
             "confirmLogout must redirect to /?next=..."
         );
     }
+
+    // ── Theme tests ──────────────────────────────────────────────────
+
+    #[test]
+    fn test_style_css_has_color_scheme() {
+        let css = get("style.css").unwrap();
+        assert!(
+            css.contains("color-scheme: light dark"),
+            "style.css :root must declare color-scheme: light dark"
+        );
+    }
+
+    #[test]
+    fn test_style_css_has_light_mode_media_query() {
+        let css = get("style.css").unwrap();
+        assert!(
+            css.contains("prefers-color-scheme: light"),
+            "style.css must have @media (prefers-color-scheme: light)"
+        );
+        // Light mode must override the key colour tokens
+        let light_pos = css.find("prefers-color-scheme: light").unwrap();
+        let light_block = &css[light_pos..light_pos + 600];
+        assert!(
+            light_block.contains("--bg-primary"),
+            "light mode block must override --bg-primary"
+        );
+        assert!(
+            light_block.contains("--text-primary"),
+            "light mode block must override --text-primary"
+        );
+        assert!(
+            light_block.contains("--accent"),
+            "light mode block must override --accent"
+        );
+        assert!(
+            light_block.contains("--border"),
+            "light mode block must override --border"
+        );
+    }
+
+    #[test]
+    fn test_index_html_has_color_scheme_meta() {
+        let html = get("index.html").unwrap();
+        assert!(
+            html.contains("color-scheme\" content=\"light dark\""),
+            "index.html must have <meta name=\"color-scheme\" content=\"light dark\">"
+        );
+    }
+
+    #[test]
+    fn test_index_html_highlight_dark_css_media_scoped() {
+        let html = get("index.html").unwrap();
+        // highlight-dark.min.css must only load in dark mode
+        assert!(
+            html.contains("highlight-dark.min.css\" media=\"(prefers-color-scheme: dark)\""),
+            "highlight-dark.min.css must have media=(prefers-color-scheme: dark) to avoid overriding light mode code colours"
+        );
+    }
+
+    #[test]
+    fn test_login_html_has_color_scheme_meta() {
+        let html = get("login.html").unwrap();
+        assert!(
+            html.contains("color-scheme\" content=\"light dark\""),
+            "login.html must have <meta name=\"color-scheme\" content=\"light dark\">"
+        );
+    }
 }
