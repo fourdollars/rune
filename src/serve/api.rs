@@ -1374,12 +1374,15 @@ const PUBLIC_PREVIEW_HTML: &str = r#"<!DOCTYPE html>
 <link rel="stylesheet" href="/assets/highlight-light.min.css" media="(prefers-color-scheme: light)">
 <link rel="stylesheet" href="/assets/katex.min.css">
 <style>
+  /* Override SPA body rules from style.css */
   body {
-    margin: 0;
-    padding: 20px;
-    background: var(--bg-primary);
-    color: var(--text-primary);
-    font-family: var(--font-sans);
+    margin: 0 !important;
+    padding: 20px !important;
+    background: var(--bg-primary) !important;
+    color: var(--text-primary) !important;
+    font-family: var(--font-sans) !important;
+    height: auto !important;
+    overflow: auto !important;
   }
   .public-container {
     max-width: 860px;
