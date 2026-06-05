@@ -19,6 +19,10 @@ static ASSETS: LazyLock<HashMap<&'static str, &'static str>> = LazyLock::new(|| 
         "highlight-dark.min.css",
         include_str!("../../web/highlight-dark.min.css"),
     );
+    m.insert(
+        "highlight-light.min.css",
+        include_str!("../../web/highlight-light.min.css"),
+    );
     m.insert("katex.min.css", include_str!("../../web/katex.min.css"));
     m.insert("katex.min.js", include_str!("../../web/katex.min.js"));
     m.insert(
@@ -434,6 +438,24 @@ mod tests {
         assert!(
             html.contains("highlight-dark.min.css\" media=\"(prefers-color-scheme: dark)\""),
             "highlight-dark.min.css must have media=(prefers-color-scheme: dark) to avoid overriding light mode code colours"
+        );
+    }
+
+    #[test]
+    fn test_index_html_highlight_light_css_media_scoped() {
+        let html = get("index.html").unwrap();
+        // highlight-light.min.css must only load in light mode
+        assert!(
+            html.contains(r#"highlight-light.min.css" media="(prefers-color-scheme: light)""#),
+            "highlight-light.min.css must have media=(prefers-color-scheme: light)"
+        );
+    }
+
+    #[test]
+    fn test_static_assets_has_highlight_light_css() {
+        assert!(
+            get("highlight-light.min.css").is_some(),
+            "highlight-light.min.css must be embedded in static assets"
         );
     }
 

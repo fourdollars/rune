@@ -707,7 +707,7 @@ pre.hljs-pre:hover .copy-btn {
 /* --- highlight.js in Preview --- */
 /* Override generic #preview pre with hljs-specific styles */
 #preview pre.hljs-pre {
-    background: #0d1117;   /* github-dark background */
+    background: #0d1117;   /* github-dark background (dark mode default) */
     border-radius: 6px;
     padding: 0;
     margin: 1em 0;
@@ -737,6 +737,15 @@ pre.hljs-pre:hover .copy-btn {
     overflow-x: auto;
     background: transparent;
 }
+/* Light mode: use github-light code block background */
+@media (prefers-color-scheme: light) {
+    #preview pre.hljs-pre {
+        background: #f6f8fa;
+    }
+    .chat-msg .body pre.hljs-pre {
+        background: #f6f8fa;
+    }
+}
 
 
 /* Fence opening/closing markers ```lang */
@@ -745,7 +754,7 @@ pre.hljs-pre:hover .copy-btn {
 }
 
 /* --- highlight.js Markdown token colors in editor --- */
-/* These map to hljs class names emitted by highlight.js markdown grammar */
+/* Dark mode (Dracula palette) */
 #editor-highlight .hljs-section,
 #editor-highlight .hljs-title        { color: #ff79c6; font-weight: bold; } /* # headers */
 #editor-highlight .hljs-bullet       { color: #ff79c6; }                    /* - * list */
@@ -766,6 +775,27 @@ pre.hljs-pre:hover .copy-btn {
 /* --- Editor: fenced code block background --- */
 #editor-highlight .hljs-meta {
     color: #6272a4;   /* fence ticks + language label */
+}
+
+/* Light mode: GitHub Light palette for editor syntax */
+@media (prefers-color-scheme: light) {
+    #editor-highlight .hljs-section,
+    #editor-highlight .hljs-title        { color: #005cc5; font-weight: bold; } /* # headers */
+    #editor-highlight .hljs-bullet       { color: #735c0f; }                    /* - * list */
+    #editor-highlight .hljs-strong       { color: #24292e; font-weight: bold; } /* **bold** */
+    #editor-highlight .hljs-emphasis     { color: #24292e; font-style: italic; }/* *italic* */
+    #editor-highlight .hljs-code         { color: #22863a; }                    /* `inline` */
+    #editor-highlight .hljs-link         { color: #0366d6; }                    /* [text](url) */
+    #editor-highlight .hljs-string       { color: #032f62; }                    /* "strings" */
+    #editor-highlight .hljs-quote        { color: #6a737d; font-style: italic; }/* > blockquote */
+    #editor-highlight .hljs-comment      { color: #6a737d; }
+    #editor-highlight .hljs-attr         { color: #22863a; }
+    #editor-highlight .hljs-keyword      { color: #d73a49; }
+    #editor-highlight .hljs-number       { color: #005cc5; }
+    #editor-highlight .hljs-literal      { color: #005cc5; }
+    #editor-highlight .hljs-deletion     { color: #b31d28; }                    /* diff - */
+    #editor-highlight .hljs-addition     { color: #22863a; }                    /* diff + */
+    #editor-highlight .hljs-meta        { color: #6a737d; }
 }
 
 /* --- Mermaid diagrams --- */
