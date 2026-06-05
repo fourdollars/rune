@@ -6,6 +6,7 @@ use std::sync::LazyLock;
 static ASSETS: LazyLock<HashMap<&'static str, &'static str>> = LazyLock::new(|| {
     let mut m = HashMap::new();
     m.insert("index.html", include_str!("../../web/index.html"));
+    m.insert("login.html", include_str!("../../web/login.html"));
     m.insert("favicon.svg", include_str!("../../web/favicon.svg"));
     m.insert("app.js", include_str!("../../web/app.js"));
     m.insert("style.css", include_str!("../../web/style.css"));
@@ -353,6 +354,28 @@ mod tests {
         assert!(
             js[switch_file_pos..next_fn_after_file].contains("updateBrowserUrl"),
             "switchFile must call updateBrowserUrl"
+        );
+    }
+
+    #[test]
+    fn test_login_html_present_and_correct() {
+        let html = get("login.html").unwrap();
+        assert!(html.contains("login-box"), "login.html missing login-box");
+        assert!(html.contains("nickname-input"), "login.html missing nickname-input");
+        assert!(html.contains("token-input"), "login.html missing token-input");
+        assert!(html.contains("login-submit"), "login.html missing login-submit");
+        assert!(html.contains("/public/"), "login.html missing link to /public/");
+        assert!(html.contains("/notes/"), "login.html missing redirect to /notes/");
+        assert!(!html.contains("nickname-modal"), "login.html must not use modal pattern");
+    }
+
+    #[test]
+    fn test_app_js_logout_redirects_to_root() {
+        let js = get("app.js").unwrap();
+        // confirmLogout must redirect to '/' (login page)
+        assert!(
+            js.contains("window.location.href = '/?next="),
+            "confirmLogout must redirect to /?next=..."
         );
     }
 }

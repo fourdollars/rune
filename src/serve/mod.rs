@@ -478,7 +478,7 @@ pub async fn run(config: RuneConfig, opts: NotesOptions) {
 
     // Static + SSE routes (SSE has its own auth logic inside the handler)
     let app = Router::new()
-        .route("/", get(index_handler))
+        .route("/", get(login_handler))
         .route("/api/events", get(api::events_handler))
         .route("/favicon.ico", get(favicon_handler))
         .route("/favicon.svg", get(favicon_handler))
@@ -545,6 +545,15 @@ pub async fn run(config: RuneConfig, opts: NotesOptions) {
 }
 
 /// Serve the main index.html.
+/// Serve the login page (/).
+async fn login_handler() -> impl IntoResponse {
+    match static_files::get("login.html") {
+        Some(content) => Html(content).into_response(),
+        None => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+    }
+}
+
+/// Serve the main SPA (index.html).
 async fn index_handler() -> impl IntoResponse {
     match static_files::get("index.html") {
         Some(content) => Html(content).into_response(),
@@ -948,17 +957,30 @@ mod tests {
             next.run(req).await
         }
 
-        let app = Router::new().route("/", get(index_handler));
+        // Test login_handler (/) and index_handler (/notes/) separately
+        let app = Router::new()
+            .route("/", get(login_handler))
+            .route("/notes/", get(index_handler));
         let req = Request::builder()
             .uri("/")
             .body(axum::body::Body::empty())
             .unwrap();
-        let resp = app.oneshot(req).await.unwrap();
+        let resp = app.clone().oneshot(req).await.unwrap();
         // Either 200 (embedded file found) or 500 (no embed in test binary)
         assert!(
             resp.status() == StatusCode::OK || resp.status() == StatusCode::INTERNAL_SERVER_ERROR,
-            "unexpected status: {}",
+            "unexpected status for login_handler: {}",
             resp.status()
+        );
+        let req2 = Request::builder()
+            .uri("/notes/")
+            .body(axum::body::Body::empty())
+            .unwrap();
+        let resp2 = app.oneshot(req2).await.unwrap();
+        assert!(
+            resp2.status() == StatusCode::OK || resp2.status() == StatusCode::INTERNAL_SERVER_ERROR,
+            "unexpected status for index_handler: {}",
+            resp2.status()
         );
     }
 

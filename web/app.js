@@ -1421,20 +1421,14 @@ function hideLogoutDialog() {
 
 function confirmLogout() {
     loggedOut = true;
-    // Close WS
-    // EventSource handles reconnection automatically
+    // Close SSE
+    if (evtSource) { evtSource.close(); evtSource = null; }
     // Clear all stored credentials
     localStorage.removeItem('rune_nickname');
     localStorage.removeItem('rune_token');
-    // Reset in-memory state
-    myNickname = '';
-    myToken    = '';
-    // Hide dialog + app, show login modal
-    hideLogoutDialog();
-    document.getElementById('nickname-input').value = '';
-    const tokenInput = document.getElementById('token-input');
-    if (tokenInput) tokenInput.value = '';
-    document.getElementById('nickname-modal').classList.remove('hidden');
+    // Redirect to login page, carrying current path as ?next= so login can return here
+    const next = window.location.pathname;
+    window.location.href = '/?next=' + encodeURIComponent(next);
 }
 
 // --- File management ---

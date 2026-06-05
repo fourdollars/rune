@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ᚱᚢᚾᛖ</title>
+    <link rel="stylesheet" href="/assets/style.css?v=0a2d549">
+    <style>
+        /* Login page: full-screen centered, no sidebar/panels */
+        body {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            min-height: 100dvh;
+            margin: 0;
+        }
+        .login-box {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 36px 32px;
+            width: 300px;
+            display: flex;
+            flex-direction: column;
+            gap: 16px;
+            text-align: center;
+        }
+        .login-title {
+            font-size: 32px;
+            color: var(--accent);
+            letter-spacing: 3px;
+        }
+        .login-subtitle {
+            font-size: 13px;
+            color: var(--text-muted);
+        }
+        .login-box input {
+            background: var(--bg-surface);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            color: var(--text-primary);
+            font-size: 14px;
+            padding: 10px 14px;
+            text-align: center;
+            outline: none;
+            transition: border-color 0.15s;
+            width: 100%;
+            box-sizing: border-box;
+        }
+        .login-box input:focus { border-color: var(--accent); }
+        .login-box button {
+            background: var(--accent);
+            border: none;
+            border-radius: 6px;
+            color: var(--bg-primary);
+            font-size: 14px;
+            font-weight: 700;
+            padding: 10px;
+            cursor: pointer;
+            transition: opacity 0.15s;
+            width: 100%;
+        }
+        .login-box button:hover { opacity: 0.85; }
+        .login-error {
+            font-size: 12px;
+            color: var(--error);
+            min-height: 16px;
+        }
+        .login-guest-link {
+            font-size: 12px;
+            color: var(--text-muted);
+        }
+        .login-guest-link a {
+            color: var(--text-secondary);
+            text-decoration: none;
+        }
+        .login-guest-link a:hover { text-decoration: underline; }
+    </style>
+</head>
+<body>
+    <div class="login-box">
+        <div class="login-title">ᚱᚢᚾᛖ</div>
+        <div class="login-subtitle">Enter your nickname to join</div>
+        <input id="nickname-input" type="text" placeholder="your name…" maxlength="20" autofocus autocomplete="username" />
+        <input id="token-input" type="password" placeholder="access token (if required)" autocomplete="current-password" />
+        <div class="login-error" id="login-error"></div>
+        <button id="login-submit">Join →</button>
+        <div class="login-guest-link">
+            or <a href="/public/">browse public notes</a>
+        </div>
+    </div>
+
+    <script>
+    'use strict';
+
+    const redirectTo = (function() {
+        // After login, go to the URL the user originally tried to reach,
+        // or fall back to /notes/
+        const params = new URLSearchParams(window.location.search);
+        const next = params.get('next');
+        if (next && next.startsWith('/notes')) return next;
+        return '/notes/';
+    })();
+
+    function setError(msg) {
+        document.getElementById('login-error').textContent = msg;
+    }
+
+    async function tryLogin() {
+        const nickname = document.getElementById('nickname-input').value.trim();
+        const token    = document.getElementById('token-input').value.trim();
+        if (!nickname) {
+            const el = document.getElementById('nickname-input');
+            el.style.borderColor = 'var(--error)';
+            setTimeout(() => el.style.borderColor = '', 800);
+            return;
+        }
+        // Persist to localStorage (same keys as app.js)
+        try {
+            localStorage.setItem('rune_nickname', nickname);
+            if (token) localStorage.setItem('rune_token', token);
+            else localStorage.removeItem('rune_token');
+        } catch {}
+        // Quick auth probe: hit /api/notes with the supplied token
+        try {
+            const headers = { 'Content-Type': 'application/json' };
+            if (token) headers['Authorization'] = 'Bearer ' + token;
+            const resp = await fetch('/api/notes', { headers });
+            if (resp.status === 401 || resp.status === 403) {
+                setError('Invalid token. Please try again.');
+                localStorage.removeItem('rune_token');
+                return;
+            }
+        } catch (e) {
+            // Network error — still proceed; SSE will handle auth
+        }
+        setError('');
+        window.location.href = redirectTo;
+    }
+
+    document.getElementById('login-submit').addEventListener('click', tryLogin);
+    document.getElementById('nickname-input').addEventListener('keydown', e => {
+        if (e.key === 'Enter') tryLogin();
+    });
+    document.getElementById('token-input').addEventListener('keydown', e => {
+        if (e.key === 'Enter') tryLogin();
+    });
+
+    // If already logged in, skip straight to /notes/
+    (function() {
+        const nick = localStorage.getItem('rune_nickname');
+        if (nick) {
+            document.getElementById('nickname-input').value = nick;
+        }
+        const tok = localStorage.getItem('rune_token');
+        if (tok) {
+            document.getElementById('token-input').value = tok;
+        }
+    })();
+    </script>
+</body>
+</html>
