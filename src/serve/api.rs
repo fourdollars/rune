@@ -1367,58 +1367,51 @@ const PUBLIC_PREVIEW_HTML: &str = r#"<!DOCTYPE html>
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="color-scheme" content="light dark">
 <title>{{TITLE}}</title>
+<link rel="stylesheet" href="/assets/style.css">
 <link rel="stylesheet" href="/assets/highlight-dark.min.css" media="(prefers-color-scheme: dark)">
 <link rel="stylesheet" href="/assets/highlight-light.min.css" media="(prefers-color-scheme: light)">
+<link rel="stylesheet" href="/assets/katex.min.css">
 <style>
-  :root { color-scheme: light dark; }
-  @media (prefers-color-scheme: dark) {
-    body { background: #1e1e2e; color: #cdd6f4; }
-    .container { background: #181825; border: 1px solid #313244; }
-    a { color: #89b4fa; }
-    code { background: #313244; color: #cdd6f4; }
-    pre { background: #181825; border: 1px solid #313244; }
-    h1,h2,h3,h4 { color: #cba6f7; border-bottom-color: #313244; }
-    blockquote { border-left: 4px solid #585b70; color: #a6adc8; background: #181825; }
+  body {
+    margin: 0;
+    padding: 20px;
+    background: var(--bg-primary);
+    color: var(--text-primary);
+    font-family: var(--font-sans);
   }
-  @media (prefers-color-scheme: light) {
-    body { background: #f6f8fa; color: #24292e; }
-    .container { background: #fff; border: 1px solid #e1e4e8; }
-    a { color: #0366d6; }
-    code { background: #eef0f3; color: #24292e; border: 1px solid #d0d7de; }
-    pre { background: #e8ecf0; border: 1px solid #d0d7de; }
-    pre code { background: transparent; border: none; }
-    h1,h2,h3,h4 { color: #24292e; border-bottom: 1px solid #eaecef; }
-    blockquote { border-left: 4px solid #dfe2e5; color: #6a737d; background: #f6f8fa; }
+  .public-container {
+    max-width: 860px;
+    margin: 0 auto;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 32px 40px;
   }
-  * { box-sizing: border-box; }
-  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif; margin: 0; padding: 20px; }
-  .container { max-width: 860px; margin: 0 auto; padding: 32px 40px; border-radius: 8px; }
-  h1,h2,h3,h4,h5,h6 { margin-top: 24px; margin-bottom: 16px; font-weight: 600; line-height: 1.25; padding-bottom: .3em; }
-  h1 { font-size: 2em; } h2 { font-size: 1.5em; } h3 { font-size: 1.25em; }
-  p { margin: 0 0 16px; line-height: 1.6; }
-  pre { padding: 16px; overflow: auto; border-radius: 6px; font-size: 85%; }
-  code { padding: .2em .4em; border-radius: 3px; font-size: 85%; }
-  pre code { padding: 0; background: transparent; }
-  blockquote { margin: 0 0 16px; padding: 0 1em; }
-  ul,ol { padding-left: 2em; margin: 0 0 16px; }
-  table { border-collapse: collapse; width: 100%; margin-bottom: 16px; }
-  th,td { border: 1px solid #dfe2e5; padding: 6px 13px; }
-  th { font-weight: 600; }
-  img { max-width: 100%; }
   .meta { font-size: 12px; opacity: 0.5; margin-bottom: 24px; }
   #loading { text-align: center; padding: 40px; opacity: 0.5; }
-  footer { margin-top: 32px; padding-top: 16px; border-top: 1px solid; opacity: 0.4; text-align: center; font-size: 12px; }
+  footer {
+    margin-top: 32px;
+    padding-top: 16px;
+    border-top: 1px solid var(--border);
+    opacity: 0.4;
+    text-align: center;
+    font-size: 12px;
+  }
   footer a { color: inherit; text-decoration: underline; }
 </style>
 </head>
 <body>
-<div class="container">
-  <div class="meta"><a href="/public/{{NOTE}}/" style="color:inherit;text-decoration:none;opacity:1" onmouseover="this.style.textDecoration='underline'" onmouseout="this.style.textDecoration='none'">{{NOTE_LABEL}}</a> / {{FILE_LABEL}}</div>
+<div class="public-container">
+  <div class="meta">
+    <a href="/public/{{NOTE}}/" style="color:inherit;text-decoration:none;opacity:1"
+       onmouseover="this.style.textDecoration='underline'"
+       onmouseout="this.style.textDecoration='none'">{{NOTE_LABEL}}</a> / {{FILE_LABEL}}
+  </div>
   <div id="loading">Loading…</div>
-  <div id="content" style="display:none"></div>
+  <div id="preview" style="display:none"></div>
 </div>
-<link rel="stylesheet" href="/assets/katex.min.css">
 <script src="/assets/katex.min.js"></script>
 <script src="/assets/katex-auto-render.min.js"></script>
 <script src="/assets/marked.min.js"></script>
@@ -1440,21 +1433,21 @@ const PUBLIC_PREVIEW_HTML: &str = r#"<!DOCTYPE html>
       if (typeof hljs !== 'undefined') {
         const language = lang && hljs.getLanguage(lang) ? lang : null;
         const highlighted = language ? hljs.highlight(text, {language}).value : hljs.highlightAuto(text).value;
-        return '<pre><code class="hljs">' + highlighted + '</code></pre>';
+        return '<pre class="hljs-pre"><code class="hljs">' + highlighted + '</code></pre>';
       }
       return '<pre><code>' + text.replace(/</g,'&lt;') + '</code></pre>';
     };
     marked.use({ renderer });
     const html = marked.parse(md);
-    const content = document.getElementById('content');
+    const content = document.getElementById('preview');
     content.innerHTML = html;
     if (typeof renderMathInElement !== 'undefined') {
       renderMathInElement(content, {
         delimiters: [
           {left: '$$', right: '$$', display: true},
           {left: '$', right: '$', display: false},
-          {left: '\\\\(', right: '\\\\)', display: false},
-          {left: '\\\\[', right: '\\\\]', display: true}
+          {left: '\\(', right: '\\)', display: false},
+          {left: '\\[', right: '\\]', display: true}
         ],
         throwOnError: false
       });
@@ -1462,7 +1455,10 @@ const PUBLIC_PREVIEW_HTML: &str = r#"<!DOCTYPE html>
     document.getElementById('loading').style.display = 'none';
     content.style.display = '';
     if (typeof mermaid !== 'undefined') {
-      mermaid.initialize({ startOnLoad: false, theme: window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'default' });
+      mermaid.initialize({
+        startOnLoad: false,
+        theme: window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'default'
+      });
       document.querySelectorAll('.mermaid').forEach(async (el) => {
         try { const {svg} = await mermaid.render('mg'+el.id, el.textContent); el.innerHTML = svg; } catch(e) {}
       });
@@ -4033,6 +4029,7 @@ mod isolation_tests {
 
     #[test]
     fn test_public_preview_html_highlight_dark_has_media() {
+        use super::PUBLIC_PREVIEW_HTML;
         assert!(
             PUBLIC_PREVIEW_HTML.contains(r#"highlight-dark.min.css" media="(prefers-color-scheme: dark)""#),
             "PUBLIC_PREVIEW_HTML: highlight-dark must have media=(prefers-color-scheme: dark)"
@@ -4041,6 +4038,7 @@ mod isolation_tests {
 
     #[test]
     fn test_public_preview_html_highlight_light_has_media() {
+        use super::PUBLIC_PREVIEW_HTML;
         assert!(
             PUBLIC_PREVIEW_HTML.contains(r#"highlight-light.min.css" media="(prefers-color-scheme: light)""#),
             "PUBLIC_PREVIEW_HTML: highlight-light.min.css must be loaded for light mode"
