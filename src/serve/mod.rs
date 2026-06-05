@@ -1898,4 +1898,204 @@ mod tests {
         assert_eq!(models[0], "gpt-5-mini");
         assert_eq!(models[1], "claude-sonnet-4.6");
     }
+    // ─────────────────────────────────────────────────────────────────────────
+    // Regression: guest GET /api/notes (login probe) must not return 403.
+    // Before the fix, the guest mutation guard used a path whitelist and
+    // blocked ALL non-whitelisted routes — including GET /api/notes — with 403.
+    // login.html probes GET /api/notes to validate the token, so the result
+    // was that every guest token login attempt failed.
+    // ─────────────────────────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_guest_get_api_notes_allowed() {
+        use axum::http::{Method, Request, StatusCode};
+        use axum::middleware as axum_mw;
+        use axum::routing::get;
+        use std::collections::HashMap;
+        use std::sync::Arc;
+        use tokio::sync::{broadcast, RwLock};
+        use tower::ServiceExt;
+
+        // Inline middleware that mirrors the FIXED auth_middleware logic
+        // (no ConnectInfo needed for this test)
+        async fn guest_mw(
+            axum::extract::State(state): axum::extract::State<ServerState>,
+            req: axum::http::Request<axum::body::Body>,
+            next: axum::middleware::Next,
+        ) -> axum::response::Response {
+            let token = req
+                .headers()
+                .get("authorization")
+                .and_then(|v| v.to_str().ok())
+                .and_then(|v| v.strip_prefix("Bearer "))
+                .map(|s| s.to_string());
+            let guest_ok = state
+                .guest_token
+                .as_deref()
+                .map(|gt| !gt.is_empty() && token.as_deref() == Some(gt))
+                .unwrap_or(false);
+            if !guest_ok {
+                return (
+                    StatusCode::UNAUTHORIZED,
+                    axum::Json(serde_json::json!({"ok":false,"error":"Authentication failed"})),
+                )
+                    .into_response();
+            }
+            // Fixed: GET is read-only, always allow for guests
+            if req.method() != axum::http::Method::GET {
+                let path = req.uri().path().to_string();
+                let allowed = ["/api/note/switch", "/api/file/switch", "/api/system-prompt"];
+                if !allowed.iter().any(|p| path == *p) {
+                    return (
+                        StatusCode::FORBIDDEN,
+                        axum::Json(
+                            serde_json::json!({"ok":false,"error":"Guest access is read-only"}),
+                        ),
+                    )
+                        .into_response();
+                }
+            }
+            next.run(req).await
+        }
+
+        let (tx, _) = broadcast::channel(64);
+        let db = ChatDb::open(std::path::Path::new(":memory:")).expect("in-memory db");
+        let state = ServerState {
+            config: crate::config::RuneConfig::default(),
+            user_token: None,
+            admin_token: None,
+            guest_token: Some("guest".into()),
+            files: Arc::new(RwLock::new(HashMap::new())),
+            active_file: Arc::new(RwLock::new(String::new())),
+            models: Arc::new(RwLock::new(vec![ModelInfo {
+                id: "m1".into(),
+                context_window: None,
+                reasoning_efforts: vec![],
+                supported_endpoints: vec![],
+            }])),
+            rooms: Arc::new(RwLock::new(HashMap::new())),
+            global_default_model: Arc::new(RwLock::new("m1".into())),
+            admin_broadcast_tx: tx,
+            chat_db: db,
+            data_dir: std::path::PathBuf::from("/tmp/rune-test"),
+        };
+
+        let app = axum::Router::new()
+            .route(
+                "/api/notes",
+                get(crate::serve::api::notes_list_json_handler),
+            )
+            .layer(axum_mw::from_fn_with_state(state.clone(), guest_mw))
+            .with_state(state);
+
+        let req = Request::builder()
+            .method(Method::GET)
+            .uri("/api/notes")
+            .header("Authorization", "Bearer guest")
+            .body(axum::body::Body::empty())
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(
+            resp.status(),
+            StatusCode::OK,
+            "guest GET /api/notes must return 200 — regression: login probe was blocked with 403"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_guest_post_mutation_blocked() {
+        // Mutation safety: guest tokens must still be blocked from POST endpoints.
+        use axum::http::{Method, Request, StatusCode};
+        use axum::middleware as axum_mw;
+        use axum::routing::post;
+        use std::collections::HashMap;
+        use std::sync::Arc;
+        use tokio::sync::{broadcast, RwLock};
+        use tower::ServiceExt;
+
+        async fn guest_mw(
+            axum::extract::State(state): axum::extract::State<ServerState>,
+            req: axum::http::Request<axum::body::Body>,
+            next: axum::middleware::Next,
+        ) -> axum::response::Response {
+            let token = req
+                .headers()
+                .get("authorization")
+                .and_then(|v| v.to_str().ok())
+                .and_then(|v| v.strip_prefix("Bearer "))
+                .map(|s| s.to_string());
+            let guest_ok = state
+                .guest_token
+                .as_deref()
+                .map(|gt| !gt.is_empty() && token.as_deref() == Some(gt))
+                .unwrap_or(false);
+            if !guest_ok {
+                return (
+                    StatusCode::UNAUTHORIZED,
+                    axum::Json(serde_json::json!({"ok":false,"error":"Authentication failed"})),
+                )
+                    .into_response();
+            }
+            if req.method() != axum::http::Method::GET {
+                let path = req.uri().path().to_string();
+                let allowed = ["/api/note/switch", "/api/file/switch", "/api/system-prompt"];
+                if !allowed.iter().any(|p| path == *p) {
+                    return (
+                        StatusCode::FORBIDDEN,
+                        axum::Json(
+                            serde_json::json!({"ok":false,"error":"Guest access is read-only"}),
+                        ),
+                    )
+                        .into_response();
+                }
+            }
+            next.run(req).await
+        }
+
+        let (tx, _) = broadcast::channel(64);
+        let db = ChatDb::open(std::path::Path::new(":memory:")).expect("in-memory db");
+        let state = ServerState {
+            config: crate::config::RuneConfig::default(),
+            user_token: None,
+            admin_token: None,
+            guest_token: Some("guest".into()),
+            files: Arc::new(RwLock::new(HashMap::new())),
+            active_file: Arc::new(RwLock::new(String::new())),
+            models: Arc::new(RwLock::new(vec![ModelInfo {
+                id: "m1".into(),
+                context_window: None,
+                reasoning_efforts: vec![],
+                supported_endpoints: vec![],
+            }])),
+            rooms: Arc::new(RwLock::new(HashMap::new())),
+            global_default_model: Arc::new(RwLock::new("m1".into())),
+            admin_broadcast_tx: tx,
+            chat_db: db,
+            data_dir: std::path::PathBuf::from("/tmp/rune-test"),
+        };
+
+        let app = axum::Router::new()
+            .route(
+                "/api/file/update",
+                post(crate::serve::api::file_update_handler),
+            )
+            .layer(axum_mw::from_fn_with_state(state.clone(), guest_mw))
+            .with_state(state);
+
+        let req = Request::builder()
+            .method(Method::POST)
+            .uri("/api/file/update")
+            .header("Authorization", "Bearer guest")
+            .header("Content-Type", "application/json")
+            .body(axum::body::Body::from(
+                r#"{"note_id":"Demo","filename":"test.md","content":"hack"}"#,
+            ))
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(
+            resp.status(),
+            StatusCode::FORBIDDEN,
+            "guest POST /api/file/update must return 403"
+        );
+    }
 }

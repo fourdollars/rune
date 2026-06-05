@@ -334,12 +334,24 @@ mod tests {
     fn test_app_js_has_url_routing() {
         let js = get("app.js").unwrap();
         assert!(js.contains("parseNotesUrl"), "app.js missing parseNotesUrl");
-        assert!(js.contains("updateBrowserUrl"), "app.js missing updateBrowserUrl");
-        assert!(js.contains("_pendingNoteId"), "app.js missing _pendingNoteId");
+        assert!(
+            js.contains("updateBrowserUrl"),
+            "app.js missing updateBrowserUrl"
+        );
+        assert!(
+            js.contains("_pendingNoteId"),
+            "app.js missing _pendingNoteId"
+        );
         assert!(js.contains("_pendingFile"), "app.js missing _pendingFile");
         assert!(js.contains("popstate"), "app.js missing popstate listener");
-        assert!(js.contains("history.pushState"), "app.js missing history.pushState");
-        assert!(js.contains("history.replaceState"), "app.js missing history.replaceState for .md redirect");
+        assert!(
+            js.contains("history.pushState"),
+            "app.js missing history.pushState"
+        );
+        assert!(
+            js.contains("history.replaceState"),
+            "app.js missing history.replaceState for .md redirect"
+        );
     }
 
     #[test]
@@ -347,10 +359,20 @@ mod tests {
         let js = get("app.js").unwrap();
         // switchNote and switchFile must call updateBrowserUrl
         // Check they each contain updateBrowserUrl (not just that it's defined)
-        let switch_note_pos = js.find("async function switchNote").expect("switchNote missing");
-        let switch_file_pos = js.find("async function switchFile").expect("switchFile missing");
-        let next_fn_after_note = js[switch_note_pos + 20..].find("\nasync function ").map(|p| switch_note_pos + 20 + p).unwrap_or(js.len());
-        let next_fn_after_file = js[switch_file_pos + 20..].find("\nasync function ").map(|p| switch_file_pos + 20 + p).unwrap_or(js.len());
+        let switch_note_pos = js
+            .find("async function switchNote")
+            .expect("switchNote missing");
+        let switch_file_pos = js
+            .find("async function switchFile")
+            .expect("switchFile missing");
+        let next_fn_after_note = js[switch_note_pos + 20..]
+            .find("\nasync function ")
+            .map(|p| switch_note_pos + 20 + p)
+            .unwrap_or(js.len());
+        let next_fn_after_file = js[switch_file_pos + 20..]
+            .find("\nasync function ")
+            .map(|p| switch_file_pos + 20 + p)
+            .unwrap_or(js.len());
         assert!(
             js[switch_note_pos..next_fn_after_note].contains("updateBrowserUrl"),
             "switchNote must call updateBrowserUrl"
@@ -365,12 +387,30 @@ mod tests {
     fn test_login_html_present_and_correct() {
         let html = get("login.html").unwrap();
         assert!(html.contains("login-box"), "login.html missing login-box");
-        assert!(html.contains("nickname-input"), "login.html missing nickname-input");
-        assert!(html.contains("token-input"), "login.html missing token-input");
-        assert!(html.contains("login-submit"), "login.html missing login-submit");
-        assert!(html.contains("/public/"), "login.html missing link to /public/");
-        assert!(html.contains("/notes/"), "login.html missing redirect to /notes/");
-        assert!(!html.contains("nickname-modal"), "login.html must not use modal pattern");
+        assert!(
+            html.contains("nickname-input"),
+            "login.html missing nickname-input"
+        );
+        assert!(
+            html.contains("token-input"),
+            "login.html missing token-input"
+        );
+        assert!(
+            html.contains("login-submit"),
+            "login.html missing login-submit"
+        );
+        assert!(
+            html.contains("/public/"),
+            "login.html missing link to /public/"
+        );
+        assert!(
+            html.contains("/notes/"),
+            "login.html missing redirect to /notes/"
+        );
+        assert!(
+            !html.contains("nickname-modal"),
+            "login.html must not use modal pattern"
+        );
     }
 
     #[test]

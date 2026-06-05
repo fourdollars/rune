@@ -120,7 +120,11 @@ pub enum SseMsg {
         messages: Vec<crate::serve::db::ChatRecord>,
     },
     #[serde(rename = "auth_result")]
-    AuthResult { ok: bool, is_admin: bool, is_guest: bool },
+    AuthResult {
+        ok: bool,
+        is_admin: bool,
+        is_guest: bool,
+    },
     #[serde(rename = "file_list")]
     FileList {
         files: Vec<FileEntry>,
@@ -514,7 +518,11 @@ pub async fn events_handler(
     let mut init_msgs = Vec::new();
 
     // Auth result
-    init_msgs.push(SseMsg::AuthResult { ok: true, is_admin, is_guest });
+    init_msgs.push(SseMsg::AuthResult {
+        ok: true,
+        is_admin,
+        is_guest,
+    });
 
     // Model list — show effective model and metadata for this note
     let effective = state.effective_model(&note_id).await;
@@ -4011,7 +4019,10 @@ mod isolation_tests {
 
         let app = Router::new()
             .route("/public", get(crate::serve::api::public_notes_list_handler))
-            .route("/public/", get(crate::serve::api::public_notes_list_handler))
+            .route(
+                "/public/",
+                get(crate::serve::api::public_notes_list_handler),
+            )
             .with_state(state);
 
         let req = axum::http::Request::builder()
@@ -4027,14 +4038,18 @@ mod isolation_tests {
         assert!(!body.contains("priv-note"), "Should NOT list private note");
         // Links must use /public/ prefix
         assert!(body.contains("/public/"), "Links must use /public/ prefix");
-        assert!(!body.contains("/notes/"), "Links must NOT use /notes/ prefix");
+        assert!(
+            !body.contains("/notes/"),
+            "Links must NOT use /notes/ prefix"
+        );
     }
 
     #[test]
     fn test_public_preview_html_highlight_dark_has_media() {
         use super::PUBLIC_PREVIEW_HTML;
         assert!(
-            PUBLIC_PREVIEW_HTML.contains(r#"highlight-dark.min.css" media="(prefers-color-scheme: dark)""#),
+            PUBLIC_PREVIEW_HTML
+                .contains(r#"highlight-dark.min.css" media="(prefers-color-scheme: dark)""#),
             "PUBLIC_PREVIEW_HTML: highlight-dark must have media=(prefers-color-scheme: dark)"
         );
     }
@@ -4043,7 +4058,8 @@ mod isolation_tests {
     fn test_public_preview_html_highlight_light_has_media() {
         use super::PUBLIC_PREVIEW_HTML;
         assert!(
-            PUBLIC_PREVIEW_HTML.contains(r#"highlight-light.min.css" media="(prefers-color-scheme: light)""#),
+            PUBLIC_PREVIEW_HTML
+                .contains(r#"highlight-light.min.css" media="(prefers-color-scheme: light)""#),
             "PUBLIC_PREVIEW_HTML: highlight-light.min.css must be loaded for light mode"
         );
     }
@@ -4063,7 +4079,12 @@ mod isolation_tests {
         let _ = db.set_file_public("mynote", "doc.md", true);
 
         // Create the actual markdown file so the handler can serve it
-        let md_dir = tmp.path().join(".rune").join("notes").join("mynote").join("markdown");
+        let md_dir = tmp
+            .path()
+            .join(".rune")
+            .join("notes")
+            .join("mynote")
+            .join("markdown");
         std::fs::create_dir_all(&md_dir).unwrap();
         std::fs::write(md_dir.join("doc.md"), "# Hello").unwrap();
 
@@ -4088,7 +4109,10 @@ mod isolation_tests {
         };
 
         let app = Router::new()
-            .route("/public/{note}/{file}", get(crate::serve::api::public_preview_handler))
+            .route(
+                "/public/{note}/{file}",
+                get(crate::serve::api::public_preview_handler),
+            )
             .with_state(state);
 
         let req = axum::http::Request::builder()
@@ -4101,7 +4125,13 @@ mod isolation_tests {
         let body = String::from_utf8_lossy(&resp.into_body().collect().await.unwrap().to_bytes())
             .to_string();
         // Preview HTML must link back to /public/, not /notes/
-        assert!(body.contains("/public/"), "Preview must use /public/ back-link");
-        assert!(!body.contains("/notes/"), "Preview must NOT use /notes/ back-link");
+        assert!(
+            body.contains("/public/"),
+            "Preview must use /public/ back-link"
+        );
+        assert!(
+            !body.contains("/notes/"),
+            "Preview must NOT use /notes/ back-link"
+        );
     }
 }
