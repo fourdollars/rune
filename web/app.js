@@ -1451,7 +1451,7 @@ function updateDocTitle(name) {
     function noteLink(label) {
         if (!notePublic) return document.createTextNode(label);
         const a = document.createElement('a');
-        a.href = '/notes/' + encodeURIComponent(currentNoteId) + '/';
+        a.href = '/public/' + encodeURIComponent(currentNoteId) + '/';
         a.target = '_blank'; a.rel = 'noopener';
         a.className = 'title-public-link';
         a.textContent = label;
@@ -1461,7 +1461,7 @@ function updateDocTitle(name) {
         const slug = (label || '').replace(/\.md$/, '');
         if (!filePublic) return document.createTextNode(label);
         const a = document.createElement('a');
-        a.href = '/notes/' + encodeURIComponent(currentNoteId) + '/' + encodeURIComponent(slug);
+        a.href = '/public/' + encodeURIComponent(currentNoteId) + '/' + encodeURIComponent(slug);
         a.target = '_blank'; a.rel = 'noopener';
         a.className = 'title-public-link';
         a.textContent = label;

@@ -152,6 +152,23 @@ async function withPage(browser, fn) {
     else ok(`URL after login: ${url}`); // informational, not a hard fail
   });
 
+  // ── Test 12: app.js public links use /public/, not /notes/ ───────
+  await withPage(browser, async (page) => {
+    const resp = await page.goto(BASE + '/assets/app.js');
+    const body = await resp.text();
+    // noteLink and fileLink in updateDocTitle must use /public/
+    const noteLink = body.match(/function noteLink[\s\S]*?(?=function fileLink)/);
+    const fileLink = body.match(/function fileLink[\s\S]*?(?=function buildTitleNodes|\n\s*function )/);
+    if (noteLink && noteLink[0].includes("'/public/")) ok('noteLink uses /public/ prefix');
+    else ko('noteLink uses /public/ prefix', 'still using /notes/ or not found');
+    if (fileLink && fileLink[0].includes("'/public/")) ok('fileLink uses /public/ prefix');
+    else ko('fileLink uses /public/ prefix', 'still using /notes/ or not found');
+    // updateBrowserUrl must still use /notes/ (SPA internal routing)
+    const browserUrl = body.match(/function updateBrowserUrl[\s\S]*?(?=\n\s*\/\/ Pending|\nlet _pending)/);
+    if (browserUrl && browserUrl[0].includes("'/notes/")) ok('updateBrowserUrl still uses /notes/ (SPA routing)');
+    else ko('updateBrowserUrl still uses /notes/ (SPA routing)', 'not found or changed');
+  });
+
   await browser.close();
 
   const total = pass + fail;
