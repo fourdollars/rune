@@ -281,6 +281,10 @@ impl SandboxExecutor {
             let mount_setup = format!(
                 concat!(
                     "mount -t tmpfs -o size={size}M,mode=1777 tmpfs /tmp",
+                    // cd re-resolves CWD through the new mount so that Landlock's
+                    // inode-based rule for /tmp matches the process's CWD inode.
+                    // Without this, the CWD still refers to the pre-mount inode.
+                    " && cd /tmp",
                     " && mkdir -p /tmp/.etc",
                     " && {{ cp /etc/ld.so.cache /tmp/.etc/ 2>/dev/null;",
                     " cp /etc/ld.so.conf /tmp/.etc/ 2>/dev/null;",
@@ -397,11 +401,6 @@ impl SandboxExecutor {
         }
     }
 
-    /// Build a seccomp wrapper command string.
-    /// Uses `setpriv --no-new-privs` which implicitly enables seccomp no_new_privs.
-    /// For actual BPF filtering, we'd need a helper binary; for now we use
-    /// no_new_privs as the baseline seccomp protection.
-
     /// Check if current_exe is the rune binary (not a test runner).
     fn is_rune_binary() -> bool {
         std::env::current_exe()
@@ -422,20 +421,36 @@ impl SandboxExecutor {
             .and_then(|p| p.to_str().map(|s| s.to_string()))
             .unwrap_or_else(|| "rune".to_string());
 
-        {
-            let mut cmd = format!("'{}' _seccomp", self_exe);
-            if !self.config.allowed_syscalls.is_empty() {
-                cmd.push_str(&format!(
-                    " --allow-syscalls {}",
-                    self.config.allowed_syscalls.join(",")
-                ));
-            }
-            if block_net {
-                cmd.push_str(" --block-network");
-            }
-            info!(allowed = ?self.config.allowed_syscalls, "sandbox: seccomp via internal _seccomp subcommand");
-            return Some(cmd);
+        // Probe whether prctl(PR_SET_SECCOMP, SECCOMP_MODE_FILTER) is permitted.
+        // Some container runtimes (e.g. ChromeOS Crostini / LXC) block this via
+        // SECCOMP_RET_TRAP, which kills the child with SIGTRAP (exit 133) before
+        // any useful work happens.  Run a trivial allow-all filter test first; if it
+        // fails we degrade gracefully rather than crashing every tool invocation.
+        let seccomp_available = Command::new(&self_exe)
+            .args(["_seccomp", "--allow-syscalls", "*", "true"])
+            .output()
+            .await
+            .map(|o| o.status.success())
+            .unwrap_or(false);
+        if !seccomp_available {
+            warn!(
+                "sandbox: prctl(PR_SET_SECCOMP) not available on this host, skipping seccomp layer"
+            );
+            return None;
         }
+
+        let mut cmd = format!("'{}' _seccomp", self_exe);
+        if !self.config.allowed_syscalls.is_empty() {
+            cmd.push_str(&format!(
+                " --allow-syscalls {}",
+                self.config.allowed_syscalls.join(",")
+            ));
+        }
+        if block_net {
+            cmd.push_str(" --block-network");
+        }
+        info!(allowed = ?self.config.allowed_syscalls, "sandbox: seccomp via internal _seccomp subcommand");
+        Some(cmd)
     }
 
     /// Build a landlock wrapper using a helper script.
