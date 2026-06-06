@@ -170,7 +170,7 @@ impl ToolRegistry {
         // /proc and /sys are denied. /run is traverse-only (for systemd-run scope).
         for p in &["/bin", "/usr", "/lib", "/lib64", "/etc"] {
             let pb = PathBuf::from(p);
-            if !read_only.contains(&pb) {
+            if pb.exists() && !read_only.contains(&pb) {
                 read_only.push(pb);
             }
         }

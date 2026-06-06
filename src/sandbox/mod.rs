@@ -50,18 +50,16 @@ impl Default for SandboxConfig {
                 PathBuf::from("/dev/null"),
                 PathBuf::from("/dev/urandom"),
             ],
-            read_only_paths: vec![
-                PathBuf::from("/bin"),
-                PathBuf::from("/usr"),
-                PathBuf::from("/lib"),
-                PathBuf::from("/lib64"),
+            read_only_paths: ["/bin", "/usr", "/lib", "/lib64", "/etc"]
+                .iter()
                 // Allow /etc read access for DNS resolution and dynamic linking.
                 // Security: sensitive files (/etc/passwd, /etc/hostname) are NOT exposed
                 // because sandbox mounts /tmp/.etc over /etc — only files explicitly
                 // copied into /tmp/.etc are visible (resolv.conf, nsswitch.conf,
                 // ld.so.cache, ssl certs, etc).
-                PathBuf::from("/etc"),
-            ],
+                .filter(|p| std::path::Path::new(p).exists())
+                .map(PathBuf::from)
+                .collect(),
             denied_paths: vec![
                 PathBuf::from("/root"),
                 PathBuf::from("/proc"),
