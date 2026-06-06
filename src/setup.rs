@@ -323,6 +323,135 @@ async fn fetch_openrouter_models() -> Option<Vec<String>> {
     Some(filtered)
 }
 
+/// Auto-detect available models for a provider using the same mechanism `rune notes` uses
+/// (ProviderRegistry::list_models). Returns model IDs sorted by the provider, or None on
+/// network/auth failure or if the provider's `list_models` is unimplemented.
+async fn fetch_provider_models(
+    provider_id: &str,
+    api_key: &str,
+    base_url: Option<&str>,
+) -> Option<Vec<crate::provider::ModelInfo>> {
+    if api_key.is_empty() {
+        return None;
+    }
+    let mut cfg = crate::config::RuneConfig::default();
+    cfg.api_key = Some(api_key.to_string());
+    cfg.provider = Some(provider_id.to_string());
+    cfg.base_url = base_url.map(|s| s.to_string());
+
+    // Try via full provider machinery (PAT → session token exchange for Copilot).
+    if let Ok(registry) = crate::serve::api::build_provider_pub(&cfg) {
+        if let Ok(models) = registry.list_models().await {
+            if !models.is_empty() {
+                return Some(models);
+            }
+        }
+    }
+
+    // For Copilot: the key may already be a session token, so the PAT exchange
+    // above can fail.  Try Bearer auth directly against the known endpoints.
+    if provider_id == "github-copilot" {
+        return fetch_copilot_models_bearer(api_key).await;
+    }
+
+    None
+}
+
+/// Call the Copilot models endpoint using `api_key` as a Bearer session token.
+/// Mirrors the exact filter used by `CopilotProvider::list_models`.
+async fn fetch_copilot_models_bearer(
+    session_token: &str,
+) -> Option<Vec<crate::provider::ModelInfo>> {
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(10))
+        .build()
+        .ok()?;
+
+    for endpoint in &[
+        "https://api.githubcopilot.com/models",
+        "https://api.business.githubcopilot.com/models",
+    ] {
+        let resp = client
+            .get(*endpoint)
+            .bearer_auth(session_token)
+            .header("User-Agent", "rune/0.1.0")
+            .header("Copilot-Integration-Id", "vscode-chat")
+            .send()
+            .await;
+        let resp = match resp {
+            Ok(r) if r.status().is_success() => r,
+            _ => continue,
+        };
+        let body: serde_json::Value = match resp.json().await {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+        let arr = match body
+            .get("data")
+            .or_else(|| body.get("models"))
+            .and_then(|v| v.as_array())
+        {
+            Some(a) => a,
+            None => continue,
+        };
+        let mut models: Vec<crate::provider::ModelInfo> = arr
+            .iter()
+            .filter(|m| {
+                m.get("model_picker_enabled")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false)
+            })
+            .filter(|m| {
+                m.get("supported_endpoints")
+                    .and_then(|v| v.as_array())
+                    .map(|a| !a.is_empty())
+                    .unwrap_or(false)
+            })
+            .filter_map(|m| {
+                let id = m
+                    .get("id")
+                    .or_else(|| m.get("name"))
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string())?;
+                let context_window = m
+                    .pointer("/capabilities/limits/max_context_window_tokens")
+                    .and_then(|v| v.as_u64());
+                let reasoning_efforts = m
+                    .pointer("/capabilities/supports/reasoning_effort")
+                    .and_then(|v| v.as_array())
+                    .map(|arr| {
+                        arr.iter()
+                            .filter_map(|e| e.as_str().map(|s| s.to_string()))
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                let supported_endpoints: Vec<String> = m
+                    .get("supported_endpoints")
+                    .and_then(|v| v.as_array())
+                    .map(|arr| {
+                        arr.iter()
+                            .filter_map(|e| e.as_str())
+                            .filter(|s| !s.starts_with("ws:"))
+                            .map(|s| s.to_string())
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                Some(crate::provider::ModelInfo {
+                    id,
+                    context_window,
+                    reasoning_efforts,
+                    supported_endpoints,
+                })
+            })
+            .collect();
+        if !models.is_empty() {
+            models.sort_by(|a, b| a.id.cmp(&b.id));
+            return Some(models);
+        }
+    }
+    None
+}
+
 async fn fetch_openrouter_embedding_models() -> Option<(Vec<String>, String)> {
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(5))
@@ -640,6 +769,7 @@ pub async fn run_setup(config_path_override: Option<String>) {
     }
 
     let mut openrouter_models = None;
+    let mut copilot_models = None;
     if provider_choice.trim() == "4" {
         print!("  Fetching models from OpenRouter...");
         let _ = io::stdout().flush();
@@ -649,17 +779,27 @@ pub async fn run_setup(config_path_override: Option<String>) {
         } else {
             println!(" Failed. Using defaults.");
         }
+    } else if provider_choice.trim() == "1" && !api_key.is_empty() {
+        print!("  Detecting models from GitHub Copilot...");
+        let _ = io::stdout().flush();
+        if let Some(models) = fetch_provider_models("github-copilot", &api_key, None).await {
+            println!(" Done.");
+            copilot_models = Some(models);
+        } else {
+            println!(" Failed.");
+        }
     }
 
     match provider_choice.trim() {
         "1" => {
-            println!(
-                "   {} gpt-4o          (powerful, recommended)",
-                "[1]".cyan()
-            );
-            println!("   {} gpt-4o-mini     (fast, cheap)", "[2]".cyan());
-            println!("   {} claude-3.5-sonnet", "[3]".cyan());
-            println!("   {} Custom", "[4]".cyan());
+            if let Some(ref models) = copilot_models {
+                for (i, model) in models.iter().enumerate() {
+                    println!("   {} {}", format!("[{}]", i + 1).cyan(), model.id);
+                }
+                println!("   {} Custom", format!("[{}]", models.len() + 1).cyan());
+            } else {
+                println!("   {} Custom", "[1]".cyan());
+            }
         }
         "2" => {
             println!("   {} gemini-2.0-flash (fast)", "[1]".cyan());
@@ -693,6 +833,8 @@ pub async fn run_setup(config_path_override: Option<String>) {
 
     let model_prompt = if let Some(ref m) = existing.model {
         format!("  Select or type model name (Enter={}): ", m)
+    } else if copilot_models.is_some() {
+        "  Select or type model name (Enter=1): ".to_string()
     } else {
         "  Select or type model name: ".to_string()
     };
@@ -701,9 +843,37 @@ pub async fn run_setup(config_path_override: Option<String>) {
         existing.model.clone().unwrap()
     } else {
         match (provider_choice.trim(), model_choice.trim()) {
-            ("1", "1") => "gpt-4o".to_string(),
-            ("1", "2") => "gpt-4o-mini".to_string(),
-            ("1", "3") => "claude-3.5-sonnet".to_string(),
+            ("1", choice) => {
+                if let Some(ref models) = copilot_models {
+                    // Empty choice defaults to [1] (first model).
+                    let effective = if choice.is_empty() { "1" } else { choice };
+                    if let Ok(idx) = effective.parse::<usize>() {
+                        if idx > 0 && idx <= models.len() {
+                            models[idx - 1].id.clone()
+                        } else if idx == models.len() + 1 {
+                            prompt("  Model name: ")
+                                .unwrap_or_default()
+                                .trim()
+                                .to_string()
+                        } else {
+                            effective.to_string()
+                        }
+                    } else {
+                        effective.to_string()
+                    }
+                } else {
+                    // Auto-detect failed: only Custom is offered.
+                    let custom = if choice.is_empty() || choice == "1" {
+                        prompt("  Model name: ")
+                            .unwrap_or_default()
+                            .trim()
+                            .to_string()
+                    } else {
+                        choice.to_string()
+                    };
+                    custom
+                }
+            }
             ("2", "1") => "gemini-2.0-flash".to_string(),
             ("2", "2") => "gemini-1.5-pro".to_string(),
             ("3", "1") => "gpt-4o-mini".to_string(),
@@ -782,37 +952,83 @@ pub async fn run_setup(config_path_override: Option<String>) {
     }
     println!();
 
-    // 4. Thinking level
-    println!("{}", "4. Thinking (reasoning effort):".bold());
-    println!("   {} off     — no extended reasoning", "[1]".cyan());
-    println!("   {} low     — minimal reasoning", "[2]".cyan());
-    println!("   {} medium  — balanced", "[3]".cyan());
-    println!("   {} high    — deep reasoning", "[4]".cyan());
-    println!("   {} xhigh   — maximum reasoning effort", "[5]".cyan());
-    if let Some(ref t) = existing.thinking {
-        println!("   {}", format!("(current: {})", t).dimmed());
-    }
-    println!();
-    let thinking_default = existing.thinking.as_deref().unwrap_or("off");
-    let thinking_prompt = format!(
-        "  Select [1-5] or type level (Enter={}): ",
-        thinking_default
-    );
-    let thinking_input = prompt(&thinking_prompt).unwrap_or_default();
-    let thinking = if thinking_input.trim().is_empty() {
-        thinking_default.to_string()
-    } else {
-        match thinking_input.trim() {
-            "1" | "off" | "none" => "off".to_string(),
-            "2" | "low" => "low".to_string(),
-            "3" | "medium" => "medium".to_string(),
-            "4" | "high" => "high".to_string(),
-            "5" | "xhigh" => "xhigh".to_string(),
-            other => other.to_string(),
+    // Look up dynamic ModelInfo for the selected model (Copilot only).
+    let selected_model_info = copilot_models
+        .as_ref()
+        .and_then(|models| models.iter().find(|m| m.id == model));
+
+    // 4. Thinking (reasoning effort)
+    //   - Copilot model with no reasoning_efforts → skip, force "off" (overrides existing config)
+    //   - Copilot model with reasoning_efforts     → show step with those levels
+    //   - No dynamic info (non-Copilot / custom)   → show standard levels
+    let thinking = if let Some(info) = selected_model_info {
+        if info.reasoning_efforts.is_empty() {
+            println!(
+                "  {} Thinking: off (model does not support reasoning)",
+                "✓".green()
+            );
+            println!();
+            "off".to_string()
+        } else {
+            println!("{}", "4. Thinking (reasoning effort):".bold());
+            for (i, level) in info.reasoning_efforts.iter().enumerate() {
+                println!("   {} {}", format!("[{}]", i + 1).cyan(), level);
+            }
+            if let Some(ref t) = existing.thinking {
+                println!("   {}", format!("(current: {})", t).dimmed());
+            }
+            println!();
+            let thinking_default = existing.thinking.as_deref().unwrap_or("off");
+            let thinking_prompt = format!("  Select or type level (Enter={}): ", thinking_default);
+            let thinking_input = prompt(&thinking_prompt).unwrap_or_default();
+            let chosen = if thinking_input.trim().is_empty() {
+                thinking_default.to_string()
+            } else if let Ok(idx) = thinking_input.trim().parse::<usize>() {
+                if idx > 0 && idx <= info.reasoning_efforts.len() {
+                    info.reasoning_efforts[idx - 1].clone()
+                } else {
+                    thinking_input.trim().to_string()
+                }
+            } else {
+                thinking_input.trim().to_string()
+            };
+            println!("  {} Thinking: {}", "✓".green(), chosen.cyan());
+            println!();
+            chosen
         }
+    } else {
+        println!("{}", "4. Thinking (reasoning effort):".bold());
+        println!("   {} off     — no extended reasoning", "[1]".cyan());
+        println!("   {} low     — minimal reasoning", "[2]".cyan());
+        println!("   {} medium  — balanced", "[3]".cyan());
+        println!("   {} high    — deep reasoning", "[4]".cyan());
+        println!("   {} xhigh   — maximum reasoning effort", "[5]".cyan());
+        if let Some(ref t) = existing.thinking {
+            println!("   {}", format!("(current: {})", t).dimmed());
+        }
+        println!();
+        let thinking_default = existing.thinking.as_deref().unwrap_or("off");
+        let thinking_prompt = format!(
+            "  Select [1-5] or type level (Enter={}): ",
+            thinking_default
+        );
+        let thinking_input = prompt(&thinking_prompt).unwrap_or_default();
+        let chosen = if thinking_input.trim().is_empty() {
+            thinking_default.to_string()
+        } else {
+            match thinking_input.trim() {
+                "1" | "off" | "none" => "off".to_string(),
+                "2" | "low" => "low".to_string(),
+                "3" | "medium" => "medium".to_string(),
+                "4" | "high" => "high".to_string(),
+                "5" | "xhigh" => "xhigh".to_string(),
+                other => other.to_string(),
+            }
+        };
+        println!("  {} Thinking: {}", "✓".green(), chosen.cyan());
+        println!();
+        chosen
     };
-    println!("  {} Thinking: {}", "✓".green(), thinking.cyan());
-    println!();
 
     // 5. Skills directory
     println!("{}", "5. Skills directory:".bold());
