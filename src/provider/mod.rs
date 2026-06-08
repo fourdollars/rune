@@ -437,9 +437,12 @@ impl OpenAiProvider {
         m.contains("/o1")
             || m.contains("/o3")
             || m.contains("-r1")
+            || m.contains(":r1")
             || m.contains("reasoning")
             || m.contains("thinking")
             || m.contains("claude-3-7-sonnet")
+            || m.contains("qwen3")
+            || m.contains("qwq")
     }
 
     fn normalize_thinking(&self, mut request: LlmRequest) -> LlmRequest {
@@ -469,7 +472,71 @@ impl Provider for OpenAiProvider {
 
         Box::pin(async move {
             if !is_openrouter {
-                return Ok(Vec::new());
+                if base_url.contains("api.openai.com") {
+                    // Official OpenAI: no auto-discovery (huge model list, reasoning is per-model)
+                    return Ok(Vec::new());
+                }
+                // Custom endpoint (Ollama, LM Studio, vLLM, …): query /models and always
+                // expose the Ollama-compatible thinking levels for every model.
+                let url = format!("{}/models", base_url.trim_end_matches('/'));
+                let client = Client::new();
+                let Ok(resp) = client
+                    .get(&url)
+                    .bearer_auth(&api_key)
+                    .timeout(std::time::Duration::from_secs(10))
+                    .send()
+                    .await
+                else {
+                    return Ok(Vec::new());
+                };
+                if !resp.status().is_success() {
+                    return Ok(Vec::new());
+                }
+                let Ok(body) = resp.text().await else {
+                    return Ok(Vec::new());
+                };
+                let Ok(v) = serde_json::from_str::<serde_json::Value>(&body) else {
+                    return Ok(Vec::new());
+                };
+                // Support OpenAI-compatible {"data": [{id}]} and Ollama {"models": [{name}]}
+                let ids: Vec<String> = if let Some(arr) = v.get("data").and_then(|d| d.as_array()) {
+                    arr.iter()
+                        .filter_map(|m| {
+                            m.get("id")
+                                .and_then(|id| id.as_str())
+                                .map(|s| s.to_string())
+                        })
+                        .collect()
+                } else if let Some(arr) = v.get("models").and_then(|d| d.as_array()) {
+                    arr.iter()
+                        .filter_map(|m| {
+                            m.get("name")
+                                .or_else(|| m.get("id"))
+                                .and_then(|id| id.as_str())
+                                .map(|s| s.to_string())
+                        })
+                        .collect()
+                } else {
+                    return Ok(Vec::new());
+                };
+
+                let reasoning_efforts = vec![
+                    "none".to_string(),
+                    "low".to_string(),
+                    "medium".to_string(),
+                    "high".to_string(),
+                ];
+                let mut models: Vec<ModelInfo> = ids
+                    .into_iter()
+                    .map(|id| ModelInfo {
+                        id,
+                        context_window: None,
+                        reasoning_efforts: reasoning_efforts.clone(),
+                        supported_endpoints: vec!["/chat/completions".to_string()],
+                    })
+                    .collect();
+                models.sort_by(|a, b| a.id.cmp(&b.id));
+                return Ok(models);
             }
 
             let url = format!("{}/models", base_url.trim_end_matches('/'));
@@ -598,7 +665,7 @@ impl Provider for OpenAiProvider {
                 }
             } else {
                 if let Some(ref thinking) = request.thinking {
-                    if thinking != "none" {
+                    if thinking != "none" && thinking != "off" {
                         payload_value["reasoning_effort"] =
                             serde_json::Value::String(thinking.clone());
                     }
@@ -736,7 +803,7 @@ impl Provider for OpenAiProvider {
                     }
                 } else {
                     if let Some(ref thinking) = request.thinking {
-                        if thinking != "none" {
+                        if thinking != "none" && thinking != "off" {
                             map.insert(
                                 "reasoning_effort".to_string(),
                                 Value::String(thinking.clone()),

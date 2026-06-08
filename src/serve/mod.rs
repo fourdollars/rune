@@ -236,6 +236,29 @@ pub async fn run(config: RuneConfig, opts: NotesOptions) {
         auto_detect_openrouter_model().await
     };
 
+    // When base_url is set with provider openai (or no provider), automatically populate
+    // Ollama-compatible thinking levels for every configured model.
+    let default_reasoning_efforts: Vec<String> = {
+        let is_custom_openai = !matches!(
+            config.provider.as_deref(),
+            Some("openrouter") | Some("gemini") | Some("anthropic") | Some("github-copilot")
+        ) && config
+            .base_url
+            .as_ref()
+            .map(|u| !u.is_empty() && !u.contains("api.openai.com") && !u.contains("openrouter.ai"))
+            .unwrap_or(false);
+        if is_custom_openai {
+            vec![
+                "none".to_string(),
+                "low".to_string(),
+                "medium".to_string(),
+                "high".to_string(),
+            ]
+        } else {
+            vec![]
+        }
+    };
+
     // Parse comma-separated model list from serve_model
     let mut models: Vec<ModelInfo> = if config
         .notes
@@ -253,50 +276,72 @@ pub async fn run(config: RuneConfig, opts: NotesOptions) {
             .map(|id| ModelInfo {
                 id,
                 context_window: None,
-                reasoning_efforts: vec![],
+                reasoning_efforts: default_reasoning_efforts.clone(),
                 supported_endpoints: vec![],
             })
             .collect()
     };
 
-    // Auto-discover models from provider if none configured
-    if models.is_empty() {
-        eprintln!("  ℹ No models configured, discovering from provider...");
+    // Always query the provider for model metadata (reasoning_efforts, context_window).
+    // If models were explicitly configured, use discovery only to enrich their metadata.
+    // If no models were configured, use the discovered list or fall back to the default.
+    {
         let mut config_for_discovery = config.clone();
         config_for_discovery.model = serve_model.clone();
         match crate::serve::api::build_provider_pub(&config_for_discovery) {
             Ok(registry) => match registry.list_models().await {
                 Ok(discovered) if !discovered.is_empty() => {
-                    eprintln!("  ✓ Discovered {} models from provider", discovered.len());
-                    models = discovered;
+                    if models.is_empty() {
+                        eprintln!("  ✓ Discovered {} models from provider", discovered.len());
+                        models = discovered;
+                    } else {
+                        // Enrich reasoning_efforts for each configured model.
+                        // All models from a custom endpoint share the same efforts list,
+                        // so fall back to the first discovered entry when there's no exact match.
+                        let fallback_efforts = discovered[0].reasoning_efforts.clone();
+                        for model in &mut models {
+                            if let Some(found) = discovered.iter().find(|d| d.id == model.id) {
+                                model.reasoning_efforts = found.reasoning_efforts.clone();
+                                model.context_window = found.context_window;
+                            } else if !fallback_efforts.is_empty() {
+                                model.reasoning_efforts = fallback_efforts.clone();
+                            }
+                        }
+                    }
                 }
                 Ok(_) => {
-                    eprintln!("  ⚠ Provider returned no models, using default");
-                    models = vec![ModelInfo {
-                        id: serve_model.clone(),
-                        context_window: None,
-                        reasoning_efforts: vec![],
-                        supported_endpoints: vec![],
-                    }];
+                    if models.is_empty() {
+                        eprintln!("  ⚠ Provider returned no models, using default");
+                        models = vec![ModelInfo {
+                            id: serve_model.clone(),
+                            context_window: None,
+                            reasoning_efforts: vec![],
+                            supported_endpoints: vec![],
+                        }];
+                    }
                 }
                 Err(e) => {
-                    eprintln!("  ⚠ Failed to discover models: {}", e);
-                    models = vec![ModelInfo {
-                        id: serve_model.clone(),
-                        context_window: None,
-                        reasoning_efforts: vec![],
-                        supported_endpoints: vec![],
-                    }];
+                    if models.is_empty() {
+                        eprintln!("  ⚠ Failed to discover models: {}", e);
+                        models = vec![ModelInfo {
+                            id: serve_model.clone(),
+                            context_window: None,
+                            reasoning_efforts: vec![],
+                            supported_endpoints: vec![],
+                        }];
+                    }
                 }
             },
             Err(e) => {
-                eprintln!("  ⚠ Cannot build provider for model discovery: {}", e);
-                models = vec![ModelInfo {
-                    id: serve_model.clone(),
-                    context_window: None,
-                    reasoning_efforts: vec![],
-                    supported_endpoints: vec![],
-                }];
+                if models.is_empty() {
+                    eprintln!("  ⚠ Cannot build provider for model discovery: {}", e);
+                    models = vec![ModelInfo {
+                        id: serve_model.clone(),
+                        context_window: None,
+                        reasoning_efforts: vec![],
+                        supported_endpoints: vec![],
+                    }];
+                }
             }
         }
     }

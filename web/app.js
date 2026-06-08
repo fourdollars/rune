@@ -1284,13 +1284,15 @@ function updateThinkingSelect() {
         return;
     }
 
-    // Build options: always include "off" plus the model's supported efforts
+    // Build options: prepend "off" only when "none" is not already in the list
     selects.forEach(select => {
         select.innerHTML = '';
-        const offOpt = document.createElement('option');
-        offOpt.value = 'off';
-        offOpt.textContent = 'off';
-        select.appendChild(offOpt);
+        if (!efforts.includes('none')) {
+            const offOpt = document.createElement('option');
+            offOpt.value = 'off';
+            offOpt.textContent = 'off';
+            select.appendChild(offOpt);
+        }
 
         efforts.forEach(level => {
             const opt = document.createElement('option');
