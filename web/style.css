@@ -1531,7 +1531,7 @@ pre.hljs-pre:hover .copy-btn {
     background: transparent;
     font-size: 10px;
     font-family: var(--font-mono, monospace);
-    color: rgba(255,255,255,0.35);
+    color: var(--text-muted);
     pointer-events: none;
     transition: opacity 0.3s;
     white-space: nowrap;
