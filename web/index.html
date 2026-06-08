@@ -256,7 +256,7 @@
         var t = setInterval(function() {
           if (window.mermaid) {
             clearInterval(t);
-            mermaid.initialize({ startOnLoad: false, theme: "dark" });
+            mermaid.initialize({ startOnLoad: false, theme: window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'default' });
           }
         }, 50);
       });
