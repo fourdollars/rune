@@ -1439,7 +1439,7 @@ const PUBLIC_PREVIEW_HTML: &str = r#"<!DOCTYPE html>
     renderer.code = function({text, lang}) {
       if (lang && lang.toLowerCase() === 'mermaid') {
         const id = 'mermaid-' + Math.random().toString(36).slice(2);
-        return '<div class="mermaid" id="' + id + '">' + text.replace(/</g,'&lt;') + '</div>';
+        return '<div class="mermaid" id="' + id + '" data-src="' + text.replace(/"/g,'&quot;') + '"></div>';
       }
       if (typeof hljs !== 'undefined') {
         const language = lang && hljs.getLanguage(lang) ? lang : null;
@@ -1466,12 +1466,23 @@ const PUBLIC_PREVIEW_HTML: &str = r#"<!DOCTYPE html>
     document.getElementById('loading').style.display = 'none';
     content.style.display = '';
     if (typeof mermaid !== 'undefined') {
+      const renderMermaidDiagrams = () => {
+        document.querySelectorAll('.mermaid').forEach(async (el) => {
+          const src = el.dataset.src || '';
+          if (!src) return;
+          const uid = 'mermaid-' + Math.random().toString(36).slice(2);
+          el.id = uid;
+          try { const {svg} = await mermaid.render(uid + '-svg', src); el.innerHTML = svg; } catch(e) {}
+        });
+      };
       mermaid.initialize({
         startOnLoad: false,
         theme: window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'default'
       });
-      document.querySelectorAll('.mermaid').forEach(async (el) => {
-        try { const {svg} = await mermaid.render('mg'+el.id, el.textContent); el.innerHTML = svg; } catch(e) {}
+      renderMermaidDiagrams();
+      window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', function(e) {
+        mermaid.initialize({ startOnLoad: false, theme: e.matches ? 'dark' : 'default' });
+        renderMermaidDiagrams();
       });
     }
   } catch(e) {

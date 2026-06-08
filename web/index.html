@@ -260,6 +260,13 @@
           }
         }, 50);
       });
+      // Re-render diagrams when the OS color scheme changes
+      window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', function(e) {
+        if (window.mermaid) {
+          mermaid.initialize({ startOnLoad: false, theme: e.matches ? 'dark' : 'default' });
+          if (typeof renderPreview === 'function') renderPreview();
+        }
+      });
     </script>
     
     <!-- Generic prompt/confirm dialog -->
