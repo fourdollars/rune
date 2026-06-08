@@ -860,6 +860,17 @@ function replayHistory(messages) {
     }
     addSystemMessage('── current ──');
     chatMessages.scrollTop = chatMessages.scrollHeight;
+
+    // Restore context overlay from the last assistant message that has context_tokens
+    const lastWithCtx = [...messages].reverse().find(
+        m => m.role === 'assistant' && m.context_tokens != null && m.model
+    );
+    if (lastWithCtx) {
+        const modelEntry = availableModels.find(m => m.id === lastWithCtx.model);
+        if (modelEntry && modelEntry.context_window) {
+            updateContextOverlay(lastWithCtx.context_tokens, modelEntry.context_window);
+        }
+    }
 }
 
 function renderChatMath(el) {
