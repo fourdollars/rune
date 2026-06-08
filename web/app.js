@@ -685,7 +685,9 @@ function applyNoNoteLayout() {
     } else {
         // Note exists or active: restore normal layout
         panelLeft.classList.remove('fullscreen');
-        panelCenter.classList.remove('hidden');
+        if (showEdit || showPreview) {
+            panelCenter.classList.remove('hidden');
+        }
         panelRight.classList.remove('hidden');
     }
 }
