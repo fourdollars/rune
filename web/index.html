@@ -251,14 +251,13 @@
 
     <script src="/assets-bin/mermaid.min.js" defer></script>
     <script>
-      // Initialize mermaid once the script loads
+      // mermaid.min.js is defer-ed, so it always runs before DOMContentLoaded.
+      // Initialize synchronously here — no polling needed — so the theme is set
+      // before any SSE-triggered renderPreview() call can reach mermaid.render().
       document.addEventListener("DOMContentLoaded", function() {
-        var t = setInterval(function() {
-          if (window.mermaid) {
-            clearInterval(t);
-            mermaid.initialize({ startOnLoad: false, theme: window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'default' });
-          }
-        }, 50);
+        if (window.mermaid) {
+          mermaid.initialize({ startOnLoad: false, theme: window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'default' });
+        }
       });
       // Re-render diagrams when the OS color scheme changes
       window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', function(e) {
