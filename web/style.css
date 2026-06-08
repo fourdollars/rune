@@ -839,6 +839,13 @@ pre.hljs-pre:hover .copy-btn {
     max-width: 100%;
     height: auto;
 }
+/* foreignObject clips HTML content (white-space:nowrap divs) when Mermaid's
+   internal text measurement underestimates the rendered width. Allow overflow
+   so labels are never cut; SVG viewport still bounds the diagram as a whole. */
+.mermaid-block foreignObject,
+.mermaid foreignObject {
+    overflow: visible;
+}
 
 /* --- Inline SVG in preview --- */
 #preview svg {
