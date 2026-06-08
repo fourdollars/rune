@@ -2059,6 +2059,7 @@ async fn handle_chat_message(
                     Some(agent.step_count() as i32),
                     Some(agent.tool_call_count() as i32),
                     meta_thinking,
+                    Some(agent.total_context_tokens() as i32),
                 )
                 .await;
         }

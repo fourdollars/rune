@@ -38,6 +38,9 @@ pub struct ChatRecord {
     /// Thinking/reasoning level used (assistant only, None = off).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub thinking: Option<String>,
+    /// Total context tokens at the time of this response (assistant only).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub context_tokens: Option<i32>,
 }
 
 /// A stored session entry.
@@ -108,6 +111,7 @@ impl ChatDb {
         ",
         );
         let _ = conn.execute_batch("ALTER TABLE messages ADD COLUMN thinking TEXT;");
+        let _ = conn.execute_batch("ALTER TABLE messages ADD COLUMN context_tokens INTEGER;");
         let _ = conn.execute_batch("ALTER TABLE sessions ADD COLUMN public INTEGER DEFAULT 0;");
         let _ = conn.execute_batch(
             "
@@ -225,7 +229,7 @@ impl ChatDb {
         content: &str,
     ) -> anyhow::Result<i64> {
         self.insert_with_meta(
-            note_id, role, nickname, content, None, None, None, None, None, None,
+            note_id, role, nickname, content, None, None, None, None, None, None, None,
         )
     }
 
@@ -242,6 +246,7 @@ impl ChatDb {
         steps: Option<i32>,
         tool_calls: Option<i32>,
         thinking: Option<&str>,
+        context_tokens: Option<i32>,
     ) -> anyhow::Result<i64> {
         let conn = self.conn.lock().unwrap();
         let ts = std::time::SystemTime::now()
@@ -249,9 +254,9 @@ impl ChatDb {
             .unwrap_or_default()
             .as_secs() as i64;
         conn.execute(
-            "INSERT INTO messages (note_id, role, nickname, content, created_at, model, tokens_in, tokens_out, steps, tool_calls, thinking)
-             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11)",
-            params![note_id, role, nickname, content, ts, model, tokens_in, tokens_out, steps, tool_calls, thinking],
+            "INSERT INTO messages (note_id, role, nickname, content, created_at, model, tokens_in, tokens_out, steps, tool_calls, thinking, context_tokens)
+             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12)",
+            params![note_id, role, nickname, content, ts, model, tokens_in, tokens_out, steps, tool_calls, thinking, context_tokens],
         )?;
         Ok(conn.last_insert_rowid())
     }
@@ -260,7 +265,7 @@ impl ChatDb {
     pub fn load_recent(&self, note_id: &str, limit: usize) -> anyhow::Result<Vec<ChatRecord>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT id, note_id, role, nickname, content, created_at, model, tokens_in, tokens_out, steps, tool_calls, thinking
+            "SELECT id, note_id, role, nickname, content, created_at, model, tokens_in, tokens_out, steps, tool_calls, thinking, context_tokens
              FROM messages
              WHERE note_id = ?1
              ORDER BY id DESC
@@ -281,6 +286,7 @@ impl ChatDb {
                     steps: row.get(9)?,
                     tool_calls: row.get(10)?,
                     thinking: row.get(11).ok().flatten(),
+                    context_tokens: row.get(12).ok().flatten(),
                 })
             })?
             .filter_map(|r| r.ok())
@@ -300,7 +306,7 @@ impl ChatDb {
         content: String,
     ) {
         self.insert_with_meta_async(
-            note_id, role, nickname, content, None, None, None, None, None, None,
+            note_id, role, nickname, content, None, None, None, None, None, None, None,
         )
         .await;
     }
@@ -318,6 +324,7 @@ impl ChatDb {
         steps: Option<i32>,
         tool_calls: Option<i32>,
         thinking: Option<String>,
+        context_tokens: Option<i32>,
     ) {
         let db = self.clone();
         tokio::task::spawn_blocking(move || {
@@ -332,6 +339,7 @@ impl ChatDb {
                 steps,
                 tool_calls,
                 thinking.as_deref(),
+                context_tokens,
             ) {
                 warn!("Failed to persist chat message: {}", e);
             }
@@ -604,7 +612,7 @@ impl ChatDb {
         let conn = self.conn.lock().unwrap();
         // Load all messages for this session
         let mut stmt = conn.prepare(
-            "SELECT id, note_id, role, nickname, content, created_at, model, tokens_in, tokens_out, steps, tool_calls, thinking
+            "SELECT id, note_id, role, nickname, content, created_at, model, tokens_in, tokens_out, steps, tool_calls, thinking, context_tokens
              FROM messages WHERE note_id = ?1 ORDER BY id ASC",
         )?;
         let records: Vec<ChatRecord> = stmt
@@ -622,6 +630,7 @@ impl ChatDb {
                     steps: row.get(9)?,
                     tool_calls: row.get(10)?,
                     thinking: row.get(11).ok().flatten(),
+                    context_tokens: row.get(12).ok().flatten(),
                 })
             })?
             .filter_map(|r| r.ok())
@@ -684,7 +693,7 @@ impl ChatDb {
         // 2. Search live DB
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT id, note_id, role, nickname, content, created_at, model, tokens_in, tokens_out, steps, tool_calls, thinking
+            "SELECT id, note_id, role, nickname, content, created_at, model, tokens_in, tokens_out, steps, tool_calls, thinking, context_tokens
              FROM messages WHERE note_id = ?1 ORDER BY id ASC",
         )?;
         let live: Vec<ChatRecord> = stmt
@@ -702,6 +711,7 @@ impl ChatDb {
                     steps: row.get(9)?,
                     tool_calls: row.get(10)?,
                     thinking: row.get(11).ok().flatten(),
+                    context_tokens: row.get(12).ok().flatten(),
                 })
             })?
             .filter_map(|r| r.ok())
@@ -909,6 +919,7 @@ mod tests {
             steps: None,
             tool_calls: None,
             thinking: None,
+            context_tokens: None,
         };
         let mut f = std::fs::File::create(&arc_path).unwrap();
         writeln!(f, "{}", serde_json::to_string(&old_rec).unwrap()).unwrap();
@@ -952,6 +963,7 @@ mod tests {
             Some(3),
             Some(2),
             None,
+            None,
         )
         .unwrap();
         let rows = db.load_recent("default", 1).unwrap();
@@ -960,6 +972,48 @@ mod tests {
         assert_eq!(rows[0].tokens_out, Some(42));
         assert_eq!(rows[0].steps, Some(3));
         assert_eq!(rows[0].tool_calls, Some(2));
+    }
+
+    #[test]
+    fn test_insert_with_meta_persists_context_tokens() {
+        let db = in_memory_db();
+        db.insert_with_meta(
+            "default",
+            "assistant",
+            "ᚱᚢᚾᛖ",
+            "hello",
+            Some("gpt-5-mini"),
+            Some(100),
+            Some(42),
+            Some(3),
+            Some(2),
+            None,
+            Some(4200),
+        )
+        .unwrap();
+        let rows = db.load_recent("default", 1).unwrap();
+        assert_eq!(rows[0].context_tokens, Some(4200));
+    }
+
+    #[test]
+    fn test_insert_with_meta_context_tokens_none() {
+        let db = in_memory_db();
+        db.insert_with_meta(
+            "default",
+            "assistant",
+            "ᚱᚢᚾᛖ",
+            "hello",
+            Some("gpt-5-mini"),
+            Some(100),
+            Some(42),
+            Some(3),
+            Some(2),
+            None,
+            None,
+        )
+        .unwrap();
+        let rows = db.load_recent("default", 1).unwrap();
+        assert!(rows[0].context_tokens.is_none());
     }
 
     #[test]
@@ -988,6 +1042,7 @@ mod tests {
             Some(25),
             Some(1),
             Some(0),
+            None,
             None,
         )
         .unwrap();
