@@ -82,6 +82,7 @@ let dirBrowserTargetInput = null;
 let settingsNoteId = null;
 
 let activeModel = '';
+let lastContextTokens = null;
 
 // --- DOM refs ---
 const preview = document.getElementById('preview');
@@ -584,6 +585,12 @@ function handleMessage(msg) {
             updateModelIndicator();
             updateThinkingSelect();
             addSystemMessage('🔄 Model switched to: ' + activeModel + ' ' + currentThinking);
+            if (lastContextTokens !== null) {
+                const newModel = availableModels.find(m => m.id === activeModel);
+                if (newModel && newModel.context_window) {
+                    updateContextOverlay(lastContextTokens, newModel.context_window);
+                }
+            }
             break;
         case 'thinking_changed':
             currentThinking = msg.thinking || 'off';
@@ -982,6 +989,7 @@ function updateContextOverlay(ctxTokens, ctxWindow) {
     const pctEl   = document.getElementById('context-pct');
     const cntEl   = document.getElementById('context-counts');
     if (!overlay || !pctEl || !cntEl) return;
+    lastContextTokens = ctxTokens;
     const pct = Math.round((ctxTokens / ctxWindow) * 100);
     pctEl.textContent = pct + '% context used';
     const fmt = n => n >= 1000 ? (n / 1000).toFixed(1) + 'k' : String(n);
