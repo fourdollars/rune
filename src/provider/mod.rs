@@ -581,6 +581,16 @@ impl Provider for OpenAiProvider {
             let mut reasoning_set = std::collections::HashSet::new();
 
             for m in list.data {
+                // Only include models that explicitly declare "tools" support
+                let supports_tools = m
+                    .supported_parameters
+                    .as_ref()
+                    .map(|params| params.iter().any(|p| p.to_lowercase() == "tools"))
+                    .unwrap_or(false);
+                if !supports_tools {
+                    continue;
+                }
+
                 let supports_reasoning = if let Some(ref params) = m.supported_parameters {
                     params.iter().any(|p| p.to_lowercase() == "reasoning")
                 } else {
