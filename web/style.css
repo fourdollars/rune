@@ -846,6 +846,17 @@ pre.hljs-pre:hover .copy-btn {
 .mermaid foreignObject {
     overflow: visible;
 }
+/* Mermaid measures label height while its temporary element is in <body>,
+   where <p> gets the browser-default margin (1em 0 = 16px).  After we inject
+   the SVG into #preview, "#preview p { margin: 0.6em 0 }" fires and shrinks
+   each <p> by ~12.8px total, making the content shorter than the foreignObject
+   that Mermaid sized.  The content then top-aligns instead of centering.
+   Restoring the browser-default margin here keeps measured == rendered height
+   so Mermaid's translate(-halfW, -halfH) centering stays correct. */
+.mermaid-block foreignObject p,
+.mermaid foreignObject p {
+    margin: 1em 0;
+}
 
 /* --- Inline SVG in preview --- */
 #preview svg {
