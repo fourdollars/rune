@@ -447,14 +447,22 @@ impl Agent {
         text
     }
 
-    /// Compact context: use embedding-based RAG if available, otherwise simple truncation.
+    /// Compact context: try LLM-summary first, then RAG, then simple truncation.
     pub async fn compact(&mut self) {
         let keep_last = self.config.compact_keep_last.max(1);
         if self.messages.len() <= keep_last + 1 {
             return;
         }
 
-        // Try RAG-based compaction if embedding is available
+        // Priority 1: LLM-based semantic summary (best quality)
+        match self.compact_llm_summary(keep_last).await {
+            Ok(()) => return,
+            Err(e) => {
+                warn!(error = %e, "LLM compaction failed; trying RAG");
+            }
+        }
+
+        // Priority 2: RAG-based compaction if embedding is available
         if let Some(engine) = self.embedding.clone() {
             if self.config.embedding.enabled {
                 match self.compact_rag(&engine, keep_last).await {
@@ -469,8 +477,121 @@ impl Agent {
             }
         }
 
-        // Fallback: simple compaction
+        // Fallback: simple truncation
         self.compact_simple();
+    }
+
+    /// LLM-based semantic compaction: summarise older messages using a dedicated
+    /// LLM call (no tools, no streaming) and replace them with the summary.
+    /// Falls through to simple compaction on any error.
+    async fn compact_llm_summary(&mut self, keep_last: usize) -> Result<()> {
+        let total = self.messages.len();
+        let summarize_end = total.saturating_sub(keep_last);
+        if summarize_end <= 1 {
+            anyhow::bail!("not enough messages to summarise");
+        }
+
+        // Build a plain-text transcript of messages to be compacted
+        // (skip index 0 which is the system prompt)
+        let mut transcript_parts: Vec<String> = Vec::new();
+        for m in self.messages.iter().skip(1).take(summarize_end - 1) {
+            let role_label = match m.role.as_str() {
+                "user" => "User",
+                "assistant" => "Assistant",
+                "tool" => "Tool result",
+                other => other,
+            };
+            let content = if let Some(c) = m.content.as_deref() {
+                c.to_string()
+            } else if let Some(tcs) = m.tool_calls.as_ref() {
+                tcs.iter()
+                    .map(|tc| format!("{}({})", tc.function.name, tc.function.arguments))
+                    .collect::<Vec<_>>()
+                    .join("; ")
+            } else {
+                String::new()
+            };
+            if !content.is_empty() {
+                transcript_parts.push(format!("[{}]: {}", role_label, content));
+            }
+        }
+
+        if transcript_parts.is_empty() {
+            anyhow::bail!("no messages to summarise");
+        }
+
+        let transcript = transcript_parts.join("\n");
+        // Safety: if the transcript itself is huge, truncate to avoid infinite regress
+        let max_transcript_chars = self.config.context_window * 2; // rough char limit
+        let transcript = if transcript.chars().count() > max_transcript_chars {
+            transcript
+                .chars()
+                .take(max_transcript_chars)
+                .collect::<String>()
+                + "\n[transcript truncated]"
+        } else {
+            transcript
+        };
+
+        let summarize_prompt = format!(
+            "You are a conversation summariser. Summarise the following conversation \
+             transcript concisely in the same language(s) used. Preserve all key facts, \
+             decisions, file paths, code snippets, and outcomes. Do not include meta-commentary \
+             or explanations — output ONLY the summary.\n\nConversation:\n{transcript}"
+        );
+
+        let request = crate::provider::LlmRequest {
+            model: self.config.model.clone(),
+            messages: vec![
+                crate::provider::LlmMessage {
+                    role: "user".to_string(),
+                    name: None,
+                    content: Some(summarize_prompt),
+                    tool_calls: None,
+                    tool_call_id: None,
+                    content_parts: None,
+                },
+            ],
+            tools: None,
+            max_tokens: Some(2048),
+            thinking: None,
+        };
+
+        let response = self.provider.chat(request).await
+            .map_err(|e| anyhow::anyhow!("LLM summary call failed: {e}"))?;
+
+        let summary_text = response
+            .content
+            .filter(|s| !s.trim().is_empty())
+            .ok_or_else(|| anyhow::anyhow!("LLM returned empty summary"))?;
+
+        let summary_msg = format!(
+            "[Context compacted — summary of {} earlier messages]\n{summary_text}",
+            summarize_end - 1
+        );
+
+        // Rebuild messages: system prompt + summary + last keep_last messages
+        let mut new_messages: Vec<crate::provider::LlmMessage> = Vec::new();
+        if let Some(sys) = self.messages.first().cloned() {
+            new_messages.push(sys);
+        }
+        new_messages.push(crate::provider::LlmMessage {
+            role: "system".to_string(),
+            name: None,
+            content: Some(summary_msg),
+            tool_calls: None,
+            tool_call_id: None,
+            content_parts: None,
+        });
+        new_messages.extend(self.messages[total - keep_last..].iter().cloned());
+        self.messages = new_messages;
+
+        info!(
+            compacted = summarize_end - 1,
+            kept = keep_last,
+            "LLM semantic compaction complete"
+        );
+        Ok(())
     }
 
     /// Simple compaction: summarize older messages, keep last N.
@@ -3041,6 +3162,59 @@ read(3, "root:x:0:0:...", 4096) = 1234"#;
         // All 4 history messages present (plus whatever system msg make_test_agent has)
         // make_test_agent starts with 0 messages, load_history adds 4
         assert_eq!(agent.message_count(), 4);
+    }
+
+    // ─── LLM-based compaction ────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_compact_llm_summary_replaces_old_messages() {
+        // compact_llm_summary should collapse old messages into a single summary
+        // message and keep the last keep_last messages intact.
+        let mut agent = make_test_agent();
+        agent.config.compact_keep_last = 2;
+        // Build: [system, u1, a1, u2, a2, u3, a3] (7 messages)
+        agent.messages.push(crate::provider::LlmMessage { role: "system".into(), name: None, content: Some("You are a test agent.".into()), tool_calls: None, tool_call_id: None, content_parts: None });
+        agent.messages.push(crate::provider::LlmMessage { role: "user".into(), name: None, content: Some("msg1".into()), tool_calls: None, tool_call_id: None, content_parts: None });
+        agent.messages.push(crate::provider::LlmMessage { role: "assistant".into(), name: None, content: Some("resp1".into()), tool_calls: None, tool_call_id: None, content_parts: None });
+        agent.messages.push(crate::provider::LlmMessage { role: "user".into(), name: None, content: Some("msg2".into()), tool_calls: None, tool_call_id: None, content_parts: None });
+        agent.messages.push(crate::provider::LlmMessage { role: "assistant".into(), name: None, content: Some("resp2".into()), tool_calls: None, tool_call_id: None, content_parts: None });
+        agent.messages.push(crate::provider::LlmMessage { role: "user".into(), name: None, content: Some("msg3".into()), tool_calls: None, tool_call_id: None, content_parts: None });
+        agent.messages.push(crate::provider::LlmMessage { role: "assistant".into(), name: None, content: Some("resp3".into()), tool_calls: None, tool_call_id: None, content_parts: None });
+        let before_count = agent.message_count(); // 7
+        assert_eq!(before_count, 7);
+
+        agent.compact().await;
+
+        // After compact: [system, summary, last-2-messages] = 4
+        let after_count = agent.message_count();
+        assert!(
+            after_count < before_count,
+            "expected fewer messages after compact, got {} (was {})",
+            after_count, before_count
+        );
+        // system prompt preserved at index 0
+        assert_eq!(agent.messages[0].role, "system");
+        // summary message at index 1 (role=system, content starts with [Context compacted)
+        let summary_msg = &agent.messages[1];
+        assert_eq!(summary_msg.role, "system");
+        let summary_content = summary_msg.content.as_deref().unwrap_or("");
+        assert!(summary_content.contains("[Context compacted"), "expected compaction header in: {summary_content}");
+        // last 2 messages preserved
+        assert_eq!(agent.messages[agent.message_count() - 1].content.as_deref(), Some("resp3"));
+    }
+
+    #[tokio::test]
+    async fn test_compact_llm_summary_too_few_messages_noop() {
+        // With keep_last=4 and only 3 messages total (including system),
+        // compact() should be a no-op — nothing to summarise.
+        let mut agent = make_test_agent();
+        agent.config.compact_keep_last = 4;
+        agent.messages.push(crate::provider::LlmMessage { role: "user".into(), name: None, content: Some("hi".into()), tool_calls: None, tool_call_id: None, content_parts: None });
+        agent.messages.push(crate::provider::LlmMessage { role: "assistant".into(), name: None, content: Some("hello".into()), tool_calls: None, tool_call_id: None, content_parts: None });
+        // 3 total: [system, user, assistant]
+        let before = agent.message_count();
+        agent.compact().await;
+        assert_eq!(agent.message_count(), before, "compact should be no-op when nothing to summarise");
     }
 
     // ─── truncate_middle ──────────────────────────────────────────────────────
