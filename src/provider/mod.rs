@@ -944,7 +944,7 @@ impl CopilotProvider {
                     .duration_since(std::time::UNIX_EPOCH)
                     .unwrap_or_default()
                     .as_secs();
-                if now < expires_at - 60 {
+                if expires_at > 60 && now < expires_at - 60 {
                     // refresh 60s before expiry
                     return Ok((token.clone(), endpoint.clone()));
                 }
@@ -992,7 +992,14 @@ impl CopilotProvider {
             .ok_or_else(|| anyhow!("no token in response"))?
             .to_string();
 
-        let expires_at = v.get("expires_at").and_then(|e| e.as_u64()).unwrap_or(0);
+        let now_secs = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        let expires_at = v
+            .get("expires_at")
+            .and_then(|e| e.as_u64())
+            .unwrap_or(now_secs + 1800); // fallback: 30 min from now
 
         let endpoint = v
             .get("endpoints")
@@ -1001,9 +1008,7 @@ impl CopilotProvider {
             .unwrap_or("https://api.githubcopilot.com")
             .to_string();
 
-        info!(endpoint = %endpoint, expires_in = expires_at.saturating_sub(
-            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs()
-        ), "copilot token refreshed");
+        info!(endpoint = %endpoint, expires_in = expires_at.saturating_sub(now_secs), "copilot token refreshed");
 
         // Update cache
         {
