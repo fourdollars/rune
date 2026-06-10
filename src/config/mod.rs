@@ -175,7 +175,7 @@ impl Default for RuneConfig {
             skills_dir: "./skills".to_string(),
             log_level: "error".to_string(),
             max_steps: Some(50),
-            token_budget: Some(262144),
+            token_budget: None, // No default cost guard; context_window drives compaction
             timeout_secs: Some(30),
             base_url: None,
             trace: None,
@@ -1014,7 +1014,7 @@ mod config_tests {
         assert_eq!(c.skills_dir, "./skills");
         assert_eq!(c.log_level, "error");
         assert_eq!(c.max_steps, Some(50));
-        assert_eq!(c.token_budget, Some(262144));
+        assert_eq!(c.token_budget, None); // Default: no cost guard limit
         assert_eq!(c.timeout_secs, Some(30));
         assert!(c.base_url.is_none());
         assert!(c.trace.is_none());

@@ -1925,6 +1925,17 @@ async fn handle_chat_message(
     cfg.model = active_model.clone();
     let effective_thinking_level = state.effective_thinking(&note_id).await;
     cfg.thinking = effective_thinking_level.clone();
+    // Use the model actual context window from ModelInfo (dynamic, from provider API).
+    // This ensures compact threshold aligns with real model capability.
+    // Falls back to cfg.context_window (config/default) when ModelInfo is unavailable.
+    {
+        let models = state.models.read().await;
+        if let Some(model_info) = models.iter().find(|m| m.id == active_model) {
+            if let Some(cw) = model_info.context_window {
+                cfg.context_window = cw as usize;
+            }
+        }
+    }
     let mut agent = Agent::new(cfg, provider, true, embedding);
     agent.set_serve_mode(true);
     agent.token_callback = Some(token_callback);
@@ -3420,6 +3431,70 @@ mod isolation_tests {
         *room.model_override.write().await = Some("claude-sonnet-4.6".into());
         let model = state.effective_model("note-x").await;
         assert_eq!(model, "claude-sonnet-4.6");
+    }
+
+    #[tokio::test]
+    async fn test_model_info_context_window_applied_to_cfg() {
+        // When ModelInfo has a context_window, it should override cfg.context_window
+        // This test verifies the lookup logic mirrors what handle_chat_message does.
+        let tmp = tempfile::tempdir().unwrap();
+        let (admin_broadcast_tx, _) = tokio::sync::broadcast::channel(256);
+        let db_path = tmp.path().join("test.db");
+        let db = ChatDb::open(&db_path).unwrap();
+        let model_id = "gpt-5-mini";
+        let expected_cw: u64 = 131072;
+        let state = ServerState {
+            config: RuneConfig::default(),
+            user_token: None,
+            admin_token: Some("admin123".into()),
+            guest_token: None,
+            files: Arc::new(RwLock::new(HashMap::new())),
+            active_file: Arc::new(RwLock::new(String::new())),
+            models: Arc::new(tokio::sync::RwLock::new(vec![
+                ModelInfo {
+                    id: model_id.into(),
+                    context_window: Some(expected_cw),
+                    reasoning_efforts: vec![],
+                    supported_endpoints: vec![],
+                },
+            ])),
+            rooms: Arc::new(RwLock::new(HashMap::new())),
+            global_default_model: Arc::new(RwLock::new(model_id.into())),
+            admin_broadcast_tx,
+            chat_db: db,
+            data_dir: tmp.path().join(".rune"),
+        };
+        let active_model = state.effective_model("note-x").await;
+        assert_eq!(active_model, model_id);
+        // Simulate what handle_chat_message does: look up ModelInfo and override cfg
+        let mut cfg = state.config.clone();
+        let models = state.models.read().await;
+        if let Some(model_info) = models.iter().find(|m| m.id == active_model) {
+            if let Some(cw) = model_info.context_window {
+                cfg.context_window = cw as usize;
+            }
+        }
+        drop(models);
+        assert_eq!(cfg.context_window, expected_cw as usize,
+            "cfg.context_window must be overridden by ModelInfo.context_window");
+    }
+
+    #[tokio::test]
+    async fn test_model_info_context_window_fallback_when_none() {
+        // When ModelInfo.context_window is None, cfg.context_window keeps its default
+        let (state, _tmp) = make_state();
+        let active_model = state.effective_model("note-x").await;
+        let default_cw = state.config.context_window;
+        let mut cfg = state.config.clone();
+        let models = state.models.read().await;
+        if let Some(model_info) = models.iter().find(|m| m.id == active_model) {
+            if let Some(cw) = model_info.context_window {
+                cfg.context_window = cw as usize;
+            }
+        }
+        drop(models);
+        assert_eq!(cfg.context_window, default_cw,
+            "cfg.context_window must remain as default when ModelInfo.context_window is None");
     }
 
     #[tokio::test]
