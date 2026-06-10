@@ -47,6 +47,9 @@ pub fn estimate_tokens(text: &str) -> usize {
     }
     // CJK and other wide Unicode chars (U+1100+) average ~1 token each;
     // ASCII/Latin average ~4 chars per token. Use a weighted estimate.
+    // NOTE: U+1100 is Hangul Jamo; the range also covers Ethiopic, Cherokee,
+    // Canadian Aboriginal, Runic, etc. — those actually tokenise closer to Latin
+    // but the over-count is minor and we accept it as a conservative approximation.
     let (cjk_chars, ascii_chars): (usize, usize) = text.chars().fold((0, 0), |(cjk, asc), c| {
         if c as u32 >= 0x1100 {
             (cjk + 1, asc)
@@ -312,20 +315,26 @@ impl Agent {
         const HISTORY_BUDGET_RATIO: f64 = 0.40;
         let history_token_budget =
             ((self.config.context_window as f64) * HISTORY_BUDGET_RATIO) as usize;
+        // Use an index-based approach instead of Vec::remove(0) to avoid O(n²)
+        // behaviour on large histories (200+ records).
+        let mut trim_from = 0usize;
         loop {
-            let history_tokens: usize = history_msgs
+            let history_tokens: usize = history_msgs[trim_from..]
                 .iter()
                 .map(|m| estimate_tokens(m.content.as_deref().unwrap_or("")) + 4)
                 .sum();
-            if history_tokens <= history_token_budget || history_msgs.len() < 2 {
+            if history_tokens <= history_token_budget || history_msgs.len() - trim_from < 2 {
                 break;
             }
-            // Remove oldest message; if the next is an assistant reply,
-            // remove it too so user/assistant turns stay paired.
-            history_msgs.remove(0);
-            if !history_msgs.is_empty() && history_msgs[0].role == "assistant" {
-                history_msgs.remove(0);
+            // Drop oldest message; if the next is an assistant reply,
+            // drop it too so user/assistant turns stay paired.
+            trim_from += 1;
+            if trim_from < history_msgs.len() && history_msgs[trim_from].role == "assistant" {
+                trim_from += 1;
             }
+        }
+        if trim_from > 0 {
+            history_msgs.drain(..trim_from);
         }
 
         for (i, msg) in history_msgs.into_iter().enumerate() {
@@ -521,12 +530,15 @@ impl Agent {
         }
 
         let transcript = transcript_parts.join("\n");
-        // Safety: if the transcript itself is huge, truncate to avoid infinite regress
-        let max_transcript_chars = self.config.context_window * 2; // rough char limit
-        let transcript = if transcript.chars().count() > max_transcript_chars {
+        // Safety: if the transcript itself is huge, truncate to avoid infinite regress.
+        // Cap at 32 768 chars (~8 K tokens for ASCII) — a safe summarisation input
+        // regardless of model context window size. Using context_window (tokens) * 2
+        // as a char limit would be misleading because the units differ.
+        const MAX_TRANSCRIPT_CHARS: usize = 32_768;
+        let transcript = if transcript.chars().count() > MAX_TRANSCRIPT_CHARS {
             transcript
                 .chars()
-                .take(max_transcript_chars)
+                .take(MAX_TRANSCRIPT_CHARS)
                 .collect::<String>()
                 + "\n[transcript truncated]"
         } else {
@@ -542,22 +554,23 @@ impl Agent {
 
         let request = crate::provider::LlmRequest {
             model: self.config.model.clone(),
-            messages: vec![
-                crate::provider::LlmMessage {
-                    role: "user".to_string(),
-                    name: None,
-                    content: Some(summarize_prompt),
-                    tool_calls: None,
-                    tool_call_id: None,
-                    content_parts: None,
-                },
-            ],
+            messages: vec![crate::provider::LlmMessage {
+                role: "user".to_string(),
+                name: None,
+                content: Some(summarize_prompt),
+                tool_calls: None,
+                tool_call_id: None,
+                content_parts: None,
+            }],
             tools: None,
             max_tokens: Some(2048),
             thinking: None,
         };
 
-        let response = self.provider.chat(request).await
+        let response = self
+            .provider
+            .chat(request)
+            .await
             .map_err(|e| anyhow::anyhow!("LLM summary call failed: {e}"))?;
 
         let summary_text = response
@@ -570,13 +583,15 @@ impl Agent {
             summarize_end - 1
         );
 
-        // Rebuild messages: system prompt + summary + last keep_last messages
+        // Rebuild messages: system prompt + summary + last keep_last messages.
+        // Use role "user" for the summary injection — not "system" — to avoid
+        // sending multiple system messages which some providers reject or mis-order.
         let mut new_messages: Vec<crate::provider::LlmMessage> = Vec::new();
         if let Some(sys) = self.messages.first().cloned() {
             new_messages.push(sys);
         }
         new_messages.push(crate::provider::LlmMessage {
-            role: "system".to_string(),
+            role: "user".to_string(),
             name: None,
             content: Some(summary_msg),
             tool_calls: None,
@@ -3140,7 +3155,11 @@ read(3, "root:x:0:0:...", 4096) = 1234"#;
         agent.load_history(&records);
         // Each pair ≈ (50+4)*2 = 108 tokens; budget=400 → at most ~3–4 pairs
         let history_msgs = agent.message_count().saturating_sub(1); // subtract system msg
-        assert!(history_msgs <= 8, "expected ≤8 history msgs, got {}", history_msgs);
+        assert!(
+            history_msgs <= 8,
+            "expected ≤8 history msgs, got {}",
+            history_msgs
+        );
         // The last message must be the newest assistant reply
         let last = &agent.messages[agent.message_count() - 1];
         assert_eq!(last.role, "assistant");
@@ -3173,13 +3192,62 @@ read(3, "root:x:0:0:...", 4096) = 1234"#;
         let mut agent = make_test_agent();
         agent.config.compact_keep_last = 2;
         // Build: [system, u1, a1, u2, a2, u3, a3] (7 messages)
-        agent.messages.push(crate::provider::LlmMessage { role: "system".into(), name: None, content: Some("You are a test agent.".into()), tool_calls: None, tool_call_id: None, content_parts: None });
-        agent.messages.push(crate::provider::LlmMessage { role: "user".into(), name: None, content: Some("msg1".into()), tool_calls: None, tool_call_id: None, content_parts: None });
-        agent.messages.push(crate::provider::LlmMessage { role: "assistant".into(), name: None, content: Some("resp1".into()), tool_calls: None, tool_call_id: None, content_parts: None });
-        agent.messages.push(crate::provider::LlmMessage { role: "user".into(), name: None, content: Some("msg2".into()), tool_calls: None, tool_call_id: None, content_parts: None });
-        agent.messages.push(crate::provider::LlmMessage { role: "assistant".into(), name: None, content: Some("resp2".into()), tool_calls: None, tool_call_id: None, content_parts: None });
-        agent.messages.push(crate::provider::LlmMessage { role: "user".into(), name: None, content: Some("msg3".into()), tool_calls: None, tool_call_id: None, content_parts: None });
-        agent.messages.push(crate::provider::LlmMessage { role: "assistant".into(), name: None, content: Some("resp3".into()), tool_calls: None, tool_call_id: None, content_parts: None });
+        agent.messages.push(crate::provider::LlmMessage {
+            role: "system".into(),
+            name: None,
+            content: Some("You are a test agent.".into()),
+            tool_calls: None,
+            tool_call_id: None,
+            content_parts: None,
+        });
+        agent.messages.push(crate::provider::LlmMessage {
+            role: "user".into(),
+            name: None,
+            content: Some("msg1".into()),
+            tool_calls: None,
+            tool_call_id: None,
+            content_parts: None,
+        });
+        agent.messages.push(crate::provider::LlmMessage {
+            role: "assistant".into(),
+            name: None,
+            content: Some("resp1".into()),
+            tool_calls: None,
+            tool_call_id: None,
+            content_parts: None,
+        });
+        agent.messages.push(crate::provider::LlmMessage {
+            role: "user".into(),
+            name: None,
+            content: Some("msg2".into()),
+            tool_calls: None,
+            tool_call_id: None,
+            content_parts: None,
+        });
+        agent.messages.push(crate::provider::LlmMessage {
+            role: "assistant".into(),
+            name: None,
+            content: Some("resp2".into()),
+            tool_calls: None,
+            tool_call_id: None,
+            content_parts: None,
+        });
+        agent.messages.push(crate::provider::LlmMessage {
+            role: "user".into(),
+            name: None,
+            content: Some("msg3".into()),
+            tool_calls: None,
+            tool_call_id: None,
+            content_parts: None,
+        });
+        agent.messages.push(crate::provider::LlmMessage {
+            role: "assistant".into(),
+            name: None,
+            content: Some("resp3".into()),
+            tool_calls: None,
+            tool_call_id: None,
+            content_parts: None,
+        });
         let before_count = agent.message_count(); // 7
         assert_eq!(before_count, 7);
 
@@ -3190,17 +3258,25 @@ read(3, "root:x:0:0:...", 4096) = 1234"#;
         assert!(
             after_count < before_count,
             "expected fewer messages after compact, got {} (was {})",
-            after_count, before_count
+            after_count,
+            before_count
         );
         // system prompt preserved at index 0
         assert_eq!(agent.messages[0].role, "system");
-        // summary message at index 1 (role=system, content starts with [Context compacted)
+        // summary message at index 1: role="user" (not "system") to avoid
+        // multi-system-message issues with some providers.
         let summary_msg = &agent.messages[1];
-        assert_eq!(summary_msg.role, "system");
+        assert_eq!(summary_msg.role, "user");
         let summary_content = summary_msg.content.as_deref().unwrap_or("");
-        assert!(summary_content.contains("[Context compacted"), "expected compaction header in: {summary_content}");
+        assert!(
+            summary_content.contains("[Context compacted"),
+            "expected compaction header in: {summary_content}"
+        );
         // last 2 messages preserved
-        assert_eq!(agent.messages[agent.message_count() - 1].content.as_deref(), Some("resp3"));
+        assert_eq!(
+            agent.messages[agent.message_count() - 1].content.as_deref(),
+            Some("resp3")
+        );
     }
 
     #[tokio::test]
@@ -3209,12 +3285,30 @@ read(3, "root:x:0:0:...", 4096) = 1234"#;
         // compact() should be a no-op — nothing to summarise.
         let mut agent = make_test_agent();
         agent.config.compact_keep_last = 4;
-        agent.messages.push(crate::provider::LlmMessage { role: "user".into(), name: None, content: Some("hi".into()), tool_calls: None, tool_call_id: None, content_parts: None });
-        agent.messages.push(crate::provider::LlmMessage { role: "assistant".into(), name: None, content: Some("hello".into()), tool_calls: None, tool_call_id: None, content_parts: None });
+        agent.messages.push(crate::provider::LlmMessage {
+            role: "user".into(),
+            name: None,
+            content: Some("hi".into()),
+            tool_calls: None,
+            tool_call_id: None,
+            content_parts: None,
+        });
+        agent.messages.push(crate::provider::LlmMessage {
+            role: "assistant".into(),
+            name: None,
+            content: Some("hello".into()),
+            tool_calls: None,
+            tool_call_id: None,
+            content_parts: None,
+        });
         // 3 total: [system, user, assistant]
         let before = agent.message_count();
         agent.compact().await;
-        assert_eq!(agent.message_count(), before, "compact should be no-op when nothing to summarise");
+        assert_eq!(
+            agent.message_count(),
+            before,
+            "compact should be no-op when nothing to summarise"
+        );
     }
 
     // ─── truncate_middle ──────────────────────────────────────────────────────

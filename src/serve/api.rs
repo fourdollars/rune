@@ -3447,14 +3447,12 @@ mod isolation_tests {
             guest_token: None,
             files: Arc::new(RwLock::new(HashMap::new())),
             active_file: Arc::new(RwLock::new(String::new())),
-            models: Arc::new(tokio::sync::RwLock::new(vec![
-                ModelInfo {
-                    id: model_id.into(),
-                    context_window: Some(expected_cw),
-                    reasoning_efforts: vec![],
-                    supported_endpoints: vec![],
-                },
-            ])),
+            models: Arc::new(tokio::sync::RwLock::new(vec![ModelInfo {
+                id: model_id.into(),
+                context_window: Some(expected_cw),
+                reasoning_efforts: vec![],
+                supported_endpoints: vec![],
+            }])),
             rooms: Arc::new(RwLock::new(HashMap::new())),
             global_default_model: Arc::new(RwLock::new(model_id.into())),
             admin_broadcast_tx,
@@ -3472,8 +3470,10 @@ mod isolation_tests {
             }
         }
         drop(models);
-        assert_eq!(cfg.context_window, expected_cw as usize,
-            "cfg.context_window must be overridden by ModelInfo.context_window");
+        assert_eq!(
+            cfg.context_window, expected_cw as usize,
+            "cfg.context_window must be overridden by ModelInfo.context_window"
+        );
     }
 
     #[tokio::test]
@@ -3490,8 +3490,10 @@ mod isolation_tests {
             }
         }
         drop(models);
-        assert_eq!(cfg.context_window, default_cw,
-            "cfg.context_window must remain as default when ModelInfo.context_window is None");
+        assert_eq!(
+            cfg.context_window, default_cw,
+            "cfg.context_window must remain as default when ModelInfo.context_window is None"
+        );
     }
 
     #[tokio::test]

@@ -175,7 +175,13 @@ impl Default for RuneConfig {
             skills_dir: "./skills".to_string(),
             log_level: "error".to_string(),
             max_steps: Some(50),
-            token_budget: None, // No default cost guard; context_window drives compaction
+            // No hard token-budget cap by default; context_window + compaction drive
+            // memory management instead. IMPORTANT: this means unbounded LLM costs are
+            // possible for long-running sessions with slowly-growing context (e.g. many
+            // short messages that never trigger compaction). Operators who want a safety
+            // ceiling must set `token_budget` explicitly in rune.toml, e.g.:
+            //   token_budget = 262144   # 256 K tokens ≈ original default
+            token_budget: None,
             timeout_secs: Some(30),
             base_url: None,
             trace: None,
