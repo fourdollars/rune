@@ -2016,19 +2016,16 @@ async fn handle_chat_message(
     };
     agent.set_system_prompt(&system_prompt);
 
-    // Load chat history into agent context
-    let history = state.chat_db.load_recent_async(note_id.clone(), 51).await;
+    // Load chat history into agent context.
+    // Fetch 200 records so token-aware trimming inside load_history has
+    // enough material; it will drop oldest pairs to fit within 40% of
+    // context_window automatically.
+    let history = state.chat_db.load_recent_async(note_id.clone(), 200).await;
     let history_without_current: Vec<_> = history
         .into_iter()
         .filter(|r| !(r.role == "user" && r.content == user_msg))
         .collect();
-    let max_history = 100usize;
-    let history_slice = if history_without_current.len() > max_history {
-        &history_without_current[history_without_current.len() - max_history..]
-    } else {
-        &history_without_current[..]
-    };
-    agent.load_history(history_slice);
+    agent.load_history(&history_without_current);
 
     // Run agent
     let stop_reason = agent.run(&user_msg).await;

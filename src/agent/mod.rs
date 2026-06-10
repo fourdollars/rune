@@ -42,12 +42,22 @@ enum ConfirmResult {
 
 /// Rough token estimator using a chars/4 approximation.
 pub fn estimate_tokens(text: &str) -> usize {
-    let chars = text.chars().count();
-    if chars == 0 {
-        0
-    } else {
-        (chars + 3) / 4
+    if text.is_empty() {
+        return 0;
     }
+    // CJK and other wide Unicode chars (U+1100+) average ~1 token each;
+    // ASCII/Latin average ~4 chars per token. Use a weighted estimate.
+    let (cjk_chars, ascii_chars): (usize, usize) = text.chars().fold((0, 0), |(cjk, asc), c| {
+        if c as u32 >= 0x1100 {
+            (cjk + 1, asc)
+        } else {
+            (cjk, asc + 1)
+        }
+    });
+    // CJK: 1 token each (conservative); ASCII: 1 token per 4 chars
+    let cjk_tokens = cjk_chars;
+    let ascii_tokens = (ascii_chars + 3) / 4;
+    (cjk_tokens + ascii_tokens).max(1)
 }
 
 /// The AI Agent — orchestrates LLM calls and tool execution.
@@ -293,6 +303,28 @@ impl Agent {
                 history_msgs.remove(len - 2);
             } else {
                 break;
+            }
+        }
+
+        // Token-aware trimming: drop oldest message pairs until history
+        // tokens fit within 40% of context_window, leaving headroom for
+        // system prompt, tool schema, new user message, and output.
+        const HISTORY_BUDGET_RATIO: f64 = 0.40;
+        let history_token_budget =
+            ((self.config.context_window as f64) * HISTORY_BUDGET_RATIO) as usize;
+        loop {
+            let history_tokens: usize = history_msgs
+                .iter()
+                .map(|m| estimate_tokens(m.content.as_deref().unwrap_or("")) + 4)
+                .sum();
+            if history_tokens <= history_token_budget || history_msgs.len() < 2 {
+                break;
+            }
+            // Remove oldest message; if the next is an assistant reply,
+            // remove it too so user/assistant turns stay paired.
+            history_msgs.remove(0);
+            if !history_msgs.is_empty() && history_msgs[0].role == "assistant" {
+                history_msgs.remove(0);
             }
         }
 
@@ -784,6 +816,20 @@ impl Agent {
                     "context window threshold exceeded; compacting"
                 );
                 self.compact().await;
+                // Post-compact safety check: if context is still over the hard limit
+                // (100% of context_window), compact again up to 2 more times.
+                let hard_limit = self.config.context_window;
+                for _ in 0..2 {
+                    if self.total_context_tokens() <= hard_limit {
+                        break;
+                    }
+                    warn!(
+                        context_tokens = self.total_context_tokens(),
+                        context_window = self.config.context_window,
+                        "context still over hard limit after compact; compacting again"
+                    );
+                    self.compact().await;
+                }
             }
 
             self.step_count += 1;
@@ -2418,8 +2464,8 @@ mod tests {
 
     #[test]
     fn test_estimate_tokens_unicode() {
-        // 4 unicode chars → (4+3)/4 = 1
-        assert_eq!(estimate_tokens("你好世界"), 1);
+        // 4 CJK chars → 4 tokens (1 token each)
+        assert_eq!(estimate_tokens("你好世界"), 4);
     }
 
     #[test]
@@ -2930,6 +2976,71 @@ read(3, "root:x:0:0:...", 4096) = 1234"#;
         assert_eq!(filtered.len(), 2);
         assert_eq!(filtered[0].content, "hello");
         assert_eq!(filtered[1].content, "hi there");
+    }
+
+    // ─── token-aware history trimming ────────────────────────────────────────
+
+    fn make_chat_record(id: i64, role: &str, content: &str) -> crate::serve::db::ChatRecord {
+        crate::serve::db::ChatRecord {
+            id,
+            note_id: "default".into(),
+            role: role.into(),
+            nickname: "".into(),
+            content: content.into(),
+            created_at: id,
+            model: None,
+            tokens_in: None,
+            tokens_out: None,
+            steps: None,
+            tool_calls: None,
+            thinking: None,
+            context_tokens: None,
+        }
+    }
+
+    #[test]
+    fn test_load_history_token_aware_trims_oldest() {
+        // context_window = 1000 tokens → budget = 400 tokens.
+        // 10 user+assistant pairs, each ~50 ASCII tokens (200-char content).
+        // Total ~1000 tokens > 400 → oldest pairs should be trimmed.
+        let mut agent = make_test_agent();
+        agent.config.context_window = 1000;
+        // 200 chars ≈ 50 ASCII tokens each
+        let long_content: String = "x".repeat(200);
+        let records: Vec<_> = (0..10i64)
+            .flat_map(|i| {
+                let base = i * 2;
+                vec![
+                    make_chat_record(base, "user", &long_content),
+                    make_chat_record(base + 1, "assistant", &long_content),
+                ]
+            })
+            .collect();
+        agent.load_history(&records);
+        // Each pair ≈ (50+4)*2 = 108 tokens; budget=400 → at most ~3–4 pairs
+        let history_msgs = agent.message_count().saturating_sub(1); // subtract system msg
+        assert!(history_msgs <= 8, "expected ≤8 history msgs, got {}", history_msgs);
+        // The last message must be the newest assistant reply
+        let last = &agent.messages[agent.message_count() - 1];
+        assert_eq!(last.role, "assistant");
+        assert_eq!(last.content.as_deref(), Some(long_content.as_str()));
+    }
+
+    #[test]
+    fn test_load_history_small_history_not_trimmed() {
+        // Small history well within budget → nothing trimmed.
+        let mut agent = make_test_agent();
+        agent.config.context_window = 128_000;
+        let records = vec![
+            make_chat_record(1, "user", "hello"),
+            make_chat_record(2, "assistant", "hi"),
+            make_chat_record(3, "user", "how are you"),
+            make_chat_record(4, "assistant", "great"),
+        ];
+        agent.load_history(&records);
+        // All 4 history messages present (plus whatever system msg make_test_agent has)
+        // make_test_agent starts with 0 messages, load_history adds 4
+        assert_eq!(agent.message_count(), 4);
     }
 
     // ─── truncate_middle ──────────────────────────────────────────────────────
