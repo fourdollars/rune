@@ -1091,8 +1091,8 @@ function applyPanelLayout() {
         previewContainer.style.width = '';
     }
 
-    // Show split-title whenever any panel is visible (editor or preview)
-    const splitTitle = document.getElementById('split-title');
+    // Show split-title-bar whenever any panel is visible (editor or preview)
+    const splitTitle = document.getElementById('split-title-bar');
     if (splitTitle) {
         splitTitle.style.display = (showEdit || showPreview) ? 'flex' : 'none';
     }

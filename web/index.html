@@ -157,8 +157,6 @@
                 <div class="note-tree" id="note-tree"></div>
                 <div class="explorer-actions">
                     <button id="btn-new-note" class="explorer-action-btn" onclick="showNewNoteDialog()" title="New note">+</button>
-                    <button id="btn-edit" class="explorer-action-btn active" onclick="toggleEdit()" title="Toggle editor">✏️</button>
-                    <button id="btn-preview" class="explorer-action-btn" onclick="togglePreview()" title="Toggle preview">👁</button>
                     <button id="btn-logout" class="explorer-action-btn" onclick="showLogoutDialog()" title="Logout">⏏</button>
                 </div>
             </div>
@@ -168,7 +166,11 @@
         <main id="panel-center">
 
             <div id="center-body">
-                <div id="split-title"></div>
+                <div id="split-title-bar">
+                    <button id="btn-edit" class="split-title-btn active" onclick="toggleEdit()" title="Toggle editor">✏️</button>
+                    <div id="split-title"></div>
+                    <button id="btn-preview" class="split-title-btn" onclick="togglePreview()" title="Toggle preview">👁</button>
+                </div>
                 <div id="split-body">
                 <div class="mobile-section" id="mobile-section-preview">
                     <div class="mobile-section-header" onclick="toggleMobileSection('preview')">

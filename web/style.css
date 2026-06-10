@@ -897,23 +897,58 @@ pre.hljs-pre:hover .copy-btn {
 }
 
 /* --- split-title bar (visible when editor or preview is shown) --- */
-#split-title {
+#split-title-bar {
     display: none;
     height: 36px;
     min-height: 36px;
     flex-shrink: 0;
     align-items: center;
+    background: var(--bg-secondary);
+    border-bottom: 1px solid var(--border);
+    width: 100%;
+    gap: 0;
+}
+
+#split-title {
+    flex: 1;
+    display: flex;
+    align-items: center;
     justify-content: center;
     font-size: 13px;
     font-weight: 500;
     color: var(--text-secondary);
-    background: var(--bg-secondary);
-    border-bottom: 1px solid var(--border);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    padding: 0 12px;
-    width: 100%;
+    padding: 0 4px;
+    min-width: 0;
+}
+
+.split-title-btn {
+    flex-shrink: 0;
+    background: none;
+    border: none;
+    cursor: pointer;
+    font-size: 14px;
+    padding: 0 10px;
+    height: 36px;
+    display: flex;
+    align-items: center;
+    color: var(--text-muted);
+    opacity: 0.55;
+    transition: background 0.1s, color 0.1s, opacity 0.1s;
+    border-radius: 0;
+}
+
+.split-title-btn:hover {
+    background: var(--bg-hover, rgba(255,255,255,0.08));
+    color: var(--text-primary);
+    opacity: 1;
+}
+
+.split-title-btn.active {
+    color: var(--accent, #6366f1);
+    opacity: 1;
 }
 
 .title-public-link {
@@ -1761,7 +1796,7 @@ pre.hljs-pre:hover .copy-btn {
     #panel-center, #panel-center.hidden { flex: 1 !important; display: flex !important; flex-direction: column; overflow: hidden; width: auto !important; min-width: auto !important; height: auto !important; padding: 0 !important; }
     #center-body { flex: 1; display: flex !important; flex-direction: column; overflow: hidden; }
     #center-body.split-view #split-body { flex-direction: column !important; }
-    #split-title { display: none !important; }
+    #split-title-bar { display: none !important; }
     #split-body { flex: 1; min-height: 0; overflow: hidden; }
 
     /* ─── Accordion sections ─── */
