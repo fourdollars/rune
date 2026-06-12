@@ -1299,6 +1299,9 @@ pub struct GeminiProvider {
     pub api_key: String,
     pub model: String,
     pub base_url: String,
+    /// Models confirmed by list_models() to support thinkingConfig.
+    /// None = not yet fetched (fall back to name heuristic).
+    thinking_capable: std::sync::Mutex<Option<std::collections::HashSet<String>>>,
 }
 
 impl GeminiProvider {
@@ -1308,7 +1311,20 @@ impl GeminiProvider {
             model: model.unwrap_or_else(|| "gemini-2.0-flash".to_string()),
             base_url: base_url
                 .unwrap_or_else(|| "https://generativelanguage.googleapis.com/v1beta".to_string()),
+            thinking_capable: std::sync::Mutex::new(None),
         }
+    }
+
+    /// Returns true if the model supports thinkingConfig.
+    /// Uses the API-populated cache; falls back to name heuristic before first list_models call.
+    fn model_supports_thinking(&self, model: &str) -> bool {
+        if let Ok(guard) = self.thinking_capable.lock() {
+            if let Some(ref set) = *guard {
+                return set.contains(model);
+            }
+        }
+        // Cache not yet populated — conservative name-based fallback
+        model.starts_with("gemini-2.5") || model.contains("thinking")
     }
 
     /// Convert OpenAI-format messages to Gemini format.
@@ -1455,6 +1471,69 @@ impl Provider for GeminiProvider {
         "gemini"
     }
 
+    fn list_models(&self) -> Pin<Box<dyn Future<Output = Result<Vec<ModelInfo>>> + Send + '_>> {
+        let api_key = self.api_key.clone();
+        let base_url = self.base_url.clone();
+        Box::pin(async move {
+            let client = Client::builder()
+                .timeout(std::time::Duration::from_secs(10))
+                .build()?;
+            let url = format!("{}/models?key={}", base_url.trim_end_matches('/'), api_key);
+            let resp = client.get(&url).send().await?;
+            if !resp.status().is_success() {
+                return Ok(Vec::new());
+            }
+            let body: serde_json::Value = resp.json().await?;
+            let arr = match body.get("models").and_then(|v| v.as_array()) {
+                Some(a) => a,
+                None => return Ok(Vec::new()),
+            };
+
+            let thinking_levels = vec!["low".to_string(), "medium".to_string(), "high".to_string()];
+            let mut thinking_set = std::collections::HashSet::new();
+
+            let mut models: Vec<ModelInfo> = arr
+                .iter()
+                .filter(|m| {
+                    m.get("supportedGenerationMethods")
+                        .and_then(|v| v.as_array())
+                        .map(|a| a.iter().any(|e| e.as_str() == Some("generateContent")))
+                        .unwrap_or(false)
+                })
+                .filter_map(|m| {
+                    let id = m
+                        .get("name")
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.trim_start_matches("models/").to_string())?;
+                    let supports_thinking =
+                        m.get("thinking").and_then(|v| v.as_bool()).unwrap_or(false);
+                    if supports_thinking {
+                        thinking_set.insert(id.clone());
+                    }
+                    Some(ModelInfo {
+                        id,
+                        context_window: m.get("inputTokenLimit").and_then(|v| v.as_u64()),
+                        reasoning_efforts: if supports_thinking {
+                            thinking_levels.clone()
+                        } else {
+                            vec![]
+                        },
+                        supported_endpoints: vec![],
+                    })
+                })
+                .collect();
+
+            models.sort_by(|a, b| a.id.cmp(&b.id));
+
+            // Populate thinking cache for use in chat()
+            if let Ok(mut guard) = self.thinking_capable.lock() {
+                *guard = Some(thinking_set);
+            }
+
+            Ok(models)
+        })
+    }
+
     fn chat(
         &self,
         request: LlmRequest,
@@ -1466,6 +1545,7 @@ impl Provider for GeminiProvider {
         } else {
             request.model.clone()
         };
+        let thinking_capable = self.model_supports_thinking(&model);
 
         Box::pin(async move {
             let (system_instruction, contents) = Self::convert_messages(&request.messages);
@@ -1482,22 +1562,24 @@ impl Provider for GeminiProvider {
                 payload["tools"] = t;
             }
 
-            // Gemini thinking config
-            if let Some(ref thinking) = request.thinking {
-                let budget = match thinking.as_str() {
-                    "low" => Some(1024),
-                    "medium" => Some(4096),
-                    "high" => Some(8192),
-                    "xhigh" => Some(16384),
-                    "none" | "off" => Some(0),
-                    _ => None,
-                };
-                if let Some(b) = budget {
-                    payload["generationConfig"] = serde_json::json!({
-                        "thinkingConfig": {
-                            "thinkingBudget": b
-                        }
-                    });
+            // Gemini thinking config — only for models that support it (2.5+ series)
+            if thinking_capable {
+                if let Some(ref thinking) = request.thinking {
+                    let budget = match thinking.as_str() {
+                        "low" => Some(1024),
+                        "medium" => Some(4096),
+                        "high" => Some(8192),
+                        "xhigh" => Some(16384),
+                        "none" | "off" => Some(0),
+                        _ => None,
+                    };
+                    if let Some(b) = budget {
+                        payload["generationConfig"] = serde_json::json!({
+                            "thinkingConfig": {
+                                "thinkingBudget": b
+                            }
+                        });
+                    }
                 }
             }
 
@@ -1658,6 +1740,7 @@ impl Provider for GeminiProvider {
         } else {
             request.model.clone()
         };
+        let thinking_capable = self.model_supports_thinking(&model);
 
         Box::pin(async move {
             let (system_instruction, contents) = Self::convert_messages(&request.messages);
@@ -1674,22 +1757,24 @@ impl Provider for GeminiProvider {
                 payload["tools"] = t;
             }
 
-            // Gemini thinking config
-            if let Some(ref thinking) = request.thinking {
-                let budget = match thinking.as_str() {
-                    "low" => Some(1024),
-                    "medium" => Some(4096),
-                    "high" => Some(8192),
-                    "xhigh" => Some(16384),
-                    "none" | "off" => Some(0),
-                    _ => None,
-                };
-                if let Some(b) = budget {
-                    payload["generationConfig"] = serde_json::json!({
-                        "thinkingConfig": {
-                            "thinkingBudget": b
-                        }
-                    });
+            // Gemini thinking config — only for models that support it (2.5+ series)
+            if thinking_capable {
+                if let Some(ref thinking) = request.thinking {
+                    let budget = match thinking.as_str() {
+                        "low" => Some(1024),
+                        "medium" => Some(4096),
+                        "high" => Some(8192),
+                        "xhigh" => Some(16384),
+                        "none" | "off" => Some(0),
+                        _ => None,
+                    };
+                    if let Some(b) = budget {
+                        payload["generationConfig"] = serde_json::json!({
+                            "thinkingConfig": {
+                                "thinkingBudget": b
+                            }
+                        });
+                    }
                 }
             }
 

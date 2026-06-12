@@ -452,6 +452,43 @@ async fn fetch_copilot_models_bearer(
     None
 }
 
+async fn fetch_gemini_models(api_key: &str, base_url: &str) -> Option<Vec<String>> {
+    if api_key.is_empty() {
+        return None;
+    }
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(10))
+        .build()
+        .ok()?;
+    let url = format!("{}/models?key={}", base_url, api_key);
+    let resp = client.get(&url).send().await.ok()?;
+    if !resp.status().is_success() {
+        return None;
+    }
+    let body: serde_json::Value = resp.json().await.ok()?;
+    let arr = body.get("models")?.as_array()?;
+    let mut models: Vec<String> = arr
+        .iter()
+        .filter(|m| {
+            m.get("supportedGenerationMethods")
+                .and_then(|v| v.as_array())
+                .map(|a| a.iter().any(|e| e.as_str() == Some("generateContent")))
+                .unwrap_or(false)
+        })
+        .filter_map(|m| {
+            m.get("name")
+                .and_then(|v| v.as_str())
+                .map(|s| s.trim_start_matches("models/").to_string())
+        })
+        .collect();
+    models.sort();
+    if models.is_empty() {
+        None
+    } else {
+        Some(models)
+    }
+}
+
 async fn fetch_openrouter_embedding_models() -> Option<(Vec<String>, String)> {
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(5))
@@ -770,6 +807,7 @@ pub async fn run_setup(config_path_override: Option<String>) {
 
     let mut openrouter_models = None;
     let mut copilot_models = None;
+    let mut gemini_models = None;
     if provider_choice.trim() == "4" {
         print!("  Fetching models from OpenRouter...");
         let _ = io::stdout().flush();
@@ -788,6 +826,18 @@ pub async fn run_setup(config_path_override: Option<String>) {
         } else {
             println!(" Failed.");
         }
+    } else if provider_choice.trim() == "2" && !api_key.is_empty() {
+        print!("  Fetching models from Gemini...");
+        let _ = io::stdout().flush();
+        let gemini_base = base_url
+            .as_deref()
+            .unwrap_or("https://generativelanguage.googleapis.com/v1beta");
+        if let Some(models) = fetch_gemini_models(&api_key, gemini_base).await {
+            println!(" Done.");
+            gemini_models = Some(models);
+        } else {
+            println!(" Failed. Using defaults.");
+        }
     }
 
     match provider_choice.trim() {
@@ -802,9 +852,14 @@ pub async fn run_setup(config_path_override: Option<String>) {
             }
         }
         "2" => {
-            println!("   {} gemini-2.0-flash (fast)", "[1]".cyan());
-            println!("   {} gemini-1.5-pro   (powerful)", "[2]".cyan());
-            println!("   {} Custom", "[3]".cyan());
+            if let Some(ref models) = gemini_models {
+                for (i, model) in models.iter().enumerate() {
+                    println!("   {} {}", format!("[{}]", i + 1).cyan(), model);
+                }
+                println!("   {} Custom", format!("[{}]", models.len() + 1).cyan());
+            } else {
+                println!("   {} Custom", "[1]".cyan());
+            }
         }
         "3" => {
             println!("   {} gpt-4o-mini     (fast, cheap)", "[1]".cyan());
@@ -833,7 +888,7 @@ pub async fn run_setup(config_path_override: Option<String>) {
 
     let model_prompt = if let Some(ref m) = existing.model {
         format!("  Select or type model name (Enter={}): ", m)
-    } else if copilot_models.is_some() {
+    } else if copilot_models.is_some() || gemini_models.is_some() {
         "  Select or type model name (Enter=1): ".to_string()
     } else {
         "  Select or type model name: ".to_string()
@@ -874,8 +929,35 @@ pub async fn run_setup(config_path_override: Option<String>) {
                     custom
                 }
             }
-            ("2", "1") => "gemini-2.0-flash".to_string(),
-            ("2", "2") => "gemini-1.5-pro".to_string(),
+            ("2", choice) => {
+                if let Some(ref models) = gemini_models {
+                    let effective = if choice.is_empty() { "1" } else { choice };
+                    if let Ok(idx) = effective.parse::<usize>() {
+                        if idx > 0 && idx <= models.len() {
+                            models[idx - 1].clone()
+                        } else if idx == models.len() + 1 {
+                            prompt("  Model name: ")
+                                .unwrap_or_default()
+                                .trim()
+                                .to_string()
+                        } else {
+                            effective.to_string()
+                        }
+                    } else {
+                        effective.to_string()
+                    }
+                } else {
+                    // fetch failed — only Custom was shown
+                    if choice.is_empty() || choice == "1" {
+                        prompt("  Model name: ")
+                            .unwrap_or_default()
+                            .trim()
+                            .to_string()
+                    } else {
+                        choice.to_string()
+                    }
+                }
+            }
             ("3", "1") => "gpt-4o-mini".to_string(),
             ("3", "2") => "gpt-4o".to_string(),
             ("3", "3") => "gpt-4-turbo".to_string(),
@@ -1282,6 +1364,17 @@ pub async fn run_setup(config_path_override: Option<String>) {
                 println!("   {} Custom", "[4]".cyan());
             }
             println!();
+        } else if provider_choice.trim() == "2" {
+            println!("  Select a model for notes:");
+            if let Some(ref models) = gemini_models {
+                for (i, model) in models.iter().enumerate() {
+                    println!("   {} {}", format!("[{}]", i + 1).cyan(), model);
+                }
+                println!("   {} Custom", format!("[{}]", models.len() + 1).cyan());
+            } else {
+                println!("   {} Custom", "[1]".cyan());
+            }
+            println!();
         }
 
         let model_prompt = if model_default.is_empty() {
@@ -1326,6 +1419,37 @@ pub async fn run_setup(config_path_override: Option<String>) {
                             .to_string();
                         custom
                     }
+                }
+            }
+        } else if provider_choice.trim() == "2" {
+            if let Some(ref models) = gemini_models {
+                if notes_model_choice.is_empty() {
+                    "".to_string()
+                } else if let Ok(idx) = notes_model_choice.parse::<usize>() {
+                    if idx > 0 && idx <= models.len() {
+                        models[idx - 1].clone()
+                    } else if idx == models.len() + 1 {
+                        let custom = prompt("  Model name: ")
+                            .unwrap_or_default()
+                            .trim()
+                            .to_string();
+                        custom
+                    } else {
+                        notes_model_choice.to_string()
+                    }
+                } else {
+                    notes_model_choice.to_string()
+                }
+            } else {
+                // fetch failed — only Custom was shown
+                if notes_model_choice.is_empty() || notes_model_choice == "1" {
+                    let custom = prompt("  Model name: ")
+                        .unwrap_or_default()
+                        .trim()
+                        .to_string();
+                    custom
+                } else {
+                    notes_model_choice.to_string()
                 }
             }
         } else {
