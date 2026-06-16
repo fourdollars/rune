@@ -69,7 +69,6 @@ let editorDirty = false;
 let debounceTimer = null;
 let specVersion = 0;
 let myNickname = '';
-let myToken = '';
 let isAdmin = false;
 let isGuest = false;
 let availableModels = [];
@@ -272,60 +271,8 @@ if (typeof marked !== 'undefined') {
     marked.use({ renderer, hooks, breaks: true, gfm: true });
 }
 
-// --- Nickname Modal ---
-function submitNickname() {
-    const input = document.getElementById('nickname-input');
-    const tokenInput = document.getElementById('token-input');
-    const name = (input.value || '').trim();
-    if (!name) {
-        input.focus();
-        input.style.borderColor = 'var(--error)';
-        setTimeout(() => input.style.borderColor = '', 800);
-        return;
-    }
-    myNickname = name;
-    myToken = tokenInput ? (tokenInput.value || '').trim() : '';
-    // Persist to localStorage
-    try {
-        localStorage.setItem('rune_nickname', myNickname);
-        if (myToken) localStorage.setItem('rune_token', myToken);
-        else localStorage.removeItem('rune_token');
-    } catch {}
-    document.getElementById('nickname-modal').classList.add('hidden');
-    loggedOut = false;
-    // If URL contains a specific note/file, use it as the initial target
-    if (_pendingNoteId) {
-        localStorage.setItem('rune_note', _pendingNoteId);
-        if (_pendingFile) localStorage.setItem('rune_file', _pendingFile + '.md');
-        _pendingNoteId = null;
-        _pendingFile   = null;
-    }
-    connect();
-}
-
-function loadStoredCredentials() {
-    try {
-        const savedNick = localStorage.getItem('rune_nickname');
-        const savedToken = localStorage.getItem('rune_token');
-        if (savedNick) {
-            const input = document.getElementById('nickname-input');
-            if (input) input.value = savedNick;
-        }
-        if (savedToken) {
-            const tokenInput = document.getElementById('token-input');
-            if (tokenInput) tokenInput.value = savedToken;
-        }
-        // Auto-join if both saved
-        if (savedNick) {
-            submitNickname();
-        }
-    } catch {}
-}
-
-// Enter key on nickname input
-document.getElementById('nickname-input').addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') submitNickname();
-});
+// Enter key on nickname input (no-op: nickname modal removed, login handled by GitHub OAuth)
+// document.getElementById('nickname-input') may not exist in new UI
 
 // --- Connection ---
 async function fetchNoteListAndConnect() {
@@ -335,9 +282,7 @@ async function fetchNoteListAndConnect() {
 
     // No saved note — fetch list via REST and connect to first available
     try {
-        const res = await fetch('/api' + '/notes', {
-            headers: myToken ? { 'Authorization': 'Bearer ' + myToken } : {}
-        });
+        const res = await fetch('/api/notes', { credentials: 'include' });
         const data = await res.json();
         if (data.ok && data.notes && data.notes.length > 0) {
             const firstNote = data.notes[0].id;
@@ -359,10 +304,9 @@ function connect(noteId) {
 
     const params = new URLSearchParams();
     if (myNickname) params.set('nickname', myNickname);
-    if (myToken) params.set('token', myToken);
     params.set('note_id', targetNote);
 
-    evtSource = new EventSource('/api/events?' + params.toString());
+    evtSource = new EventSource('/api/events?' + params.toString(), { withCredentials: true });
     let authFailed = false;
 
     evtSource.onopen = () => {
@@ -398,14 +342,15 @@ function connect(noteId) {
         evtSource.addEventListener(type, (e) => {
             try {
                 const msg = JSON.parse(e.data);
-                // Handle auth failure: close SSE, show login modal
-                if (msg.type === 'error' && msg.message && msg.message.includes('Authentication failed')) {
+                // Handle auth failure: redirect to login
+                if ((msg.type === 'error' || msg.type === 'auth_error') &&
+                    msg.message && (msg.message.includes('Authentication') || msg.message.includes('not authenticated'))) {
                     authFailed = true;
                     evtSource.close();
                     evtSource = null;
                     isConnected = false;
-                    addSystemMessage('Authentication failed. Please check your token.');
-                    document.getElementById('nickname-modal').classList.remove('hidden');
+                    localStorage.removeItem('rune_session_id');
+                    window.location.href = '/?next=' + encodeURIComponent(window.location.pathname);
                     return;
                 }
                 // Handle note not found: stop reconnect, switch to another note
@@ -439,11 +384,11 @@ function connect(noteId) {
 // Helper for POST requests
 async function api(endpoint, body) {
     const headers = { 'Content-Type': 'application/json' };
-    if (myToken) headers['Authorization'] = 'Bearer ' + myToken;
     try {
         const resp = await fetch('/api/' + endpoint, {
             method: 'POST',
             headers,
+            credentials: 'include',
             body: JSON.stringify(body),
         });
         const data = await resp.json();
@@ -541,10 +486,12 @@ function handleMessage(msg) {
         case 'auth_result':
             isAdmin = msg.is_admin;
             isGuest = !!msg.is_guest;
-            // If auth failed (no valid token) and user is not logged-out intentionally,
-            // redirect to /public/ for unauthenticated browsing
-            if (!isAdmin && !isGuest && !msg.ok && !loggedOut) {
-                window.location.href = '/public/';
+            // Set nickname from GitHub login
+            if (msg.login) myNickname = msg.login;
+            // If auth failed and not intentionally logged out, redirect to login
+            if (!msg.ok && !loggedOut) {
+                localStorage.removeItem('rune_session_id');
+                window.location.href = '/?next=' + encodeURIComponent(window.location.pathname);
                 break;
             }
             // Rainbow title for admin
@@ -1463,12 +1410,11 @@ function confirmLogout() {
     loggedOut = true;
     // Close SSE
     if (evtSource) { evtSource.close(); evtSource = null; }
-    // Clear all stored credentials
+    // Clear session from localStorage
+    localStorage.removeItem('rune_session_id');
     localStorage.removeItem('rune_nickname');
-    localStorage.removeItem('rune_token');
-    // Redirect to login page, carrying current path as ?next= so login can return here
-    const next = window.location.pathname;
-    window.location.href = '/?next=' + encodeURIComponent(next);
+    // Server clears HttpOnly cookie via /auth/logout redirect
+    window.location.href = '/auth/logout';
 }
 
 // --- File management ---
@@ -2136,7 +2082,48 @@ try {
     if (sp !== null) showPreview = sp === '1';
 } catch {}
 applyPanelLayout();
-loadStoredCredentials();
+// Session init: verify session via /api/me, then connect, or redirect to login
+function getSessionId() {
+    const ls = localStorage.getItem('rune_session_id');
+    if (ls) return ls;
+    const match = document.cookie.match(/(?:^|;\s*)rune_session_id=([^;]+)/);
+    if (match) {
+        try { localStorage.setItem('rune_session_id', match[1]); } catch {}
+        return match[1];
+    }
+    return null;
+}
+
+(async function initSession() {
+    const sessionId = getSessionId();
+    if (!sessionId) {
+        window.location.href = '/?next=' + encodeURIComponent(window.location.pathname);
+        return;
+    }
+    try {
+        const resp = await fetch('/api/me', { credentials: 'include' });
+        const data = resp.ok ? await resp.json() : { ok: false };
+        if (data.ok) {
+            myNickname = data.login || '';
+            isAdmin = data.role === 'admin';
+            isGuest = data.role === 'guest';
+            // If URL contains a specific note/file, use it as the initial target
+            if (_pendingNoteId) {
+                localStorage.setItem('rune_note', _pendingNoteId);
+                if (_pendingFile) localStorage.setItem('rune_file', _pendingFile + '.md');
+                _pendingNoteId = null;
+                _pendingFile   = null;
+            }
+            connect();
+        } else {
+            localStorage.removeItem('rune_session_id');
+            window.location.href = '/?next=' + encodeURIComponent(window.location.pathname);
+        }
+    } catch {
+        // Network error — SSE will handle auth
+        connect();
+    }
+})();
 
 
 

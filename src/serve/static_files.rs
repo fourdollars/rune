@@ -303,12 +303,8 @@ mod tests {
         );
         assert!(js.contains("confirmLogout"), "app.js missing confirmLogout");
         assert!(
-            js.contains("rune_nickname"),
-            "app.js missing rune_nickname localStorage key"
-        );
-        assert!(
-            js.contains("rune_token"),
-            "app.js missing rune_token localStorage key"
+            js.contains("rune_session_id"),
+            "app.js missing rune_session_id localStorage key"
         );
     }
 
@@ -388,16 +384,12 @@ mod tests {
         let html = get("login.html").unwrap();
         assert!(html.contains("login-box"), "login.html missing login-box");
         assert!(
-            html.contains("nickname-input"),
-            "login.html missing nickname-input"
+            html.contains("github-signin-btn"),
+            "login.html missing github-signin-btn"
         );
         assert!(
-            html.contains("token-input"),
-            "login.html missing token-input"
-        );
-        assert!(
-            html.contains("login-submit"),
-            "login.html missing login-submit"
+            html.contains("local-login-form"),
+            "login.html missing local-login-form"
         );
         assert!(
             html.contains("/public/"),
@@ -418,8 +410,8 @@ mod tests {
         let js = get("app.js").unwrap();
         // confirmLogout must redirect to '/' (login page)
         assert!(
-            js.contains("window.location.href = '/?next="),
-            "confirmLogout must redirect to /?next=..."
+            js.contains("window.location.href = '/auth/logout';"),
+            "confirmLogout must redirect to /auth/logout"
         );
     }
 

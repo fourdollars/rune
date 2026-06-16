@@ -4,7 +4,8 @@
     <meta charset="UTF-8">
     <link rel="icon" type="image/svg+xml" href="/favicon.svg">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>ᚱᚢᚾᛖ</title>
+    <title>ᚱᚢᚾᛖ — Sign In</title>
+    <meta name="description" content="Sign in to Rune Notes">
     <meta name="color-scheme" content="light dark">
     <link rel="stylesheet" href="/assets/style.css?v=0a2d549">
     <style>
@@ -21,7 +22,7 @@
             border: 1px solid var(--border);
             border-radius: 12px;
             padding: 36px 32px;
-            width: 300px;
+            width: 320px;
             display: flex;
             flex-direction: column;
             gap: 16px;
@@ -36,38 +37,95 @@
             font-size: 13px;
             color: var(--text-muted);
         }
-        .login-box input {
+        .github-btn {
+            display: none;
+            align-items: center;
+            justify-content: center;
+            gap: 10px;
+            background: #238636;
+            border: none;
+            border-radius: 6px;
+            color: #ffffff;
+            font-size: 14px;
+            font-weight: 700;
+            padding: 12px 18px;
+            cursor: pointer;
+            text-decoration: none;
+            transition: background 0.15s;
+            width: 100%;
+            box-sizing: border-box;
+        }
+        .github-btn:hover { background: #2ea043; }
+        .github-btn svg { flex-shrink: 0; }
+        
+        .divider-or {
+            display: none;
+            align-items: center;
+            text-align: center;
+            font-size: 12px;
+            color: var(--text-muted);
+            margin: 8px 0;
+        }
+        .divider-or::before, .divider-or::after {
+            content: '';
+            flex: 1;
+            border-bottom: 1px solid var(--border);
+        }
+        .divider-or::before { margin-right: .5em; }
+        .divider-or::after { margin-left: .5em; }
+
+        .local-login-form {
+            display: none;
+            flex-direction: column;
+            gap: 12px;
+            text-align: left;
+            margin-top: 8px;
+        }
+        .local-login-form label {
+            font-size: 11px;
+            font-weight: 600;
+            color: var(--text-secondary);
+            text-transform: uppercase;
+            letter-spacing: 0.3px;
+        }
+        .local-login-form input {
             background: var(--bg-surface);
             border: 1px solid var(--border);
             border-radius: 6px;
             color: var(--text-primary);
             font-size: 14px;
-            padding: 10px 14px;
-            text-align: center;
+            padding: 10px;
             outline: none;
-            transition: border-color 0.15s;
-            width: 100%;
-            box-sizing: border-box;
         }
-        .login-box input:focus { border-color: var(--accent); }
-        .login-box button {
+        .local-login-form input:focus {
+            border-color: var(--accent);
+        }
+        .local-btn {
             background: var(--accent);
             border: none;
             border-radius: 6px;
-            color: var(--bg-primary);
+            color: #ffffff;
             font-size: 14px;
             font-weight: 700;
-            padding: 10px;
+            padding: 12px;
             cursor: pointer;
             transition: opacity 0.15s;
-            width: 100%;
+            text-align: center;
         }
-        .login-box button:hover { opacity: 0.85; }
+        .local-btn:hover {
+            opacity: 0.9;
+        }
+
         .login-error {
             font-size: 12px;
-            color: var(--error);
+            color: var(--error, #f85149);
             min-height: 16px;
+            padding: 6px 10px;
+            background: rgba(248, 81, 73, 0.1);
+            border-radius: 6px;
+            display: none;
         }
+        .login-error.visible { display: block; }
         .login-guest-link {
             font-size: 12px;
             color: var(--text-muted);
@@ -77,16 +135,38 @@
             text-decoration: none;
         }
         .login-guest-link a:hover { text-decoration: underline; }
+        .login-loading {
+            font-size: 12px;
+            color: var(--text-muted);
+            display: none;
+        }
+        .login-loading.visible { display: block; }
     </style>
 </head>
 <body>
     <div class="login-box">
         <div class="login-title">ᚱᚢᚾᛖ</div>
-        <div class="login-subtitle">Enter your nickname to join</div>
-        <input id="nickname-input" type="text" placeholder="your name…" maxlength="20" autofocus autocomplete="username" />
-        <input id="token-input" type="password" placeholder="access token (if required)" autocomplete="current-password" />
+        <div class="login-subtitle">Sign in to access your notes</div>
         <div class="login-error" id="login-error"></div>
-        <button id="login-submit">Join →</button>
+        <div class="login-loading" id="login-loading">Checking session…</div>
+        
+        <a id="github-signin-btn" class="github-btn" href="/auth/github">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                <path d="M12 0C5.374 0 0 5.373 0 12c0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23A11.509 11.509 0 0112 5.803c1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576C20.566 21.797 24 17.3 24 12c0-6.627-5.373-12-12-12z"/>
+            </svg>
+            Sign in with GitHub
+        </a>
+        
+        <div id="login-divider" class="divider-or">or</div>
+        
+        <form id="local-login-form" class="local-login-form" onsubmit="handleLocalLogin(event)">
+            <label for="username">Username</label>
+            <input type="text" id="username" placeholder="username..." required />
+            <label for="password">Password</label>
+            <input type="password" id="password" placeholder="password..." required />
+            <button type="submit" class="local-btn">Sign In</button>
+        </form>
+
         <div class="login-guest-link">
             or <a href="/public/">browse public notes</a>
         </div>
@@ -95,69 +175,127 @@
     <script>
     'use strict';
 
+    function setError(msg) {
+        const el = document.getElementById('login-error');
+        el.textContent = msg;
+        el.classList.toggle('visible', !!msg);
+    }
+
+    function setLoading(show) {
+        document.getElementById('login-loading').classList.toggle('visible', show);
+        const btn = document.getElementById('github-signin-btn');
+        if (btn) {
+            if (show) {
+                btn.style.opacity = '0.5';
+                btn.style.pointerEvents = 'none';
+            } else {
+                btn.style.opacity = '';
+                btn.style.pointerEvents = '';
+            }
+        }
+        const localForm = document.getElementById('local-login-form');
+        if (localForm) {
+            const submitBtn = localForm.querySelector('.local-btn');
+            if (submitBtn) {
+                submitBtn.disabled = show;
+                submitBtn.style.opacity = show ? '0.5' : '';
+            }
+        }
+    }
+
+    // Show error from ?error= query param (e.g. after /auth/denied redirect to login)
+    (function() {
+        const params = new URLSearchParams(window.location.search);
+        const err = params.get('error');
+        if (err) setError('Sign-in failed: ' + decodeURIComponent(err));
+    })();
+
+    // After login, go to the URL the user originally tried to reach, or /notes/
     const redirectTo = (function() {
-        // After login, go to the URL the user originally tried to reach,
-        // or fall back to /notes/
         const params = new URLSearchParams(window.location.search);
         const next = params.get('next');
         if (next && next.startsWith('/notes')) return next;
         return '/notes/';
     })();
 
-    function setError(msg) {
-        document.getElementById('login-error').textContent = msg;
-    }
-
-    async function tryLogin() {
-        const nickname = document.getElementById('nickname-input').value.trim();
-        const token    = document.getElementById('token-input').value.trim();
-        if (!nickname) {
-            const el = document.getElementById('nickname-input');
-            el.style.borderColor = 'var(--error)';
-            setTimeout(() => el.style.borderColor = '', 800);
-            return;
-        }
-        // Persist to localStorage (same keys as app.js)
+    // Load auth configuration and display appropriate methods
+    (async function loadAuthConfig() {
         try {
-            localStorage.setItem('rune_nickname', nickname);
-            if (token) localStorage.setItem('rune_token', token);
-            else localStorage.removeItem('rune_token');
-        } catch {}
-        // Quick auth probe: hit /api/notes with the supplied token
-        try {
-            const headers = { 'Content-Type': 'application/json' };
-            if (token) headers['Authorization'] = 'Bearer ' + token;
-            const resp = await fetch('/api/notes', { headers });
-            if (resp.status === 401 || resp.status === 403) {
-                setError('Invalid token. Please try again.');
-                localStorage.removeItem('rune_token');
-                return;
+            const resp = await fetch('/api/auth/config');
+            if (resp.ok) {
+                const data = await resp.json();
+                if (data.ok) {
+                    const showGithub = !!data.github;
+                    const showLocal = !!data.local;
+                    document.getElementById('github-signin-btn').style.display = showGithub ? 'flex' : 'none';
+                    document.getElementById('local-login-form').style.display = showLocal ? 'flex' : 'none';
+                    if (showGithub && showLocal) {
+                        document.getElementById('login-divider').style.display = 'flex';
+                    } else {
+                        document.getElementById('login-divider').style.display = 'none';
+                    }
+                }
             }
         } catch (e) {
-            // Network error — still proceed; SSE will handle auth
+            console.error("Failed to load auth config:", e);
         }
+    })();
+
+    // Handle local credential submission
+    async function handleLocalLogin(event) {
+        event.preventDefault();
         setError('');
-        window.location.href = redirectTo;
+        const usernameInput = document.getElementById('username');
+        const passwordInput = document.getElementById('password');
+        const username = usernameInput.value.trim();
+        const password = passwordInput.value;
+        if (!username || !password) return;
+
+        setLoading(true);
+        try {
+            const resp = await fetch('/auth/local', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ username, password }),
+                credentials: 'include'
+            });
+            const data = await resp.json();
+            if (resp.ok && data.ok) {
+                // Store local token marker to prompt session restoration
+                localStorage.setItem('rune_session_id', 'local_session');
+                window.location.href = redirectTo;
+            } else {
+                setError(data.error || 'Invalid username or password');
+            }
+        } catch {
+            setError('Network error during login');
+        }
+        setLoading(false);
     }
 
-    document.getElementById('login-submit').addEventListener('click', tryLogin);
-    document.getElementById('nickname-input').addEventListener('keydown', e => {
-        if (e.key === 'Enter') tryLogin();
-    });
-    document.getElementById('token-input').addEventListener('keydown', e => {
-        if (e.key === 'Enter') tryLogin();
-    });
+    // If already authenticated (session cookie present), skip to /notes/
+    (async function checkExistingSession() {
+        // rune_session_id is the JS-readable cookie set alongside the HttpOnly rune_sid
+        const hasCookie = document.cookie.match(/(?:^|;\s*)rune_session_id=([^;]+)/);
+        const lsId = localStorage.getItem('rune_session_id');
+        if (!hasCookie && !lsId) return; // No session at all
 
-    // If already logged in, skip straight to /notes/
-    (function() {
-        const nick = localStorage.getItem('rune_nickname');
-        if (nick) {
-            document.getElementById('nickname-input').value = nick;
+        setLoading(true);
+        try {
+            const resp = await fetch('/api/me', { credentials: 'include' });
+            if (resp.ok) {
+                const data = await resp.json();
+                if (data.ok) {
+                    window.location.href = redirectTo;
+                    return;
+                }
+            }
+            // Session invalid — clear local storage
+            localStorage.removeItem('rune_session_id');
+        } catch {
+            // Network error — don't block the login button
         }
-        const tok = localStorage.getItem('rune_token');
-        if (tok) {
-            document.getElementById('token-input').value = tok;
-        }
+        setLoading(false);
     })();
     </script>
 </body>

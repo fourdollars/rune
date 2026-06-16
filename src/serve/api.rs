@@ -124,6 +124,7 @@ pub enum SseMsg {
         ok: bool,
         is_admin: bool,
         is_guest: bool,
+        login: String,
     },
     #[serde(rename = "file_list")]
     FileList {
@@ -198,8 +199,8 @@ pub struct DirEntry {
 
 #[derive(Debug, Deserialize)]
 pub struct EventsQuery {
+    /// Optional nickname override (falls back to GitHub login from session).
     pub nickname: Option<String>,
-    pub token: Option<String>,
     /// Required: the note to subscribe to.
     pub note_id: Option<String>,
 }
@@ -356,28 +357,9 @@ impl ApiResponse {
     }
 }
 
-// ─── Auth helpers ──────────────────────────────────────────────────────────
-
-pub fn check_token(state: &ServerState, token: Option<&str>) -> bool {
-    match &state.user_token {
-        None => false, // no user_token configured = no user access
-        Some(expected) => token == Some(expected.as_str()),
-    }
-}
-
-pub fn check_admin(state: &ServerState, admin_token: Option<&str>) -> bool {
-    match &state.admin_token {
-        None => false,
-        Some(at) => !at.is_empty() && admin_token == Some(at.as_str()),
-    }
-}
-
-pub fn check_guest(state: &ServerState, token: Option<&str>) -> bool {
-    match &state.guest_token {
-        None => false,
-        Some(gt) => !gt.is_empty() && token == Some(gt.as_str()),
-    }
-}
+// Auth functions are now handled by the OAuth session middleware in serve/mod.rs
+// and the session lookup in events_handler below.
+// See src/serve/oauth.rs for role resolution logic.
 
 pub fn is_valid_filename(name: &str) -> bool {
     !name.is_empty()
@@ -431,26 +413,37 @@ pub fn broadcast_to_room(room: &NoteRoom, msg: &SseMsg) {
 pub async fn events_handler(
     State(state): State<ServerState>,
     Query(params): Query<EventsQuery>,
+    headers: axum::http::HeaderMap,
 ) -> impl IntoResponse {
-    let nickname = params.nickname.unwrap_or_else(|| "anonymous".to_string());
-    let token = params.token.as_deref();
+    // Resolve session from HttpOnly cookie
+    let sid = crate::serve::oauth::get_cookie(&headers, "rune_sid");
+    let session = match sid {
+        Some(ref id) => state.sessions.get(id).await,
+        None => None,
+    };
 
-    // Auth check
-    let is_admin = check_admin(&state, token);
-    let is_guest = check_guest(&state, token);
-    let token_ok = check_token(&state, token) || is_admin || is_guest;
-    if !token_ok {
-        let err_stream = futures::stream::once(async {
-            Ok::<_, Infallible>(
-                Event::default()
-                    .event("error")
-                    .data(r#"{"type":"error","message":"Authentication failed"}"#.to_string()),
-            )
-        });
-        return Sse::new(err_stream)
-            .keep_alive(KeepAlive::default())
-            .into_response();
-    }
+    // Auth check — must have a valid session
+    let session = match session {
+        Some(s) => s,
+        None => {
+            let err_stream = futures::stream::once(async {
+                Ok::<_, Infallible>(
+                    Event::default()
+                        .event("auth_error")
+                        .data(r#"{"type":"auth_error","message":"Authentication required. Please sign in via GitHub OAuth."}"#.to_string()),
+                )
+            });
+            return Sse::new(err_stream)
+                .keep_alive(KeepAlive::default())
+                .into_response();
+        }
+    };
+
+    let is_admin = session.is_admin();
+    let is_guest = session.is_guest();
+    let login = session.login.clone();
+    // Nickname: prefer explicit param, fall back to GitHub login
+    let nickname = params.nickname.unwrap_or_else(|| login.clone());
 
     // note_id is REQUIRED per spec
     let note_id = match params.note_id {
@@ -522,6 +515,7 @@ pub async fn events_handler(
         ok: true,
         is_admin,
         is_guest,
+        login: login.clone(),
     });
 
     // Model list — show effective model and metadata for this note
@@ -1830,6 +1824,33 @@ pub async fn notes_list_json_handler(State(state): State<ServerState>) -> Json<s
     Json(serde_json::json!({ "ok": true, "notes": notes }))
 }
 
+/// GET /api/me — return current authenticated user info from session cookie.
+pub async fn me_handler(
+    State(state): State<ServerState>,
+    headers: axum::http::HeaderMap,
+) -> impl IntoResponse {
+    use crate::serve::oauth::get_cookie;
+    let sid = get_cookie(&headers, "rune_sid");
+    let session = match sid {
+        Some(ref id) => state.sessions.get(id).await,
+        None => None,
+    };
+    match session {
+        Some(s) => Json(serde_json::json!({
+            "ok": true,
+            "login": s.login,
+            "role": s.role.as_str(),
+            "avatar_url": s.avatar_url,
+        }))
+        .into_response(),
+        None => (
+            axum::http::StatusCode::UNAUTHORIZED,
+            Json(serde_json::json!({"ok": false, "error": "Not authenticated"})),
+        )
+            .into_response(),
+    }
+}
+
 // ─── Agent chat handler ────────────────────────────────────────────────────
 
 async fn handle_chat_message(
@@ -2275,106 +2296,117 @@ mod tests {
         assert!(engine_none.is_none());
     }
 
-    #[test]
-    fn test_check_token_no_config() {
-        // With no user_token configured, check_token always returns false (strict mode)
-        let state = mock_state(None, None);
-        assert!(!check_token(&state, None));
-        assert!(!check_token(&state, Some("anything")));
+    // ─── Session-based auth tests (replaces old token auth tests) ────────────
+
+    #[tokio::test]
+    async fn test_session_auth_no_session_rejects() {
+        use crate::serve::oauth::{Role, Session, SessionStore};
+        use std::time::{Duration, Instant};
+
+        let store = SessionStore::new();
+        // No session inserted — lookup should return None
+        assert!(store.get("nonexistent").await.is_none());
     }
 
-    #[test]
-    fn test_check_token_with_config() {
-        let state = mock_state(Some("secret".into()), None);
-        assert!(check_token(&state, Some("secret")));
-        assert!(!check_token(&state, Some("wrong")));
-        assert!(!check_token(&state, None));
+    #[tokio::test]
+    async fn test_session_auth_valid_session() {
+        use crate::serve::oauth::{Role, Session, SessionStore};
+        use std::time::{Duration, Instant};
+
+        let store = SessionStore::new();
+        let session = Session {
+            id: "test-sid".into(),
+            login: "alice".into(),
+            role: Role::Admin,
+            avatar_url: "".into(),
+            expires_at: Instant::now() + Duration::from_secs(3600),
+        };
+        store.insert(session).await;
+        let found = store.get("test-sid").await;
+        assert!(found.is_some());
+        assert_eq!(found.unwrap().login, "alice");
     }
 
-    #[test]
-    fn test_check_admin() {
-        let state = mock_state(None, Some("admin123".into()));
-        assert!(check_admin(&state, Some("admin123")));
-        assert!(!check_admin(&state, Some("wrong")));
-        assert!(!check_admin(&state, None));
+    #[tokio::test]
+    async fn test_session_auth_expired_session_rejects() {
+        use crate::serve::oauth::{Role, Session, SessionStore};
+        use std::time::{Duration, Instant};
+
+        let store = SessionStore::new();
+        let session = Session {
+            id: "expired-sid".into(),
+            login: "bob".into(),
+            role: Role::User,
+            avatar_url: "".into(),
+            expires_at: Instant::now() - Duration::from_secs(1),
+        };
+        store.insert(session).await;
+        assert!(store.get("expired-sid").await.is_none());
     }
 
-    #[test]
-    fn test_check_admin_empty() {
-        let state = mock_state(None, Some("".into()));
-        assert!(!check_admin(&state, Some("")));
+    #[tokio::test]
+    async fn test_session_auth_guest_role() {
+        use crate::serve::oauth::{Role, Session, SessionStore};
+        use std::time::{Duration, Instant};
+
+        let store = SessionStore::new();
+        let session = Session {
+            id: "guest-sid".into(),
+            login: "guest-user".into(),
+            role: Role::Guest,
+            avatar_url: "".into(),
+            expires_at: Instant::now() + Duration::from_secs(3600),
+        };
+        store.insert(session).await;
+        let found = store.get("guest-sid").await.unwrap();
+        assert!(found.is_guest());
+        assert!(!found.is_admin());
     }
 
-    #[test]
-    fn test_check_admin_none_configured() {
-        let state = mock_state(None, None);
-        assert!(!check_admin(&state, Some("anything")));
+    #[tokio::test]
+    async fn test_session_auth_admin_role() {
+        use crate::serve::oauth::{Role, Session, SessionStore};
+        use std::time::{Duration, Instant};
+
+        let store = SessionStore::new();
+        let session = Session {
+            id: "admin-sid".into(),
+            login: "superuser".into(),
+            role: Role::Admin,
+            avatar_url: "".into(),
+            expires_at: Instant::now() + Duration::from_secs(3600),
+        };
+        store.insert(session).await;
+        let found = store.get("admin-sid").await.unwrap();
+        assert!(found.is_admin());
+        assert!(!found.is_guest());
     }
 
-    #[test]
-    fn test_strict_auth_no_tokens_configured_rejects_all() {
-        // When no tokens are configured, nothing should pass
-        let state = mock_state(None, None);
-        assert!(!check_token(&state, None));
-        assert!(!check_token(&state, Some("random")));
-        assert!(!check_admin(&state, None));
-        assert!(!check_admin(&state, Some("random")));
-        assert!(!check_guest(&state, None));
-        assert!(!check_guest(&state, Some("random")));
-    }
+    #[tokio::test]
+    async fn test_session_store_isolation() {
+        use crate::serve::oauth::{Role, Session, SessionStore};
+        use std::time::{Duration, Instant};
 
-    #[test]
-    fn test_strict_auth_guest_cannot_impersonate_user() {
-        let mut state = mock_state(Some("user-secret".into()), None);
-        state.guest_token = Some("guest-secret".into());
-        // Guest token does not pass check_token
-        assert!(!check_token(&state, Some("guest-secret")));
-        // But does pass check_guest
-        assert!(check_guest(&state, Some("guest-secret")));
-    }
-
-    #[test]
-    fn test_strict_auth_guest_cannot_impersonate_admin() {
-        let mut state = mock_state(None, Some("admin-secret".into()));
-        state.guest_token = Some("guest-secret".into());
-        // Guest token does not pass check_admin
-        assert!(!check_admin(&state, Some("guest-secret")));
-    }
-
-    #[test]
-    fn test_strict_auth_empty_token_rejected() {
-        let state = mock_state(Some("secret".into()), None);
-        assert!(!check_token(&state, Some("")));
-        assert!(!check_token(&state, None));
-    }
-
-    #[test]
-    fn test_strict_auth_empty_guest_token_rejected() {
-        let mut state = mock_state(Some("user".into()), None);
-        state.guest_token = Some("".into());
-        // Empty guest_token should never match
-        assert!(!check_guest(&state, Some("")));
-        assert!(!check_guest(&state, None));
-    }
-
-    #[test]
-    fn test_strict_auth_wrong_token_rejected() {
-        let mut state = mock_state(Some("correct-user".into()), Some("correct-admin".into()));
-        state.guest_token = Some("correct-guest".into());
-        assert!(!check_token(&state, Some("wrong")));
-        assert!(!check_admin(&state, Some("wrong")));
-        assert!(!check_guest(&state, Some("wrong")));
-    }
-
-    #[test]
-    fn test_strict_auth_no_localhost_bypass() {
-        // This test documents the security invariant:
-        // There is no localhost bypass in auth middleware.
-        // All connections must present a valid token.
-        let state = mock_state(Some("secret".into()), None);
-        // Even with correct token, no special treatment for any IP
-        assert!(check_token(&state, Some("secret")));
-        assert!(!check_token(&state, None));
+        let store = SessionStore::new();
+        let s1 = Session {
+            id: "s1".into(),
+            login: "user1".into(),
+            role: Role::User,
+            avatar_url: "".into(),
+            expires_at: Instant::now() + Duration::from_secs(3600),
+        };
+        let s2 = Session {
+            id: "s2".into(),
+            login: "user2".into(),
+            role: Role::Admin,
+            avatar_url: "".into(),
+            expires_at: Instant::now() + Duration::from_secs(3600),
+        };
+        store.insert(s1).await;
+        store.insert(s2).await;
+        store.remove("s1").await;
+        assert!(store.get("s1").await.is_none());
+        assert!(store.get("s2").await.is_some());
     }
 
     #[test]
@@ -2571,13 +2603,11 @@ mod tests {
     }
 
     // Helper to create a minimal ServerState for tests
-    fn mock_state(token: Option<String>, admin_token: Option<String>) -> ServerState {
+    fn mock_state(_token: Option<String>, _admin_token: Option<String>) -> ServerState {
         let (admin_broadcast_tx, _) = broadcast::channel(16);
         ServerState {
             config: crate::config::RuneConfig::default(),
-            user_token: token,
-            admin_token,
-            guest_token: None,
+            sessions: crate::serve::oauth::SessionStore::new(),
             files: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
             active_file: Arc::new(tokio::sync::RwLock::new(String::new())),
             models: Arc::new(tokio::sync::RwLock::new(vec![ModelInfo {
@@ -2649,9 +2679,7 @@ mod integration_tests {
         let db = ChatDb::open(&db_path).unwrap();
         ServerState {
             config: RuneConfig::default(),
-            user_token: None,
-            admin_token: Some("admin123".into()),
-            guest_token: None,
+            sessions: crate::serve::oauth::SessionStore::new(),
             files: Arc::new(RwLock::new(std::collections::HashMap::new())),
             active_file: Arc::new(RwLock::new(String::new())),
             models: Arc::new(tokio::sync::RwLock::new(vec![
@@ -2677,9 +2705,7 @@ mod integration_tests {
     }
 
     fn test_state_with_token(tmp: &TempDir) -> ServerState {
-        let mut state = test_state(tmp);
-        state.user_token = Some("secret".into());
-        state
+        test_state(tmp)
     }
 
     async fn post_json(app: &Router, path: &str, body: Value) -> (StatusCode, Value) {
@@ -3302,9 +3328,7 @@ mod integration_tests {
 
         let state = crate::serve::ServerState {
             config: crate::config::RuneConfig::default(),
-            user_token: None,
-            admin_token: Some("admin".into()),
-            guest_token: None,
+            sessions: crate::serve::oauth::SessionStore::new(),
             files: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
             active_file: Arc::new(tokio::sync::RwLock::new(String::new())),
             models: Arc::new(tokio::sync::RwLock::new(vec![ModelInfo {
@@ -3370,9 +3394,7 @@ mod isolation_tests {
         let db = ChatDb::open(&db_path).unwrap();
         let state = ServerState {
             config: RuneConfig::default(),
-            user_token: None,
-            admin_token: Some("admin123".into()),
-            guest_token: None,
+            sessions: crate::serve::oauth::SessionStore::new(),
             files: Arc::new(RwLock::new(HashMap::new())),
             active_file: Arc::new(RwLock::new(String::new())),
             models: Arc::new(tokio::sync::RwLock::new(vec![
@@ -3442,9 +3464,7 @@ mod isolation_tests {
         let expected_cw: u64 = 131072;
         let state = ServerState {
             config: RuneConfig::default(),
-            user_token: None,
-            admin_token: Some("admin123".into()),
-            guest_token: None,
+            sessions: crate::serve::oauth::SessionStore::new(),
             files: Arc::new(RwLock::new(HashMap::new())),
             active_file: Arc::new(RwLock::new(String::new())),
             models: Arc::new(tokio::sync::RwLock::new(vec![ModelInfo {
@@ -3717,9 +3737,7 @@ mod isolation_tests {
         let db = crate::serve::db::ChatDb::open(&tmp.path().join("t.db")).unwrap();
         let state = crate::serve::ServerState {
             config: crate::config::RuneConfig::default(),
-            user_token: Some("user-tok".into()),
-            admin_token: Some("admin-tok".into()),
-            guest_token: None,
+            sessions: crate::serve::oauth::SessionStore::new(),
             files: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
             active_file: Arc::new(tokio::sync::RwLock::new(String::new())),
             models: Arc::new(tokio::sync::RwLock::new(vec![
@@ -3786,9 +3804,7 @@ mod isolation_tests {
         let db = crate::serve::db::ChatDb::open(&tmp.path().join("t.db")).unwrap();
         let state = crate::serve::ServerState {
             config: crate::config::RuneConfig::default(),
-            user_token: Some("tok".into()),
-            admin_token: None,
-            guest_token: None,
+            sessions: crate::serve::oauth::SessionStore::new(),
             files: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
             active_file: Arc::new(tokio::sync::RwLock::new(String::new())),
             models: Arc::new(tokio::sync::RwLock::new(vec![ModelInfo {
@@ -3804,6 +3820,15 @@ mod isolation_tests {
             data_dir: tmp.path().join(".rune"),
         };
 
+        let session = crate::serve::oauth::Session {
+            id: "session-test".to_string(),
+            login: "test-user".to_string(),
+            role: crate::serve::oauth::Role::User,
+            avatar_url: "".to_string(),
+            expires_at: std::time::Instant::now() + std::time::Duration::from_secs(3600),
+        };
+        state.sessions.insert(session).await;
+
         let app = Router::new()
             .route("/api/events", get(crate::serve::api::events_handler))
             .with_state(state);
@@ -3811,7 +3836,8 @@ mod isolation_tests {
         // Request SSE with non-existent note_id
         let req = axum::http::Request::builder()
             .method("GET")
-            .uri("/api/events?token=tok&note_id=nonexistent&nickname=test")
+            .uri("/api/events?note_id=nonexistent&nickname=test")
+            .header(axum::http::header::COOKIE, "rune_sid=session-test")
             .body(Body::empty())
             .unwrap();
         let resp = app.oneshot(req).await.unwrap();
@@ -3842,9 +3868,7 @@ mod isolation_tests {
 
         let state = crate::serve::ServerState {
             config: crate::config::RuneConfig::default(),
-            user_token: None,
-            admin_token: None,
-            guest_token: Some("guest-tok".into()),
+            sessions: crate::serve::oauth::SessionStore::new(),
             files: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
             active_file: Arc::new(tokio::sync::RwLock::new(String::new())),
             models: Arc::new(tokio::sync::RwLock::new(vec![ModelInfo {
@@ -3860,6 +3884,15 @@ mod isolation_tests {
             data_dir: tmp.path().join(".rune"),
         };
 
+        let session = crate::serve::oauth::Session {
+            id: "session-guest".to_string(),
+            login: "guest-user".to_string(),
+            role: crate::serve::oauth::Role::Guest,
+            avatar_url: "".to_string(),
+            expires_at: std::time::Instant::now() + std::time::Duration::from_secs(3600),
+        };
+        state.sessions.insert(session).await;
+
         let app = Router::new()
             .route("/api/events", get(crate::serve::api::events_handler))
             .with_state(state);
@@ -3867,7 +3900,8 @@ mod isolation_tests {
         // Guest trying to subscribe to private note
         let req = axum::http::Request::builder()
             .method("GET")
-            .uri("/api/events?token=guest-tok&note_id=private-note&nickname=guest")
+            .uri("/api/events?note_id=private-note&nickname=guest")
+            .header(axum::http::header::COOKIE, "rune_sid=session-guest")
             .body(Body::empty())
             .unwrap();
         let resp = app.oneshot(req).await.unwrap();
@@ -3896,9 +3930,7 @@ mod isolation_tests {
 
         let state = crate::serve::ServerState {
             config: crate::config::RuneConfig::default(),
-            user_token: None,
-            admin_token: None,
-            guest_token: Some("guest-tok".into()),
+            sessions: crate::serve::oauth::SessionStore::new(),
             files: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
             active_file: Arc::new(tokio::sync::RwLock::new(String::new())),
             models: Arc::new(tokio::sync::RwLock::new(vec![ModelInfo {
@@ -3914,6 +3946,15 @@ mod isolation_tests {
             data_dir: tmp.path().join(".rune"),
         };
 
+        let session = crate::serve::oauth::Session {
+            id: "session-guest".to_string(),
+            login: "guest-user".to_string(),
+            role: crate::serve::oauth::Role::Guest,
+            avatar_url: "".to_string(),
+            expires_at: std::time::Instant::now() + std::time::Duration::from_secs(3600),
+        };
+        state.sessions.insert(session).await;
+
         let app = Router::new()
             .route("/api/events", get(crate::serve::api::events_handler))
             .with_state(state);
@@ -3921,7 +3962,8 @@ mod isolation_tests {
         // Guest subscribing to public note — should succeed (200 OK)
         let req = axum::http::Request::builder()
             .method("GET")
-            .uri("/api/events?token=guest-tok&note_id=public-note&nickname=guest")
+            .uri("/api/events?note_id=public-note&nickname=guest")
+            .header(axum::http::header::COOKIE, "rune_sid=session-guest")
             .body(Body::empty())
             .unwrap();
         let resp = app.oneshot(req).await.unwrap();
@@ -3963,9 +4005,7 @@ mod isolation_tests {
 
         let state = crate::serve::ServerState {
             config: crate::config::RuneConfig::default(),
-            user_token: None,
-            admin_token: Some("admin".into()),
-            guest_token: None,
+            sessions: crate::serve::oauth::SessionStore::new(),
             files: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
             active_file: Arc::new(tokio::sync::RwLock::new(String::new())),
             models: Arc::new(tokio::sync::RwLock::new(vec![ModelInfo {
@@ -4033,9 +4073,7 @@ mod isolation_tests {
 
         let state = crate::serve::ServerState {
             config: crate::config::RuneConfig::default(),
-            user_token: None,
-            admin_token: Some("admin".into()),
-            guest_token: None,
+            sessions: crate::serve::oauth::SessionStore::new(),
             files: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
             active_file: Arc::new(tokio::sync::RwLock::new(String::new())),
             models: Arc::new(tokio::sync::RwLock::new(vec![ModelInfo {
@@ -4085,9 +4123,7 @@ mod isolation_tests {
 
         let state = crate::serve::ServerState {
             config: crate::config::RuneConfig::default(),
-            user_token: None,
-            admin_token: Some("admin".into()),
-            guest_token: None,
+            sessions: crate::serve::oauth::SessionStore::new(),
             files: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
             active_file: Arc::new(tokio::sync::RwLock::new(String::new())),
             models: Arc::new(tokio::sync::RwLock::new(vec![ModelInfo {
@@ -4176,9 +4212,7 @@ mod isolation_tests {
 
         let state = crate::serve::ServerState {
             config: crate::config::RuneConfig::default(),
-            user_token: None,
-            admin_token: Some("admin".into()),
-            guest_token: None,
+            sessions: crate::serve::oauth::SessionStore::new(),
             files: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
             active_file: Arc::new(tokio::sync::RwLock::new(String::new())),
             models: Arc::new(tokio::sync::RwLock::new(vec![ModelInfo {

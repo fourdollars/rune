@@ -49,10 +49,22 @@ threshold = 0.6                    # cosine similarity threshold
 [notes]
 port = 9527
 bind = "0.0.0.0"
-admin_token = "adminCHANGE_ME"
-user_token = "userCHANGE_ME"
-guest_token = "guestCHANGE_ME"
 thinking = "high"
+
+# GitHub OAuth 2.0 Login
+[notes.github]
+client_id = "Ov23liABCDEF12345678"
+client_secret = "your_client_secret_here"
+# GitHub logins or "org:org_name/team" entries (comma-separated)
+admins = ["fourdollars", "org:my-org/ops"]
+users = ["org:my-org"]
+guests = []
+
+# Local Static Password Login
+[notes.local]
+admins = ["admin:admin123"]
+users = ["user:user123"]
+guests = ["guest:guest123"]
 ```
 
 ### Concourse Resource Type
@@ -173,8 +185,9 @@ rune notes --bind 0.0.0.0
 - **File visibility** — each file can be marked public or private
 - **Real-time updates** — SSE (Server-Sent Events) for live streaming of AI responses, model changes, user presence, and system events
 - **Public preview pages** — rendered markdown with Mermaid diagram support, KaTeX math, and syntax highlighting (highlight.js)
-- **Guest read-only mode** — unauthenticated guests can browse and read public notes
+- **GitHub OAuth authentication** — sign in with GitHub; roles resolved from login allowlists and org/team membership
 - **Role-based access control** — admin / user / guest roles with distinct permissions
+- **Session cookies** — HttpOnly `rune_sid` cookie + JS-readable `rune_session_id` for 24h sessions
 
 ### Role Permissions
 
@@ -192,10 +205,19 @@ rune notes --bind 0.0.0.0
 
 | Path | Description |
 |------|-------------|
-| `/notes/` | Lists all public notes |
-| `/notes/{note}/` | Lists public files in a note |
-| `/notes/{note}/{file}` | Rendered markdown preview (client-side with marked.js) |
-| `/api/public/raw/{note}/{file}` | Raw markdown content |
+| `/` | Login page (GitHub button & Local form) |
+| `/auth/github` | Start GitHub OAuth flow |
+| `/auth/github/callback` | GitHub OAuth callback |
+| `/auth/local` | Local username/password validation |
+| `/auth/logout` | Clear session and redirect to `/` |
+| `/auth/denied` | Access denied / not on allowlist |
+| `/notes/` | Authenticated editor SPA |
+| `/api/me` | Current user info (login, role, avatar) |
+| `/api/auth/config` | Exposes enabled authentication methods |
+| `/api/public/raw/{note}/{file}` | Raw markdown content (no auth required) |
+| `/public/` | Lists all public notes |
+| `/public/{note}/` | Lists public files in a note |
+| `/public/{note}/{file}` | Rendered markdown preview (client-side with marked.js) |
 
 ### SSE Events
 
@@ -222,8 +244,9 @@ src/
 ├── mcp/             — MCP client (stdio JSON-RPC)
 ├── cli/             — interactive CLI, slash commands, persistent history
 ├── serve/           — Notes HTTP server (serve mode)
-│   ├── mod.rs           — server setup, routing, middleware
+│   ├── mod.rs           — server setup, routing, middleware, session auth
 │   ├── api.rs           — REST + SSE API handlers
+│   ├── oauth.rs         — GitHub OAuth 2.0: sessions, role resolution, handlers
 │   ├── db.rs            — note/file persistence and metadata
 │   └── static_files.rs  — embedded static asset serving
 ├── setup.rs         — `rune init` wizard

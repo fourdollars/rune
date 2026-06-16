@@ -19,9 +19,14 @@ struct ExistingConfig {
     notes_section: Option<String>,
     notes_port: Option<u16>,
     notes_bind: Option<String>,
-    notes_admin_token: Option<String>,
-    notes_user_token: Option<String>,
-    notes_guest_token: Option<String>,
+    notes_github_client_id: Option<String>,
+    notes_github_client_secret: Option<String>,
+    notes_github_admins: Option<String>,
+    notes_github_users: Option<String>,
+    notes_github_guests: Option<String>,
+    notes_local_admins: Option<String>,
+    notes_local_users: Option<String>,
+    notes_local_guests: Option<String>,
     notes_model: Option<String>,
 }
 
@@ -70,9 +75,14 @@ fn load_existing_config(path: &std::path::Path) -> ExistingConfig {
             notes_section: None,
             notes_port: None,
             notes_bind: None,
-            notes_admin_token: None,
-            notes_user_token: None,
-            notes_guest_token: None,
+            notes_github_client_id: None,
+            notes_github_client_secret: None,
+            notes_github_admins: None,
+            notes_github_users: None,
+            notes_github_guests: None,
+            notes_local_admins: None,
+            notes_local_users: None,
+            notes_local_guests: None,
             notes_model: None,
         };
     }
@@ -125,18 +135,100 @@ fn load_existing_config(path: &std::path::Path) -> ExistingConfig {
             .and_then(|t| t.get("bind"))
             .and_then(|v| v.as_str())
             .map(|s| s.to_string()),
-        notes_admin_token: notes_table
-            .and_then(|t| t.get("admin_token"))
+        notes_github_client_id: table
+            .get("notes")
+            .and_then(|v| v.as_table())
+            .and_then(|t| t.get("github"))
+            .and_then(|v| v.as_table())
+            .and_then(|t| t.get("client_id"))
             .and_then(|v| v.as_str())
             .map(|s| s.to_string()),
-        notes_user_token: notes_table
-            .and_then(|t| t.get("user_token"))
+        notes_github_client_secret: table
+            .get("notes")
+            .and_then(|v| v.as_table())
+            .and_then(|t| t.get("github"))
+            .and_then(|v| v.as_table())
+            .and_then(|t| t.get("client_secret"))
             .and_then(|v| v.as_str())
             .map(|s| s.to_string()),
-        notes_guest_token: notes_table
-            .and_then(|t| t.get("guest_token"))
-            .and_then(|v| v.as_str())
-            .map(|s| s.to_string()),
+        notes_github_admins: table
+            .get("notes")
+            .and_then(|v| v.as_table())
+            .and_then(|t| t.get("github"))
+            .and_then(|v| v.as_table())
+            .and_then(|t| t.get("admins"))
+            .and_then(|v| v.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            }),
+        notes_github_users: table
+            .get("notes")
+            .and_then(|v| v.as_table())
+            .and_then(|t| t.get("github"))
+            .and_then(|v| v.as_table())
+            .and_then(|t| t.get("users"))
+            .and_then(|v| v.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            }),
+        notes_github_guests: table
+            .get("notes")
+            .and_then(|v| v.as_table())
+            .and_then(|t| t.get("github"))
+            .and_then(|v| v.as_table())
+            .and_then(|t| t.get("guests"))
+            .and_then(|v| v.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            }),
+        notes_local_admins: table
+            .get("notes")
+            .and_then(|v| v.as_table())
+            .and_then(|t| t.get("local"))
+            .and_then(|v| v.as_table())
+            .and_then(|t| t.get("admins"))
+            .and_then(|v| v.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            }),
+        notes_local_users: table
+            .get("notes")
+            .and_then(|v| v.as_table())
+            .and_then(|t| t.get("local"))
+            .and_then(|v| v.as_table())
+            .and_then(|t| t.get("users"))
+            .and_then(|v| v.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            }),
+        notes_local_guests: table
+            .get("notes")
+            .and_then(|v| v.as_table())
+            .and_then(|t| t.get("local"))
+            .and_then(|v| v.as_table())
+            .and_then(|t| t.get("guests"))
+            .and_then(|v| v.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            }),
         notes_model: notes_table
             .and_then(|t| t.get("model"))
             .and_then(|v| v.as_str())
@@ -1287,13 +1379,21 @@ pub async fn run_setup(config_path_override: Option<String>) {
 
     let mut notes_port = 9527;
     let mut notes_bind = "127.0.0.1".to_string();
-    let mut notes_admin_token = "adminCHANGE_ME".to_string();
-    let mut notes_user_token = "userCHANGE_ME".to_string();
-    let mut notes_guest_token = "guestCHANGE_ME".to_string();
+    let mut notes_github_client_id = "".to_string();
+    let mut notes_github_client_secret = "".to_string();
+    let mut notes_github_admins = "".to_string();
+    let mut notes_github_users = "".to_string();
+    let mut notes_github_guests = "".to_string();
+    let mut notes_local_admins = "".to_string();
+    let mut notes_local_users = "".to_string();
+    let mut notes_local_guests = "".to_string();
     let mut notes_model = "".to_string();
+    let mut enable_github = false;
+    let mut enable_local = false;
 
     if enable_notes {
         println!("  Enter config values for [notes] section:");
+        println!();
 
         let port_default = existing.notes_port.unwrap_or(9527);
         let port_prompt = format!("  Port [{}]: ", port_default);
@@ -1313,41 +1413,131 @@ pub async fn run_setup(config_path_override: Option<String>) {
             bind_input.trim().to_string()
         };
 
-        let admin_default = existing
-            .notes_admin_token
-            .as_deref()
-            .unwrap_or("adminCHANGE_ME");
-        let admin_prompt = format!("  Admin token [{}]: ", admin_default);
-        let admin_input = prompt(&admin_prompt).unwrap_or_default();
-        notes_admin_token = if admin_input.trim().is_empty() {
-            admin_default.to_string()
+        println!("  Select authentication methods for Notes:");
+        println!("   {} GitHub OAuth 2.0", "[1]".cyan());
+        println!(
+            "   {} Local Static Credentials (username:password)",
+            "[2]".cyan()
+        );
+        println!("   {} Both", "[3]".cyan());
+        println!();
+        let auth_default =
+            if existing.notes_github_client_id.is_some() && existing.notes_local_admins.is_some() {
+                "3"
+            } else if existing.notes_local_admins.is_some() {
+                "2"
+            } else {
+                "1"
+            };
+        let auth_prompt = format!("  Authentication method [{}]: ", auth_default);
+        let auth_choice = prompt(&auth_prompt).unwrap_or_default();
+        let auth_choice = if auth_choice.trim().is_empty() {
+            auth_default
         } else {
-            admin_input.trim().to_string()
+            auth_choice.trim()
         };
+        enable_github = auth_choice == "1" || auth_choice == "3";
+        enable_local = auth_choice == "2" || auth_choice == "3";
 
-        let user_default = existing
-            .notes_user_token
-            .as_deref()
-            .unwrap_or("userCHANGE_ME");
-        let user_prompt = format!("  User token [{}]: ", user_default);
-        let user_input = prompt(&user_prompt).unwrap_or_default();
-        notes_user_token = if user_input.trim().is_empty() {
-            user_default.to_string()
-        } else {
-            user_input.trim().to_string()
-        };
+        if enable_github {
+            println!();
+            println!("  Configure GitHub OAuth 2.0 (create an OAuth App at https://github.com/settings/developers):");
+            let client_id_default = existing.notes_github_client_id.as_deref().unwrap_or("");
+            let client_id_prompt = if client_id_default.is_empty() {
+                "   GitHub OAuth Client ID: ".to_string()
+            } else {
+                format!("   GitHub OAuth Client ID [{}]: ", client_id_default)
+            };
+            let client_id_input = prompt(&client_id_prompt).unwrap_or_default();
+            notes_github_client_id = if client_id_input.trim().is_empty() {
+                client_id_default.to_string()
+            } else {
+                client_id_input.trim().to_string()
+            };
 
-        let guest_default = existing
-            .notes_guest_token
-            .as_deref()
-            .unwrap_or("guestCHANGE_ME");
-        let guest_prompt = format!("  Guest token [{}]: ", guest_default);
-        let guest_input = prompt(&guest_prompt).unwrap_or_default();
-        notes_guest_token = if guest_input.trim().is_empty() {
-            guest_default.to_string()
-        } else {
-            guest_input.trim().to_string()
-        };
+            let client_secret_default =
+                existing.notes_github_client_secret.as_deref().unwrap_or("");
+            let secret_prompt = if client_secret_default.is_empty() {
+                "   GitHub OAuth Client Secret: ".to_string()
+            } else {
+                format!(
+                    "   GitHub OAuth Client Secret [{}]: ",
+                    client_secret_default
+                )
+            };
+            let secret_input = prompt(&secret_prompt).unwrap_or_default();
+            notes_github_client_secret = if secret_input.trim().is_empty() {
+                client_secret_default.to_string()
+            } else {
+                secret_input.trim().to_string()
+            };
+
+            println!(
+                "   {} Enter GitHub logins or \"org:org/team\" for each role (comma-separated):",
+                "ℹ".dimmed()
+            );
+            let admins_default = existing.notes_github_admins.as_deref().unwrap_or("");
+            let admins_prompt = format!("   Admins [{}]: ", admins_default);
+            let admins_input = prompt(&admins_prompt).unwrap_or_default();
+            notes_github_admins = if admins_input.trim().is_empty() {
+                admins_default.to_string()
+            } else {
+                admins_input.trim().to_string()
+            };
+
+            let users_default = existing.notes_github_users.as_deref().unwrap_or("");
+            let users_prompt = format!("   Users [{}]: ", users_default);
+            let users_input = prompt(&users_prompt).unwrap_or_default();
+            notes_github_users = if users_input.trim().is_empty() {
+                users_default.to_string()
+            } else {
+                users_input.trim().to_string()
+            };
+
+            let guests_default = existing.notes_github_guests.as_deref().unwrap_or("");
+            let guests_prompt = format!("   Guests [{}]: ", guests_default);
+            let guests_input = prompt(&guests_prompt).unwrap_or_default();
+            notes_github_guests = if guests_input.trim().is_empty() {
+                guests_default.to_string()
+            } else {
+                guests_input.trim().to_string()
+            };
+        }
+
+        if enable_local {
+            println!();
+            println!("  Configure Local Static Credentials:");
+            println!(
+                "   {} Enter local credentials (format: \"username:password\", comma-separated):",
+                "ℹ".dimmed()
+            );
+            let local_admins_default = existing.notes_local_admins.as_deref().unwrap_or("");
+            let local_admins_prompt = format!("   Admins [{}]: ", local_admins_default);
+            let local_admins_input = prompt(&local_admins_prompt).unwrap_or_default();
+            notes_local_admins = if local_admins_input.trim().is_empty() {
+                local_admins_default.to_string()
+            } else {
+                local_admins_input.trim().to_string()
+            };
+
+            let local_users_default = existing.notes_local_users.as_deref().unwrap_or("");
+            let local_users_prompt = format!("   Users [{}]: ", local_users_default);
+            let local_users_input = prompt(&local_users_prompt).unwrap_or_default();
+            notes_local_users = if local_users_input.trim().is_empty() {
+                local_users_default.to_string()
+            } else {
+                local_users_input.trim().to_string()
+            };
+
+            let local_guests_default = existing.notes_local_guests.as_deref().unwrap_or("");
+            let local_guests_prompt = format!("   Guests [{}]: ", local_guests_default);
+            let local_guests_input = prompt(&local_guests_prompt).unwrap_or_default();
+            notes_local_guests = if local_guests_input.trim().is_empty() {
+                local_guests_default.to_string()
+            } else {
+                local_guests_input.trim().to_string()
+            };
+        }
 
         let model_default = existing.notes_model.as_deref().unwrap_or("");
         if provider_choice.trim() == "4" {
@@ -1530,11 +1720,51 @@ pub async fn run_setup(config_path_override: Option<String>) {
         toml_content.push_str("[notes]\n");
         toml_content.push_str(&format!("port = {}\n", notes_port));
         toml_content.push_str(&format!("bind = \"{}\"\n", notes_bind));
-        toml_content.push_str(&format!("admin_token = \"{}\"\n", notes_admin_token));
-        toml_content.push_str(&format!("user_token = \"{}\"\n", notes_user_token));
-        toml_content.push_str(&format!("guest_token = \"{}\"\n", notes_guest_token));
         if !notes_model.is_empty() {
             toml_content.push_str(&format!("model = \"{}\"\n", notes_model));
+        }
+        // Convert comma-separated logins to TOML array
+        fn to_toml_array(s: &str) -> String {
+            if s.trim().is_empty() {
+                return "[]".to_string();
+            }
+            let items: Vec<String> = s
+                .split(',')
+                .map(|x| format!("\"{}\"", x.trim()))
+                .filter(|x| x != "\"\"")
+                .collect();
+            format!("[{}]", items.join(", "))
+        }
+
+        if enable_github {
+            toml_content.push_str("\n[notes.github]\n");
+            toml_content.push_str(&format!("client_id = \"{}\"\n", notes_github_client_id));
+            toml_content.push_str(&format!(
+                "client_secret = \"{}\"\n",
+                notes_github_client_secret
+            ));
+            toml_content.push_str(&format!(
+                "admins = {}\n",
+                to_toml_array(&notes_github_admins)
+            ));
+            toml_content.push_str(&format!("users = {}\n", to_toml_array(&notes_github_users)));
+            toml_content.push_str(&format!(
+                "guests = {}\n",
+                to_toml_array(&notes_github_guests)
+            ));
+        }
+
+        if enable_local {
+            toml_content.push_str("\n[notes.local]\n");
+            toml_content.push_str(&format!(
+                "admins = {}\n",
+                to_toml_array(&notes_local_admins)
+            ));
+            toml_content.push_str(&format!("users = {}\n", to_toml_array(&notes_local_users)));
+            toml_content.push_str(&format!(
+                "guests = {}\n",
+                to_toml_array(&notes_local_guests)
+            ));
         }
     }
 

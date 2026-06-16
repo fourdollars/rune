@@ -87,14 +87,44 @@ pub struct NotesConfig {
     pub port: Option<u16>,
     /// Bind address (default: 127.0.0.1).
     pub bind: Option<String>,
-    /// User token required from clients. None = no user access possible.
-    pub user_token: Option<String>,
-    /// Admin token: clients with this token get admin role (can approve tool requests).
-    pub admin_token: Option<String>,
-    /// Guest token: read-only access. Cannot chat, create, edit, or delete anything.
-    pub guest_token: Option<String>,
     /// Model to use for notes mode. If not set or empty, defaults to auto-detecting the first OpenRouter model.
     pub model: Option<String>,
+    /// GitHub OAuth configuration. Required for serve mode.
+    pub github: Option<GitHubOAuthConfig>,
+    /// Local credentials configuration.
+    pub local: Option<LocalConfig>,
+}
+
+/// Local credentials configuration for Rune Notes.
+#[derive(Debug, Clone, Deserialize, Default)]
+pub struct LocalConfig {
+    /// Local username:password credentials granted admin role.
+    #[serde(default)]
+    pub admins: Vec<String>,
+    /// Local username:password credentials granted user role.
+    #[serde(default)]
+    pub users: Vec<String>,
+    /// Local username:password credentials granted guest (read-only) role.
+    #[serde(default)]
+    pub guests: Vec<String>,
+}
+
+/// GitHub OAuth 2.0 configuration for Rune Notes.
+#[derive(Debug, Clone, Deserialize, Default)]
+pub struct GitHubOAuthConfig {
+    /// GitHub OAuth App client ID.
+    pub client_id: String,
+    /// GitHub OAuth App client secret.
+    pub client_secret: String,
+    /// GitHub logins or `"org:org/team"` refs granted admin role.
+    #[serde(default)]
+    pub admins: Vec<String>,
+    /// GitHub logins or `"org:org/team"` refs granted user role.
+    #[serde(default)]
+    pub users: Vec<String>,
+    /// GitHub logins or `"org:org/team"` refs granted guest (read-only) role.
+    #[serde(default)]
+    pub guests: Vec<String>,
 }
 
 impl Default for PolicyConfig {
@@ -1366,8 +1396,7 @@ log_level = "info"
         let s = NotesConfig::default();
         assert!(s.port.is_none());
         assert!(s.bind.is_none());
-        assert!(s.user_token.is_none());
-        assert!(s.admin_token.is_none());
+        assert!(s.github.is_none());
     }
 
     #[test]
@@ -1380,15 +1409,12 @@ log_level = "info"
 [notes]
 port = 9527
 bind = "0.0.0.0"
-user_token = "secret"
-admin_token = "admin_secret"
 "#;
         let cfg: PartialConfig = toml::from_str(toml_str).unwrap();
         let serve = cfg.notes.unwrap();
         assert_eq!(serve.port, Some(9527));
         assert_eq!(serve.bind.as_deref(), Some("0.0.0.0"));
-        assert_eq!(serve.user_token.as_deref(), Some("secret"));
-        assert_eq!(serve.admin_token.as_deref(), Some("admin_secret"));
+        assert!(serve.github.is_none());
     }
 
     #[test]
@@ -2004,7 +2030,7 @@ allowed_syscalls = ["ptrace", "bpf"]
     fn test_rune_config_default_serve() {
         let c = RuneConfig::default();
         assert!(c.notes.port.is_none());
-        assert!(c.notes.user_token.is_none());
+        assert!(c.notes.github.is_none());
     }
 
     #[test]
@@ -2055,5 +2081,45 @@ allowed_syscalls = ["ptrace", "bpf"]
         let partial: PartialConfig = toml::from_str(toml).unwrap();
         // PartialConfig doesn't have cli_prompt at all, confirming it's CLI-only
         assert!(partial.model == Some("gpt-4".to_string()));
+    }
+
+    #[test]
+    fn test_github_config_parses() {
+        let toml_str = r#"
+[notes.github]
+client_id = "Ov23liABC"
+client_secret = "secret123"
+admins = ["fourdollars", "org:my-org/ops"]
+users = ["org:my-org"]
+guests = ["some-friend"]
+"#;
+        let cfg: crate::config::PartialConfig = toml::from_str(toml_str).unwrap();
+        let oauth = cfg
+            .notes
+            .and_then(|n| n.github)
+            .expect("github must be present");
+        assert_eq!(oauth.client_id, "Ov23liABC");
+        assert_eq!(oauth.client_secret, "secret123");
+        assert_eq!(oauth.admins, vec!["fourdollars", "org:my-org/ops"]);
+        assert_eq!(oauth.users, vec!["org:my-org"]);
+        assert_eq!(oauth.guests, vec!["some-friend"]);
+    }
+
+    #[test]
+    fn test_local_config_parses() {
+        let toml_str = r#"
+[notes.local]
+admins = ["admin:admin123"]
+users = ["user:user123"]
+guests = ["guest:guest123"]
+"#;
+        let cfg: crate::config::PartialConfig = toml::from_str(toml_str).unwrap();
+        let local = cfg
+            .notes
+            .and_then(|n| n.local)
+            .expect("local must be present");
+        assert_eq!(local.admins, vec!["admin:admin123"]);
+        assert_eq!(local.users, vec!["user:user123"]);
+        assert_eq!(local.guests, vec!["guest:guest123"]);
     }
 }

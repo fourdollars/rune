@@ -379,9 +379,20 @@ rune notes --bind 0.0.0.0 --port 9527
 [notes]
 port = 9527
 bind = "0.0.0.0"
-user_token = "your-user-token"
-admin_token = "your-admin-token"
-guest_token = "your-guest-token"
+
+# GitHub OAuth 2.0 Login
+[notes.github]
+client_id = "your_github_client_id"
+client_secret = "your_github_client_secret"
+admins = ["fourdollars", "org:my-org/ops"]
+users = ["org:my-org"]
+guests = []
+
+# Local Static Password Login
+[notes.local]
+admins = ["admin:admin123"]
+users = ["user:user123"]
+guests = ["guest:guest123"]
 ```
 
 ### Role Permissions
@@ -403,8 +414,8 @@ guest_token = "your-guest-token"
 
 Admin can toggle visibility (👁/🙈) for individual notes and files. When both the note and file are set to public, anyone can view the rendered Markdown at:
 
-- **Index:** `http://host:port/notes/` — lists all public notes and files
-- **Preview:** `http://host:port/notes/{note}/{filename}` — rendered Markdown page
+- **Index:** `http://host:port/public/` — lists all public notes
+- **Preview:** `http://host:port/public/{note}/{filename}` — rendered Markdown page
 
 No authentication required for public pages.
 
