@@ -185,7 +185,7 @@ fn finalize_tool_calls(states: BTreeMap<usize, StreamingToolCallState>) -> Vec<L
                     warn!(
                         "dropping tool_call with invalid JSON arguments: tool={}, index={}, error={}, args={}",
                         state.name, index, e,
-                        &state.arguments[..state.arguments.len().min(200)]
+                        crate::config::safe_truncate(&state.arguments, 200)
                     );
                     return None;
                 }
@@ -553,7 +553,7 @@ impl Provider for OpenAiProvider {
                 let body = response.text().await.unwrap_or_default();
                 return Err(anyhow!(
                     "list OpenRouter models failed: {}",
-                    &body[..body.len().min(200)]
+                    crate::config::safe_truncate(&body, 200)
                 ));
             }
 
@@ -717,7 +717,7 @@ impl Provider for OpenAiProvider {
                 return Err(anyhow!(
                     "API request failed ({}): {}",
                     status,
-                    &stdout[..stdout.len().min(500)]
+                    crate::config::safe_truncate(&stdout, 500)
                 ));
             }
 
@@ -726,7 +726,7 @@ impl Provider for OpenAiProvider {
                 anyhow!(
                     "failed to parse response JSON: {}\nraw: {}",
                     e,
-                    &stdout[..stdout.len().min(500)]
+                    crate::config::safe_truncate(&stdout, 500)
                 )
             })?;
 
@@ -969,7 +969,7 @@ impl CopilotProvider {
             return Err(anyhow!(
                 "copilot token refresh failed ({}): {}",
                 "non-2xx",
-                &body[..body.len().min(200)]
+                crate::config::safe_truncate(&body, 200)
             ));
         }
 
@@ -982,7 +982,7 @@ impl CopilotProvider {
             anyhow!(
                 "failed to parse token response: {}\nraw: {}",
                 e,
-                &stdout[..stdout.len().min(200)]
+                crate::config::safe_truncate(&stdout, 200)
             )
         })?;
 
@@ -1044,7 +1044,7 @@ impl Provider for CopilotProvider {
                 let body = response.text().await.unwrap_or_default();
                 return Err(anyhow!(
                     "list models failed: {}",
-                    &body[..body.len().min(200)]
+                    crate::config::safe_truncate(&body, 200)
                 ));
             }
 
@@ -1202,7 +1202,7 @@ impl Provider for CopilotProvider {
                     let err = anyhow!(
                         "Copilot API request failed ({}): {}",
                         status,
-                        &stdout[..stdout.len().min(500)]
+                        crate::config::safe_truncate(&stdout, 500)
                     );
                     if is_retriable_endpoint_error(&err) && endpoints.len() > 1 {
                         warn!(model = %request.model, endpoint = %path, status = %status, "endpoint returned error, trying next");
@@ -1216,7 +1216,7 @@ impl Provider for CopilotProvider {
                     anyhow!(
                         "failed to parse response: {}\nraw: {}",
                         e,
-                        &stdout[..stdout.len().min(500)]
+                        crate::config::safe_truncate(&stdout, 500)
                     )
                 })?;
 
@@ -1615,7 +1615,7 @@ impl Provider for GeminiProvider {
                 return Err(anyhow!(
                     "Gemini API request failed ({}): {}",
                     status,
-                    &stdout[..stdout.len().min(500)]
+                    crate::config::safe_truncate(&stdout, 500)
                 ));
             }
 
@@ -1623,7 +1623,7 @@ impl Provider for GeminiProvider {
                 anyhow!(
                     "failed to parse Gemini response: {}\nraw: {}",
                     e,
-                    &stdout[..stdout.len().min(500)]
+                    crate::config::safe_truncate(&stdout, 500)
                 )
             })?;
 
@@ -1806,7 +1806,7 @@ impl Provider for GeminiProvider {
                 return Err(anyhow!(
                     "Gemini streaming request failed ({}): {}",
                     status,
-                    &body[..body.len().min(500)]
+                    crate::config::safe_truncate(&body, 500)
                 ));
             }
 

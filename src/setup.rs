@@ -772,11 +772,12 @@ pub async fn run_setup(config_path_override: Option<String>) {
         // GitHub Copilot: offer two auth methods
         println!("{}", "2. GitHub Copilot authentication:".bold());
         if let Some(ref k) = existing.api_key {
-            let masked = format!(
-                "{}...{}",
-                &k[..k.len().min(4)],
-                &k[k.len().saturating_sub(4)..]
-            );
+            let chars: Vec<char> = k.chars().collect();
+            let prefix_len = chars.len().min(4);
+            let suffix_start = chars.len().saturating_sub(4).max(prefix_len);
+            let prefix: String = chars[..prefix_len].iter().collect();
+            let suffix: String = chars[suffix_start..].iter().collect();
+            let masked = format!("{}...{}", prefix, suffix);
             println!("   {}", format!("(current: {})", masked).dimmed());
         }
         println!(
@@ -858,11 +859,12 @@ pub async fn run_setup(config_path_override: Option<String>) {
         println!("{}", "2. Enter your API key:".bold());
         println!("   {}", format!("Hint: {}", key_hint).dimmed());
         if let Some(ref k) = existing.api_key {
-            let masked = format!(
-                "{}...{}",
-                &k[..k.len().min(4)],
-                &k[k.len().saturating_sub(4)..]
-            );
+            let chars: Vec<char> = k.chars().collect();
+            let prefix_len = chars.len().min(4);
+            let suffix_start = chars.len().saturating_sub(4).max(prefix_len);
+            let prefix: String = chars[..prefix_len].iter().collect();
+            let suffix: String = chars[suffix_start..].iter().collect();
+            let masked = format!("{}...{}", prefix, suffix);
             println!("   {}", format!("(current: {})", masked).dimmed());
         }
         let key_prompt = if existing.api_key.is_some() {
@@ -886,7 +888,7 @@ pub async fn run_setup(config_path_override: Option<String>) {
         println!(
             "  {} API key set ({}...)",
             "✓".green(),
-            &api_key[..api_key.len().min(8)]
+            crate::config::safe_truncate(&api_key, 8)
         );
     }
     println!();

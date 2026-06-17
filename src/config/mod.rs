@@ -27,6 +27,19 @@ fn expand_tilde_vec(v: &mut Vec<String>) {
     }
 }
 
+/// Safely truncates a string to a maximum byte length without panicking on UTF-8 character boundaries.
+pub fn safe_truncate(s: &str, max_bytes: usize) -> &str {
+    if s.len() <= max_bytes {
+        s
+    } else {
+        let mut idx = max_bytes;
+        while idx > 0 && !s.is_char_boundary(idx) {
+            idx -= 1;
+        }
+        &s[..idx]
+    }
+}
+
 /// Unified sandbox/security policy.
 #[derive(Debug, Clone, Deserialize)]
 pub struct PolicyConfig {
@@ -1334,6 +1347,28 @@ log_level = "info"
 "#;
         let cfg: PartialConfig = toml::from_str(toml_str).unwrap();
         assert!(cfg.system_prompt.is_none());
+    }
+
+    #[test]
+    fn test_safe_truncate() {
+        assert_eq!(safe_truncate("hello", 3), "hel");
+        assert_eq!(safe_truncate("hello", 10), "hello");
+        assert_eq!(safe_truncate("", 5), "");
+        // "我" is 3 bytes (228, 136, 145)
+        assert_eq!(safe_truncate("我", 0), "");
+        assert_eq!(safe_truncate("我", 1), "");
+        assert_eq!(safe_truncate("我", 2), "");
+        assert_eq!(safe_truncate("我", 3), "我");
+        assert_eq!(safe_truncate("我", 4), "我");
+
+        // "我。？"
+        // '。' (bytes 198..201 of string)
+        // '？' (bytes 198..201 of string)
+        let s = "我。？";
+        assert_eq!(safe_truncate(s, 2), "");
+        assert_eq!(safe_truncate(s, 3), "我");
+        assert_eq!(safe_truncate(s, 5), "我");
+        assert_eq!(safe_truncate(s, 6), "我。");
     }
 
     // --- expand_tilde tests ---

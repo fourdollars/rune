@@ -4045,7 +4045,7 @@ mod isolation_tests {
         assert!(
             body.contains("OpenAI.md"),
             "Should show public file; got: {}",
-            &body[..body.len().min(300)]
+            crate::config::safe_truncate(&body, 300)
         );
         assert!(!body.contains("private.md"), "Should NOT show private file");
 
