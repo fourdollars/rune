@@ -528,11 +528,20 @@ impl Provider for OpenAiProvider {
                     "medium".to_string(),
                     "high".to_string(),
                 ];
+                let provider_id = if self.provider_name == "openrouter"
+                    || self.base_url.contains("openrouter.ai")
+                {
+                    "openrouter".to_string()
+                } else if self.base_url == "https://api.openai.com/v1" {
+                    "openai".to_string()
+                } else {
+                    "openai-compatible".to_string()
+                };
                 let mut models: Vec<ModelInfo> = ids
                     .into_iter()
                     .map(|id| ModelInfo {
                         id,
-                        provider: Some(self.name().to_string()),
+                        provider: Some(provider_id.clone()),
                         context_window: None,
                         reasoning_efforts: reasoning_efforts.clone(),
                         supported_endpoints: vec!["/chat/completions".to_string()],
@@ -613,9 +622,18 @@ impl Provider for OpenAiProvider {
                     Vec::new()
                 };
 
+                let provider_id = if self.provider_name == "openrouter"
+                    || self.base_url.contains("openrouter.ai")
+                {
+                    "openrouter".to_string()
+                } else if self.base_url == "https://api.openai.com/v1" {
+                    "openai".to_string()
+                } else {
+                    "openai-compatible".to_string()
+                };
                 models.push(ModelInfo {
                     id: m.id,
-                    provider: Some(self.name().to_string()),
+                    provider: Some(provider_id),
                     context_window: m.context_length.map(|l| l as u64),
                     reasoning_efforts,
                     supported_endpoints: vec!["/chat/completions".to_string()],

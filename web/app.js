@@ -1282,6 +1282,34 @@ function switchThinking(level) {
 
 function showModelDialog() {
     if (!isAdmin || availableModels.length <= 1) return;
+
+    // Set provider in title
+    const titleEl = document.getElementById('model-modal-title');
+    if (titleEl) {
+        const firstModel = availableModels.find(m => m.provider);
+        const providerName = firstModel ? firstModel.provider : '';
+        if (providerName) {
+            let friendlyProvider = providerName;
+            const lower = providerName.toLowerCase();
+            if (lower === 'gemini') {
+                friendlyProvider = 'Google Gemini';
+            } else if (lower === 'github-copilot') {
+                friendlyProvider = 'GitHub Copilot';
+            } else if (lower === 'openrouter') {
+                friendlyProvider = 'OpenRouter';
+            } else if (lower === 'openai') {
+                friendlyProvider = 'OpenAI';
+            } else if (lower === 'openai-compatible') {
+                friendlyProvider = 'OpenAI compatible';
+            } else {
+                friendlyProvider = providerName.charAt(0).toUpperCase() + providerName.slice(1);
+            }
+            titleEl.textContent = `Switch Model (${friendlyProvider})`;
+        } else {
+            titleEl.textContent = 'Switch Model';
+        }
+    }
+
     const listEl = document.getElementById('model-list');
     if (!listEl) return;
     listEl.innerHTML = '';
@@ -1299,13 +1327,6 @@ function showModelDialog() {
         // Metadata badges
         const badgeContainer = document.createElement('span');
         badgeContainer.className = 'model-badges';
-        
-        if (m.provider) {
-            const providerBadge = document.createElement('span');
-            providerBadge.className = 'model-provider-badge';
-            providerBadge.textContent = m.provider;
-            badgeContainer.appendChild(providerBadge);
-        }
         
         if (m.reasoning_efforts && m.reasoning_efforts.length > 0) {
             const reasonBadge = document.createElement('span');
