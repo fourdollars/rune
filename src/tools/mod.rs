@@ -436,7 +436,7 @@ stderr: {}",
                 "type": "function",
                 "function": {
                     "name": "list_markdown",
-                    "description": "List all available markdown files from the database (not the filesystem) and show which one is currently active.",
+                    "description": "List all .md files in the current notebook and show which one is active. Call this first whenever you are unsure which files exist.",
                     "parameters": {
                         "type": "object",
                         "properties": {},
@@ -448,11 +448,11 @@ stderr: {}",
                 "type": "function",
                 "function": {
                     "name": "read_markdown",
-                    "description": "Read a markdown file from the database (not the filesystem). Defaults to the currently active file if no filename is given.",
+                    "description": "Read a notebook file. Content is always plain text (markdown). Omit 'filename' to read the currently active file.",
                     "parameters": {
                         "type": "object",
                         "properties": {
-                            "filename": { "type": "string", "description": "Filename to read (e.g. spec.md). Must be a single filename, not a path. Omit to read the active file." }
+                            "filename": { "type": "string", "description": "Bare .md filename only (e.g. 'notes.md'). No paths, no subdirectories, no other extensions. Omit to use the active file." }
                         },
                         "required": []
                     }
@@ -462,14 +462,14 @@ stderr: {}",
                 "type": "function",
                 "function": {
                     "name": "write_markdown",
-                    "description": "Edit a markdown file in the database (not the filesystem). Use 'content' for full replacement, or 'search'+'replace' for targeted edits. Defaults to the active file if no filename is given.",
+                    "description": "Write plain-text markdown content to a notebook file. Use 'content' to replace the whole file, or 'search'+'replace' for a targeted edit. Omit 'filename' to write to the active file. Creates the file if it does not exist.",
                     "parameters": {
                         "type": "object",
                         "properties": {
-                            "filename": { "type": "string", "description": "Filename to edit (e.g. spec.md). Must be a single filename, not a path. Omit to edit the active file." },
-                            "content": { "type": "string", "description": "Full new content (replaces entire file)" },
-                            "search": { "type": "string", "description": "Text to search for (used with replace)" },
-                            "replace": { "type": "string", "description": "Replacement text (used with search)" }
+                            "filename": { "type": "string", "description": "Bare .md filename only (e.g. 'notes.md'). No paths, no subdirectories, no other extensions. Omit to use the active file." },
+                            "content": { "type": "string", "description": "Full new plain-text content (replaces entire file). Cannot be used together with 'search'/'replace'." },
+                            "search": { "type": "string", "description": "Exact text to find in the current file (used with 'replace')." },
+                            "replace": { "type": "string", "description": "Replacement text for the first match of 'search'." }
                         },
                         "required": []
                     }

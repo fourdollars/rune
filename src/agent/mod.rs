@@ -1457,6 +1457,12 @@ impl Agent {
             if f.contains('/') || f.contains('\\') {
                 return Some("Error: filename cannot contain path separators".to_string());
             }
+            if !f.ends_with(".md") {
+                return Some(format!(
+                    "Error: '{}' is not a markdown file. Only .md files are supported.",
+                    f
+                ));
+            }
             f
         } else {
             // Find first .md file as default
@@ -4521,6 +4527,43 @@ read(3, "root:x:0:0:...", 4096) = 1234"#;
         assert!(result
             .unwrap()
             .contains("does not support the 'path' parameter"));
+    }
+    #[tokio::test]
+    async fn test_markdown_tool_rejects_non_md_extension() {
+        use tempfile::TempDir;
+
+        let tmp = TempDir::new().unwrap();
+        let md_dir = tmp.path().to_path_buf();
+
+        let config = RuneConfig::default();
+        let provider = ProviderRegistry::new();
+        let mut agent = Agent::new(config, provider, false, None);
+        agent.markdown_dir = Some(md_dir);
+
+        for bad_name in &["notes.txt", "README", "file.MD", "doc.markdown"] {
+            let args = serde_json::json!({"filename": bad_name, "content": "test"});
+            let result = agent
+                .handle_markdown_tool("write_markdown", &args)
+                .await
+                .unwrap();
+            assert!(
+                result.contains("not a markdown file"),
+                "expected rejection for '{}', got: {}",
+                bad_name,
+                result
+            );
+        }
+
+        // .md extension must be accepted
+        let args = serde_json::json!({"filename": "ok.md", "content": "hello"});
+        let result = agent
+            .handle_markdown_tool("write_markdown", &args)
+            .await
+            .unwrap();
+        assert!(
+            !result.contains("not a markdown file"),
+            "ok.md should be accepted"
+        );
     }
     #[tokio::test]
     async fn test_tool_status_callback_sequential_emits_start_and_end() {
