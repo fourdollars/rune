@@ -452,7 +452,7 @@ stderr: {}",
                     "parameters": {
                         "type": "object",
                         "properties": {
-                            "filename": { "type": "string", "description": "Filename to read (e.g. spec.md). Omit to read the active file." }
+                            "filename": { "type": "string", "description": "Filename to read (e.g. spec.md). Must be a single filename, not a path. Omit to read the active file." }
                         },
                         "required": []
                     }
@@ -466,7 +466,7 @@ stderr: {}",
                     "parameters": {
                         "type": "object",
                         "properties": {
-                            "filename": { "type": "string", "description": "Filename to edit (e.g. spec.md). Omit to edit the active file." },
+                            "filename": { "type": "string", "description": "Filename to edit (e.g. spec.md). Must be a single filename, not a path. Omit to edit the active file." },
                             "content": { "type": "string", "description": "Full new content (replaces entire file)" },
                             "search": { "type": "string", "description": "Text to search for (used with replace)" },
                             "replace": { "type": "string", "description": "Replacement text (used with search)" }
