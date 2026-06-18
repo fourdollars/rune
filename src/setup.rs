@@ -530,6 +530,7 @@ async fn fetch_copilot_models_bearer(
                     .unwrap_or_default();
                 Some(crate::provider::ModelInfo {
                     id,
+                    provider: Some("github-copilot".to_string()),
                     context_window,
                     reasoning_efforts,
                     supported_endpoints,

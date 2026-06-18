@@ -262,6 +262,7 @@ pub async fn run(config: RuneConfig, opts: NotesOptions) {
             .filter(|s| !s.is_empty())
             .map(|id| ModelInfo {
                 id,
+                provider: None,
                 context_window: None,
                 reasoning_efforts: default_reasoning_efforts.clone(),
                 supported_endpoints: vec![],
@@ -301,6 +302,7 @@ pub async fn run(config: RuneConfig, opts: NotesOptions) {
                         eprintln!("  ⚠ Provider returned no models, using default");
                         models = vec![ModelInfo {
                             id: serve_model.clone(),
+                            provider: None,
                             context_window: None,
                             reasoning_efforts: vec![],
                             supported_endpoints: vec![],
@@ -312,6 +314,7 @@ pub async fn run(config: RuneConfig, opts: NotesOptions) {
                         eprintln!("  ⚠ Failed to discover models: {}", e);
                         models = vec![ModelInfo {
                             id: serve_model.clone(),
+                            provider: None,
                             context_window: None,
                             reasoning_efforts: vec![],
                             supported_endpoints: vec![],
@@ -324,6 +327,7 @@ pub async fn run(config: RuneConfig, opts: NotesOptions) {
                     eprintln!("  ⚠ Cannot build provider for model discovery: {}", e);
                     models = vec![ModelInfo {
                         id: serve_model.clone(),
+                        provider: None,
                         context_window: None,
                         reasoning_efforts: vec![],
                         supported_endpoints: vec![],
@@ -385,6 +389,7 @@ pub async fn run(config: RuneConfig, opts: NotesOptions) {
                                         .iter()
                                         .map(|m| crate::serve::api::ModelListEntry {
                                             id: m.id.clone(),
+                                            provider: m.provider.clone(),
                                             context_window: m.context_window,
                                             reasoning_efforts: m.reasoning_efforts.clone(),
                                         })
@@ -1326,6 +1331,7 @@ mod tests {
             .filter(|s| !s.is_empty())
             .map(|id| ModelInfo {
                 id,
+                provider: None,
                 context_window: None,
                 reasoning_efforts: vec![],
                 supported_endpoints: vec![],
@@ -1369,6 +1375,7 @@ mod tests {
             active_file: Arc::new(RwLock::new("main.md".into())),
             models: Arc::new(RwLock::new(vec![ModelInfo {
                 id: "gpt-4o".into(),
+                provider: None,
                 context_window: None,
                 reasoning_efforts: vec![],
                 supported_endpoints: vec![],

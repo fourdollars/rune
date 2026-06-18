@@ -77,6 +77,8 @@ impl NoteRoom {
 pub struct ModelListEntry {
     pub id: String,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub provider: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub context_window: Option<u64>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub reasoning_efforts: Vec<String>,
@@ -531,6 +533,7 @@ pub async fn events_handler(
         .iter()
         .map(|m| ModelListEntry {
             id: m.id.clone(),
+            provider: m.provider.clone(),
             context_window: m.context_window,
             reasoning_efforts: m.reasoning_efforts.clone(),
         })
@@ -2531,11 +2534,13 @@ mod tests {
             models: vec![
                 ModelListEntry {
                     id: "gpt-4".into(),
+                    provider: Some("openai".into()),
                     context_window: Some(128000),
                     reasoning_efforts: vec![],
                 },
                 ModelListEntry {
                     id: "claude".into(),
+                    provider: Some("openrouter".into()),
                     context_window: Some(200000),
                     reasoning_efforts: vec!["low".into(), "medium".into(), "high".into()],
                 },
@@ -2545,6 +2550,8 @@ mod tests {
         };
         let json = serde_json::to_string(&msg).unwrap();
         assert!(json.contains(r#""type":"model_list""#));
+        assert!(json.contains(r#""provider":"openai""#));
+        assert!(json.contains(r#""provider":"openrouter""#));
         assert!(json.contains(r#""context_window":128000"#));
         assert!(json.contains(r#""reasoning_efforts":["low","medium","high"]"#));
         assert!(json.contains(r#""thinking":"off""#));
@@ -2611,6 +2618,7 @@ mod tests {
             files: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
             active_file: Arc::new(tokio::sync::RwLock::new(String::new())),
             models: Arc::new(tokio::sync::RwLock::new(vec![ModelInfo {
+                provider: None,
                 id: "test-model".into(),
                 context_window: None,
                 reasoning_efforts: vec![],
@@ -2684,12 +2692,14 @@ mod integration_tests {
             active_file: Arc::new(RwLock::new(String::new())),
             models: Arc::new(tokio::sync::RwLock::new(vec![
                 ModelInfo {
+                    provider: None,
                     id: "gpt-5-mini".into(),
                     context_window: None,
                     reasoning_efforts: vec![],
                     supported_endpoints: vec![],
                 },
                 ModelInfo {
+                    provider: None,
                     id: "claude-sonnet-4.6".into(),
                     context_window: None,
                     reasoning_efforts: vec![],
@@ -3332,6 +3342,7 @@ mod integration_tests {
             files: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
             active_file: Arc::new(tokio::sync::RwLock::new(String::new())),
             models: Arc::new(tokio::sync::RwLock::new(vec![ModelInfo {
+                provider: None,
                 id: "m1".into(),
                 context_window: None,
                 reasoning_efforts: vec![],
@@ -3399,12 +3410,14 @@ mod isolation_tests {
             active_file: Arc::new(RwLock::new(String::new())),
             models: Arc::new(tokio::sync::RwLock::new(vec![
                 ModelInfo {
+                    provider: None,
                     id: "gpt-5-mini".into(),
                     context_window: None,
                     reasoning_efforts: vec![],
                     supported_endpoints: vec![],
                 },
                 ModelInfo {
+                    provider: None,
                     id: "claude-sonnet-4.6".into(),
                     context_window: None,
                     reasoning_efforts: vec![],
@@ -3468,6 +3481,7 @@ mod isolation_tests {
             files: Arc::new(RwLock::new(HashMap::new())),
             active_file: Arc::new(RwLock::new(String::new())),
             models: Arc::new(tokio::sync::RwLock::new(vec![ModelInfo {
+                provider: None,
                 id: model_id.into(),
                 context_window: Some(expected_cw),
                 reasoning_efforts: vec![],
@@ -3742,12 +3756,14 @@ mod isolation_tests {
             active_file: Arc::new(tokio::sync::RwLock::new(String::new())),
             models: Arc::new(tokio::sync::RwLock::new(vec![
                 ModelInfo {
+                    provider: None,
                     id: "gpt-5-mini".into(),
                     context_window: None,
                     reasoning_efforts: vec![],
                     supported_endpoints: vec![],
                 },
                 ModelInfo {
+                    provider: None,
                     id: "claude-sonnet-4.6".into(),
                     context_window: None,
                     reasoning_efforts: vec![],
@@ -3808,6 +3824,7 @@ mod isolation_tests {
             files: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
             active_file: Arc::new(tokio::sync::RwLock::new(String::new())),
             models: Arc::new(tokio::sync::RwLock::new(vec![ModelInfo {
+                provider: None,
                 id: "m1".into(),
                 context_window: None,
                 reasoning_efforts: vec![],
@@ -3872,6 +3889,7 @@ mod isolation_tests {
             files: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
             active_file: Arc::new(tokio::sync::RwLock::new(String::new())),
             models: Arc::new(tokio::sync::RwLock::new(vec![ModelInfo {
+                provider: None,
                 id: "m1".into(),
                 context_window: None,
                 reasoning_efforts: vec![],
@@ -3934,6 +3952,7 @@ mod isolation_tests {
             files: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
             active_file: Arc::new(tokio::sync::RwLock::new(String::new())),
             models: Arc::new(tokio::sync::RwLock::new(vec![ModelInfo {
+                provider: None,
                 id: "m1".into(),
                 context_window: None,
                 reasoning_efforts: vec![],
@@ -4009,6 +4028,7 @@ mod isolation_tests {
             files: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
             active_file: Arc::new(tokio::sync::RwLock::new(String::new())),
             models: Arc::new(tokio::sync::RwLock::new(vec![ModelInfo {
+                provider: None,
                 id: "m1".into(),
                 context_window: None,
                 reasoning_efforts: vec![],
@@ -4077,6 +4097,7 @@ mod isolation_tests {
             files: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
             active_file: Arc::new(tokio::sync::RwLock::new(String::new())),
             models: Arc::new(tokio::sync::RwLock::new(vec![ModelInfo {
+                provider: None,
                 id: "m1".into(),
                 context_window: None,
                 reasoning_efforts: vec![],
@@ -4127,6 +4148,7 @@ mod isolation_tests {
             files: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
             active_file: Arc::new(tokio::sync::RwLock::new(String::new())),
             models: Arc::new(tokio::sync::RwLock::new(vec![ModelInfo {
+                provider: None,
                 id: "m1".into(),
                 context_window: None,
                 reasoning_efforts: vec![],
@@ -4216,6 +4238,7 @@ mod isolation_tests {
             files: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
             active_file: Arc::new(tokio::sync::RwLock::new(String::new())),
             models: Arc::new(tokio::sync::RwLock::new(vec![ModelInfo {
+                provider: None,
                 id: "m1".into(),
                 context_window: None,
                 reasoning_efforts: vec![],

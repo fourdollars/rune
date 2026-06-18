@@ -1300,6 +1300,13 @@ function showModelDialog() {
         const badgeContainer = document.createElement('span');
         badgeContainer.className = 'model-badges';
         
+        if (m.provider) {
+            const providerBadge = document.createElement('span');
+            providerBadge.className = 'model-provider-badge';
+            providerBadge.textContent = m.provider;
+            badgeContainer.appendChild(providerBadge);
+        }
+        
         if (m.reasoning_efforts && m.reasoning_efforts.length > 0) {
             const reasonBadge = document.createElement('span');
             reasonBadge.className = 'model-reasoning-badge';

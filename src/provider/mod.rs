@@ -346,6 +346,8 @@ async fn stream_openai_compatible_response(
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ModelInfo {
     pub id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub provider: Option<String>,
     pub context_window: Option<u64>,
     pub reasoning_efforts: Vec<String>,
     pub supported_endpoints: Vec<String>,
@@ -530,6 +532,7 @@ impl Provider for OpenAiProvider {
                     .into_iter()
                     .map(|id| ModelInfo {
                         id,
+                        provider: Some(self.name().to_string()),
                         context_window: None,
                         reasoning_efforts: reasoning_efforts.clone(),
                         supported_endpoints: vec!["/chat/completions".to_string()],
@@ -612,6 +615,7 @@ impl Provider for OpenAiProvider {
 
                 models.push(ModelInfo {
                     id: m.id,
+                    provider: Some(self.name().to_string()),
                     context_window: m.context_length.map(|l| l as u64),
                     reasoning_efforts,
                     supported_endpoints: vec!["/chat/completions".to_string()],
@@ -1111,6 +1115,7 @@ impl Provider for CopilotProvider {
                                 .unwrap_or_default();
                             Some(ModelInfo {
                                 id,
+                                provider: Some(self.name().to_string()),
                                 context_window,
                                 reasoning_efforts,
                                 supported_endpoints,
@@ -1512,6 +1517,7 @@ impl Provider for GeminiProvider {
                     }
                     Some(ModelInfo {
                         id,
+                        provider: Some(self.name().to_string()),
                         context_window: m.get("inputTokenLimit").and_then(|v| v.as_u64()),
                         reasoning_efforts: if supports_thinking {
                             thinking_levels.clone()
@@ -3923,6 +3929,7 @@ mod provider_tests {
                             .unwrap_or_default();
                         Some(ModelInfo {
                             id,
+                            provider: None,
                             context_window,
                             reasoning_efforts,
                             supported_endpoints: vec![],
@@ -3991,6 +3998,7 @@ mod provider_tests {
                             .unwrap_or_default();
                         Some(ModelInfo {
                             id,
+                            provider: None,
                             context_window,
                             reasoning_efforts,
                             supported_endpoints: vec![],
@@ -4025,6 +4033,7 @@ mod provider_tests {
                             .map(|s| s.to_string())?;
                         Some(ModelInfo {
                             id,
+                            provider: None,
                             context_window: None,
                             reasoning_efforts: vec![],
                             supported_endpoints: vec![],
@@ -4055,6 +4064,7 @@ mod provider_tests {
                             .map(|s| s.to_string())?;
                         Some(ModelInfo {
                             id,
+                            provider: None,
                             context_window: None,
                             reasoning_efforts: vec![],
                             supported_endpoints: vec![],
