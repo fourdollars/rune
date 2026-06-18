@@ -939,7 +939,7 @@ pub async fn note_rename_handler(
         Ok(Some(new_id)) => {
             let old_dir = state.data_dir.join("notes").join(&req.note_id);
             let new_dir = state.data_dir.join("notes").join(&new_id);
-            if old_dir.exists() {
+            if old_dir.exists() && old_dir != new_dir {
                 if !new_dir.exists() {
                     // Simple rename: no target directory, just mv
                     let _ = tokio::fs::rename(&old_dir, &new_dir).await;
@@ -2814,6 +2814,34 @@ mod integration_tests {
             .with_state(state.clone());
 
         post_json(&app, "/api/session/create", json!({"name": "old-name"})).await;
+
+        // Create a dummy markdown file in old-name note directory
+        let old_md_dir = state.note_markdown_dir("old-name");
+        tokio::fs::create_dir_all(&old_md_dir).await.unwrap();
+        let dummy_file = old_md_dir.join("hello.md");
+        tokio::fs::write(&dummy_file, b"content").await.unwrap();
+
+        // 1. Rename to same name but update icon (simulate emoji picker icon change)
+        let (_, body) = post_json(
+            &app,
+            "/api/session/rename",
+            json!({
+                "note_id": "old-name",
+                "name": "old-name",
+                "icon": "🚀"
+            }),
+        )
+        .await;
+        assert_eq!(body["ok"], true);
+
+        // Assert that note session icon is indeed "🚀" in db:
+        let record = state.chat_db.get_session("old-name").unwrap().unwrap();
+        assert_eq!(record.icon.as_deref(), Some("🚀"));
+
+        // Assert markdown file still exists (not deleted!)
+        assert!(dummy_file.exists());
+
+        // 2. Rename to a different name
         let (_, body) = post_json(
             &app,
             "/api/session/rename",
@@ -2829,6 +2857,13 @@ mod integration_tests {
         // Assert that new note session icon is indeed "🚀" in db:
         let record = state.chat_db.get_session("new-name-test").unwrap().unwrap();
         assert_eq!(record.icon.as_deref(), Some("🚀"));
+
+        // Assert markdown file moved to new directory
+        let new_md_dir = state.note_markdown_dir("new-name-test");
+        assert!(new_md_dir.join("hello.md").exists());
+
+        // Assert old directory is cleaned up
+        assert!(!old_md_dir.exists());
     }
 
     // ─── File CRUD tests ───────────────────────────────────────────────────────
