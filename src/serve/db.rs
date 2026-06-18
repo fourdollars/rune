@@ -54,6 +54,8 @@ pub struct NoteRecord {
     pub public: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub model_override: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub icon: Option<String>,
 }
 
 /// Thread-safe SQLite connection wrapper.
@@ -124,6 +126,7 @@ impl ChatDb {
         ",
         );
         let _ = conn.execute_batch("ALTER TABLE sessions ADD COLUMN model_override TEXT;");
+        let _ = conn.execute_batch("ALTER TABLE sessions ADD COLUMN icon TEXT;");
         Ok(Self {
             conn: Arc::new(Mutex::new(conn)),
             deferred_path: Arc::new(Mutex::new(None)),
@@ -162,7 +165,8 @@ impl ChatDb {
                     created_at  INTEGER NOT NULL,
                     created_by  TEXT,
                     public      INTEGER DEFAULT 0,
-                    model_override TEXT
+                    model_override TEXT,
+                    icon        TEXT
                 );
                 CREATE TABLE IF NOT EXISTS file_visibility (
                     note_id  TEXT NOT NULL,
@@ -381,7 +385,7 @@ impl ChatDb {
     pub fn list_notes(&self) -> anyhow::Result<Vec<NoteRecord>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT id, name, created_at, created_by, COALESCE(public, 0), model_override FROM sessions ORDER BY name ASC"
+            "SELECT id, name, created_at, created_by, COALESCE(public, 0), model_override, icon FROM sessions ORDER BY name ASC"
         )?;
         let rows = stmt
             .query_map([], |row| {
@@ -392,6 +396,7 @@ impl ChatDb {
                     created_by: row.get(3)?,
                     public: row.get::<_, i32>(4).unwrap_or(0) != 0,
                     model_override: row.get(5)?,
+                    icon: row.get(6)?,
                 })
             })?
             .filter_map(|r| r.ok())
@@ -403,7 +408,12 @@ impl ChatDb {
     /// If new_name already exists, merges: old messages are re-tagged to new_name,
     /// old session row is deleted. Filesystem merge is handled by the caller.
     /// Returns Ok(Some(new_id)) on success, Ok(None) if source not found.
-    pub fn rename_note(&self, id: &str, new_name: &str) -> anyhow::Result<Option<String>> {
+    pub fn rename_note(
+        &self,
+        id: &str,
+        new_name: &str,
+        icon: Option<&str>,
+    ) -> anyhow::Result<Option<String>> {
         let conn = self.conn.lock().unwrap();
         // Check source exists
         let src_exists: bool = conn.query_row(
@@ -414,8 +424,12 @@ impl ChatDb {
         if !src_exists {
             return Ok(None);
         }
-        // no-op: same name
+        // no-op: same name (but update icon if provided)
         if id == new_name {
+            conn.execute(
+                "UPDATE sessions SET icon = ?1 WHERE id = ?2",
+                params![icon, id],
+            )?;
             return Ok(Some(new_name.to_string()));
         }
         let target_exists: bool = conn.query_row(
@@ -427,6 +441,10 @@ impl ChatDb {
         if target_exists {
             // Merge: re-tag old messages to new_name, delete old session row
             conn.execute(
+                "UPDATE sessions SET icon = ?1 WHERE id = ?2",
+                params![icon, new_name],
+            )?;
+            conn.execute(
                 "UPDATE messages SET note_id = ?1 WHERE note_id = ?2",
                 params![new_name, id],
             )?;
@@ -434,8 +452,8 @@ impl ChatDb {
         } else {
             // Simple rename: update session row + re-tag messages
             conn.execute(
-                "UPDATE sessions SET id = ?1, name = ?1 WHERE id = ?2",
-                params![new_name, id],
+                "UPDATE sessions SET id = ?1, name = ?1, icon = ?2 WHERE id = ?3",
+                params![new_name, icon, id],
             )?;
             conn.execute(
                 "UPDATE messages SET note_id = ?1 WHERE note_id = ?2",
@@ -456,7 +474,7 @@ impl ChatDb {
     pub fn get_session(&self, id: &str) -> anyhow::Result<Option<NoteRecord>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT id, name, created_at, created_by, COALESCE(public, 0), model_override FROM sessions WHERE id = ?1"
+            "SELECT id, name, created_at, created_by, COALESCE(public, 0), model_override, icon FROM sessions WHERE id = ?1"
         )?;
         let mut rows = stmt.query_map(params![id], |row| {
             Ok(NoteRecord {
@@ -466,6 +484,7 @@ impl ChatDb {
                 created_by: row.get(3)?,
                 public: row.get::<_, i32>(4).unwrap_or(0) != 0,
                 model_override: row.get(5)?,
+                icon: row.get(6)?,
             })
         })?;
         Ok(rows.next().and_then(|r| r.ok()))
@@ -1081,13 +1100,14 @@ mod tests {
     fn test_rename_note() {
         let db = in_memory_db();
         db.create_note("s1", "s1", None).unwrap();
-        let result = db.rename_note("s1", "new-name").unwrap();
+        let result = db.rename_note("s1", "new-name", Some("📝")).unwrap();
         assert_eq!(result, Some("new-name".to_string()));
         // Old id gone, new id exists
         assert!(db.get_session("s1").unwrap().is_none());
         let s = db.get_session("new-name").unwrap().unwrap();
         assert_eq!(s.name, "new-name");
         assert_eq!(s.id, "new-name");
+        assert_eq!(s.icon.as_deref(), Some("📝"));
     }
 
     #[test]
@@ -1095,7 +1115,7 @@ mod tests {
         let db = in_memory_db();
         db.create_note("old", "old", None).unwrap();
         db.insert("old", "user", "alice", "hello").unwrap();
-        let _ = db.rename_note("old", "new").unwrap();
+        let _ = db.rename_note("old", "new", None).unwrap();
         // Messages should now be under "new"
         let msgs = db.load_recent("new", 10).unwrap();
         assert_eq!(msgs.len(), 1);
@@ -1108,7 +1128,7 @@ mod tests {
     #[test]
     fn test_rename_nonexistent_returns_none() {
         let db = in_memory_db();
-        assert_eq!(db.rename_note("nope", "X").unwrap(), None);
+        assert_eq!(db.rename_note("nope", "X", None).unwrap(), None);
     }
 
     #[test]
@@ -1119,11 +1139,15 @@ mod tests {
         // Insert a message under "a"
         db.insert("a", "user", "nick", "hello from a").unwrap();
         // Rename a -> b: target exists, so merge
-        assert_eq!(db.rename_note("a", "b").unwrap(), Some("b".into()));
+        assert_eq!(
+            db.rename_note("a", "b", Some("🌟")).unwrap(),
+            Some("b".into())
+        );
         // "a" session should be gone
         assert!(db.get_session("a").unwrap().is_none());
         // "b" session still exists
-        assert!(db.get_session("b").unwrap().is_some());
+        let s_b = db.get_session("b").unwrap().unwrap();
+        assert_eq!(s_b.icon.as_deref(), Some("🌟"));
         // The message originally under "a" should now be under "b"
         let msgs = db.load_recent("b", 10).unwrap();
         assert_eq!(msgs.len(), 1);
@@ -1134,7 +1158,21 @@ mod tests {
     fn test_rename_note_source_not_found() {
         let db = in_memory_db();
         // Renaming non-existent source returns None
-        assert_eq!(db.rename_note("ghost", "anything").unwrap(), None);
+        assert_eq!(db.rename_note("ghost", "anything", None).unwrap(), None);
+    }
+
+    #[test]
+    fn test_rename_note_same_name_update_icon() {
+        let db = in_memory_db();
+        db.create_note("s1", "s1", None).unwrap();
+        assert_eq!(db.get_session("s1").unwrap().unwrap().icon, None);
+
+        // Update icon, name is same
+        let result = db.rename_note("s1", "s1", Some("🔥")).unwrap();
+        assert_eq!(result, Some("s1".to_string()));
+
+        let s = db.get_session("s1").unwrap().unwrap();
+        assert_eq!(s.icon.as_deref(), Some("🔥"));
     }
 
     #[test]
