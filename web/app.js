@@ -1802,7 +1802,11 @@ function renderNoteList() {
         const notePublic = !!s.public;
         const folderIcon = document.createElement('span');
         folderIcon.className = 'icon' + (isAdmin ? ' clickable' : '') + (notePublic ? '' : ' private');
-        folderIcon.textContent = notePublic ? ((s.id === currentNoteId) ? '📂' : '📁') : '🔐';
+        if (s.icon) {
+            folderIcon.textContent = s.icon;
+        } else {
+            folderIcon.textContent = notePublic ? ((s.id === currentNoteId) ? '📂' : '📁') : '🔐';
+        }
         folderIcon.title = notePublic ? 'Public note (click to make private)' : 'Private note (click to make public)';
         if (isAdmin) {
             folderIcon.onclick = (e) => {
@@ -2023,6 +2027,7 @@ function showNoteSettings(sessionId) {
     settingsNoteId = sessionId;
     document.getElementById('note-settings-title').textContent = 'Note: ' + s.name;
     document.getElementById('note-settings-name').value = s.name;
+    document.getElementById('note-settings-icon').value = s.icon || '';
     // Hide delete button for default session
     const delBtn = document.getElementById('btn-delete-note');
     if (delBtn) delBtn.style.display = sessionId === 'default' ? 'none' : '';
@@ -2037,9 +2042,12 @@ function hideNoteSettings() {
 function saveNoteSettings() {
     if (!settingsNoteId) return;
     const name = document.getElementById('note-settings-name').value.trim();
+    const icon = document.getElementById('note-settings-icon').value.trim();
     const s = notes.find(x => x.id === settingsNoteId);
-    if (s && name && name !== s.name) {
-        api('note/rename', { note_id: settingsNoteId, name });
+    if (s && name) {
+        if (name !== s.name || icon !== (s.icon || '')) {
+            api('note/rename', { note_id: settingsNoteId, name, icon: icon || null });
+        }
     }
     hideNoteSettings();
 }
@@ -2391,7 +2399,7 @@ function renderMobileNoteTree() {
         const noteHeader = document.createElement('div');
         noteHeader.className = 'mobile-note-header' + (s.id === currentNoteId ? ' active' : '');
         const notePublic = !!s.public;
-        const noteIconStr = notePublic ? (s.id === currentNoteId ? '📂' : '📁') : '🔐';
+        const noteIconStr = s.icon ? s.icon : (notePublic ? (s.id === currentNoteId ? '📂' : '📁') : '🔐');
         noteHeader.innerHTML = '<span class="mobile-note-icon">' + noteIconStr + '</span><span class="mobile-note-name">' + (s.name || s.id) + '</span>';
         noteHeader.onclick = () => {
             if (s.id !== currentNoteId) {

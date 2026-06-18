@@ -255,6 +255,7 @@ pub struct NoteCreateReq {
 pub struct NoteRenameReq {
     pub note_id: String,
     pub name: String,
+    pub icon: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -929,7 +930,10 @@ pub async fn note_rename_handler(
     State(state): State<ServerState>,
     Json(req): Json<NoteRenameReq>,
 ) -> Json<ApiResponse> {
-    match state.chat_db.rename_note(&req.note_id, &req.name) {
+    match state
+        .chat_db
+        .rename_note(&req.note_id, &req.name, req.icon.as_deref())
+    {
         Ok(Some(new_id)) => {
             let old_dir = state.data_dir.join("notes").join(&req.note_id);
             let new_dir = state.data_dir.join("notes").join(&new_id);
@@ -2798,18 +2802,29 @@ mod integration_tests {
 
     #[tokio::test]
     async fn test_session_rename() {
-        let (app, _tmp) = test_app();
+        let tmp = tempfile::tempdir().unwrap();
+        let state = test_state(&tmp);
+        let app = Router::new()
+            .route("/api/session/create", post(note_create_handler))
+            .route("/api/session/rename", post(note_rename_handler))
+            .with_state(state.clone());
+
         post_json(&app, "/api/session/create", json!({"name": "old-name"})).await;
         let (_, body) = post_json(
             &app,
             "/api/session/rename",
             json!({
                 "note_id": "old-name",
-                "name": "new-name"
+                "name": "new-name-test",
+                "icon": "🚀"
             }),
         )
         .await;
         assert_eq!(body["ok"], true);
+
+        // Assert that new note session icon is indeed "🚀" in db:
+        let record = state.chat_db.get_session("new-name-test").unwrap().unwrap();
+        assert_eq!(record.icon.as_deref(), Some("🚀"));
     }
 
     // ─── File CRUD tests ───────────────────────────────────────────────────────

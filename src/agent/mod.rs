@@ -2467,6 +2467,9 @@ impl Agent {
     /// Check if a real TTY is available for interactive prompts.
     /// Returns false in serve mode (systemd service, no controlling terminal).
     fn has_tty() -> bool {
+        if cfg!(test) {
+            return false;
+        }
         std::fs::File::open("/dev/tty").is_ok()
     }
 
