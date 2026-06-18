@@ -1402,6 +1402,16 @@ pre.hljs-pre:hover .copy-btn {
     justify-content: center;
     font-size: 14px;
 }
+.explorer-row .icon.clickable {
+    cursor: pointer;
+    transition: opacity 0.15s;
+}
+.explorer-row .icon.private {
+    opacity: 0.45;
+}
+.explorer-row .icon.clickable:hover {
+    opacity: 1.0 !important;
+}
 
 .explorer-row .label {
     flex: 1;

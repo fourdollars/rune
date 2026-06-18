@@ -1799,9 +1799,17 @@ function renderNoteList() {
         chevron.className = 'chevron open';
         chevron.textContent = '›';
 
+        const notePublic = !!s.public;
         const folderIcon = document.createElement('span');
-        folderIcon.className = 'icon';
+        folderIcon.className = 'icon' + (isAdmin ? ' clickable' : '') + (notePublic ? '' : ' private');
         folderIcon.textContent = (s.id === currentNoteId) ? '📂' : '📁';
+        folderIcon.title = notePublic ? 'Public note (click to make private)' : 'Private note (click to make public)';
+        if (isAdmin) {
+            folderIcon.onclick = (e) => {
+                e.stopPropagation();
+                api('note/visibility', { note_id: s.id, public: !notePublic });
+            };
+        }
 
         const folderLabel = document.createElement('span');
         folderLabel.className = 'label';
@@ -1835,21 +1843,7 @@ function renderNoteList() {
             folderRow.appendChild(actions);
         }
 
-        // Visibility icon for note
-        {
-            const notePublic = !!s.public;
-            const visIcon = document.createElement('span');
-            visIcon.className = 'visibility-icon' + (isAdmin ? '' : ' readonly');
-            visIcon.title = notePublic ? 'Public (click to make private)' : 'Private (click to make public)';
-            visIcon.textContent = notePublic ? '👁' : '🙈';
-            if (isAdmin) {
-                visIcon.onclick = (e) => {
-                    e.stopPropagation();
-                    api('note/visibility', { note_id: s.id, public: !notePublic });
-                };
-            }
-            folderRow.appendChild(visIcon);
-        }
+
 
         section.appendChild(folderRow);
 
@@ -1861,9 +1855,19 @@ function renderNoteList() {
             fileRow.className = 'explorer-row';
             fileRow.style.paddingLeft = '20px';
 
+            const fileVisibility = s.fileVisibility || {};
+            const filePublic = !!fileVisibility[fname];
+
             const fileIcon = document.createElement('span');
-            fileIcon.className = 'icon';
+            fileIcon.className = 'icon' + (isAdmin ? ' clickable' : '') + (filePublic ? '' : ' private');
             fileIcon.textContent = fname.endsWith('.md') ? '📝' : '📄';
+            fileIcon.title = filePublic ? 'Public file (click to make private)' : 'Private file (click to make public)';
+            if (isAdmin) {
+                fileIcon.onclick = (e) => {
+                    e.stopPropagation();
+                    api('file/visibility', { note_id: s.id, filename: fname, public: !filePublic });
+                };
+            }
 
             const fileLabel = document.createElement('span');
             fileLabel.className = 'label';
@@ -1901,22 +1905,7 @@ function renderNoteList() {
                 fileRow.appendChild(fileActions);
             }
 
-            // Visibility icon for file
-            {
-                const fileVisibility = s.fileVisibility || {};
-                const filePublic = !!fileVisibility[fname];
-                const visIcon = document.createElement('span');
-                visIcon.className = 'visibility-icon' + (isAdmin ? '' : ' readonly');
-                visIcon.title = filePublic ? 'Public (click to make private)' : 'Private (click to make public)';
-                visIcon.textContent = filePublic ? '👁' : '🙈';
-                if (isAdmin) {
-                    visIcon.onclick = (e) => {
-                        e.stopPropagation();
-                        api('file/visibility', { note_id: s.id, filename: fname, public: !filePublic });
-                    };
-                }
-                fileRow.appendChild(visIcon);
-            }
+
 
             fileRow.onclick = () => {
                 if (s.id !== currentNoteId) {
