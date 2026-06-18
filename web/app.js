@@ -1346,7 +1346,31 @@ function showModelDialog() {
         btn.onclick = () => { switchModel(modelId); hideModelDialog(); };
         listEl.appendChild(btn);
     });
+
+    const searchInput = document.getElementById('model-search-input');
+    if (searchInput) {
+        searchInput.value = '';
+        searchInput.oninput = (e) => {
+            const query = e.target.value.toLowerCase().trim();
+            const buttons = listEl.querySelectorAll('.model-option');
+            buttons.forEach(btn => {
+                const nameSpan = btn.querySelector('.model-option-name');
+                if (nameSpan) {
+                    const name = nameSpan.textContent.toLowerCase();
+                    if (name.includes(query)) {
+                        btn.style.display = 'flex';
+                    } else {
+                        btn.style.display = 'none';
+                    }
+                }
+            });
+        };
+    }
+
     document.getElementById('model-modal').classList.remove('hidden');
+    if (searchInput) {
+        setTimeout(() => searchInput.focus(), 50);
+    }
 }
 
 function formatContextWindow(tokens) {

@@ -2060,3 +2060,20 @@ pre.hljs-pre:hover .copy-btn {
     display: flex;
     align-items: center;
 }
+
+/* Model search/filter input */
+.model-search-input {
+    width: 100%;
+    background: var(--bg-surface);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--text);
+    font-size: 13px;
+    padding: 8px 12px;
+    outline: none;
+    transition: border-color 0.15s;
+    box-sizing: border-box;
+}
+.model-search-input:focus {
+    border-color: var(--accent);
+}
