@@ -1802,7 +1802,7 @@ function renderNoteList() {
         const notePublic = !!s.public;
         const folderIcon = document.createElement('span');
         folderIcon.className = 'icon' + (isAdmin ? ' clickable' : '') + (notePublic ? '' : ' private');
-        folderIcon.textContent = (s.id === currentNoteId) ? '📂' : '📁';
+        folderIcon.textContent = notePublic ? ((s.id === currentNoteId) ? '📂' : '📁') : '🔐';
         folderIcon.title = notePublic ? 'Public note (click to make private)' : 'Private note (click to make public)';
         if (isAdmin) {
             folderIcon.onclick = (e) => {
@@ -1860,7 +1860,7 @@ function renderNoteList() {
 
             const fileIcon = document.createElement('span');
             fileIcon.className = 'icon' + (isAdmin ? ' clickable' : '') + (filePublic ? '' : ' private');
-            fileIcon.textContent = fname.endsWith('.md') ? '📝' : '📄';
+            fileIcon.textContent = filePublic ? (fname.endsWith('.md') ? '📝' : '📄') : '🔒';
             fileIcon.title = filePublic ? 'Public file (click to make private)' : 'Private file (click to make public)';
             if (isAdmin) {
                 fileIcon.onclick = (e) => {
@@ -2390,7 +2390,9 @@ function renderMobileNoteTree() {
         // Note header (folder)
         const noteHeader = document.createElement('div');
         noteHeader.className = 'mobile-note-header' + (s.id === currentNoteId ? ' active' : '');
-        noteHeader.innerHTML = '<span class="mobile-note-icon">' + (s.id === currentNoteId ? '📂' : '📁') + '</span><span class="mobile-note-name">' + (s.name || s.id) + '</span>';
+        const notePublic = !!s.public;
+        const noteIconStr = notePublic ? (s.id === currentNoteId ? '📂' : '📁') : '🔐';
+        noteHeader.innerHTML = '<span class="mobile-note-icon">' + noteIconStr + '</span><span class="mobile-note-name">' + (s.name || s.id) + '</span>';
         noteHeader.onclick = () => {
             if (s.id !== currentNoteId) {
                 switchNote(s.id);
@@ -2404,7 +2406,10 @@ function renderMobileNoteTree() {
         files.forEach(fname => {
             const fileRow = document.createElement('div');
             fileRow.className = 'mobile-file-row' + (s.id === currentNoteId && fname === currentFilename ? ' active' : '');
-            fileRow.innerHTML = '<span class="mobile-file-icon">📄</span><span class="mobile-file-name">' + fname + '</span>';
+            const fileVisibility = s.fileVisibility || {};
+            const filePublic = !!fileVisibility[fname];
+            const fileIconStr = filePublic ? (fname.endsWith('.md') ? '📝' : '📄') : '🔒';
+            fileRow.innerHTML = '<span class="mobile-file-icon">' + fileIconStr + '</span><span class="mobile-file-name">' + fname + '</span>';
             fileRow.onclick = () => {
                 if (s.id !== currentNoteId) {
                     switchNote(s.id, fname);
