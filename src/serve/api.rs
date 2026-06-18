@@ -183,6 +183,7 @@ pub struct NoteListEntry {
     pub public: bool,
     /// Which files are publicly visible (only names that are public=true)
     pub public_files: Vec<String>,
+    pub icon: Option<String>,
 }
 
 #[derive(Debug, Serialize, Clone)]
@@ -398,6 +399,7 @@ pub async fn build_note_list(state: &ServerState) -> Vec<NoteListEntry> {
             files,
             public: s.public,
             public_files,
+            icon: s.icon.clone(),
         });
     }
     entries
@@ -2479,6 +2481,7 @@ mod tests {
                 files: vec!["spec.md".into()],
                 public: false,
                 public_files: vec![],
+                icon: None,
             }],
             active: "test".into(),
         };
@@ -2584,6 +2587,7 @@ mod tests {
             files: vec!["readme.md".into()],
             public: false,
             public_files: vec![],
+            icon: None,
         };
         let json = serde_json::to_string(&entry).unwrap();
         assert!(json.contains(r#""id":"s1""#));
