@@ -95,9 +95,19 @@
                 <label>Name</label>
                 <input type="text" id="note-settings-name" maxlength="50" />
             </div>
-            <div class="form-group">
+            <div class="form-group emoji-picker-group">
                 <label>Icon (Emoji)</label>
-                <input type="text" id="note-settings-icon" placeholder="Default" maxlength="10" style="width: 80px;" />
+                <div class="emoji-picker-wrapper">
+                    <button type="button" id="emoji-picker-trigger" class="emoji-picker-trigger">📂</button>
+                    <div id="emoji-picker-popover" class="emoji-picker-popover hidden">
+                        <input type="text" id="emoji-search-input" class="emoji-search-input" placeholder="Search emoji..." autocomplete="off" />
+                        <div class="emoji-tabs" id="emoji-picker-tabs"></div>
+                        <div class="emoji-scroll-area" id="emoji-picker-scroll-area">
+                            <button type="button" class="emoji-clear-btn" id="emoji-clear-btn">Reset to Default</button>
+                            <div id="emoji-categories-container"></div>
+                        </div>
+                    </div>
+                </div>
             </div>
             <div class="form-group">
                 <div class="path-input-row">
