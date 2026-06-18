@@ -1437,20 +1437,19 @@ impl Agent {
     async fn handle_markdown_tool(&self, name: &str, args: &serde_json::Value) -> Option<String> {
         let md_dir = self.markdown_dir.as_ref()?;
 
-        // Resolve filename: use arg 'filename' or 'path' if provided, else first .md file in dir
+        // If the LLM incorrectly passed 'path', reject it immediately to force it to use 'filename'.
+        if args.get("path").is_some() {
+            return Some(format!(
+                "Error: {} does not support the 'path' parameter. Please specify the target filename using 'filename' instead.",
+                name
+            ));
+        }
+
+        // Resolve filename: use arg if provided, else first .md file in dir
         let fname_arg = args
             .get("filename")
-            .or_else(|| args.get("path"))
             .and_then(|v| v.as_str())
-            .map(|s| {
-                // Strip directories and path separators
-                let s = s.replace('\\', "/");
-                if let Some(pos) = s.rfind('/') {
-                    s[pos + 1..].to_string()
-                } else {
-                    s
-                }
-            });
+            .map(|s| s.to_string());
         let fname = if let Some(f) = fname_arg {
             if f.is_empty() {
                 return Some("Error: filename cannot be empty".to_string());
@@ -4514,25 +4513,14 @@ read(3, "root:x:0:0:...", 4096) = 1234"#;
         let config = RuneConfig::default();
         let provider = ProviderRegistry::new();
         let mut agent = Agent::new(config, provider, false, None);
-        agent.markdown_dir = Some(md_dir.clone());
+        agent.markdown_dir = Some(md_dir);
 
-        // Test 1: use "path" key instead of "filename"
+        // Test: use "path" key instead of "filename" (should reject and fail)
         let args = serde_json::json!({"path": "LCA.md", "content": "LCA analysis"});
         let result = agent.handle_markdown_tool("write_markdown", &args).await;
-        assert!(result.unwrap().contains("updated"));
-
-        // Verify LCA.md was created
-        let on_disk = std::fs::read_to_string(md_dir.join("LCA.md")).unwrap();
-        assert_eq!(on_disk, "LCA analysis");
-
-        // Test 2: use "path" key containing directories
-        let args2 = serde_json::json!({"path": "/some/dir/LCA2.md", "content": "LCA2 content"});
-        let result2 = agent.handle_markdown_tool("write_markdown", &args2).await;
-        assert!(result2.unwrap().contains("updated"));
-
-        // Verify LCA2.md was created in the main directory (directories stripped)
-        let on_disk2 = std::fs::read_to_string(md_dir.join("LCA2.md")).unwrap();
-        assert_eq!(on_disk2, "LCA2 content");
+        assert!(result
+            .unwrap()
+            .contains("does not support the 'path' parameter"));
     }
     #[tokio::test]
     async fn test_tool_status_callback_sequential_emits_start_and_end() {
