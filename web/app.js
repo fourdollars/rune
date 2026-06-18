@@ -1808,11 +1808,16 @@ function renderNoteList() {
         } else {
             folderIcon.textContent = notePublic ? ((s.id === currentNoteId) ? '📂' : '📁') : '🔐';
         }
-        folderIcon.title = notePublic ? 'Public note (click to make private)' : 'Private note (click to make public)';
+        folderIcon.title = notePublic
+            ? (isAdmin ? 'Public note (click to make private)' : 'Public note')
+            : (isAdmin ? 'Private note (click to make public)' : 'Private note');
         if (isAdmin) {
             folderIcon.onclick = (e) => {
                 e.stopPropagation();
-                api('note/visibility', { note_id: s.id, public: !notePublic });
+                const nextPublic = !notePublic;
+                s.public = nextPublic;
+                renderNoteList();
+                api('note/visibility', { note_id: s.id, public: nextPublic });
             };
         }
 
@@ -1866,11 +1871,17 @@ function renderNoteList() {
             const fileIcon = document.createElement('span');
             fileIcon.className = 'icon' + (isAdmin ? ' clickable' : '') + (filePublic ? '' : ' private');
             fileIcon.textContent = filePublic ? (fname.endsWith('.md') ? '📝' : '📄') : '🔒';
-            fileIcon.title = filePublic ? 'Public file (click to make private)' : 'Private file (click to make public)';
+            fileIcon.title = filePublic
+                ? (isAdmin ? 'Public file (click to make private)' : 'Public file')
+                : (isAdmin ? 'Private file (click to make public)' : 'Private file');
             if (isAdmin) {
                 fileIcon.onclick = (e) => {
                     e.stopPropagation();
-                    api('file/visibility', { note_id: s.id, filename: fname, public: !filePublic });
+                    const nextPublic = !filePublic;
+                    if (!s.fileVisibility) s.fileVisibility = {};
+                    s.fileVisibility[fname] = nextPublic;
+                    renderNoteList();
+                    api('file/visibility', { note_id: s.id, filename: fname, public: nextPublic });
                 };
             }
 
