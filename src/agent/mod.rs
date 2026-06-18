@@ -1437,12 +1437,24 @@ impl Agent {
     async fn handle_markdown_tool(&self, name: &str, args: &serde_json::Value) -> Option<String> {
         let md_dir = self.markdown_dir.as_ref()?;
 
-        // Resolve filename: use arg if provided, else first .md file in dir
+        // Resolve filename: use arg 'filename' or 'path' if provided, else first .md file in dir
         let fname_arg = args
             .get("filename")
+            .or_else(|| args.get("path"))
             .and_then(|v| v.as_str())
-            .map(|s| s.to_string());
+            .map(|s| {
+                // Strip directories and path separators
+                let s = s.replace('\\', "/");
+                if let Some(pos) = s.rfind('/') {
+                    s[pos + 1..].to_string()
+                } else {
+                    s
+                }
+            });
         let fname = if let Some(f) = fname_arg {
+            if f.is_empty() {
+                return Some("Error: filename cannot be empty".to_string());
+            }
             if f.contains('/') || f.contains('\\') {
                 return Some("Error: filename cannot contain path separators".to_string());
             }
@@ -4490,6 +4502,37 @@ read(3, "root:x:0:0:...", 4096) = 1234"#;
             serde_json::json!({"filename": "test.md", "search": "nonexistent", "replace": "x"});
         let result = agent.handle_markdown_tool("write_markdown", &args).await;
         assert!(result.unwrap().contains("search text not found"));
+    }
+
+    #[tokio::test]
+    async fn test_write_markdown_path_fallback() {
+        use tempfile::TempDir;
+
+        let tmp = TempDir::new().unwrap();
+        let md_dir = tmp.path().to_path_buf();
+
+        let config = RuneConfig::default();
+        let provider = ProviderRegistry::new();
+        let mut agent = Agent::new(config, provider, false, None);
+        agent.markdown_dir = Some(md_dir.clone());
+
+        // Test 1: use "path" key instead of "filename"
+        let args = serde_json::json!({"path": "LCA.md", "content": "LCA analysis"});
+        let result = agent.handle_markdown_tool("write_markdown", &args).await;
+        assert!(result.unwrap().contains("updated"));
+
+        // Verify LCA.md was created
+        let on_disk = std::fs::read_to_string(md_dir.join("LCA.md")).unwrap();
+        assert_eq!(on_disk, "LCA analysis");
+
+        // Test 2: use "path" key containing directories
+        let args2 = serde_json::json!({"path": "/some/dir/LCA2.md", "content": "LCA2 content"});
+        let result2 = agent.handle_markdown_tool("write_markdown", &args2).await;
+        assert!(result2.unwrap().contains("updated"));
+
+        // Verify LCA2.md was created in the main directory (directories stripped)
+        let on_disk2 = std::fs::read_to_string(md_dir.join("LCA2.md")).unwrap();
+        assert_eq!(on_disk2, "LCA2 content");
     }
     #[tokio::test]
     async fn test_tool_status_callback_sequential_emits_start_and_end() {
