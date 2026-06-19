@@ -9,6 +9,7 @@ mod cli;
 mod concourse;
 mod config;
 mod embedding;
+mod loop_engine;
 mod mcp;
 mod precommands;
 mod provider;
