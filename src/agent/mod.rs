@@ -126,6 +126,8 @@ pub struct Agent {
     /// Callback fired when a tool execution starts/ends (for serve mode status indicator).
     /// Called with (tool_name, "start"|"end").
     pub tool_status_callback: Option<Arc<dyn Fn(&str, &str) + Send + Sync>>,
+    /// Optional worktree path for isolated loop executions.
+    pub worktree_path: Option<PathBuf>,
 }
 
 impl Agent {
@@ -242,6 +244,79 @@ impl Agent {
             file_list_callback: None,
             file_content_callback: None,
             tool_status_callback: None,
+            worktree_path: None,
+        }
+    }
+
+    pub fn map_path_to_worktree(&self, path_str: &str) -> String {
+        let wt_path = match &self.worktree_path {
+            Some(p) => p,
+            None => return path_str.to_string(),
+        };
+
+        let path = std::path::Path::new(path_str);
+        if path.is_absolute() {
+            if let Ok(cwd) = std::env::current_dir() {
+                if let Ok(rel) = path.strip_prefix(&cwd) {
+                    return wt_path.join(rel).to_string_lossy().to_string();
+                }
+            }
+            path_str.to_string()
+        } else {
+            // It's relative. Resolve relative to the worktree path.
+            wt_path.join(path_str).to_string_lossy().to_string()
+        }
+    }
+
+    pub fn unmap_path_from_worktree(&self, s: &str) -> String {
+        if let Some(ref wt_path) = self.worktree_path {
+            let wt_str = wt_path.to_string_lossy().to_string();
+            s.replace(&wt_str, ".")
+        } else {
+            s.to_string()
+        }
+    }
+
+    fn map_tool_call_arguments(&self, tc: &mut LlmToolCall) {
+        if let Some(wt_path) = &self.worktree_path {
+            let mut args: serde_json::Value = serde_json::from_str(&tc.function.arguments)
+                .unwrap_or(serde_json::Value::Object(serde_json::Map::new()));
+
+            let mut changed = false;
+            match tc.function.name.as_str() {
+                "read_file" | "write_file" | "list_dir" => {
+                    if let Some(path_val) = args.get_mut("path") {
+                        if let Some(path_str) = path_val.as_str() {
+                            let mapped = self.map_path_to_worktree(path_str);
+                            *path_val = serde_json::Value::String(mapped);
+                            changed = true;
+                        }
+                    }
+                }
+                "execute_cmd" => {
+                    if let Some(cwd_val) = args.get_mut("cwd") {
+                        if let Some(cwd_str) = cwd_val.as_str() {
+                            let mapped = self.map_path_to_worktree(cwd_str);
+                            *cwd_val = serde_json::Value::String(mapped);
+                            changed = true;
+                        }
+                    } else {
+                        if let Some(obj) = args.as_object_mut() {
+                            obj.insert(
+                                "cwd".to_string(),
+                                serde_json::Value::String(wt_path.to_string_lossy().to_string()),
+                            );
+                            changed = true;
+                        }
+                    }
+                }
+                _ => {}
+            }
+            if changed {
+                if let Ok(s) = serde_json::to_string(&args) {
+                    tc.function.arguments = s;
+                }
+            }
         }
     }
 
@@ -1062,8 +1137,11 @@ impl Agent {
                 let early_stop: Option<StopReason> = None;
 
                 for tc in &response.tool_calls {
-                    let args: serde_json::Value = serde_json::from_str(&tc.function.arguments)
-                        .unwrap_or(serde_json::Value::Object(serde_json::Map::new()));
+                    let mut tc_mapped = tc.clone();
+                    self.map_tool_call_arguments(&mut tc_mapped);
+                    let args: serde_json::Value =
+                        serde_json::from_str(&tc_mapped.function.arguments)
+                            .unwrap_or(serde_json::Value::Object(serde_json::Map::new()));
 
                     eprintln!(
                         "  {} {}",
@@ -1098,7 +1176,7 @@ impl Agent {
                         }
                     }
 
-                    dispatch_list.push((tc.id.clone(), tc.function.name.clone(), args));
+                    dispatch_list.push((tc.id.clone(), tc_mapped.function.name.clone(), args));
                 }
 
                 if let Some(stop) = early_stop {
@@ -1128,7 +1206,8 @@ impl Agent {
                 }
 
                 // Push results in order
-                for (i, output) in results.into_iter().enumerate() {
+                for (i, mut output) in results.into_iter().enumerate() {
+                    output.content = self.unmap_path_from_worktree(&output.content);
                     let tc_id = &dispatch_list[i].0;
                     let tc_name = &dispatch_list[i].1;
                     let content_preview = redact(&char_preview(&output.content, 200));
@@ -1588,6 +1667,11 @@ impl Agent {
         let args: serde_json::Value = serde_json::from_str(&tc.function.arguments)
             .unwrap_or(serde_json::Value::Object(serde_json::Map::new()));
 
+        let mut tc_mapped = tc.clone();
+        self.map_tool_call_arguments(&mut tc_mapped);
+        let mapped_args: serde_json::Value = serde_json::from_str(&tc_mapped.function.arguments)
+            .unwrap_or(serde_json::Value::Object(serde_json::Map::new()));
+
         eprintln!(
             "  {} {}",
             "⚙".dimmed(),
@@ -1702,13 +1786,20 @@ impl Agent {
             }
         }
 
-        let mut output = self.tools.execute(&tc.function.name, args.clone()).await;
+        let mut output = self
+            .tools
+            .execute(&tc_mapped.function.name, mapped_args.clone())
+            .await;
+        output.content = self.unmap_path_from_worktree(&output.content);
 
         // If built-in tools don't know this tool, try MCP
         if output.is_error && output.content.starts_with("unknown tool:") {
             if let Some(ref mcp) = self.mcp_manager {
                 let mut mgr = mcp.lock().await;
-                match mgr.call_tool(&tc.function.name, args.clone()).await {
+                match mgr
+                    .call_tool(&tc_mapped.function.name, mapped_args.clone())
+                    .await
+                {
                     Ok(result) => {
                         let text = if let Some(s) = result.as_str() {
                             s.to_string()
@@ -1716,7 +1807,7 @@ impl Agent {
                             serde_json::to_string_pretty(&result).unwrap_or_default()
                         };
                         output = crate::tools::ToolOutput {
-                            content: text,
+                            content: self.unmap_path_from_worktree(&text),
                             is_error: false,
                             active_layers: None,
                             degraded: None,
@@ -1761,7 +1852,11 @@ impl Agent {
                             )
                             .green()
                         );
-                        output = self.tools.execute(&tc.function.name, args.clone()).await;
+                        output = self
+                            .tools
+                            .execute(&tc_mapped.function.name, mapped_args.clone())
+                            .await;
+                        output.content = self.unmap_path_from_worktree(&output.content);
                         continue;
                     }
                 } else if self.config.policy.mode == "confirm" {
@@ -1774,7 +1869,11 @@ impl Agent {
                             self.tools.add_allowed_domain(&domain);
                             self.config.policy.allowed_domains.push(domain.clone());
                             crate::config::persist_domain(&domain);
-                            output = self.tools.execute(&tc.function.name, args.clone()).await;
+                            output = self
+                                .tools
+                                .execute(&tc_mapped.function.name, mapped_args.clone())
+                                .await;
+                            output.content = self.unmap_path_from_worktree(&output.content);
                             continue;
                         }
                     }
@@ -1810,7 +1909,11 @@ impl Agent {
                             )
                             .green()
                         );
-                        output = self.tools.execute(&tc.function.name, args.clone()).await;
+                        output = self
+                            .tools
+                            .execute(&tc_mapped.function.name, mapped_args.clone())
+                            .await;
+                        output.content = self.unmap_path_from_worktree(&output.content);
                         continue;
                     }
                 } else if self.config.policy.mode == "confirm" {
@@ -1823,7 +1926,11 @@ impl Agent {
                             self.tools.add_allowed_command(&command);
                             self.config.policy.allowed_commands.push(command.clone());
                             crate::config::persist_command(&command);
-                            output = self.tools.execute(&tc.function.name, args.clone()).await;
+                            output = self
+                                .tools
+                                .execute(&tc_mapped.function.name, mapped_args.clone())
+                                .await;
+                            output.content = self.unmap_path_from_worktree(&output.content);
                             continue;
                         }
                     }
@@ -1859,7 +1966,11 @@ impl Agent {
                             )
                             .green()
                         );
-                        output = self.tools.execute(&tc.function.name, args.clone()).await;
+                        output = self
+                            .tools
+                            .execute(&tc_mapped.function.name, mapped_args.clone())
+                            .await;
+                        output.content = self.unmap_path_from_worktree(&output.content);
                         continue;
                     }
                 }
@@ -1869,13 +1980,13 @@ impl Agent {
             if contains_permission_denied(&output.content) {
                 if self.interactive && Self::has_tty() {
                     // Extract the original command from args for strace re-run
-                    let cmd_for_strace = args
+                    let cmd_for_strace = mapped_args
                         .get("cmd")
                         .and_then(|v| v.as_str())
                         .map(|s| s.to_string());
 
                     if let Some(cmd) = cmd_for_strace {
-                        let cwd = args
+                        let cwd = mapped_args
                             .get("cwd")
                             .and_then(|v| v.as_str())
                             .map(|s| s.to_string());
@@ -1926,8 +2037,10 @@ impl Agent {
                                         );
                                         output = self
                                             .tools
-                                            .execute(&tc.function.name, args.clone())
+                                            .execute(&tc_mapped.function.name, mapped_args.clone())
                                             .await;
+                                        output.content =
+                                            self.unmap_path_from_worktree(&output.content);
                                         continue;
                                     }
                                 }
@@ -2003,7 +2116,11 @@ impl Agent {
                                 }
                             }
                             if any_added {
-                                output = self.tools.execute(&tc.function.name, args.clone()).await;
+                                output = self
+                                    .tools
+                                    .execute(&tc_mapped.function.name, mapped_args.clone())
+                                    .await;
+                                output.content = self.unmap_path_from_worktree(&output.content);
                                 continue;
                             }
                         }

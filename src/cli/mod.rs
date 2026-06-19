@@ -1186,7 +1186,7 @@ async fn execute_prompt(agent: &mut Agent, input: &str) -> StopReason {
 }
 
 /// Initialize the provider registry from config.
-fn init_provider(cfg: &config::RuneConfig) -> ProviderRegistry {
+pub fn init_provider(cfg: &config::RuneConfig) -> ProviderRegistry {
     let mut registry = ProviderRegistry::new();
 
     if let Some(ref key) = cfg.api_key {
@@ -1218,6 +1218,9 @@ fn init_provider(cfg: &config::RuneConfig) -> ProviderRegistry {
         });
 
         match provider_name {
+            "mock-loop" => {
+                registry.register(Box::new(crate::provider::MockLoopProvider::new()));
+            }
             "github-copilot" | "copilot" => {
                 registry.register(Box::new(CopilotProvider::new(key.clone())));
             }

@@ -4094,3 +4094,50 @@ mod provider_tests {
         assert!(models.is_empty());
     }
 }
+
+pub struct MockLoopProvider;
+
+impl MockLoopProvider {
+    pub fn new() -> Self {
+        Self
+    }
+}
+
+impl Provider for MockLoopProvider {
+    fn name(&self) -> &str {
+        "mock-loop"
+    }
+
+    fn chat(
+        &self,
+        request: LlmRequest,
+    ) -> Pin<Box<dyn Future<Output = Result<LlmResponse>> + Send + '_>> {
+        Box::pin(async move {
+            let user_msg = request
+                .messages
+                .last()
+                .and_then(|m| m.content.as_deref())
+                .unwrap_or("");
+
+            let content = if user_msg.contains("Verifier") || user_msg.contains("verify") {
+                Some("GOAL_COMPLETE: All tests pass successfully and the requested feature is fully implemented!".to_string())
+            } else {
+                Some(
+                    "I have implemented the requested changes in src/main.rs. Please verify them."
+                        .to_string(),
+                )
+            };
+
+            Ok(LlmResponse {
+                content,
+                tool_calls: Vec::new(),
+                usage: crate::provider::TokenUsage {
+                    prompt_tokens: 10,
+                    completion_tokens: 10,
+                    total_tokens: 20,
+                },
+                model: request.model.clone(),
+            })
+        })
+    }
+}
