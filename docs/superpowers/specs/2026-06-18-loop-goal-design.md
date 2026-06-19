@@ -1,7 +1,7 @@
 # Design: `/loop`, `/goal`, and `/model` — Persistent Goal-Driven Agents with Worktree Isolation
 
 **Date:** 2026-06-19  
-**Status:** Approved (v3)  
+**Status:** Approved (v4)  
 **Scope:** CLI + rune notes (serve mode)
 
 ---
@@ -14,11 +14,13 @@ We implement three user-facing features:
 1.  **`/loop`**: Schedules or runs a prompt repeatedly.
 2.  **`/goal`**: Executes a loop that continues until an evaluation step signals the goal has been successfully completed.
 3.  **`/model`**: Views or switches the active model for the session.
+4.  **`/agent`**: Views or switches the active custom agent profile for the session.
 
 To ensure safety, isolation, and reuse, the implementation is built on:
 *   **Unified LoopEngine**: Orchestrates loop states across CLI and Notes via a `LoopModeAdapter` interface.
 *   **Git Worktree Isolation**: Spawns isolated directories to run tasks without dirtying the user's workspace.
 *   **Sub-agent Isolation**: Splitting work between an **Implementer** role (making changes) and a **Verifier** role (auditing and checking goals).
+*   **Custom Agent Profiles**: Storing customized agent templates (models and prompts) globally under `[agents]` and referencing them directly under `[loop]`.
 *   **Persistence & Audit Logs**: Saving states to disk (`~/.rune/loops/`) to support session resumption and tracing.
 
 ---
@@ -101,11 +103,21 @@ To prevent confirmation bias, we separate the loop execution context into two is
     *   **Constraint**: Under a strict read-only/verify system prompt. Must output `GOAL_COMPLETE` on success, or a detailed breakdown of failures if unsatisfied.
 
 ### Config
-Users can configure role-specific models in `~/.rune/rune.toml`:
+Users configure customized agent profiles in `~/.rune/rune.toml`:
 ```toml
-[loop.sub_agents]
-implementer_model = "gemini-2.5-flash"
-verifier_model = "claude-sonnet-4"
+# 1. Global Agent Registry
+[agents.builder]
+model = "gemini-2.5-flash"
+system_prompt = "You are a builder. Focus on writing clean code and executing implementation tasks."
+
+[agents.thinker]
+model = "claude-sonnet-4"
+system_prompt = "You are a thinker. Analyze requirements, create specs, and plan steps."
+
+# 2. Loop Configuration (Direct Reference)
+[loop]
+implementer_agent = "builder"
+verifier_agent = "thinker"
 ```
 
 ---
@@ -134,6 +146,8 @@ To run loops without disrupting the active directory:
     *   Initiates goal loop execution.
 *   `/model [name]`
     *   Views or switches the active model for the session.
+*   `/agent [name]`
+    *   Views or switches the active agent profile for the session (loading its associated system prompt and model).
 
 ### 5.2 Notes API / SSE
 *   **SSE Events**: `loop_iteration`, `loop_done`, `goal_status`, `goal_achieved`.
@@ -152,9 +166,10 @@ To run loops without disrupting the active directory:
 | `src/loop_engine/state.rs` | Definitions for `LoopState`, serialization, and `audit.jsonl` logging. |
 | `src/loop_engine/worktree.rs` | `WorktreeManager` implementing `git worktree add`, `remove`, and path resolution. |
 | `src/loop_engine/sub_agent.rs` | Orchestrating the Implementer and Verifier sub-agent prompts and invocation contexts. |
-| `src/cli/mod.rs` | REPL commands for `/loop`, `/goal`, and `/model` parsing and CLI adapter implementation. |
+| `src/cli/mod.rs` | REPL commands for `/loop`, `/goal`, `/model`, and `/agent` parsing and CLI adapter implementation. |
 | `src/serve/api.rs` | Notes SSE hooks and endpoint handlers for room-level loop/goal scheduling. |
 | `src/serve/mod.rs` | Routing for new REST API paths. |
+| `src/config/mod.rs` | Parse new global `[agents]` registry and `implementer_agent`/`verifier_agent` loop configs. |
 | `src/agent/mod.rs` | Mapping file execution tools to the remapped worktree path if loop mode is active. |
 
 ---
@@ -165,3 +180,4 @@ To run loops without disrupting the active directory:
 *   `test_state_persistence_and_resume`: Verify states write to `state.json` and a loop can resume from iteration N.
 *   `test_sub_agent_handshake`: Verify Verifier feedback is correctly formatted and passed back to the Implementer.
 *   `test_goal_keyword_and_evaluator`: Ensure both keyword completion and LLM condition evaluation stop loops correctly.
+*   `test_agent_profile_resolution`: Ensure custom agent system prompt and model configurations are resolved correctly.
