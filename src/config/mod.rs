@@ -140,6 +140,46 @@ pub struct GitHubOAuthConfig {
     pub guests: Vec<String>,
 }
 
+#[derive(Debug, Clone, Deserialize, Default)]
+pub struct AgentProfile {
+    pub model: Option<String>,
+    pub system_prompt: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct LoopConfig {
+    #[serde(default = "default_max_iterations")]
+    pub max_iterations: u32,
+    #[serde(default = "default_confidence_threshold")]
+    pub confidence_threshold: f64,
+    #[serde(default = "default_state_dir")]
+    pub state_dir: String,
+    pub implementer_agent: Option<String>,
+    pub verifier_agent: Option<String>,
+}
+
+impl Default for LoopConfig {
+    fn default() -> Self {
+        Self {
+            max_iterations: 20,
+            confidence_threshold: 0.7,
+            state_dir: "~/.rune/loops".to_string(),
+            implementer_agent: None,
+            verifier_agent: None,
+        }
+    }
+}
+
+fn default_max_iterations() -> u32 {
+    20
+}
+fn default_confidence_threshold() -> f64 {
+    0.7
+}
+fn default_state_dir() -> String {
+    "~/.rune/loops".to_string()
+}
+
 impl Default for PolicyConfig {
     fn default() -> Self {
         Self {
@@ -204,6 +244,10 @@ pub struct RuneConfig {
     /// Notes mode configuration ([notes] section in rune.toml).
     #[serde(default)]
     pub notes: NotesConfig,
+    #[serde(default)]
+    pub agents: std::collections::HashMap<String, AgentProfile>,
+    #[serde(rename = "loop", default)]
+    pub loop_config: LoopConfig,
     /// CLI positional prompt (for one-shot mode). Not from config file.
     #[serde(skip)]
     pub cli_prompt: Option<String>,
@@ -240,6 +284,8 @@ impl Default for RuneConfig {
             system_prompt: None,
             preload_skills: Vec::new(),
             notes: NotesConfig::default(),
+            agents: std::collections::HashMap::new(),
+            loop_config: LoopConfig::default(),
             cli_prompt: None,
         }
     }
@@ -267,6 +313,10 @@ struct PartialConfig {
     system_prompt: Option<String>,
     thinking: Option<String>,
     notes: Option<NotesConfig>,
+    #[serde(default)]
+    agents: Option<std::collections::HashMap<String, AgentProfile>>,
+    #[serde(rename = "loop")]
+    loop_config: Option<LoopConfig>,
 }
 
 /// CLI argument overrides.
@@ -466,6 +516,8 @@ pub fn load() -> anyhow::Result<RuneConfig> {
         thinking: env::var("RUNE_THINKING").ok(),
         system_prompt: env::var("RUNE_SYSTEM_PROMPT").ok(),
         notes: None,
+        agents: None,
+        loop_config: None,
     };
     let env_json_output = env::var("RUNE_JSON_OUTPUT")
         .ok()
@@ -697,6 +749,18 @@ pub fn load() -> anyhow::Result<RuneConfig> {
             .or_else(|| lc.and_then(|c| c.notes.clone()))
             .or_else(|| uc.and_then(|c| c.notes.clone()))
             .unwrap_or_default(),
+        agents: ec
+            .and_then(|c| c.agents.clone())
+            .or_else(|| cwdc.and_then(|c| c.agents.clone()))
+            .or_else(|| lc.and_then(|c| c.agents.clone()))
+            .or_else(|| uc.and_then(|c| c.agents.clone()))
+            .unwrap_or_default(),
+        loop_config: ec
+            .and_then(|c| c.loop_config.clone())
+            .or_else(|| cwdc.and_then(|c| c.loop_config.clone()))
+            .or_else(|| lc.and_then(|c| c.loop_config.clone()))
+            .or_else(|| uc.and_then(|c| c.loop_config.clone()))
+            .unwrap_or_default(),
         cli_prompt: if cli.prompt.is_empty() {
             None
         } else {
@@ -754,6 +818,8 @@ pub fn load_without_clap() -> anyhow::Result<RuneConfig> {
         thinking: env::var("RUNE_THINKING").ok(),
         system_prompt: env::var("RUNE_SYSTEM_PROMPT").ok(),
         notes: None,
+        agents: None,
+        loop_config: None,
     };
 
     // Load TOML files
@@ -893,6 +959,16 @@ pub fn load_without_clap() -> anyhow::Result<RuneConfig> {
             .and_then(|c| c.notes.clone())
             .or_else(|| lc.and_then(|c| c.notes.clone()))
             .or_else(|| uc.and_then(|c| c.notes.clone()))
+            .unwrap_or_default(),
+        agents: cwdc
+            .and_then(|c| c.agents.clone())
+            .or_else(|| lc.and_then(|c| c.agents.clone()))
+            .or_else(|| uc.and_then(|c| c.agents.clone()))
+            .unwrap_or_default(),
+        loop_config: cwdc
+            .and_then(|c| c.loop_config.clone())
+            .or_else(|| lc.and_then(|c| c.loop_config.clone()))
+            .or_else(|| uc.and_then(|c| c.loop_config.clone()))
             .unwrap_or_default(),
         cli_prompt: None,
     };
@@ -2098,6 +2174,8 @@ allowed_syscalls = ["ptrace", "bpf"]
         assert!(cfg.thinking.is_none());
         assert!(cfg.system_prompt.is_none());
         assert!(cfg.notes.is_none());
+        assert!(cfg.agents.is_none());
+        assert!(cfg.loop_config.is_none());
     }
 
     #[test]
@@ -2156,5 +2234,34 @@ guests = ["guest:guest123"]
         assert_eq!(local.admins, vec!["admin:admin123"]);
         assert_eq!(local.users, vec!["user:user123"]);
         assert_eq!(local.guests, vec!["guest:guest123"]);
+    }
+
+    #[test]
+    fn test_custom_agents_and_loop_deserialization() {
+        let toml_str = r#"
+            model = "gpt-4"
+            skills_dir = "./skills"
+            log_level = "error"
+            json_output = false
+            auto_approve = false
+            context_window = 8192
+            compact_threshold = 0.5
+            compact_keep_last = 5
+
+            [agents.builder]
+            model = "gemini-2.5-flash"
+            system_prompt = "Builder prompt"
+
+            [loop]
+            max_iterations = 25
+            implementer_agent = "builder"
+            verifier_agent = "thinker"
+        "#;
+        let cfg: RuneConfig = toml::from_str(toml_str).unwrap();
+        assert_eq!(cfg.loop_config.max_iterations, 25);
+        assert_eq!(
+            cfg.agents.get("builder").unwrap().system_prompt.as_deref(),
+            Some("Builder prompt")
+        );
     }
 }
