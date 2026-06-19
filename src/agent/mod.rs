@@ -365,6 +365,13 @@ impl Agent {
         }
     }
 
+    pub fn system_prompt(&self) -> Option<&str> {
+        self.messages
+            .first()
+            .filter(|m| m.role == "system")
+            .and_then(|m| m.content.as_deref())
+    }
+
     /// Reset conversation state for a new run (keeps system prompt).
     pub fn tokens_used(&self) -> u32 {
         self.tokens_used

@@ -104,6 +104,16 @@ fn print_help() {
     );
     println!(
         "    {:<24} {}",
+        "/model [name]".green(),
+        "View or switch the active model"
+    );
+    println!(
+        "    {:<24} {}",
+        "/agent [name]".green(),
+        "View or switch the active agent profile"
+    );
+    println!(
+        "    {:<24} {}",
         "/compact".green(),
         "Compact (summarize) older conversation context"
     );
@@ -1592,6 +1602,10 @@ pub async fn run() {
             }
         };
 
+        if handle_model_agent_commands(&cmd, &mut cfg, &mut agent) {
+            continue;
+        }
+
         match cmd.as_str() {
             "/exit" | "/quit" => {
                 if !is_json_mode(&cfg) {
@@ -1824,6 +1838,90 @@ pub fn parse_skill_frontmatter(content: &str) -> SkillFrontmatter {
         tools_allow,
         tools_deny,
         model,
+    }
+}
+
+/// Handle `/model` and `/agent` commands. Returns `true` if matched, `false` otherwise.
+pub fn handle_model_agent_commands(
+    cmd: &str,
+    cfg: &mut config::RuneConfig,
+    agent: &mut Agent,
+) -> bool {
+    match cmd {
+        "/model" => {
+            println!("  model: {}", cfg.model.green());
+            true
+        }
+        cmd if cmd.starts_with("/model ") => {
+            let name = cmd.strip_prefix("/model ").unwrap().trim();
+            if name.is_empty() {
+                println!("  model: {}", cfg.model.green());
+            } else {
+                cfg.model = name.to_string();
+                agent.config.model = name.to_string();
+                println!("  {} Model switched to: {}", "✓".green(), name.cyan());
+            }
+            true
+        }
+        "/agent" => {
+            println!("Available agent profiles:");
+            if cfg.agents.is_empty() {
+                println!("  No agent profiles configured.");
+            } else {
+                for (name, profile) in &cfg.agents {
+                    let model_str = profile.model.as_deref().unwrap_or("default");
+                    let has_prompt = profile.system_prompt.is_some();
+                    println!(
+                        "  - {} (model: {}, system prompt: {})",
+                        name.cyan(),
+                        model_str.green(),
+                        if has_prompt { "configured" } else { "none" }
+                    );
+                }
+            }
+            true
+        }
+        cmd if cmd.starts_with("/agent ") => {
+            let name = cmd.strip_prefix("/agent ").unwrap().trim();
+            if name.is_empty() {
+                println!("Available agent profiles:");
+                if cfg.agents.is_empty() {
+                    println!("  No agent profiles configured.");
+                } else {
+                    for (name, profile) in &cfg.agents {
+                        let model_str = profile.model.as_deref().unwrap_or("default");
+                        let has_prompt = profile.system_prompt.is_some();
+                        println!(
+                            "  - {} (model: {}, system prompt: {})",
+                            name.cyan(),
+                            model_str.green(),
+                            if has_prompt { "configured" } else { "none" }
+                        );
+                    }
+                }
+            } else if let Some(profile) = cfg.agents.get(name) {
+                if let Some(ref m) = profile.model {
+                    cfg.model = m.clone();
+                    agent.config.model = m.clone();
+                }
+                if let Some(ref p) = profile.system_prompt {
+                    agent.set_system_prompt(p);
+                }
+                println!(
+                    "  {} Switched active profile to agent: {}",
+                    "✓".green(),
+                    name.cyan()
+                );
+            } else {
+                println!(
+                    "  {} Agent profile not found in config: {}",
+                    "⚠".yellow(),
+                    name.yellow()
+                );
+            }
+            true
+        }
+        _ => false,
     }
 }
 
@@ -2327,5 +2425,54 @@ model: different
 
         let should_show_banner = stdin_is_terminal && !json_mode && cli_prompt.is_none();
         assert!(should_show_banner);
+    }
+
+    #[test]
+    fn test_model_agent_commands() {
+        let mut config = crate::config::RuneConfig::default();
+        config.model = "default-model".to_string();
+
+        let mut builder_profile = crate::config::AgentProfile::default();
+        builder_profile.model = Some("gemini-2.5-flash".to_string());
+        builder_profile.system_prompt = Some("You are a builder.".to_string());
+
+        config.agents.insert("builder".to_string(), builder_profile);
+
+        let registry = crate::provider::ProviderRegistry::new();
+        let mut agent = Agent::new(config.clone(), registry, false, None);
+
+        // 1. Test /model with no args (should not change anything)
+        let handled = handle_model_agent_commands("/model", &mut config, &mut agent);
+        assert!(handled);
+        assert_eq!(config.model, "default-model");
+        assert_eq!(agent.config.model, "default-model");
+
+        // 2. Test /model with arg (should change model)
+        let handled =
+            handle_model_agent_commands("/model claude-3-5-sonnet", &mut config, &mut agent);
+        assert!(handled);
+        assert_eq!(config.model, "claude-3-5-sonnet");
+        assert_eq!(agent.config.model, "claude-3-5-sonnet");
+
+        // 3. Test /agent with no args (should not change anything)
+        let handled = handle_model_agent_commands("/agent", &mut config, &mut agent);
+        assert!(handled);
+
+        // 4. Test /agent with non-existent profile (should print error, not change)
+        let handled = handle_model_agent_commands("/agent nonexistent", &mut config, &mut agent);
+        assert!(handled);
+        assert_eq!(config.model, "claude-3-5-sonnet");
+        assert_eq!(agent.config.model, "claude-3-5-sonnet");
+
+        // 5. Test /agent with existent profile "builder" (should change model and system prompt)
+        let handled = handle_model_agent_commands("/agent builder", &mut config, &mut agent);
+        assert!(handled);
+        assert_eq!(config.model, "gemini-2.5-flash");
+        assert_eq!(agent.config.model, "gemini-2.5-flash");
+        assert_eq!(agent.system_prompt(), Some("You are a builder."));
+
+        // 6. Test a non-matching command
+        let handled = handle_model_agent_commands("/help", &mut config, &mut agent);
+        assert!(!handled);
     }
 }
