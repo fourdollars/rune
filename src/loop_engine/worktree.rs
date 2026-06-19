@@ -47,6 +47,8 @@ impl WorktreeManager {
         let branch_exists = Command::new("git")
             .current_dir(&repo_path)
             .args(&["show-ref", "--verify", &branch_ref])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
             .status()
             .map(|status| status.success())
             .unwrap_or(false);
