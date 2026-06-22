@@ -480,6 +480,9 @@ pub async fn run(config: RuneConfig, opts: NotesOptions) {
     // API routes with auth middleware
     let api_routes = Router::new()
         .route("/api/chat", post(api::chat_handler))
+        .route("/api/chat/cancel", post(api::chat_cancel_handler))
+        .route("/api/goal/set", post(api::goal_set_handler))
+        .route("/api/goal/clear", post(api::goal_clear_handler))
         .route("/api/file/create", post(api::file_create_handler))
         .route("/api/file/delete", post(api::file_delete_handler))
         .route("/api/file/rename", post(api::file_rename_handler))

@@ -7,6 +7,7 @@
 use crate::agent::{Agent, StopReason};
 use crate::config::RuneConfig;
 use crate::embedding::EmbeddingEngine;
+use crate::loop_engine::LoopModeAdapter;
 use crate::provider::{
     CopilotProvider, GeminiProvider, ModelInfo, OpenAiProvider, ProviderRegistry,
 };
@@ -55,6 +56,9 @@ pub struct NoteRoom {
     pub active_status: Arc<TokioRwLock<String>>,
     /// Per-note thinking override; None = fall back to config.thinking
     pub thinking_override: TokioRwLock<Option<String>>,
+    pub goal_condition: TokioRwLock<Option<String>>,
+    pub goal_status: TokioRwLock<Option<String>>,
+    pub goal_model: TokioRwLock<Option<String>>,
 }
 
 impl NoteRoom {
@@ -69,6 +73,9 @@ impl NoteRoom {
             streaming_tokens: Arc::new(TokioRwLock::new(String::new())),
             active_status: Arc::new(TokioRwLock::new("idle".to_string())),
             thinking_override: TokioRwLock::new(None),
+            goal_condition: TokioRwLock::new(None),
+            goal_status: TokioRwLock::new(None),
+            goal_model: TokioRwLock::new(None),
         }
     }
 }
@@ -173,6 +180,22 @@ pub enum SseMsg {
         parent: Option<String>,
         entries: Vec<DirEntry>,
     },
+    #[serde(rename = "loop_iteration")]
+    LoopIteration {
+        iteration: u32,
+        record: crate::loop_engine::state::IterationRecord,
+    },
+    #[serde(rename = "loop_done")]
+    LoopDone { status: String, output: String },
+    #[serde(rename = "goal_status")]
+    GoalStatus {
+        note_id: String,
+        condition: Option<String>,
+        status: Option<String>,
+        model: Option<String>,
+    },
+    #[serde(rename = "goal_achieved")]
+    GoalAchieved { output: String },
 }
 
 #[derive(Debug, Serialize, Clone)]
@@ -213,6 +236,23 @@ pub struct ChatReq {
     pub note_id: String,
     pub content: String,
     pub nickname: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct GoalSetReq {
+    pub note_id: String,
+    pub condition: String,
+    pub model: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct GoalClearReq {
+    pub note_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ChatCancelReq {
+    pub note_id: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -561,6 +601,19 @@ pub async fn events_handler(
     // Users update (not sent to guests per spec)
     if !is_guest {
         init_msgs.push(SseMsg::UsersUpdate { count });
+    }
+
+    // Goal status update
+    {
+        let condition = room.goal_condition.read().await.clone();
+        let status = room.goal_status.read().await.clone();
+        let model = room.goal_model.read().await.clone();
+        init_msgs.push(SseMsg::GoalStatus {
+            note_id: note_id.clone(),
+            condition,
+            status,
+            model,
+        });
     }
 
     // Streaming recovery: restore AI task status on reconnect
@@ -1369,6 +1422,377 @@ pub async fn file_visibility_handler(
         }
         Err(e) => Json(ApiResponse::err(format!("Failed: {}", e))),
     }
+}
+
+struct NoteLoopAdapter {
+    note_id: String,
+    state: ServerState,
+    cancel_token: CancellationToken,
+}
+
+impl crate::loop_engine::LoopModeAdapter for NoteLoopAdapter {
+    fn on_loop_start(&self, _loop_id: &str, _goal: &str) {
+        let note_id = self.note_id.clone();
+        let state = self.state.clone();
+        tokio::spawn(async move {
+            let room = state.get_or_create_room(&note_id).await;
+            {
+                let mut status_guard = room.goal_status.write().await;
+                *status_guard = Some("Running".to_string());
+            }
+            let condition = room.goal_condition.read().await.clone();
+            let status = room.goal_status.read().await.clone();
+            let model = room.goal_model.read().await.clone();
+            broadcast_to_room(
+                &room,
+                &SseMsg::GoalStatus {
+                    note_id,
+                    condition,
+                    status,
+                    model,
+                },
+            );
+        });
+    }
+
+    fn on_iteration_start(&self, _iteration: u32, _max_iterations: u32) {}
+
+    fn on_iteration_complete(
+        &self,
+        iteration: u32,
+        record: &crate::loop_engine::state::IterationRecord,
+    ) {
+        let note_id = self.note_id.clone();
+        let state = self.state.clone();
+        let record = record.clone();
+        tokio::spawn(async move {
+            let room = state.get_or_create_room(&note_id).await;
+            broadcast_to_room(&room, &SseMsg::LoopIteration { iteration, record });
+        });
+    }
+
+    fn check_cancellation(&self) -> bool {
+        self.cancel_token.is_cancelled()
+    }
+
+    fn request_human_input<'a>(
+        &'a self,
+        _prompt: &'a str,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Option<String>> + Send + 'a>> {
+        Box::pin(async { None })
+    }
+}
+
+pub async fn goal_set_handler(
+    State(state): State<ServerState>,
+    Json(req): Json<GoalSetReq>,
+) -> Json<ApiResponse> {
+    if req.note_id.is_empty() {
+        return Json(ApiResponse::err("No note selected"));
+    }
+    if req.condition.trim().is_empty() {
+        return Json(ApiResponse::err("Empty goal condition"));
+    }
+
+    let room = state.get_or_create_room(&req.note_id).await;
+
+    // Update goal fields on room
+    {
+        *room.goal_condition.write().await = Some(req.condition.clone());
+        *room.goal_status.write().await = Some("Running".to_string());
+        *room.goal_model.write().await = req.model.clone();
+    }
+
+    // Cancel any running task in the room
+    let new_token = CancellationToken::new();
+    {
+        let mut guard = room.cancel_token.lock().unwrap();
+        if let Some(old) = guard.replace(new_token.clone()) {
+            old.cancel();
+        }
+    }
+    {
+        let mut buf = room.streaming_tokens.write().await;
+        buf.clear();
+    }
+
+    // Broadcast the new goal status to the room
+    broadcast_to_room(
+        &room,
+        &SseMsg::GoalStatus {
+            note_id: req.note_id.clone(),
+            condition: Some(req.condition.clone()),
+            status: Some("Running".to_string()),
+            model: req.model.clone(),
+        },
+    );
+
+    // Send thinking status to the room
+    let thinking = SseMsg::Status {
+        state: "thinking".to_string(),
+    };
+    broadcast_to_room(&room, &thinking);
+
+    // Mark room as active (for SSE reconnect recovery)
+    {
+        let mut status = room.active_status.write().await;
+        *status = "thinking".to_string();
+    }
+
+    // Spawn the LoopEngine run in the background
+    let state_clone = state.clone();
+    let note_id = req.note_id.clone();
+    let condition = req.condition.clone();
+    let cancel = new_token.clone();
+    let model_override = req.model.clone();
+
+    tokio::spawn(async move {
+        let repo_path = match std::env::current_dir() {
+            Ok(p) => p,
+            Err(e) => {
+                let err_msg = format!("Failed to get current directory: {}", e);
+                let room = state_clone.get_or_create_room(&note_id).await;
+                {
+                    *room.goal_status.write().await = Some("Failed".to_string());
+                    let mut status_guard = room.active_status.write().await;
+                    *status_guard = "idle".to_string();
+                }
+                broadcast_to_room(
+                    &room,
+                    &SseMsg::GoalStatus {
+                        note_id: note_id.clone(),
+                        condition: Some(condition),
+                        status: Some("Failed".to_string()),
+                        model: model_override,
+                    },
+                );
+                broadcast_to_room(&room, &SseMsg::Error { message: err_msg });
+                broadcast_to_room(
+                    &room,
+                    &SseMsg::Status {
+                        state: "idle".to_string(),
+                    },
+                );
+                return;
+            }
+        };
+
+        // Create the LoopEngine
+        let loops_dir = state_clone.data_dir.join("loops");
+        let mut loop_cfg = state_clone.config.clone();
+        if let Some(ref m) = model_override {
+            loop_cfg.model = m.clone();
+        }
+
+        let engine = crate::loop_engine::LoopEngine::new(loop_cfg, loops_dir);
+        let adapter = NoteLoopAdapter {
+            note_id: note_id.clone(),
+            state: state_clone.clone(),
+            cancel_token: cancel,
+        };
+
+        let run_result = engine
+            .run_loop(&note_id, &condition, &repo_path, &adapter)
+            .await;
+
+        let room = state_clone.get_or_create_room(&note_id).await;
+        {
+            let mut status_guard = room.active_status.write().await;
+            *status_guard = "idle".to_string();
+        }
+        broadcast_to_room(
+            &room,
+            &SseMsg::Status {
+                state: "idle".to_string(),
+            },
+        );
+
+        match run_result {
+            Ok(output) => {
+                {
+                    *room.goal_status.write().await = Some("Complete".to_string());
+                }
+                let condition = room.goal_condition.read().await.clone();
+                let model = room.goal_model.read().await.clone();
+                broadcast_to_room(
+                    &room,
+                    &SseMsg::GoalStatus {
+                        note_id: note_id.clone(),
+                        condition,
+                        status: Some("Complete".to_string()),
+                        model,
+                    },
+                );
+                broadcast_to_room(
+                    &room,
+                    &SseMsg::GoalAchieved {
+                        output: output.clone(),
+                    },
+                );
+                broadcast_to_room(
+                    &room,
+                    &SseMsg::LoopDone {
+                        status: "goal".to_string(),
+                        output,
+                    },
+                );
+            }
+            Err(e) => {
+                let status_str = if adapter.check_cancellation() {
+                    "Paused".to_string()
+                } else {
+                    "Failed".to_string()
+                };
+                {
+                    *room.goal_status.write().await = Some(status_str.clone());
+                }
+                let condition = room.goal_condition.read().await.clone();
+                let model = room.goal_model.read().await.clone();
+                broadcast_to_room(
+                    &room,
+                    &SseMsg::GoalStatus {
+                        note_id: note_id.clone(),
+                        condition,
+                        status: Some(status_str.clone()),
+                        model,
+                    },
+                );
+                let err_msg = format!("Goal loop error: {}", e);
+                broadcast_to_room(
+                    &room,
+                    &SseMsg::Error {
+                        message: err_msg.clone(),
+                    },
+                );
+                broadcast_to_room(
+                    &room,
+                    &SseMsg::LoopDone {
+                        status: if status_str == "Paused" {
+                            "cancel".to_string()
+                        } else {
+                            "error".to_string()
+                        },
+                        output: err_msg,
+                    },
+                );
+            }
+        }
+    });
+
+    Json(ApiResponse::success())
+}
+
+pub async fn goal_clear_handler(
+    State(state): State<ServerState>,
+    Json(req): Json<GoalClearReq>,
+) -> Json<ApiResponse> {
+    if req.note_id.is_empty() {
+        return Json(ApiResponse::err("No note selected"));
+    }
+
+    let room = state.get_or_create_room(&req.note_id).await;
+
+    // Cancel current task
+    {
+        let mut guard = room.cancel_token.lock().unwrap();
+        if let Some(old) = guard.take() {
+            old.cancel();
+        }
+    }
+
+    // Reset active status to idle
+    {
+        let mut status_guard = room.active_status.write().await;
+        *status_guard = "idle".to_string();
+    }
+    broadcast_to_room(
+        &room,
+        &SseMsg::Status {
+            state: "idle".to_string(),
+        },
+    );
+
+    // Clear goal fields on room
+    {
+        *room.goal_condition.write().await = None;
+        *room.goal_status.write().await = None;
+        *room.goal_model.write().await = None;
+    }
+
+    // Broadcast the cleared goal status to the room
+    broadcast_to_room(
+        &room,
+        &SseMsg::GoalStatus {
+            note_id: req.note_id.clone(),
+            condition: None,
+            status: None,
+            model: None,
+        },
+    );
+
+    Json(ApiResponse::success())
+}
+
+pub async fn chat_cancel_handler(
+    State(state): State<ServerState>,
+    Json(req): Json<ChatCancelReq>,
+) -> Json<ApiResponse> {
+    if req.note_id.is_empty() {
+        return Json(ApiResponse::err("No note selected"));
+    }
+
+    let room = state.get_or_create_room(&req.note_id).await;
+
+    // Cancel current task
+    {
+        let mut guard = room.cancel_token.lock().unwrap();
+        if let Some(old) = guard.replace(CancellationToken::new()) {
+            old.cancel();
+        }
+    }
+
+    // Reset active status to idle
+    {
+        let mut status_guard = room.active_status.write().await;
+        *status_guard = "idle".to_string();
+    }
+    broadcast_to_room(
+        &room,
+        &SseMsg::Status {
+            state: "idle".to_string(),
+        },
+    );
+
+    // Broadcast loop_done if status was running
+    let was_running = {
+        let status = room.goal_status.read().await;
+        status.as_deref() == Some("Running")
+    };
+    if was_running {
+        {
+            *room.goal_status.write().await = Some("Paused".to_string());
+        }
+        let condition = room.goal_condition.read().await.clone();
+        let model = room.goal_model.read().await.clone();
+        broadcast_to_room(
+            &room,
+            &SseMsg::GoalStatus {
+                note_id: req.note_id.clone(),
+                condition,
+                status: Some("Paused".to_string()),
+                model,
+            },
+        );
+        broadcast_to_room(
+            &room,
+            &SseMsg::LoopDone {
+                status: "cancel".to_string(),
+                output: "Loop paused by user".to_string(),
+            },
+        );
+    }
+
+    Json(ApiResponse::success())
 }
 
 // ─── Public (no-auth) handlers ──────────────────────────────────────────────
@@ -4349,5 +4773,110 @@ mod isolation_tests {
             !body.contains("/notes/"),
             "Preview must NOT use /notes/ back-link"
         );
+    }
+
+    #[tokio::test]
+    async fn test_goal_set_clear_cancel_endpoints() {
+        use axum::body::Body;
+        use axum::{routing::post, Router};
+        use http_body_util::BodyExt;
+        use tower::ServiceExt;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let (admin_broadcast_tx, _) = broadcast::channel(256);
+        let db = crate::serve::db::ChatDb::open(&tmp.path().join("t.db")).unwrap();
+        let _ = db.create_note("note-goal", "note-goal", None);
+
+        let mut config = crate::config::RuneConfig::default();
+        config.model = "mock-loop".to_string();
+        config.provider = Some("mock-loop".to_string());
+        config.api_key = Some("dummy-key".to_string());
+
+        let state = crate::serve::ServerState {
+            config,
+            sessions: crate::serve::oauth::SessionStore::new(),
+            files: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
+            active_file: Arc::new(tokio::sync::RwLock::new(String::new())),
+            models: Arc::new(tokio::sync::RwLock::new(vec![ModelInfo {
+                provider: None,
+                id: "mock-loop".into(),
+                context_window: None,
+                reasoning_efforts: vec![],
+                supported_endpoints: vec![],
+            }])),
+            rooms: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
+            global_default_model: Arc::new(tokio::sync::RwLock::new("mock-loop".into())),
+            admin_broadcast_tx,
+            chat_db: db,
+            data_dir: tmp.path().join(".rune"),
+        };
+
+        let app = Router::new()
+            .route("/api/goal/set", post(crate::serve::api::goal_set_handler))
+            .route(
+                "/api/goal/clear",
+                post(crate::serve::api::goal_clear_handler),
+            )
+            .route(
+                "/api/chat/cancel",
+                post(crate::serve::api::chat_cancel_handler),
+            )
+            .with_state(state.clone());
+
+        // 1. Set goal
+        let set_req = axum::http::Request::builder()
+            .method("POST")
+            .uri("/api/goal/set")
+            .header("content-type", "application/json")
+            .body(Body::from(
+                r#"{"note_id":"note-goal","condition":"Verify correctness","model":null}"#,
+            ))
+            .unwrap();
+
+        let resp = app.clone().oneshot(set_req).await.unwrap();
+        assert_eq!(resp.status(), axum::http::StatusCode::OK);
+
+        let room = state.get_or_create_room("note-goal").await;
+        {
+            let cond = room.goal_condition.read().await;
+            assert_eq!(cond.as_deref(), Some("Verify correctness"));
+            let status = room.goal_status.read().await;
+            assert_eq!(status.as_deref(), Some("Running"));
+        }
+
+        // 2. Cancel goal
+        let cancel_req = axum::http::Request::builder()
+            .method("POST")
+            .uri("/api/chat/cancel")
+            .header("content-type", "application/json")
+            .body(Body::from(r#"{"note_id":"note-goal"}"#))
+            .unwrap();
+
+        let resp = app.clone().oneshot(cancel_req).await.unwrap();
+        assert_eq!(resp.status(), axum::http::StatusCode::OK);
+
+        {
+            let status = room.goal_status.read().await;
+            // Should be Paused after cancellation
+            assert_eq!(status.as_deref(), Some("Paused"));
+        }
+
+        // 3. Clear goal
+        let clear_req = axum::http::Request::builder()
+            .method("POST")
+            .uri("/api/goal/clear")
+            .header("content-type", "application/json")
+            .body(Body::from(r#"{"note_id":"note-goal"}"#))
+            .unwrap();
+
+        let resp = app.clone().oneshot(clear_req).await.unwrap();
+        assert_eq!(resp.status(), axum::http::StatusCode::OK);
+
+        {
+            let cond = room.goal_condition.read().await;
+            assert!(cond.is_none());
+            let status = room.goal_status.read().await;
+            assert!(status.is_none());
+        }
     }
 }
