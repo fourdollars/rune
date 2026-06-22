@@ -8,6 +8,7 @@ use std::time::Duration;
 
 use crate::agent::{Agent, StopReason};
 use crate::config;
+use crate::loop_engine::LoopModeAdapter;
 use crate::provider::{CopilotProvider, GeminiProvider, OpenAiProvider, ProviderRegistry};
 use crate::skills::SkillLoader;
 use crate::tools::ToolRegistry;
@@ -1295,6 +1296,71 @@ fn resolve_path(path: &str) -> String {
     format!("/{}", parts.join("/"))
 }
 
+struct CliLoopAdapter;
+
+impl LoopModeAdapter for CliLoopAdapter {
+    fn on_loop_start(&self, loop_id: &str, goal: &str) {
+        println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+        println!(
+            "🚀 Starting Goal Loop: {} (ID: {})",
+            goal.green().bold(),
+            loop_id.cyan()
+        );
+        println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+    }
+
+    fn on_iteration_start(&self, iteration: u32, max_iterations: u32) {
+        println!();
+        println!(
+            "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ Loop iteration {}/{} ━━━",
+            iteration, max_iterations
+        );
+        println!();
+    }
+
+    fn on_iteration_complete(
+        &self,
+        iteration: u32,
+        record: &crate::loop_engine::state::IterationRecord,
+    ) {
+        println!();
+        println!("  ✓ Iteration {} complete.", iteration);
+        if let Some(ref err) = record.error {
+            println!("  {} Verification failed: {}", "✗".red(), err);
+        } else {
+            println!("  {} Goal successfully satisfied!", "✓".green());
+        }
+        if let Some(tokens) = record.tokens_used {
+            println!("  {} Tokens used: {}", "ℹ".cyan(), tokens);
+        }
+        if let Some(ms) = record.duration_ms {
+            println!("  {} Duration: {}s", "ℹ".cyan(), (ms as f64) / 1000.0);
+        }
+        println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+    }
+
+    fn check_cancellation(&self) -> bool {
+        false
+    }
+
+    fn request_human_input<'a>(
+        &'a self,
+        prompt: &'a str,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Option<String>> + Send + 'a>> {
+        Box::pin(async move {
+            print!("{}", prompt);
+            use std::io::Write;
+            let _ = std::io::stdout().flush();
+            let mut input = String::new();
+            if std::io::stdin().read_line(&mut input).is_ok() {
+                Some(input.trim().to_string())
+            } else {
+                None
+            }
+        })
+    }
+}
+
 /// Main CLI entry point.
 pub async fn run() {
     let mut cfg = config::load().unwrap_or_default();
@@ -1637,6 +1703,89 @@ pub async fn run() {
             }
             "/config" => show_config(&cfg),
             "/tools" => show_tools(),
+            cmd if cmd == "/loop" || cmd.starts_with("/loop ") => {
+                let prompt = cmd.strip_prefix("/loop").unwrap().trim();
+                let goal_condition = if prompt.is_empty() {
+                    "Maintain and improve codebase health".to_string()
+                } else {
+                    prompt.to_string()
+                };
+
+                let loop_id = format!(
+                    "loop-{}",
+                    std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_secs()
+                );
+                let adapter = CliLoopAdapter;
+                let engine = crate::loop_engine::LoopEngine::new(
+                    cfg.clone(),
+                    crate::serve::data_dir().join("loops"),
+                );
+                let repo_path =
+                    std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+
+                println!("  Starting loop engine...");
+                let handle = tokio::spawn(async move {
+                    engine
+                        .run_loop(&loop_id, &goal_condition, &repo_path, &adapter)
+                        .await
+                });
+                match tokio::task::block_in_place(|| {
+                    tokio::runtime::Handle::current().block_on(handle)
+                }) {
+                    Ok(Ok(res)) => {
+                        println!("  {} Loop finished successfully: {}", "✓".green(), res);
+                    }
+                    Ok(Err(e)) => {
+                        println!("  {} Loop failed: {}", "✗".red(), e);
+                    }
+                    Err(e) => {
+                        println!("  {} Task error: {}", "✗".red(), e);
+                    }
+                }
+            }
+            cmd if cmd.starts_with("/goal ") => {
+                let prompt = cmd.strip_prefix("/goal ").unwrap().trim();
+                if prompt.is_empty() {
+                    println!("  Usage: /goal <condition>");
+                } else {
+                    let goal = prompt.to_string();
+                    let loop_id = format!(
+                        "goal-{}",
+                        std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .unwrap_or_default()
+                            .as_secs()
+                    );
+                    let adapter = CliLoopAdapter;
+                    let engine = crate::loop_engine::LoopEngine::new(
+                        cfg.clone(),
+                        crate::serve::data_dir().join("loops"),
+                    );
+                    let repo_path =
+                        std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+
+                    println!("  Starting goal engine...");
+                    let handle = tokio::spawn(async move {
+                        engine.run_loop(&loop_id, &goal, &repo_path, &adapter).await
+                    });
+                    match tokio::task::block_in_place(|| {
+                        tokio::runtime::Handle::current().block_on(handle)
+                    }) {
+                        Ok(Ok(res)) => {
+                            println!("  {} Goal achieved: {}", "✓".green(), res);
+                        }
+                        Ok(Err(e)) => {
+                            println!("  {} Goal execution failed: {}", "✗".red(), e);
+                        }
+                        Err(e) => {
+                            println!("  {} Task error: {}", "✗".red(), e);
+                        }
+                    }
+                }
+            }
             "/skills full" => show_skills_full(&cfg),
             "/skills" => show_skills(&cfg),
             "/mcps full" => show_mcps_full(&cfg, &agent),
