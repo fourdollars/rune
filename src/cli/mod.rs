@@ -92,6 +92,19 @@ fn print_help() {
     );
     println!();
 
+    println!("  {}", "Goal Loops".bold());
+    println!(
+        "    {:<24} {}",
+        "/loop [prompt]".green(),
+        "Start a persistent prompt loop"
+    );
+    println!(
+        "    {:<24} {}",
+        "/goal <condition>".green(),
+        "Start a loop evaluating a goal condition"
+    );
+    println!();
+
     println!("  {}", "Session".bold());
     println!(
         "    {:<24} {}",
