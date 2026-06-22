@@ -196,6 +196,8 @@ impl SandboxExecutor {
             if use_tmpfs {
                 flags.push("--map-root-user");
                 flags.push("--mount");
+                flags.push("--pid");
+                flags.push("--fork");
                 active_layers.push(format!("tmpfs(/tmp,{}MB)", self.config.tmp_size_mb));
                 info!(
                     size_mb = self.config.tmp_size_mb,
@@ -297,7 +299,7 @@ impl SandboxExecutor {
                     " cp /etc/locale.alias /tmp/.etc/ 2>/dev/null;",
                     " true; }}",
                     " && mount --bind /tmp/.etc /etc",
-                    " && mount -t tmpfs -o size=0 tmpfs /proc",
+                    " && mount -t proc proc /proc",
                     " && mount -t tmpfs -o size=0 tmpfs /var/run",
                     " && unset INVOCATION_ID JOURNAL_STREAM SYSTEMD_EXEC_PID MANAGERPID DBUS_SESSION_BUS_ADDRESS XDG_RUNTIME_DIR PWD && export PWD=/tmp HOME=/tmp && exec {cmd}",
                 ),
