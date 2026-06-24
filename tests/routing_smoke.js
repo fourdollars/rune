@@ -208,6 +208,54 @@ async function withPage(browser, fn) {
     else ok('logout navigated (login page check skipped — page may not have loaded yet)');
   });
 
+  // ── Test 13: Hide context-overlay when chat-input is not empty ───────
+  await withPage(browser, async (page) => {
+    // Login first
+    await page.goto(BASE + '/notes/Rune/routing');
+    await page.waitForSelector('#nickname-modal:not(.hidden)', { timeout: 5000 }).catch(() => {});
+    await page.fill('#nickname-input', 'testbot');
+    await page.fill('#token-input', ADMIN_TOKEN);
+    await page.click('#nickname-submit');
+    await page.waitForFunction(() => {
+      const el = document.getElementById('status-indicator');
+      return el && !el.textContent.includes('\uD83D\uDD34');
+    }, { timeout: 8000 }).catch(() => {});
+
+    // Force update context overlay by calling updateContextOverlay via page.evaluate
+    await page.evaluate(() => {
+      if (typeof updateContextOverlay === 'function') {
+        updateContextOverlay(100, 1000); // 10% context used
+      }
+    });
+
+    const isVisibleBefore = await page.evaluate(() => {
+      const overlay = document.getElementById('context-overlay');
+      return overlay && getComputedStyle(overlay).display !== 'none';
+    });
+    if (isVisibleBefore) ok('context overlay is visible initially');
+    else ko('context overlay is visible initially', 'overlay is display: none');
+
+    // Type some text in the chat input
+    await page.fill('#chat-input', 'Hello Rune');
+
+    const isVisibleDuring = await page.evaluate(() => {
+      const overlay = document.getElementById('context-overlay');
+      return overlay && getComputedStyle(overlay).display === 'none';
+    });
+    if (isVisibleDuring) ok('context overlay is hidden when input has text');
+    else ko('context overlay is hidden when input has text', 'overlay is still visible');
+
+    // Clear the input
+    await page.fill('#chat-input', '');
+
+    const isVisibleAfter = await page.evaluate(() => {
+      const overlay = document.getElementById('context-overlay');
+      return overlay && getComputedStyle(overlay).display !== 'none';
+    });
+    if (isVisibleAfter) ok('context overlay is visible again after input is cleared');
+    else ko('context overlay is visible again after input is cleared', 'overlay is still hidden');
+  });
+
   await browser.close();
 
   const total = pass + fail;
