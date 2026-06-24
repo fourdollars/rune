@@ -289,15 +289,6 @@ impl LoopEngine {
                     }),
                 );
 
-                // Keep branch, but remove the worktree itself
-                let _ = std::process::Command::new("git")
-                    .current_dir(repo_path)
-                    .arg("worktree")
-                    .arg("remove")
-                    .arg("--force")
-                    .arg(&worktree.path)
-                    .output();
-
                 return Ok(verifier_output);
             }
 
