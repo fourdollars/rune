@@ -92,6 +92,7 @@ impl LoopEngine {
             },
         };
         state.status = "Running".to_string();
+        state.updated_at = now_rfc3339();
         state.worktree_path = Some(worktree.path.to_string_lossy().to_string());
         if let Err(e) = save_state(&state, &loop_dir.to_string_lossy()) {
             let _ = worktree.remove();

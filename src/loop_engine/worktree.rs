@@ -45,12 +45,16 @@ impl WorktreeManager {
         let path = abs_git_common.join("rune-worktrees").join(loop_id);
         let branch = Self::get_branch_name(loop_id);
 
-        if path.exists() && path.join(".git").exists() {
-            return Ok(Self {
-                repo_path,
-                loop_id: loop_id.to_string(),
-                path,
-            });
+        if path.exists() {
+            if path.join(".git").exists() {
+                return Ok(Self {
+                    repo_path,
+                    loop_id: loop_id.to_string(),
+                    path,
+                });
+            } else {
+                std::fs::remove_dir_all(&path)?;
+            }
         }
 
         // Ensure the parent directory (.git/rune-worktrees) exists
@@ -158,12 +162,28 @@ impl WorktreeManager {
 
         // Clean up the branch after worktree is removed to avoid dangling branches
         let branch = Self::get_branch_name(&self.loop_id);
-        let branch_result = Command::new("git")
+        let branch_ref = format!("refs/heads/{}", branch);
+        let branch_exists = Command::new("git")
             .current_dir(&self.repo_path)
-            .arg("branch")
-            .arg("-D")
-            .arg(&branch)
-            .output();
+            .args(&["show-ref", "--verify", &branch_ref])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .map(|status| status.success())
+            .unwrap_or(false);
+
+        let branch_result = if branch_exists {
+            Some(
+                Command::new("git")
+                    .current_dir(&self.repo_path)
+                    .arg("branch")
+                    .arg("-D")
+                    .arg(&branch)
+                    .output(),
+            )
+        } else {
+            None
+        };
 
         let worktree_err = match worktree_result {
             Ok(output) => {
@@ -183,7 +203,7 @@ impl WorktreeManager {
         };
 
         let branch_err = match branch_result {
-            Ok(output) => {
+            Some(Ok(output)) => {
                 if !output.status.success() {
                     Some(std::io::Error::new(
                         std::io::ErrorKind::Other,
@@ -196,7 +216,8 @@ impl WorktreeManager {
                     None
                 }
             }
-            Err(e) => Some(e),
+            Some(Err(e)) => Some(e),
+            None => None,
         };
 
         if let Some(err) = worktree_err {
@@ -352,5 +373,67 @@ mod tests {
             WorktreeManager::get_branch_name("my-note"),
             "rune/loop-my-note"
         );
+    }
+
+    #[test]
+    fn test_worktree_conflict_stale_dir() {
+        let (_temp_dir, temp_path) = setup_temp_git_repo();
+
+        let loop_id = "test-loop-conflict";
+        let output = Command::new("git")
+            .args(&["rev-parse", "--git-common-dir"])
+            .current_dir(&temp_path)
+            .output()
+            .unwrap();
+        let git_common_str = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        let git_common_path = PathBuf::from(git_common_str);
+        let abs_git_common = if git_common_path.is_absolute() {
+            git_common_path
+        } else {
+            temp_path.join(git_common_path)
+        };
+        let abs_git_common = std::fs::canonicalize(abs_git_common).unwrap();
+        let path = abs_git_common.join("rune-worktrees").join(loop_id);
+
+        std::fs::create_dir_all(&path).unwrap();
+        assert!(path.exists());
+        assert!(!path.join(".git").exists());
+
+        let manager = WorktreeManager::create(&temp_path, loop_id)
+            .expect("Failed to create worktree with stale dir");
+        assert!(manager.path.exists());
+        assert!(manager.path.join(".git").exists());
+
+        manager.remove().expect("Failed to remove worktree");
+    }
+
+    #[test]
+    fn test_worktree_remove_idempotency_already_deleted_branch() {
+        let (_temp_dir, temp_path) = setup_temp_git_repo();
+
+        let loop_id = "test-loop-idempotency";
+        let manager =
+            WorktreeManager::create(&temp_path, loop_id).expect("Failed to create worktree");
+
+        // Detach HEAD in the worktree so the branch is no longer checked out
+        let status = Command::new("git")
+            .current_dir(&manager.path)
+            .args(&["checkout", "--detach"])
+            .status()
+            .expect("Failed to execute git checkout --detach");
+        assert!(status.success());
+
+        let branch = WorktreeManager::get_branch_name(loop_id);
+        let status = Command::new("git")
+            .current_dir(&temp_path)
+            .args(&["branch", "-D", &branch])
+            .status()
+            .expect("Failed to execute git");
+        assert!(status.success());
+
+        manager
+            .remove()
+            .expect("Failed to remove worktree when branch is already deleted");
+        assert!(!manager.path.exists());
     }
 }
