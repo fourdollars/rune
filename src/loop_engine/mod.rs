@@ -107,6 +107,14 @@ impl LoopEngine {
                     state.status = "Failed".to_string();
                     state.updated_at = now_rfc3339();
                     let _ = save_state(&state, &loop_dir.to_string_lossy());
+                    let _ = log_audit(
+                        &loop_dir.to_string_lossy(),
+                        "system",
+                        "loop_failed",
+                        serde_json::json!({
+                            "error": e.to_string()
+                        }),
+                    );
                     let _ = worktree.remove();
                     Err(e)
                 }

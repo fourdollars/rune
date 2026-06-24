@@ -117,44 +117,92 @@ impl WorktreeManager {
 
     pub fn remove(&self) -> std::io::Result<()> {
         // Avoid to_str().unwrap() by passing Path directly to arg
-        let output = Command::new("git")
+        let worktree_result = Command::new("git")
             .current_dir(&self.repo_path)
             .arg("worktree")
             .arg("remove")
             .arg("--force")
             .arg(&self.path)
-            .output()?;
+            .output();
 
-        if !output.status.success() {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                format!(
-                    "git worktree remove failed: {}",
-                    String::from_utf8_lossy(&output.stderr).trim()
-                ),
-            ));
+        let worktree_failed = match &worktree_result {
+            Ok(output) => !output.status.success(),
+            Err(_) => true,
+        };
+
+        if worktree_failed {
+            // Attempt to clean up git's worktree metadata directory to allow branch deletion
+            if let Ok(output) = Command::new("git")
+                .args(&["rev-parse", "--git-common-dir"])
+                .current_dir(&self.repo_path)
+                .output()
+            {
+                if output.status.success() {
+                    let git_common_str = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                    let git_common_path = PathBuf::from(git_common_str);
+                    let abs_git_common = if git_common_path.is_absolute() {
+                        git_common_path
+                    } else {
+                        self.repo_path.join(git_common_path)
+                    };
+                    if let Ok(abs_git_common) = std::fs::canonicalize(abs_git_common) {
+                        let meta_path = abs_git_common.join("worktrees").join(&self.loop_id);
+                        let _ = std::fs::remove_dir_all(meta_path);
+                    }
+                }
+            }
         }
 
         // Clean up the branch after worktree is removed to avoid dangling branches
         let branch = Self::get_branch_name(&self.loop_id);
-        let output = Command::new("git")
+        let branch_result = Command::new("git")
             .current_dir(&self.repo_path)
             .arg("branch")
             .arg("-D")
             .arg(&branch)
-            .output()?;
+            .output();
 
-        if !output.status.success() {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                format!(
-                    "git branch -D failed: {}",
-                    String::from_utf8_lossy(&output.stderr).trim()
-                ),
-            ));
+        let worktree_err = match worktree_result {
+            Ok(output) => {
+                if !output.status.success() {
+                    Some(std::io::Error::new(
+                        std::io::ErrorKind::Other,
+                        format!(
+                            "git worktree remove failed: {}",
+                            String::from_utf8_lossy(&output.stderr).trim()
+                        ),
+                    ))
+                } else {
+                    None
+                }
+            }
+            Err(e) => Some(e),
+        };
+
+        let branch_err = match branch_result {
+            Ok(output) => {
+                if !output.status.success() {
+                    Some(std::io::Error::new(
+                        std::io::ErrorKind::Other,
+                        format!(
+                            "git branch -D failed: {}",
+                            String::from_utf8_lossy(&output.stderr).trim()
+                        ),
+                    ))
+                } else {
+                    None
+                }
+            }
+            Err(e) => Some(e),
+        };
+
+        if let Some(err) = worktree_err {
+            Err(err)
+        } else if let Some(err) = branch_err {
+            Err(err)
+        } else {
+            Ok(())
         }
-
-        Ok(())
     }
 }
 
@@ -243,6 +291,48 @@ mod tests {
         let loop_id = "test-loop-invalid";
         let res = WorktreeManager::create(&invalid_path, loop_id);
         assert!(res.is_err());
+    }
+
+    #[test]
+    fn test_remove_robust_cleanup() {
+        let (_temp_dir, temp_path) = setup_temp_git_repo();
+
+        let loop_id = "test-loop-robust";
+        let mut manager =
+            WorktreeManager::create(&temp_path, loop_id).expect("Failed to create worktree");
+
+        // Now, manually change manager's path to something that isn't a worktree
+        manager.path = temp_path.join("non-existent-worktree-path");
+
+        // The branch should still exist right now
+        let branch = WorktreeManager::get_branch_name(loop_id);
+        let branch_ref = format!("refs/heads/{}", branch);
+        let check_branch = || {
+            Command::new("git")
+                .current_dir(&temp_path)
+                .args(&["show-ref", "--verify", &branch_ref])
+                .status()
+                .map(|status| status.success())
+                .unwrap_or(false)
+        };
+        assert!(check_branch(), "Branch should exist before remove");
+
+        // Call remove. It should return Err because git worktree remove fails,
+        // but it should still attempt to delete the branch.
+        let res = manager.remove();
+        assert!(res.is_err());
+        assert!(
+            res.unwrap_err()
+                .to_string()
+                .contains("git worktree remove failed"),
+            "Expected worktree remove to fail"
+        );
+
+        // Verify that the branch was still deleted!
+        assert!(
+            !check_branch(),
+            "Branch should have been deleted despite worktree remove failure"
+        );
     }
 
     #[test]
