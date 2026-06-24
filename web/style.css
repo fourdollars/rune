@@ -1641,6 +1641,12 @@ pre.hljs-pre:hover .copy-btn {
     display: none;
 }
 
+/* Hide context overlay when chat input contains text */
+#chat-input:not(:placeholder-shown) ~ #context-overlay {
+    display: none !important;
+}
+
+
 .context-overlay.warn {
     color: #f0c040;
     border-color: rgba(240,192,64,0.3);
