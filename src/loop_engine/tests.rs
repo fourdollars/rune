@@ -137,3 +137,62 @@ async fn test_failing_loop_cleans_up_worktree() {
         .unwrap_or(false);
     assert!(!branch_exists, "Branch should have been deleted");
 }
+
+struct CancelAdapter {
+    cancelled: Mutex<bool>,
+}
+
+impl LoopModeAdapter for CancelAdapter {
+    fn on_loop_start(&self, _loop_id: &str, _goal: &str) {}
+    fn on_iteration_start(&self, _iteration: u32, _max_iterations: u32) {}
+    fn on_iteration_complete(&self, _iteration: u32, _record: &IterationRecord) {}
+    fn check_cancellation(&self) -> bool {
+        *self.cancelled.lock().unwrap()
+    }
+    fn request_human_input<'a>(
+        &'a self,
+        _prompt: &'a str,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Option<String>> + Send + 'a>> {
+        Box::pin(async { None })
+    }
+}
+
+#[tokio::test]
+async fn test_loop_engine_cancellation() {
+    let (temp_dir, repo_path) = setup_temp_git_repo();
+    let loop_id = "test-cancellation-id";
+    let state_dir = temp_dir.path().join("loops");
+
+    let mut config = RuneConfig::default();
+    config.model = "mock-loop".to_string();
+    config.provider = Some("mock-loop".to_string());
+    config.api_key = Some("dummy-key".to_string());
+    config.loop_config.max_iterations = 3;
+
+    let engine = LoopEngine::new(config, state_dir.clone());
+    let adapter = CancelAdapter {
+        cancelled: Mutex::new(true),
+    };
+
+    let run_res = engine
+        .run_loop(loop_id, "Some goal", &repo_path, &adapter)
+        .await;
+    assert!(run_res.is_ok());
+    assert_eq!(run_res.unwrap(), "Loop paused by user");
+
+    // Verify the state on disk has status "Paused"
+    let state =
+        crate::loop_engine::state::load_state(&state_dir.join(loop_id).to_string_lossy()).unwrap();
+    assert_eq!(state.status, "Paused");
+
+    // Verify the worktree path is NOT cleaned up
+    let worktree_dir = repo_path.join(".git").join("rune-worktrees").join(loop_id);
+    assert!(
+        worktree_dir.exists(),
+        "Worktree directory should not have been cleaned up when paused"
+    );
+
+    // Clean up
+    let worktree = WorktreeManager::create(&repo_path, loop_id).unwrap();
+    let _ = worktree.remove();
+}

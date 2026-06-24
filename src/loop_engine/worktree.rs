@@ -45,6 +45,14 @@ impl WorktreeManager {
         let path = abs_git_common.join("rune-worktrees").join(loop_id);
         let branch = Self::get_branch_name(loop_id);
 
+        if path.exists() {
+            return Ok(Self {
+                repo_path,
+                loop_id: loop_id.to_string(),
+                path,
+            });
+        }
+
         // Ensure the parent directory (.git/rune-worktrees) exists
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
@@ -192,6 +200,12 @@ mod tests {
         assert_eq!(manager.loop_id, loop_id);
         assert!(manager.path.exists());
         assert!(manager.path.join("dummy.txt").exists());
+
+        // Try creating it again while it already exists - should return Ok and not fail
+        let manager2 = WorktreeManager::create(&temp_path, loop_id)
+            .expect("Failed to recreate existing worktree");
+        assert_eq!(manager2.loop_id, loop_id);
+        assert!(manager2.path.exists());
 
         manager.remove().expect("Failed to remove worktree");
         assert!(!manager.path.exists());

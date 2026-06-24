@@ -86,13 +86,44 @@ impl LoopEngine {
             },
         };
         state.status = "Running".to_string();
-        save_state(&state, &loop_dir.to_string_lossy()).map_err(|e| {
+        if let Err(e) = save_state(&state, &loop_dir.to_string_lossy()) {
             let _ = worktree.remove();
-            e
-        })?;
+            return Err(e.into());
+        }
 
         adapter.on_loop_start(loop_id, goal);
 
+        match self
+            .run_loop_inner(
+                loop_id, goal, repo_path, adapter, &mut state, &worktree, &loop_dir,
+            )
+            .await
+        {
+            Ok(res) => Ok(res),
+            Err(e) => {
+                if state.status == "Paused" {
+                    Err(e)
+                } else {
+                    state.status = "Failed".to_string();
+                    state.updated_at = now_rfc3339();
+                    let _ = save_state(&state, &loop_dir.to_string_lossy());
+                    let _ = worktree.remove();
+                    Err(e)
+                }
+            }
+        }
+    }
+
+    async fn run_loop_inner<A: LoopModeAdapter>(
+        &self,
+        loop_id: &str,
+        goal: &str,
+        repo_path: &Path,
+        adapter: &A,
+        state: &mut LoopState,
+        worktree: &WorktreeManager,
+        loop_dir: &Path,
+    ) -> Result<String, anyhow::Error> {
         let mut verifier_feedback = format!(
             "Goal to accomplish: {}\n\nPlease implement changes to satisfy this goal.",
             goal
@@ -105,10 +136,7 @@ impl LoopEngine {
             if adapter.check_cancellation() {
                 state.status = "Paused".to_string();
                 state.updated_at = now_rfc3339();
-                save_state(&state, &loop_dir.to_string_lossy()).map_err(|e| {
-                    let _ = worktree.remove();
-                    e
-                })?;
+                save_state(state, &loop_dir.to_string_lossy())?;
                 log_audit(
                     &loop_dir.to_string_lossy(),
                     "system",
@@ -117,21 +145,14 @@ impl LoopEngine {
                         "iteration": iteration - 1,
                         "reason": "user_cancelled"
                     }),
-                )
-                .map_err(|e| {
-                    let _ = worktree.remove();
-                    e
-                })?;
+                )?;
                 return Ok("Loop paused by user".to_string());
             }
 
             adapter.on_iteration_start(iteration, max_iters);
             state.current_iteration = iteration;
             state.updated_at = now_rfc3339();
-            save_state(&state, &loop_dir.to_string_lossy()).map_err(|e| {
-                let _ = worktree.remove();
-                e
-            })?;
+            save_state(state, &loop_dir.to_string_lossy())?;
 
             log_audit(
                 &loop_dir.to_string_lossy(),
@@ -140,11 +161,7 @@ impl LoopEngine {
                 serde_json::json!({
                     "iteration": iteration
                 }),
-            )
-            .map_err(|e| {
-                let _ = worktree.remove();
-                e
-            })?;
+            )?;
 
             // --- 1. Run Implementer ---
             let (impl_model, impl_prompt_opt) =
@@ -170,11 +187,9 @@ impl LoopEngine {
             let impl_output = match &stop_reason {
                 StopReason::FinalAnswer(ref ans) => ans.clone(),
                 StopReason::Error(ref err) => {
-                    let _ = worktree.remove();
                     return Err(anyhow::anyhow!("Implementer error: {}", err));
                 }
                 other => {
-                    let _ = worktree.remove();
                     return Err(anyhow::anyhow!(
                         "Implementer stopped unexpectedly: {:?}",
                         other
@@ -191,11 +206,7 @@ impl LoopEngine {
                     "tokens_used": implementer.tokens_used(),
                     "duration_ms": impl_duration.as_millis() as u64
                 }),
-            )
-            .map_err(|e| {
-                let _ = worktree.remove();
-                e
-            })?;
+            )?;
 
             // --- 2. Run Verifier ---
             let (verifier_model, verifier_prompt_opt) =
@@ -228,11 +239,9 @@ impl LoopEngine {
             let verifier_output = match &verifier_stop {
                 StopReason::FinalAnswer(ref ans) => ans.clone(),
                 StopReason::Error(ref err) => {
-                    let _ = worktree.remove();
                     return Err(anyhow::anyhow!("Verifier error: {}", err));
                 }
                 other => {
-                    let _ = worktree.remove();
                     return Err(anyhow::anyhow!(
                         "Verifier stopped unexpectedly: {:?}",
                         other
@@ -249,11 +258,7 @@ impl LoopEngine {
                     "tokens_used": verifier.tokens_used(),
                     "duration_ms": verifier_duration.as_millis() as u64
                 }),
-            )
-            .map_err(|e| {
-                let _ = worktree.remove();
-                e
-            })?;
+            )?;
 
             let is_satisfied = verifier_output.contains("GOAL_COMPLETE");
 
@@ -276,18 +281,15 @@ impl LoopEngine {
             if is_satisfied {
                 state.status = "Complete".to_string();
                 state.updated_at = now_rfc3339();
-                save_state(&state, &loop_dir.to_string_lossy()).map_err(|e| {
-                    let _ = worktree.remove();
-                    e
-                })?;
-                let _ = log_audit(
+                save_state(state, &loop_dir.to_string_lossy())?;
+                log_audit(
                     &loop_dir.to_string_lossy(),
                     "system",
                     "goal_achieved",
                     serde_json::json!({
                         "verifier_explanation": verifier_output
                     }),
-                );
+                )?;
 
                 return Ok(verifier_output);
             }
@@ -298,20 +300,14 @@ impl LoopEngine {
             );
         }
 
-        state.status = "Failed".to_string();
-        state.updated_at = now_rfc3339();
-        let _ = save_state(&state, &loop_dir.to_string_lossy());
-        let _ = log_audit(
+        log_audit(
             &loop_dir.to_string_lossy(),
             "system",
             "loop_exhausted",
             serde_json::json!({
                 "max_iterations": max_iters
             }),
-        );
-
-        // Failure cleanup
-        let _ = worktree.remove();
+        )?;
 
         Err(anyhow::anyhow!(
             "Loop reached maximum iterations without satisfying the goal"
