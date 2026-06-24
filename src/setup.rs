@@ -553,8 +553,13 @@ async fn fetch_gemini_models(api_key: &str, base_url: &str) -> Option<Vec<String
         .timeout(std::time::Duration::from_secs(10))
         .build()
         .ok()?;
-    let url = format!("{}/models?key={}", base_url, api_key);
-    let resp = client.get(&url).send().await.ok()?;
+    let url = format!("{}/models", base_url);
+    let resp = client
+        .get(&url)
+        .header("x-goog-api-key", api_key)
+        .send()
+        .await
+        .ok()?;
     if !resp.status().is_success() {
         return None;
     }

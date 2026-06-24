@@ -1501,8 +1501,12 @@ impl Provider for GeminiProvider {
             let client = Client::builder()
                 .timeout(std::time::Duration::from_secs(10))
                 .build()?;
-            let url = format!("{}/models?key={}", base_url.trim_end_matches('/'), api_key);
-            let resp = client.get(&url).send().await?;
+            let url = format!("{}/models", base_url.trim_end_matches('/'));
+            let resp = client
+                .get(&url)
+                .header("x-goog-api-key", &api_key)
+                .send()
+                .await?;
             if !resp.status().is_success() {
                 return Ok(Vec::new());
             }
@@ -1608,10 +1612,9 @@ impl Provider for GeminiProvider {
             }
 
             let url = format!(
-                "{}/models/{}:generateContent?key={}",
+                "{}/models/{}:generateContent",
                 base_url.trim_end_matches('/'),
-                model,
-                api_key
+                model
             );
 
             let payload_str = serde_json::to_string(&payload)
@@ -1623,6 +1626,7 @@ impl Provider for GeminiProvider {
             let response = client
                 .post(&url)
                 .header("Content-Type", "application/json")
+                .header("x-goog-api-key", &api_key)
                 .timeout(std::time::Duration::from_secs(120))
                 .body(payload_str)
                 .send()
@@ -1803,10 +1807,9 @@ impl Provider for GeminiProvider {
             }
 
             let url = format!(
-                "{}/models/{}:streamGenerateContent?alt=sse&key={}",
+                "{}/models/{}:streamGenerateContent?alt=sse",
                 base_url.trim_end_matches('/'),
-                model,
-                api_key
+                model
             );
 
             let payload_str = serde_json::to_string(&payload)
@@ -1818,6 +1821,7 @@ impl Provider for GeminiProvider {
             let response = client
                 .post(&url)
                 .header("Content-Type", "application/json")
+                .header("x-goog-api-key", &api_key)
                 .timeout(std::time::Duration::from_secs(120))
                 .body(payload_str)
                 .send()
@@ -4092,6 +4096,59 @@ mod provider_tests {
             })
             .unwrap_or_default();
         assert!(models.is_empty());
+    }
+
+    #[test]
+    fn test_no_api_key_in_url_leak() {
+        fn find_rs_files(dir: &std::path::Path, files: &mut Vec<std::path::PathBuf>) {
+            if dir.is_dir() {
+                if let Ok(entries) = std::fs::read_dir(dir) {
+                    for entry in entries.flatten() {
+                        let path = entry.path();
+                        if path.is_dir() {
+                            find_rs_files(&path, files);
+                        } else if path.extension().and_then(|s| s.to_str()) == Some("rs") {
+                            files.push(path);
+                        }
+                    }
+                }
+            }
+        }
+
+        let mut files = Vec::new();
+        find_rs_files(std::path::Path::new("src"), &mut files);
+
+        // Use concatenated/separated string parts to avoid matching this test itself.
+        let target_part1 = "googleapis.com";
+        let target_part2 = "key=";
+        let target_part3 = "generativelanguage";
+
+        for file_path in files {
+            let content = std::fs::read_to_string(&file_path)
+                .unwrap_or_else(|_| panic!("Failed to read {:?}", file_path));
+
+            for (line_num, line) in content.lines().enumerate() {
+                let trimmed = line.trim();
+                // Skip comments and this test function itself
+                if trimmed.starts_with("//")
+                    || trimmed.starts_with("/*")
+                    || trimmed.contains("test_no_api_key_in_url_leak")
+                {
+                    continue;
+                }
+
+                if (line.contains(target_part1) || line.contains(target_part3))
+                    && line.contains(target_part2)
+                {
+                    panic!(
+                        "Potential API key leak in URL detected in {:?} at line {}: {}",
+                        file_path,
+                        line_num + 1,
+                        line
+                    );
+                }
+            }
+        }
     }
 }
 
