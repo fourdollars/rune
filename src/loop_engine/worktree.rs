@@ -43,7 +43,7 @@ impl WorktreeManager {
         let abs_git_common = std::fs::canonicalize(abs_git_common)?;
 
         let path = abs_git_common.join("rune-worktrees").join(loop_id);
-        let branch = format!("rune/loop-{}", loop_id);
+        let branch = Self::get_branch_name(loop_id);
 
         // Ensure the parent directory (.git/rune-worktrees) exists
         if let Some(parent) = path.parent() {
@@ -128,7 +128,7 @@ impl WorktreeManager {
         }
 
         // Clean up the branch after worktree is removed to avoid dangling branches
-        let branch = format!("rune/loop-{}", self.loop_id);
+        let branch = Self::get_branch_name(&self.loop_id);
         let output = Command::new("git")
             .current_dir(&self.repo_path)
             .arg("branch")
@@ -202,7 +202,7 @@ mod tests {
         let (_temp_dir, temp_path) = setup_temp_git_repo();
 
         let loop_id = "test-loop-existing-branch";
-        let branch = format!("rune/loop-{}", loop_id);
+        let branch = WorktreeManager::get_branch_name(loop_id);
 
         // Pre-create the branch
         let status = Command::new("git")
