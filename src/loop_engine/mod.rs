@@ -73,7 +73,13 @@ impl LoopEngine {
         let worktree = WorktreeManager::create(repo_path, loop_id)?;
 
         let mut state = match crate::loop_engine::state::load_state(&loop_dir.to_string_lossy()) {
-            Ok(s) => s,
+            Ok(mut s) => {
+                if s.status == "Complete" || s.status == "Failed" || s.goal != goal {
+                    s.current_iteration = 0;
+                    s.goal = goal.to_string();
+                }
+                s
+            }
             Err(_) => LoopState {
                 loop_id: loop_id.to_string(),
                 goal: goal.to_string(),
@@ -101,6 +107,9 @@ impl LoopEngine {
         {
             Ok(res) => Ok(res),
             Err(e) => {
+                // The `if state.status == "Paused"` check is to handle cases where an error occurred
+                // during a pause/cancellation sequence, ensuring we propagate the cancellation error
+                // instead of marking the loop as "Failed".
                 if state.status == "Paused" {
                     Err(e)
                 } else {

@@ -151,6 +151,9 @@ impl WorktreeManager {
                     }
                 }
             }
+            if self.path.exists() {
+                let _ = std::fs::remove_dir_all(&self.path);
+            }
         }
 
         // Clean up the branch after worktree is removed to avoid dangling branches
