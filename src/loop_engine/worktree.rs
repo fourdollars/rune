@@ -45,7 +45,7 @@ impl WorktreeManager {
         let path = abs_git_common.join("rune-worktrees").join(loop_id);
         let branch = Self::get_branch_name(loop_id);
 
-        if path.exists() {
+        if path.exists() && path.join(".git").exists() {
             return Ok(Self {
                 repo_path,
                 loop_id: loop_id.to_string(),

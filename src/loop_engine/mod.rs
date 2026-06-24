@@ -92,6 +92,7 @@ impl LoopEngine {
             },
         };
         state.status = "Running".to_string();
+        state.worktree_path = Some(worktree.path.to_string_lossy().to_string());
         if let Err(e) = save_state(&state, &loop_dir.to_string_lossy()) {
             let _ = worktree.remove();
             return Err(e.into());
@@ -107,10 +108,20 @@ impl LoopEngine {
         {
             Ok(res) => Ok(res),
             Err(e) => {
-                // The `if state.status == "Paused"` check is to handle cases where an error occurred
-                // during a pause/cancellation sequence, ensuring we propagate the cancellation error
-                // instead of marking the loop as "Failed".
-                if state.status == "Paused" {
+                // If the loop was paused or cancelled during execution, transition status to Paused,
+                // save state, log a loop_paused event, and propagate the error without deleting the worktree.
+                if state.status == "Paused" || adapter.check_cancellation() {
+                    state.status = "Paused".to_string();
+                    state.updated_at = now_rfc3339();
+                    let _ = save_state(&state, &loop_dir.to_string_lossy());
+                    let _ = log_audit(
+                        &loop_dir.to_string_lossy(),
+                        "system",
+                        "loop_paused",
+                        serde_json::json!({
+                            "reason": "user_cancelled_during_execution"
+                        }),
+                    );
                     Err(e)
                 } else {
                     state.status = "Failed".to_string();

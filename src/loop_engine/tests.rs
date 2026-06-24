@@ -197,6 +197,86 @@ async fn test_loop_engine_cancellation() {
     let _ = worktree.remove();
 }
 
+struct CancelDuringExecutionAdapter {
+    call_count: Mutex<usize>,
+}
+
+impl LoopModeAdapter for CancelDuringExecutionAdapter {
+    fn on_loop_start(&self, _loop_id: &str, _goal: &str) {}
+    fn on_iteration_start(&self, _iteration: u32, _max_iterations: u32) {}
+    fn on_iteration_complete(&self, _iteration: u32, _record: &IterationRecord) {}
+    fn check_cancellation(&self) -> bool {
+        let mut count = self.call_count.lock().unwrap();
+        *count += 1;
+        // First check (iteration check): false. Second check (error block): true.
+        *count > 1
+    }
+    fn request_human_input<'a>(
+        &'a self,
+        _prompt: &'a str,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Option<String>> + Send + 'a>> {
+        Box::pin(async { None })
+    }
+}
+
+#[tokio::test]
+async fn test_cancellation_during_execution() {
+    let (temp_dir, repo_path) = setup_temp_git_repo();
+    let loop_id = "test-cancel-exec-id";
+    let state_dir = temp_dir.path().join("loops");
+
+    let mut config = RuneConfig::default();
+    config.model = "mock-loop".to_string();
+    config.provider = Some("mock-loop".to_string());
+    config.api_key = Some("dummy-key".to_string());
+    config.loop_config.max_iterations = 1;
+
+    let engine = LoopEngine::new(config, state_dir.clone());
+    let adapter = CancelDuringExecutionAdapter {
+        call_count: Mutex::new(0),
+    };
+
+    let run_res = engine
+        .run_loop(loop_id, "Always fail", &repo_path, &adapter)
+        .await;
+    assert!(run_res.is_err());
+
+    // Verify the state on disk has status "Paused"
+    let loop_dir = state_dir.join(loop_id);
+    let state = crate::loop_engine::state::load_state(&loop_dir.to_string_lossy()).unwrap();
+    assert_eq!(state.status, "Paused");
+
+    // Verify the audit log has loop_paused event with user_cancelled_during_execution reason
+    let audit_path = loop_dir.join("audit.jsonl");
+    let audit_content = std::fs::read_to_string(audit_path).unwrap();
+    assert!(audit_content.contains("loop_paused"));
+    assert!(audit_content.contains("user_cancelled_during_execution"));
+
+    // Verify the worktree path is NOT cleaned up
+    let worktree_dir = repo_path.join(".git").join("rune-worktrees").join(loop_id);
+    assert!(
+        worktree_dir.exists(),
+        "Worktree directory should remain intact"
+    );
+
+    // Verify the branch is NOT deleted (remains intact)
+    let branch = WorktreeManager::get_branch_name(loop_id);
+    let branch_ref = format!("refs/heads/{}", branch);
+    let branch_exists = std::process::Command::new("git")
+        .current_dir(&repo_path)
+        .args(&["show-ref", "--verify", &branch_ref])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .map(|status| status.success())
+        .unwrap_or(false);
+    assert!(branch_exists, "Branch should remain intact");
+
+    // Clean up worktree for test isolation
+    let worktree = WorktreeManager::create(&repo_path, loop_id).unwrap();
+    let _ = worktree.remove();
+}
+
 #[tokio::test]
 async fn test_rerun_completed_or_failed_or_new_goal_resets_iteration() {
     use crate::loop_engine::state::{load_state, now_rfc3339, save_state, LoopState};
