@@ -8,6 +8,14 @@ pub struct WorktreeManager {
 }
 
 impl WorktreeManager {
+    pub fn get_branch_name(loop_id: &str) -> String {
+        if loop_id.starts_with("loop-") || loop_id.starts_with("goal-") {
+            format!("rune/{}", loop_id)
+        } else {
+            format!("rune/loop-{}", loop_id)
+        }
+    }
+
     pub fn create<P: AsRef<Path>>(repo_path: P, loop_id: &str) -> std::io::Result<Self> {
         let repo_path = repo_path.as_ref().to_path_buf();
 
@@ -221,5 +229,21 @@ mod tests {
         let loop_id = "test-loop-invalid";
         let res = WorktreeManager::create(&invalid_path, loop_id);
         assert!(res.is_err());
+    }
+
+    #[test]
+    fn test_get_branch_name() {
+        assert_eq!(
+            WorktreeManager::get_branch_name("loop-1234"),
+            "rune/loop-1234"
+        );
+        assert_eq!(
+            WorktreeManager::get_branch_name("goal-5678"),
+            "rune/goal-5678"
+        );
+        assert_eq!(
+            WorktreeManager::get_branch_name("my-note"),
+            "rune/loop-my-note"
+        );
     }
 }
