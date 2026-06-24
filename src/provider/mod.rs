@@ -4176,7 +4176,9 @@ impl Provider for MockLoopProvider {
                 .and_then(|m| m.content.as_deref())
                 .unwrap_or("");
 
-            let content = if user_msg.contains("Verifier") || user_msg.contains("verify") {
+            let content = if user_msg.contains("Always fail") {
+                Some("Verification failed: the goal was not satisfied because the task is set to always fail.".to_string())
+            } else if user_msg.contains("Verifier") || user_msg.contains("verify") {
                 Some("GOAL_COMPLETE: All tests pass successfully and the requested feature is fully implemented!".to_string())
             } else {
                 Some(

@@ -92,3 +92,48 @@ async fn test_run_loop_completes() {
     assert!(*adapter.on_iteration_start_called.lock().unwrap());
     assert!(*adapter.on_iteration_complete_called.lock().unwrap());
 }
+
+#[tokio::test]
+async fn test_failing_loop_cleans_up_worktree() {
+    let (temp_dir, repo_path) = setup_temp_git_repo();
+    let loop_id = "test-failing-cleanup";
+    let state_dir = temp_dir.path().join("loops");
+
+    let mut config = RuneConfig::default();
+    config.model = "mock-loop".to_string();
+    config.provider = Some("mock-loop".to_string());
+    config.api_key = Some("dummy-key".to_string());
+    config.loop_config.max_iterations = 1;
+
+    let engine = LoopEngine::new(config, state_dir);
+    let adapter = TestAdapter {
+        on_loop_start_called: Mutex::new(false),
+        on_iteration_start_called: Mutex::new(false),
+        on_iteration_complete_called: Mutex::new(false),
+    };
+
+    let run_res = engine
+        .run_loop(loop_id, "Always fail", &repo_path, &adapter)
+        .await;
+    assert!(run_res.is_err());
+
+    // Verify the worktree path is cleaned up
+    let worktree_dir = repo_path.join(".git").join("rune-worktrees").join(loop_id);
+    assert!(
+        !worktree_dir.exists(),
+        "Worktree directory should have been cleaned up"
+    );
+
+    // Verify the branch was deleted
+    let branch = WorktreeManager::get_branch_name(loop_id);
+    let branch_ref = format!("refs/heads/{}", branch);
+    let branch_exists = std::process::Command::new("git")
+        .current_dir(&repo_path)
+        .args(&["show-ref", "--verify", &branch_ref])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .map(|status| status.success())
+        .unwrap_or(false);
+    assert!(!branch_exists, "Branch should have been deleted");
+}
