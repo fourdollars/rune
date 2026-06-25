@@ -28,6 +28,7 @@ struct ExistingConfig {
     notes_local_users: Option<String>,
     notes_local_guests: Option<String>,
     notes_model: Option<String>,
+    openrouter_zdr: Option<bool>,
 }
 
 /// Extract a raw TOML section (from [header] line to next [header] or EOF).
@@ -84,6 +85,7 @@ fn load_existing_config(path: &std::path::Path) -> ExistingConfig {
             notes_local_users: None,
             notes_local_guests: None,
             notes_model: None,
+            openrouter_zdr: None,
         };
     }
     let content = std::fs::read_to_string(&path).unwrap_or_default();
@@ -233,6 +235,7 @@ fn load_existing_config(path: &std::path::Path) -> ExistingConfig {
             .and_then(|t| t.get("model"))
             .and_then(|v| v.as_str())
             .map(|s| s.to_string()),
+        openrouter_zdr: table.get("openrouter_zdr").and_then(|v| v.as_bool()),
     }
 }
 
@@ -387,35 +390,40 @@ struct OpenRouterModel {
     pricing: Option<OpenRouterPricing>,
 }
 
-async fn fetch_openrouter_models() -> Option<Vec<String>> {
+async fn fetch_openrouter_models(openrouter_zdr: bool) -> Option<Vec<String>> {
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(5))
         .build()
         .ok()?;
 
-    // Fetch ZDR endpoints to filter models by ZDR support
-    let zdr_resp = client
-        .get("https://openrouter.ai/api/v1/endpoints/zdr")
-        .send()
-        .await
-        .ok()?;
-    if !zdr_resp.status().is_success() {
-        return None;
-    }
+    let zdr_set = if openrouter_zdr {
+        // Fetch ZDR endpoints to filter models by ZDR support
+        let zdr_resp = client
+            .get("https://openrouter.ai/api/v1/endpoints/zdr")
+            .send()
+            .await
+            .ok()?;
+        if !zdr_resp.status().is_success() {
+            return None;
+        }
 
-    #[derive(serde::Deserialize)]
-    struct OpenRouterZdrEndpoint {
-        model_id: String,
-    }
+        #[derive(serde::Deserialize)]
+        struct OpenRouterZdrEndpoint {
+            model_id: String,
+        }
 
-    #[derive(serde::Deserialize)]
-    struct OpenRouterZdrEndpointsResponse {
-        data: Vec<OpenRouterZdrEndpoint>,
-    }
+        #[derive(serde::Deserialize)]
+        struct OpenRouterZdrEndpointsResponse {
+            data: Vec<OpenRouterZdrEndpoint>,
+        }
 
-    let zdr_body: OpenRouterZdrEndpointsResponse = zdr_resp.json().await.ok()?;
-    let zdr_set: std::collections::HashSet<String> =
-        zdr_body.data.into_iter().map(|e| e.model_id).collect();
+        let zdr_body: OpenRouterZdrEndpointsResponse = zdr_resp.json().await.ok()?;
+        let set: std::collections::HashSet<String> =
+            zdr_body.data.into_iter().map(|e| e.model_id).collect();
+        Some(set)
+    } else {
+        None
+    };
 
     let resp = client
         .get("https://openrouter.ai/api/v1/models")
@@ -432,7 +440,8 @@ async fn fetch_openrouter_models() -> Option<Vec<String>> {
 
     let mut filtered = Vec::new();
     for m in &model_ids {
-        if zdr_set.contains(m) && !m.ends_with(":free") {
+        let is_zdr_ok = !openrouter_zdr || zdr_set.as_ref().map(|s| s.contains(m)).unwrap_or(false);
+        if is_zdr_ok && !m.ends_with(":free") {
             let free = format!("{}:free", m);
             if model_set.contains(&free) {
                 filtered.push(m.clone());
@@ -933,13 +942,28 @@ pub async fn run_setup(config_path_override: Option<String>) {
         println!("   {}", format!("(current: {})", m).dimmed());
     }
 
+    let mut openrouter_zdr = existing.openrouter_zdr.unwrap_or(false);
+    if provider_choice.trim() == "4" {
+        let default_zdr_str = if openrouter_zdr { "Y/n" } else { "y/N" };
+        let zdr_prompt = format!(
+            "  Enforce Zero Data Retention (ZDR) models only? ({}): ",
+            default_zdr_str
+        );
+        let zdr_input = prompt(&zdr_prompt).unwrap_or_default();
+        let zdr_trimmed = zdr_input.trim();
+        if !zdr_trimmed.is_empty() {
+            openrouter_zdr =
+                zdr_trimmed.eq_ignore_ascii_case("y") || zdr_trimmed.eq_ignore_ascii_case("yes");
+        }
+    }
+
     let mut openrouter_models = None;
     let mut copilot_models = None;
     let mut gemini_models = None;
     if provider_choice.trim() == "4" {
         print!("  Fetching models from OpenRouter...");
         let _ = io::stdout().flush();
-        if let Some(models) = fetch_openrouter_models().await {
+        if let Some(models) = fetch_openrouter_models(openrouter_zdr).await {
             println!(" Done.");
             openrouter_models = Some(models);
         } else {
@@ -1700,6 +1724,9 @@ pub async fn run_setup(config_path_override: Option<String>) {
         toml_content.push_str(&format!("model = \"{}\"\n", model));
     }
     toml_content.push_str(&format!("provider = \"{}\"\n", provider_id));
+    if provider_id == "openrouter" {
+        toml_content.push_str(&format!("openrouter_zdr = {}\n", openrouter_zdr));
+    }
     if !api_key.is_empty() {
         toml_content.push_str(&format!("api_key = \"{}\"\n", api_key));
     }

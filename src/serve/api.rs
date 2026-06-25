@@ -2628,6 +2628,7 @@ fn build_provider(config: &RuneConfig) -> anyhow::Result<ProviderRegistry> {
                 other.to_string(),
                 key,
                 config.base_url.clone(),
+                config.openrouter_zdr,
             )));
         }
     }

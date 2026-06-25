@@ -329,6 +329,7 @@ fn build_provider(cfg: &RuneConfig) -> ProviderRegistry {
                     provider_name.to_string(),
                     key.clone(),
                     cfg.base_url.clone(),
+                    cfg.openrouter_zdr,
                 )));
             }
         }

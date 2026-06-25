@@ -1251,6 +1251,7 @@ pub fn init_provider(cfg: &config::RuneConfig) -> ProviderRegistry {
                     other.to_string(),
                     key.clone(),
                     cfg.base_url.clone(),
+                    cfg.openrouter_zdr,
                 )));
             }
         }

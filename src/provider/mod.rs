@@ -408,11 +408,17 @@ pub struct OpenAiProvider {
     pub api_key: String,
     pub base_url: String,
     pub provider_name: String,
+    pub openrouter_zdr: bool,
     pub reasoning_models: std::sync::Mutex<std::collections::HashSet<String>>,
 }
 
 impl OpenAiProvider {
-    pub fn new(name: String, api_key: String, base_url: Option<String>) -> Self {
+    pub fn new(
+        name: String,
+        api_key: String,
+        base_url: Option<String>,
+        openrouter_zdr: bool,
+    ) -> Self {
         let base = base_url.unwrap_or_else(|| {
             if name == "openrouter" {
                 "https://openrouter.ai/api/v1".to_string()
@@ -424,6 +430,7 @@ impl OpenAiProvider {
             api_key,
             base_url: base,
             provider_name: name,
+            openrouter_zdr,
             reasoning_models: std::sync::Mutex::new(std::collections::HashSet::new()),
         }
     }
@@ -552,42 +559,46 @@ impl Provider for OpenAiProvider {
             }
 
             let client = Client::new();
-            let zdr_url = format!("{}/endpoints/zdr", base_url.trim_end_matches('/'));
-            let zdr_response = client
-                .get(&zdr_url)
-                .timeout(std::time::Duration::from_secs(15))
-                .send()
-                .await
-                .map_err(|e| anyhow!("failed to fetch OpenRouter ZDR endpoints: {}", e))?;
+            let zdr_set = if self.openrouter_zdr {
+                let zdr_url = format!("{}/endpoints/zdr", base_url.trim_end_matches('/'));
+                let zdr_response = client
+                    .get(&zdr_url)
+                    .timeout(std::time::Duration::from_secs(15))
+                    .send()
+                    .await
+                    .map_err(|e| anyhow!("failed to fetch OpenRouter ZDR endpoints: {}", e))?;
 
-            if !zdr_response.status().is_success() {
-                let body = zdr_response.text().await.unwrap_or_default();
-                return Err(anyhow!(
-                    "fetch OpenRouter ZDR endpoints failed: {}",
-                    crate::config::safe_truncate(&body, 200)
-                ));
-            }
+                if !zdr_response.status().is_success() {
+                    let body = zdr_response.text().await.unwrap_or_default();
+                    return Err(anyhow!(
+                        "fetch OpenRouter ZDR endpoints failed: {}",
+                        crate::config::safe_truncate(&body, 200)
+                    ));
+                }
 
-            #[derive(serde::Deserialize)]
-            struct OpenRouterZdrEndpoint {
-                model_id: String,
-            }
+                #[derive(serde::Deserialize)]
+                struct OpenRouterZdrEndpoint {
+                    model_id: String,
+                }
 
-            #[derive(serde::Deserialize)]
-            struct OpenRouterZdrEndpointsResponse {
-                data: Vec<OpenRouterZdrEndpoint>,
-            }
+                #[derive(serde::Deserialize)]
+                struct OpenRouterZdrEndpointsResponse {
+                    data: Vec<OpenRouterZdrEndpoint>,
+                }
 
-            let zdr_body = zdr_response
-                .text()
-                .await
-                .map_err(|e| anyhow!("failed to read OpenRouter ZDR endpoints response: {}", e))?;
+                let zdr_body = zdr_response.text().await.map_err(|e| {
+                    anyhow!("failed to read OpenRouter ZDR endpoints response: {}", e)
+                })?;
 
-            let zdr_list: OpenRouterZdrEndpointsResponse = serde_json::from_str(&zdr_body)
-                .map_err(|e| anyhow!("failed to parse OpenRouter ZDR endpoints list: {}", e))?;
+                let zdr_list: OpenRouterZdrEndpointsResponse = serde_json::from_str(&zdr_body)
+                    .map_err(|e| anyhow!("failed to parse OpenRouter ZDR endpoints list: {}", e))?;
 
-            let zdr_set: std::collections::HashSet<String> =
-                zdr_list.data.into_iter().map(|e| e.model_id).collect();
+                let set: std::collections::HashSet<String> =
+                    zdr_list.data.into_iter().map(|e| e.model_id).collect();
+                Some(set)
+            } else {
+                None
+            };
 
             let url = format!("{}/models", base_url.trim_end_matches('/'));
             let response = client
@@ -630,9 +641,11 @@ impl Provider for OpenAiProvider {
             let mut reasoning_set = std::collections::HashSet::new();
 
             for m in list.data {
-                // Support ZDR for OpenRouter by filtering out non-ZDR-compliant models
-                if !zdr_set.contains(&m.id) {
-                    continue;
+                // Support ZDR for OpenRouter by filtering out non-ZDR-compliant models (if opt-in is enabled)
+                if let Some(ref zdr) = zdr_set {
+                    if !zdr.contains(&m.id) {
+                        continue;
+                    }
                 }
                 // Only include models that explicitly declare "tools" support
                 let supports_tools = m
@@ -3223,7 +3236,7 @@ mod tests {
 
     #[test]
     fn test_openai_provider_new_default_base_url() {
-        let p = OpenAiProvider::new("openai".to_string(), "sk-test".to_string(), None);
+        let p = OpenAiProvider::new("openai".to_string(), "sk-test".to_string(), None, false);
         assert_eq!(p.base_url, "https://api.openai.com/v1");
         assert_eq!(p.provider_name, "openai");
         assert_eq!(p.api_key, "sk-test");
@@ -3235,6 +3248,7 @@ mod tests {
             "ollama".to_string(),
             "".to_string(),
             Some("http://localhost:11434/v1".to_string()),
+            false,
         );
         assert_eq!(p.base_url, "http://localhost:11434/v1");
         assert_eq!(p.name(), "ollama");
@@ -3866,7 +3880,7 @@ mod provider_tests {
     #[test]
     fn test_openai_provider_list_models_returns_empty_by_default() {
         // OpenAI provider uses the default trait impl which returns empty Vec
-        let p = OpenAiProvider::new("openai".to_string(), "sk-fake".to_string(), None);
+        let p = OpenAiProvider::new("openai".to_string(), "sk-fake".to_string(), None, false);
         let rt = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()
@@ -3933,6 +3947,7 @@ mod provider_tests {
             "openrouter".to_string(),
             "sk-fake".to_string(),
             Some(base_url),
+            true,
         );
         let rt = tokio::runtime::Builder::new_current_thread()
             .enable_all()
@@ -3949,8 +3964,69 @@ mod provider_tests {
     }
 
     #[test]
+    fn test_openrouter_list_models_without_zdr_filtering() {
+        use std::io::{Read, Write};
+        use std::net::TcpListener;
+        use std::thread;
+
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let base_url = format!("http://{}", addr);
+
+        thread::spawn(move || {
+            for stream in listener.incoming() {
+                let mut stream = match stream {
+                    Ok(s) => s,
+                    Err(_) => break,
+                };
+                let mut buf = [0; 1024];
+                let _ = stream.read(&mut buf);
+                let request_str = String::from_utf8_lossy(&buf);
+
+                if request_str.contains("GET /models") {
+                    let response_body = r#"{
+                        "data": [
+                            {"id": "meta-llama/llama-3.3-70b-instruct", "context_length": 131072, "supported_parameters": ["tools"]},
+                            {"id": "google/gemini-2.0-flash", "context_length": 1048576, "supported_parameters": ["tools", "reasoning"]},
+                            {"id": "openai/gpt-4o-mini", "context_length": 128000, "supported_parameters": ["tools"]},
+                            {"id": "deepseek/deepseek-chat", "context_length": 64000, "supported_parameters": ["tools"]}
+                        ]
+                    }"#;
+                    let response = format!(
+                        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                        response_body.len(),
+                        response_body
+                    );
+                    let _ = stream.write_all(response.as_bytes());
+                }
+            }
+        });
+
+        let p = OpenAiProvider::new(
+            "openrouter".to_string(),
+            "sk-fake".to_string(),
+            Some(base_url),
+            false,
+        );
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let result = rt.block_on(p.list_models());
+        assert!(result.is_ok());
+        let models = result.unwrap();
+
+        // Should NOT filter out "openai/gpt-4o-mini" and "deepseek/deepseek-chat"
+        assert_eq!(models.len(), 4);
+        assert_eq!(models[0].id, "deepseek/deepseek-chat");
+        assert_eq!(models[1].id, "google/gemini-2.0-flash");
+        assert_eq!(models[2].id, "meta-llama/llama-3.3-70b-instruct");
+        assert_eq!(models[3].id, "openai/gpt-4o-mini");
+    }
+
+    #[test]
     fn test_openrouter_supports_reasoning() {
-        let p = OpenAiProvider::new("openrouter".to_string(), "sk-fake".to_string(), None);
+        let p = OpenAiProvider::new("openrouter".to_string(), "sk-fake".to_string(), None, false);
         // Fallbacks
         assert!(p.supports_reasoning("openai/o1-mini"));
         assert!(p.supports_reasoning("openai/o3-mini"));
@@ -3970,7 +4046,7 @@ mod provider_tests {
 
     #[test]
     fn test_openrouter_normalize_thinking() {
-        let p = OpenAiProvider::new("openrouter".to_string(), "sk-fake".to_string(), None);
+        let p = OpenAiProvider::new("openrouter".to_string(), "sk-fake".to_string(), None, false);
         // Fallback model supporting reasoning preserves thinking
         let req = LlmRequest {
             model: "openai/o1-mini".to_string(),
@@ -4002,6 +4078,7 @@ mod provider_tests {
             "openai".to_string(),
             "sk-fake".to_string(),
             None,
+            false,
         )));
         let rt = tokio::runtime::Builder::new_current_thread()
             .enable_all()

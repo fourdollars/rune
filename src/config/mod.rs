@@ -218,6 +218,9 @@ pub struct RuneConfig {
     pub trace: Option<String>,
     pub json_output: bool,
     pub auto_approve: bool,
+    /// Enforce Zero Data Retention (ZDR) model filtering for OpenRouter.
+    #[serde(default)]
+    pub openrouter_zdr: bool,
     /// Approximate model context window in tokens.
     pub context_window: usize,
     /// Trigger automatic compaction once this fraction of context_window is reached.
@@ -274,6 +277,7 @@ impl Default for RuneConfig {
             trace: None,
             json_output: false,
             auto_approve: false,
+            openrouter_zdr: false,
             context_window: 128000,
             compact_threshold: 0.85,
             compact_keep_last: 6,
@@ -312,6 +316,7 @@ struct PartialConfig {
     embedding: Option<crate::embedding::EmbeddingConfig>,
     system_prompt: Option<String>,
     thinking: Option<String>,
+    openrouter_zdr: Option<bool>,
     notes: Option<NotesConfig>,
     #[serde(default)]
     agents: Option<std::collections::HashMap<String, AgentProfile>>,
@@ -438,6 +443,15 @@ struct CliArgs {
     #[arg(long, env = "RUNE_SYSTEM_PROMPT", help_heading = "Advanced")]
     system_prompt: Option<String>,
 
+    /// Enforce Zero Data Retention (ZDR) model filtering for OpenRouter
+    #[arg(
+        long,
+        env = "RUNE_OPENROUTER_ZDR",
+        action = clap::ArgAction::SetTrue,
+        help_heading = "Advanced"
+    )]
+    openrouter_zdr: bool,
+
     /// Prompt to send (one-shot mode). Alternative to piping stdin.
     #[arg(trailing_var_arg = true, help_heading = "Input")]
     prompt: Vec<String>,
@@ -515,6 +529,9 @@ pub fn load() -> anyhow::Result<RuneConfig> {
         embedding: None,
         thinking: env::var("RUNE_THINKING").ok(),
         system_prompt: env::var("RUNE_SYSTEM_PROMPT").ok(),
+        openrouter_zdr: env::var("RUNE_OPENROUTER_ZDR")
+            .ok()
+            .and_then(|v| parse_boolish(&v)),
         notes: None,
         agents: None,
         loop_config: None,
@@ -523,6 +540,9 @@ pub fn load() -> anyhow::Result<RuneConfig> {
         .ok()
         .and_then(|v| parse_boolish(&v));
     let env_auto_approve = env::var("RUNE_YES").ok().and_then(|v| parse_boolish(&v));
+    let env_openrouter_zdr = env::var("RUNE_OPENROUTER_ZDR")
+        .ok()
+        .and_then(|v| parse_boolish(&v));
 
     // Explicit config file (--config / -c / RUNE_CONFIG)
     // Highest priority: hard-fails if the file is missing or has parse errors.
@@ -684,6 +704,15 @@ pub fn load() -> anyhow::Result<RuneConfig> {
             .or(defaults.trace),
         json_output: cli.json || env_json_output.unwrap_or(defaults.json_output),
         auto_approve: cli.yes || env_auto_approve.unwrap_or(defaults.auto_approve),
+        openrouter_zdr: cli.openrouter_zdr
+            || env_openrouter_zdr.unwrap_or(
+                ec.and_then(|c| c.openrouter_zdr)
+                    .or(env_partial.openrouter_zdr)
+                    .or(cwdc.and_then(|c| c.openrouter_zdr))
+                    .or(lc.and_then(|c| c.openrouter_zdr))
+                    .or(uc.and_then(|c| c.openrouter_zdr))
+                    .unwrap_or(defaults.openrouter_zdr),
+            ),
         context_window: ec
             .and_then(|c| c.context_window)
             .or(env_partial.context_window)
@@ -817,10 +846,16 @@ pub fn load_without_clap() -> anyhow::Result<RuneConfig> {
         embedding: None,
         thinking: env::var("RUNE_THINKING").ok(),
         system_prompt: env::var("RUNE_SYSTEM_PROMPT").ok(),
+        openrouter_zdr: env::var("RUNE_OPENROUTER_ZDR")
+            .ok()
+            .and_then(|v| parse_boolish(&v)),
         notes: None,
         agents: None,
         loop_config: None,
     };
+    let env_openrouter_zdr = env::var("RUNE_OPENROUTER_ZDR")
+        .ok()
+        .and_then(|v| parse_boolish(&v));
 
     // Load TOML files
     let cwd_cfg = env::current_dir()
@@ -915,6 +950,13 @@ pub fn load_without_clap() -> anyhow::Result<RuneConfig> {
             .or_else(|| uc.and_then(|c| c.trace.clone())),
         json_output: false,
         auto_approve: false,
+        openrouter_zdr: env_openrouter_zdr.unwrap_or(
+            cwdc.and_then(|c| c.openrouter_zdr)
+                .or(env_partial.openrouter_zdr)
+                .or(lc.and_then(|c| c.openrouter_zdr))
+                .or(uc.and_then(|c| c.openrouter_zdr))
+                .unwrap_or(defaults.openrouter_zdr),
+        ),
         context_window: env_partial
             .context_window
             .or_else(|| cwdc.and_then(|c| c.context_window))
