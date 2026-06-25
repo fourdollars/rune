@@ -87,9 +87,14 @@ mod tests {
 
     #[test]
     fn test_codemirror_modes_present() {
+        let js = get("codemirror-modes.js").expect("codemirror-modes.js missing");
         assert!(
-            get("codemirror-modes.js").is_some(),
-            "codemirror-modes.js missing"
+            js.contains("defineSimpleMode"),
+            "codemirror-modes.js missing defineSimpleMode addon"
+        );
+        assert!(
+            js.contains("htmlmixed"),
+            "codemirror-modes.js missing htmlmixed mode dependency"
         );
     }
 

@@ -279,7 +279,10 @@ function insertFormat(type) {
             });
             break;
         case 'task':
-            transformLines(line => line.startsWith('- [ ] ') ? line.substring(6) : '- [ ] ' + line);
+            transformLines(line => {
+                const match = line.match(/^- \[[ xX]\] (.*)$/);
+                return match ? match[1] : '- [ ] ' + line;
+            });
             break;
         case 'table':
             doc.replaceSelection(
@@ -291,12 +294,14 @@ function insertFormat(type) {
     }
 
     function transformLines(fn) {
-        const start = doc.getCursor('start').line;
-        const end = doc.getCursor('end').line;
-        for (let i = start; i <= end; i++) {
-            const line = doc.getLine(i);
-            doc.replaceRange(fn(line, i - start), { line: i, ch: 0 }, { line: i, ch: line.length });
-        }
+        editorInstance.operation(() => {
+            const start = doc.getCursor('start').line;
+            const end = doc.getCursor('end').line;
+            for (let i = start; i <= end; i++) {
+                const line = doc.getLine(i);
+                doc.replaceRange(fn(line, i - start), { line: i, ch: 0 }, { line: i, ch: line.length });
+            }
+        });
     }
 }
 
