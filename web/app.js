@@ -208,7 +208,9 @@ function initEditor() {
 function setEditorValue(text) {
     specContent = text;
     if (editorInstance) {
-        editorInstance.setValue(text);
+        if (editorInstance.getValue() !== text) {
+            editorInstance.setValue(text);
+        }
     }
 }
 
