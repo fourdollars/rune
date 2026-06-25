@@ -1208,6 +1208,8 @@ function handlePreviewScroll() {
         const ratio = (scrollTop - offsetLow) / (offsetHigh - offsetLow || 1);
         targetEditorLine = lineLow + ratio * (lineHigh - lineLow);
     }
+    targetEditorLine = Math.round(targetEditorLine);
+    targetEditorLine = Math.max(0, Math.min(editorInstance.lineCount() - 1, targetEditorLine));
 
     const editorScrollTop = editorInstance.heightAtLine(targetEditorLine, 'local');
     editorInstance.scrollTo(null, editorScrollTop);
@@ -2730,13 +2732,11 @@ try {
         syncScrollEnabled = val === '1';
     }
 } catch {}
-document.addEventListener('DOMContentLoaded', () => {
-    const btnSync = document.getElementById('btn-sync-scroll');
-    if (btnSync) {
-        if (syncScrollEnabled) btnSync.classList.add('active');
-        else btnSync.classList.remove('active');
-    }
-});
+const btnSync = document.getElementById('btn-sync-scroll');
+if (btnSync) {
+    if (syncScrollEnabled) btnSync.classList.add('active');
+    else btnSync.classList.remove('active');
+}
 applyPanelLayout();
 // Session init: verify session via /api/me, then connect, or redirect to login
 function getSessionId() {
