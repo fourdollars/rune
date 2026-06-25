@@ -309,7 +309,9 @@ function setEditorValue(text) {
     specContent = text;
     if (editorInstance) {
         if (editorInstance.getValue() !== text) {
+            const cursor = editorInstance.getCursor();
             editorInstance.setValue(text);
+            editorInstance.setCursor(cursor);
         }
     }
 }
