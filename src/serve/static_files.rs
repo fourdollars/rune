@@ -29,6 +29,12 @@ static ASSETS: LazyLock<HashMap<&'static str, &'static str>> = LazyLock::new(|| 
         "katex-auto-render.min.js",
         include_str!("../../web/katex-auto-render.min.js"),
     );
+    m.insert("codemirror.css", include_str!("../../web/codemirror.css"));
+    m.insert("codemirror.js", include_str!("../../web/codemirror.min.js"));
+    m.insert(
+        "codemirror-markdown.js",
+        include_str!("../../web/codemirror-markdown.min.js"),
+    );
     m
 });
 
@@ -62,6 +68,16 @@ mod tests {
         assert!(
             get("katex-auto-render.min.js").is_some(),
             "katex-auto-render.min.js missing"
+        );
+    }
+
+    #[test]
+    fn test_codemirror_assets_present() {
+        assert!(get("codemirror.css").is_some(), "codemirror.css missing");
+        assert!(get("codemirror.js").is_some(), "codemirror.js missing");
+        assert!(
+            get("codemirror-markdown.js").is_some(),
+            "codemirror-markdown.js missing"
         );
     }
 
