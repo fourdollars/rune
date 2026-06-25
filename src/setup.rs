@@ -624,11 +624,44 @@ async fn fetch_gemini_models(api_key: &str, base_url: &str) -> Option<Vec<String
     }
 }
 
-async fn fetch_openrouter_embedding_models() -> Option<(Vec<String>, String)> {
+async fn fetch_openrouter_embedding_models(openrouter_zdr: bool) -> Option<(Vec<String>, String)> {
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(5))
         .build()
         .ok()?;
+
+    let zdr_set = if openrouter_zdr {
+        // Fetch ZDR endpoints to filter models by ZDR support
+        let zdr_resp = client
+            .get("https://openrouter.ai/api/v1/endpoints/zdr")
+            .send()
+            .await
+            .ok()?;
+        if !zdr_resp.status().is_success() {
+            return None;
+        }
+
+        #[derive(serde::Deserialize)]
+        struct OpenRouterZdrEndpoint {
+            model_id: String,
+        }
+
+        #[derive(serde::Deserialize)]
+        struct OpenRouterZdrEndpointsResponse {
+            data: Vec<OpenRouterZdrEndpoint>,
+        }
+
+        let zdr_body: OpenRouterZdrEndpointsResponse = zdr_resp.json().await.ok()?;
+        let set: std::collections::HashSet<String> = zdr_body
+            .data
+            .into_iter()
+            .map(|e| e.model_id)
+            .collect();
+        Some(set)
+    } else {
+        None
+    };
+
     let resp = client
         .get("https://openrouter.ai/api/v1/embeddings/models")
         .send()
@@ -641,7 +674,14 @@ async fn fetch_openrouter_embedding_models() -> Option<(Vec<String>, String)> {
     }
 
     let mut sorted_data = body.data;
+    if let Some(ref zdr) = zdr_set {
+        sorted_data.retain(|m| zdr.contains(&m.id));
+    }
     sorted_data.sort_by(|a, b| a.id.cmp(&b.id));
+
+    if sorted_data.is_empty() {
+        return None;
+    }
 
     let mut min_sum: Option<f64> = None;
     let mut default_model: Option<String> = None;
@@ -1309,7 +1349,7 @@ pub async fn run_setup(config_path_override: Option<String>) {
         if provider_choice.trim() == "4" {
             print!("  Fetching embedding models from OpenRouter...");
             let _ = io::stdout().flush();
-            if let Some(res) = fetch_openrouter_embedding_models().await {
+            if let Some(res) = fetch_openrouter_embedding_models(openrouter_zdr).await {
                 println!(" Done.");
                 openrouter_emb_models = Some(res);
             } else {
