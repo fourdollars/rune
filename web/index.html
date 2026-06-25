@@ -199,6 +199,20 @@
                     </div>
                     <div class="mobile-section-body">
                         <div id="editor-container">
+                            <div id="editor-toolbar" class="editor-toolbar">
+                                <button type="button" onclick="insertFormat('bold')" title="Bold (Ctrl+B)"><b>B</b></button>
+                                <button type="button" onclick="insertFormat('italic')" title="Italic (Ctrl+I)"><i>I</i></button>
+                                <button type="button" onclick="insertFormat('header')" title="Header cycler (Ctrl+H)">H</button>
+                                <span class="toolbar-separator">|</span>
+                                <button type="button" onclick="insertFormat('link')" title="Insert Link (Ctrl+K)">🔗</button>
+                                <button type="button" onclick="insertFormat('image')" title="Insert Image">🖼️</button>
+                                <button type="button" onclick="insertFormat('code')" title="Code Block">```</button>
+                                <span class="toolbar-separator">|</span>
+                                <button type="button" onclick="insertFormat('ul')" title="Unordered List">• List</button>
+                                <button type="button" onclick="insertFormat('ol')" title="Ordered List">1. List</button>
+                                <button type="button" onclick="insertFormat('task')" title="Task List">☑ Task</button>
+                                <button type="button" onclick="insertFormat('table')" title="Insert Table">📊 Table</button>
+                            </div>
                             <div id="editor-wrapper"></div>
                         </div>
                     </div>
