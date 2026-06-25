@@ -96,6 +96,28 @@ mod tests {
             js.contains("htmlmixed"),
             "codemirror-modes.js missing htmlmixed mode dependency"
         );
+        assert!(js.contains("toml"), "codemirror-modes.js missing toml mode");
+    }
+
+    #[test]
+    fn test_app_js_has_mode_aliases_and_themes() {
+        let js = get("app.js").expect("app.js missing");
+        assert!(
+            js.contains("registerCodeMirrorModes"),
+            "app.js must define registerCodeMirrorModes"
+        );
+        assert!(
+            js.contains("editorTheme"),
+            "app.js must define editorTheme for dark/light switching"
+        );
+        assert!(
+            js.contains("rune-dark") && js.contains("rune-light"),
+            "app.js must reference rune-dark and rune-light themes"
+        );
+        assert!(
+            js.contains("modeInfo"),
+            "app.js must populate CodeMirror.modeInfo for findModeByName"
+        );
     }
 
     #[test]

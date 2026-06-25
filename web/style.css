@@ -786,63 +786,96 @@ pre.hljs-pre:hover .copy-btn {
 }
 
 
-/* --- CodeMirror Syntax Token Colors (GitHub Dark, matches Preview highlight.js) --- */
-/* Markdown structure */
-.CodeMirror .cm-header         { color: #79c0ff; font-weight: bold; }
-.CodeMirror .cm-strong         { font-weight: bold; }
-.CodeMirror .cm-em             { font-style: italic; }
-.CodeMirror .cm-link           { color: #a5d6ff; text-decoration: underline; }
-.CodeMirror .cm-url            { color: #8b949e; }
-.CodeMirror .cm-hr             { color: #8b949e; }
-.CodeMirror .cm-quote          { color: #8b949e; font-style: italic; }
-/* Code token colors — GitHub Dark palette */
-.CodeMirror .cm-keyword        { color: #ff7b72; }   /* keyword/type       → red    */
-.CodeMirror .cm-def            { color: #d2a8ff; }   /* function def       → purple */
-.CodeMirror .cm-builtin        { color: #ffa657; }   /* built-in           → orange */
-.CodeMirror .cm-string         { color: #a5d6ff; }   /* string literal     → blue   */
-.CodeMirror .cm-string-2       { color: #a5d6ff; }   /* template/regexp    → blue   */
-.CodeMirror .cm-number         { color: #79c0ff; }   /* number             → blue   */
-.CodeMirror .cm-atom           { color: #79c0ff; }   /* atom/constant      → blue   */
-.CodeMirror .cm-variable       { color: #c9d1d9; }   /* variable           → default text */
-.CodeMirror .cm-variable-2     { color: #79c0ff; }   /* variable-2         → blue   */
-.CodeMirror .cm-variable-3,
-.CodeMirror .cm-type           { color: #ffa657; }   /* type               → orange */
-.CodeMirror .cm-comment        { color: #8b949e; }   /* comment            → grey   */
-.CodeMirror .cm-tag            { color: #7ee787; }   /* HTML tag           → green  */
-.CodeMirror .cm-attribute      { color: #79c0ff; }   /* HTML attribute     → blue   */
-.CodeMirror .cm-qualifier      { color: #79c0ff; }   /* CSS class/id       → blue   */
-.CodeMirror .cm-meta           { color: #8b949e; }   /* meta/preprocessor  → grey   */
-.CodeMirror .cm-bracket        { color: #c9d1d9; }   /* bracket            → default text */
-.CodeMirror .cm-operator       { color: #79c0ff; }   /* operator           → blue   */
-.CodeMirror .cm-error          { color: #f85149; }   /* error              → red    */
+/* ============================================================
+   CodeMirror Themes: rune-dark (GitHub Dark) & rune-light (GitHub Light)
+   Token colors match the highlight.js themes used in Preview.
+   ============================================================ */
 
-@media (prefers-color-scheme: light) {
-    /* GitHub Light palette — matches highlight-light.min.css */
-    .CodeMirror .cm-header     { color: #005cc5; font-weight: bold; }
-    .CodeMirror .cm-link       { color: #032f62; text-decoration: underline; }
-    .CodeMirror .cm-url        { color: #6a737d; }
-    .CodeMirror .cm-hr         { color: #6a737d; }
-    .CodeMirror .cm-quote      { color: #6a737d; font-style: italic; }
-    .CodeMirror .cm-keyword    { color: #d73a49; }
-    .CodeMirror .cm-def        { color: #6f42c1; }
-    .CodeMirror .cm-builtin    { color: #e36209; }
-    .CodeMirror .cm-string     { color: #032f62; }
-    .CodeMirror .cm-string-2   { color: #032f62; }
-    .CodeMirror .cm-number     { color: #005cc5; }
-    .CodeMirror .cm-atom       { color: #005cc5; }
-    .CodeMirror .cm-variable   { color: #24292e; }
-    .CodeMirror .cm-variable-2 { color: #005cc5; }
-    .CodeMirror .cm-variable-3,
-    .CodeMirror .cm-type       { color: #e36209; }
-    .CodeMirror .cm-comment    { color: #6a737d; }
-    .CodeMirror .cm-tag        { color: #22863a; }
-    .CodeMirror .cm-attribute  { color: #005cc5; }
-    .CodeMirror .cm-qualifier  { color: #005cc5; }
-    .CodeMirror .cm-meta       { color: #6a737d; }
-    .CodeMirror .cm-bracket    { color: #24292e; }
-    .CodeMirror .cm-operator   { color: #005cc5; }
-    .CodeMirror .cm-error      { color: #cb2431; }
+/* --- rune-dark: GitHub Dark palette --- */
+.cm-s-rune-dark.CodeMirror {
+    background: #0d1117;
+    color: #c9d1d9;
 }
+.cm-s-rune-dark .CodeMirror-gutters {
+    background: #161b22;
+    border-right: 1px solid #30363d;
+}
+.cm-s-rune-dark .CodeMirror-linenumber  { color: #484f58; }
+.cm-s-rune-dark .CodeMirror-cursor      { border-left: 2px solid #58a6ff; }
+.cm-s-rune-dark .CodeMirror-selected,
+.cm-s-rune-dark .CodeMirror-focused .CodeMirror-selected { background: #2d3f5e; }
+/* Markdown structure */
+.cm-s-rune-dark .cm-header     { color: #79c0ff; font-weight: bold; }
+.cm-s-rune-dark .cm-strong     { font-weight: bold; }
+.cm-s-rune-dark .cm-em         { font-style: italic; }
+.cm-s-rune-dark .cm-link       { color: #a5d6ff; text-decoration: underline; }
+.cm-s-rune-dark .cm-url        { color: #8b949e; }
+.cm-s-rune-dark .cm-hr         { color: #30363d; }
+.cm-s-rune-dark .cm-quote      { color: #8b949e; font-style: italic; }
+/* Code tokens */
+.cm-s-rune-dark .cm-keyword    { color: #ff7b72; }   /* keyword        → red    */
+.cm-s-rune-dark .cm-def        { color: #d2a8ff; }   /* function def   → purple */
+.cm-s-rune-dark .cm-builtin    { color: #ffa657; }   /* built-in       → orange */
+.cm-s-rune-dark .cm-string     { color: #a5d6ff; }   /* string         → blue   */
+.cm-s-rune-dark .cm-string-2   { color: #a5d6ff; }   /* regexp/tmpl    → blue   */
+.cm-s-rune-dark .cm-number     { color: #79c0ff; }   /* number         → blue   */
+.cm-s-rune-dark .cm-atom       { color: #79c0ff; }   /* atom/const     → blue   */
+.cm-s-rune-dark .cm-variable   { color: #c9d1d9; }   /* variable       → text   */
+.cm-s-rune-dark .cm-variable-2 { color: #79c0ff; }   /* variable-2     → blue   */
+.cm-s-rune-dark .cm-variable-3,
+.cm-s-rune-dark .cm-type       { color: #ffa657; }   /* type           → orange */
+.cm-s-rune-dark .cm-comment    { color: #8b949e; }   /* comment        → grey   */
+.cm-s-rune-dark .cm-tag        { color: #7ee787; }   /* HTML tag       → green  */
+.cm-s-rune-dark .cm-attribute  { color: #79c0ff; }   /* HTML attr      → blue   */
+.cm-s-rune-dark .cm-qualifier  { color: #79c0ff; }   /* CSS class/id   → blue   */
+.cm-s-rune-dark .cm-meta       { color: #8b949e; }   /* meta           → grey   */
+.cm-s-rune-dark .cm-bracket    { color: #c9d1d9; }   /* bracket        → text   */
+.cm-s-rune-dark .cm-operator   { color: #79c0ff; }   /* operator       → blue   */
+.cm-s-rune-dark .cm-property   { color: #79c0ff; }   /* property key   → blue   */
+.cm-s-rune-dark .cm-error      { color: #f85149; }   /* error          → red    */
+
+/* --- rune-light: GitHub Light palette --- */
+.cm-s-rune-light.CodeMirror {
+    background: #ffffff;
+    color: #24292e;
+}
+.cm-s-rune-light .CodeMirror-gutters {
+    background: #f6f8fa;
+    border-right: 1px solid #d0d7de;
+}
+.cm-s-rune-light .CodeMirror-linenumber  { color: #8c959f; }
+.cm-s-rune-light .CodeMirror-cursor      { border-left: 2px solid #0969da; }
+.cm-s-rune-light .CodeMirror-selected,
+.cm-s-rune-light .CodeMirror-focused .CodeMirror-selected { background: #c8e1ff; }
+/* Markdown structure */
+.cm-s-rune-light .cm-header    { color: #005cc5; font-weight: bold; }
+.cm-s-rune-light .cm-strong    { font-weight: bold; }
+.cm-s-rune-light .cm-em        { font-style: italic; }
+.cm-s-rune-light .cm-link      { color: #032f62; text-decoration: underline; }
+.cm-s-rune-light .cm-url       { color: #6a737d; }
+.cm-s-rune-light .cm-hr        { color: #d0d7de; }
+.cm-s-rune-light .cm-quote     { color: #6a737d; font-style: italic; }
+/* Code tokens */
+.cm-s-rune-light .cm-keyword   { color: #d73a49; }   /* keyword        → red    */
+.cm-s-rune-light .cm-def       { color: #6f42c1; }   /* function def   → purple */
+.cm-s-rune-light .cm-builtin   { color: #e36209; }   /* built-in       → orange */
+.cm-s-rune-light .cm-string    { color: #032f62; }   /* string         → navy   */
+.cm-s-rune-light .cm-string-2  { color: #032f62; }   /* regexp/tmpl    → navy   */
+.cm-s-rune-light .cm-number    { color: #005cc5; }   /* number         → blue   */
+.cm-s-rune-light .cm-atom      { color: #005cc5; }   /* atom/const     → blue   */
+.cm-s-rune-light .cm-variable  { color: #24292e; }   /* variable       → text   */
+.cm-s-rune-light .cm-variable-2{ color: #005cc5; }   /* variable-2     → blue   */
+.cm-s-rune-light .cm-variable-3,
+.cm-s-rune-light .cm-type      { color: #e36209; }   /* type           → orange */
+.cm-s-rune-light .cm-comment   { color: #6a737d; }   /* comment        → grey   */
+.cm-s-rune-light .cm-tag       { color: #22863a; }   /* HTML tag       → green  */
+.cm-s-rune-light .cm-attribute { color: #005cc5; }   /* HTML attr      → blue   */
+.cm-s-rune-light .cm-qualifier { color: #005cc5; }   /* CSS class/id   → blue   */
+.cm-s-rune-light .cm-meta      { color: #6a737d; }   /* meta           → grey   */
+.cm-s-rune-light .cm-bracket   { color: #24292e; }   /* bracket        → text   */
+.cm-s-rune-light .cm-operator  { color: #005cc5; }   /* operator       → blue   */
+.cm-s-rune-light .cm-property  { color: #005cc5; }   /* property key   → blue   */
+.cm-s-rune-light .cm-error     { color: #cb2431; }   /* error          → red    */
 
 /* --- Mermaid diagrams --- */
 .mermaid-block {
