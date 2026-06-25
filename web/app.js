@@ -513,6 +513,11 @@ function handleMessage(msg) {
             // (these come from file mutations like AI edits, not from file/switch)
             if (msg.note_id && msg.note_id !== currentNoteId) break;
             if (msg.filename !== currentFilename) break;
+            // If the user has unsaved local edits, the incoming content is a stale
+            // echo of a previous save — discard it to prevent deleted/typed chars
+            // from reappearing. Remote updates from other users are still applied
+            // because they arrive when the user is idle (editorDirty === false).
+            if (editorDirty) break;
             specContent = msg.content;
             setEditorValue(msg.content);
             if (showPreview) renderPreview();
