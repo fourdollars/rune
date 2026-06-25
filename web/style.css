@@ -228,79 +228,37 @@ body {
 
 
 
-/* Editor — textarea + highlight.js overlay */
 #editor-container {
     flex: 1;
-    min-height: 0;        /* allow flex child to shrink; critical for absolute children */
+    min-height: 0;
     overflow: hidden;
     position: relative;
 }
-
-/* ── Editor overlay: pixel-perfect alignment ── */
-
-/* Reset both layers to identical box model */
-#editor-highlight,
-#editor {
+#editor-wrapper {
     position: absolute;
     top: 0; left: 0; right: 0; bottom: 0;
-    margin: 0;
-    border: 0;
-    padding: 20px 24px;
-    box-sizing: border-box;
-
+}
+.CodeMirror {
+    height: 100% !important;
     font-family: var(--font-mono);
     font-size: 14px;
     line-height: 1.6;
-    letter-spacing: normal;
-    word-spacing: normal;
-
-    tab-size: 4;
-    -moz-tab-size: 4;
-    white-space: pre-wrap;
-    word-wrap: break-word;
-    overflow-wrap: break-word;
+    background: var(--bg-primary) !important;
+    color: var(--text-primary) !important;
 }
-
-/* Highlight layer (bottom) */
-#editor-highlight {
-    overflow: hidden;           /* JS-driven scroll sync */
-    background: var(--bg-primary);
-    color: var(--text-primary);
-    pointer-events: none;
-    z-index: 0;
-    /* Remove <pre> browser default styles */
-    border-radius: 0;
+.CodeMirror-gutters {
+    background: var(--bg-secondary) !important;
+    border-right: 1px solid var(--border) !important;
 }
-#editor-highlight code {
-    /* inherit everything from pre; add no extra spacing */
-    display: block;
-    font: inherit;
-    letter-spacing: inherit;
-    line-height: inherit;
-    tab-size: inherit;
-    white-space: inherit;
-    word-wrap: inherit;
-    overflow-wrap: inherit;
-    background: transparent;
-    padding: 0;
-    margin: 0;
-    border: 0;
-    color: inherit;
+.CodeMirror-linenumber {
+    color: var(--text-secondary) !important;
+    opacity: 0.5;
 }
-
-/* Input layer (top) */
-#editor {
-    overflow: auto;
-    background: transparent;
-    color: transparent;
-    caret-color: var(--text-primary);
-    outline: none;
-    resize: none;
-    z-index: 1;
-    -webkit-text-fill-color: transparent;
-    /* Prevent textarea from adding its own border/outline on focus */
-    appearance: none;
-    -webkit-appearance: none;
+.CodeMirror-cursor {
+    border-left: 2px solid var(--accent) !important;
+}
+.CodeMirror-selected {
+    background: var(--border) !important;
 }
 
 /* Preview */

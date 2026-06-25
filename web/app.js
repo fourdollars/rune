@@ -169,35 +169,29 @@ function escapeHtmlEditor(text) {
     return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
-// --- Editor: textarea + highlight.js overlay ---
+let editorInstance = null;
+
 function initEditor() {
-    const textarea = document.getElementById('editor');
-    const hlCode   = document.getElementById('editor-highlight-code');
-    if (!textarea || !hlCode) return;
+    const wrapper = document.getElementById('editor-wrapper');
+    if (!wrapper) return;
 
-    function syncHighlight() {
-        // Append trailing newline so last line renders correctly
-        const text = textarea.value.endsWith('\n') ? textarea.value : textarea.value + '\n';
-        hlCode.innerHTML = highlightMarkdownEditor(text);
-    }
+    editorInstance = CodeMirror(wrapper, {
+        mode: 'markdown',
+        lineNumbers: true,
+        lineWrapping: true,
+        theme: 'default',
+        value: specContent || '',
+        tabSize: 4,
+        indentUnit: 4,
+        viewportMargin: 100
+    });
 
-    function syncScroll() {
-        const pre = document.getElementById('editor-highlight');
-        if (pre) {
-            pre.scrollTop  = textarea.scrollTop;
-            pre.scrollLeft = textarea.scrollLeft;
-        }
-    }
-
-    textarea.addEventListener('input', () => {
-        specContent = textarea.value;
+    editorInstance.on('change', () => {
+        specContent = editorInstance.getValue();
         editorDirty = true;
-        syncHighlight();
         clearTimeout(debounceTimer);
         debounceTimer = setTimeout(() => {
-            // Live preview update
             if (showPreview) renderPreview();
-            // Sync to server
             if (editorDirty && currentNoteId) {
                 api('file/update', { note_id: currentNoteId, filename: currentFilename, content: specContent });
                 editorDirty = false;
@@ -205,37 +199,16 @@ function initEditor() {
         }, 300);
     });
 
-    textarea.addEventListener('scroll', () => {
-        syncScroll(); // sync highlight overlay
-        syncEditorToPreview(textarea);
+    editorInstance.on('scroll', () => {
+        if (typeof handleEditorScroll === 'function') handleEditorScroll();
     });
-
-    // Tab key
-    textarea.addEventListener('keydown', e => {
-        if (e.key === 'Tab') {
-            e.preventDefault();
-            const s = textarea.selectionStart;
-            const v = textarea.value;
-            textarea.value = v.substring(0, s) + '    ' + v.substring(textarea.selectionEnd);
-            textarea.selectionStart = textarea.selectionEnd = s + 4;
-            specContent = textarea.value;
-            syncHighlight();
-        }
-    });
-
-    syncHighlight();
 }
 
 function setEditorValue(text) {
-    const textarea = document.getElementById('editor');
-    const hlCode   = document.getElementById('editor-highlight-code');
-    if (!textarea) return;
-    textarea.value = text;
-    if (hlCode && typeof hljs !== 'undefined') {
-        const t = text.endsWith('\n') ? text : text + '\n';
-        hlCode.innerHTML = highlightMarkdownEditor(t);
+    specContent = text;
+    if (editorInstance) {
+        editorInstance.setValue(text);
     }
-    // Also update mobile editor if present
     if (isMobile) setMobileEditorContent(text);
 }
 
@@ -1105,12 +1078,13 @@ function setMode(mode) {
 // --- Edit ↔ Preview scroll sync ---
 let _scrollSyncLock = false;
 
-function syncEditorToPreview(textarea) {
-    if (!showPreview || !showEdit) return; // only sync in split view
+function handleEditorScroll() {
+    if (!editorInstance || !showPreview || !showEdit) return;
     if (_scrollSyncLock) return;
-    const maxScroll = textarea.scrollHeight - textarea.clientHeight;
+    const info = editorInstance.getScrollInfo();
+    const maxScroll = info.height - info.clientHeight;
     if (maxScroll <= 0) return;
-    const pct = textarea.scrollTop / maxScroll;
+    const pct = info.top / maxScroll;
     const pc = previewContainer;
     const pcMax = pc.scrollHeight - pc.clientHeight;
     if (pcMax <= 0) return;
@@ -1119,25 +1093,24 @@ function syncEditorToPreview(textarea) {
     requestAnimationFrame(() => { _scrollSyncLock = false; });
 }
 
-function syncPreviewToEditor(textarea) {
-    if (!showPreview || !showEdit) return;
+function syncPreviewToEditor() {
+    if (!editorInstance || !showPreview || !showEdit) return;
     if (_scrollSyncLock) return;
     const pc = previewContainer;
     const pcMax = pc.scrollHeight - pc.clientHeight;
     if (pcMax <= 0) return;
     const pct = pc.scrollTop / pcMax;
-    const maxScroll = textarea.scrollHeight - textarea.clientHeight;
+    const info = editorInstance.getScrollInfo();
+    const maxScroll = info.height - info.clientHeight;
     if (maxScroll <= 0) return;
     _scrollSyncLock = true;
-    textarea.scrollTop = pct * maxScroll;
+    editorInstance.scrollTo(null, pct * maxScroll);
     requestAnimationFrame(() => { _scrollSyncLock = false; });
 }
 
 function initPreviewScrollSync() {
-    const textarea = document.getElementById('editor');
-    if (!textarea) return;
     previewContainer.addEventListener('scroll', () => {
-        syncPreviewToEditor(textarea);
+        syncPreviewToEditor();
     });
 }
 
@@ -2836,9 +2809,8 @@ function setupMobileUI() {
     }
 
     // Force editor content sync
-    const editor = document.getElementById('editor');
-    if (editor && !editor.value && specContent) {
-        editor.value = specContent;
+    if (editorInstance && !editorInstance.getValue() && specContent) {
+        editorInstance.setValue(specContent);
     }
 
     updateMobileFilename();
