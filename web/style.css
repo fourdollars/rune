@@ -786,22 +786,63 @@ pre.hljs-pre:hover .copy-btn {
 }
 
 
-/* --- CodeMirror Syntax Token Colors --- */
-.cm-header { color: var(--accent) !important; font-weight: bold; }
-.cm-strong { font-weight: bold; }
-.cm-em { font-style: italic; }
-.cm-link { color: var(--accent) !important; text-decoration: underline; }
-.cm-url { color: var(--text-secondary) !important; }
-.cm-string { color: var(--accent) !important; }
-.cm-comment { color: var(--text-secondary) !important; opacity: 0.6; }
-.cm-variable, .cm-variable-2, .cm-variable-3 { color: var(--text-primary) !important; }
-.cm-keyword { color: var(--accent) !important; }
-.cm-number { color: var(--accent) !important; }
-.cm-atom { color: var(--accent) !important; }
-.cm-tag { color: var(--accent) !important; }
-.cm-meta { color: var(--text-secondary) !important; }
-.cm-hr { color: var(--border) !important; }
-.cm-quote { color: var(--text-secondary) !important; font-style: italic; }
+/* --- CodeMirror Syntax Token Colors (GitHub Dark, matches Preview highlight.js) --- */
+/* Markdown structure */
+.CodeMirror .cm-header         { color: #79c0ff; font-weight: bold; }
+.CodeMirror .cm-strong         { font-weight: bold; }
+.CodeMirror .cm-em             { font-style: italic; }
+.CodeMirror .cm-link           { color: #a5d6ff; text-decoration: underline; }
+.CodeMirror .cm-url            { color: #8b949e; }
+.CodeMirror .cm-hr             { color: #8b949e; }
+.CodeMirror .cm-quote          { color: #8b949e; font-style: italic; }
+/* Code token colors — GitHub Dark palette */
+.CodeMirror .cm-keyword        { color: #ff7b72; }   /* keyword/type       → red    */
+.CodeMirror .cm-def            { color: #d2a8ff; }   /* function def       → purple */
+.CodeMirror .cm-builtin        { color: #ffa657; }   /* built-in           → orange */
+.CodeMirror .cm-string         { color: #a5d6ff; }   /* string literal     → blue   */
+.CodeMirror .cm-string-2       { color: #a5d6ff; }   /* template/regexp    → blue   */
+.CodeMirror .cm-number         { color: #79c0ff; }   /* number             → blue   */
+.CodeMirror .cm-atom           { color: #79c0ff; }   /* atom/constant      → blue   */
+.CodeMirror .cm-variable       { color: #c9d1d9; }   /* variable           → default text */
+.CodeMirror .cm-variable-2     { color: #79c0ff; }   /* variable-2         → blue   */
+.CodeMirror .cm-variable-3,
+.CodeMirror .cm-type           { color: #ffa657; }   /* type               → orange */
+.CodeMirror .cm-comment        { color: #8b949e; }   /* comment            → grey   */
+.CodeMirror .cm-tag            { color: #7ee787; }   /* HTML tag           → green  */
+.CodeMirror .cm-attribute      { color: #79c0ff; }   /* HTML attribute     → blue   */
+.CodeMirror .cm-qualifier      { color: #79c0ff; }   /* CSS class/id       → blue   */
+.CodeMirror .cm-meta           { color: #8b949e; }   /* meta/preprocessor  → grey   */
+.CodeMirror .cm-bracket        { color: #c9d1d9; }   /* bracket            → default text */
+.CodeMirror .cm-operator       { color: #79c0ff; }   /* operator           → blue   */
+.CodeMirror .cm-error          { color: #f85149; }   /* error              → red    */
+
+@media (prefers-color-scheme: light) {
+    /* GitHub Light palette — matches highlight-light.min.css */
+    .CodeMirror .cm-header     { color: #005cc5; font-weight: bold; }
+    .CodeMirror .cm-link       { color: #032f62; text-decoration: underline; }
+    .CodeMirror .cm-url        { color: #6a737d; }
+    .CodeMirror .cm-hr         { color: #6a737d; }
+    .CodeMirror .cm-quote      { color: #6a737d; font-style: italic; }
+    .CodeMirror .cm-keyword    { color: #d73a49; }
+    .CodeMirror .cm-def        { color: #6f42c1; }
+    .CodeMirror .cm-builtin    { color: #e36209; }
+    .CodeMirror .cm-string     { color: #032f62; }
+    .CodeMirror .cm-string-2   { color: #032f62; }
+    .CodeMirror .cm-number     { color: #005cc5; }
+    .CodeMirror .cm-atom       { color: #005cc5; }
+    .CodeMirror .cm-variable   { color: #24292e; }
+    .CodeMirror .cm-variable-2 { color: #005cc5; }
+    .CodeMirror .cm-variable-3,
+    .CodeMirror .cm-type       { color: #e36209; }
+    .CodeMirror .cm-comment    { color: #6a737d; }
+    .CodeMirror .cm-tag        { color: #22863a; }
+    .CodeMirror .cm-attribute  { color: #005cc5; }
+    .CodeMirror .cm-qualifier  { color: #005cc5; }
+    .CodeMirror .cm-meta       { color: #6a737d; }
+    .CodeMirror .cm-bracket    { color: #24292e; }
+    .CodeMirror .cm-operator   { color: #005cc5; }
+    .CodeMirror .cm-error      { color: #cb2431; }
+}
 
 /* --- Mermaid diagrams --- */
 .mermaid-block {
