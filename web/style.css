@@ -748,71 +748,22 @@ pre.hljs-pre:hover .copy-btn {
 }
 
 
-/* Fence opening/closing markers ```lang */
-.cm-s-dracula .cm-formatting-code-block {
-    color: #6272a4;
-}
-
-/* --- highlight.js Markdown token colors in editor --- */
-/* Dark mode (Dracula palette) */
-#editor-highlight .hljs-section,
-#editor-highlight .hljs-title        { color: #ff79c6; font-weight: bold; } /* # headers */
-#editor-highlight .hljs-bullet       { color: #ff79c6; }                    /* - * list */
-#editor-highlight .hljs-strong       { color: #f8f8f2; font-weight: bold; } /* **bold** */
-#editor-highlight .hljs-emphasis     { color: #f1fa8c; font-style: italic; }/* *italic* */
-#editor-highlight .hljs-code         { color: #50fa7b; }                    /* `inline` */
-#editor-highlight .hljs-link         { color: #8be9fd; }                    /* [text](url) */
-#editor-highlight .hljs-string       { color: #f1fa8c; }                    /* "strings" */
-#editor-highlight .hljs-quote        { color: #6272a4; font-style: italic; }/* > blockquote */
-#editor-highlight .hljs-comment      { color: #6272a4; }
-#editor-highlight .hljs-attr         { color: #50fa7b; }
-#editor-highlight .hljs-keyword      { color: #ff79c6; }
-#editor-highlight .hljs-number       { color: #bd93f9; }
-#editor-highlight .hljs-literal      { color: #bd93f9; }
-#editor-highlight .hljs-deletion     { color: #f38ba8; }                    /* diff - */
-#editor-highlight .hljs-addition     { color: #a6e3a1; }                    /* diff + */
-
-/* --- Editor: fenced code block background --- */
-#editor-highlight .hljs-meta {
-    color: #6272a4;   /* fence ticks + language label */
-}
-
-/* Code block body: distinct background for depth */
-#editor-highlight .editor-code-block {
-    display: block;
-    background: var(--bg-surface);   /* dark: #11111b, deeper than bg-primary */
-    border-left: 2px solid var(--accent-dim);
-    margin: 0 -24px;                  /* bleed to editor padding edges */
-    padding: 0 24px;
-}
-
-@media (prefers-color-scheme: light) {
-    #editor-highlight .editor-code-block {
-        background: #e8ecf0;          /* same as Preview/Chat code block */
-        border-left-color: #d0d7de;
-    }
-}
-
-/* Light mode: GitHub Light palette for editor syntax */
-@media (prefers-color-scheme: light) {
-    #editor-highlight .hljs-section,
-    #editor-highlight .hljs-title        { color: #005cc5; font-weight: bold; } /* # headers */
-    #editor-highlight .hljs-bullet       { color: #735c0f; }                    /* - * list */
-    #editor-highlight .hljs-strong       { color: #24292e; font-weight: bold; } /* **bold** */
-    #editor-highlight .hljs-emphasis     { color: #24292e; font-style: italic; }/* *italic* */
-    #editor-highlight .hljs-code         { color: #22863a; }                    /* `inline` */
-    #editor-highlight .hljs-link         { color: #0366d6; }                    /* [text](url) */
-    #editor-highlight .hljs-string       { color: #032f62; }                    /* "strings" */
-    #editor-highlight .hljs-quote        { color: #6a737d; font-style: italic; }/* > blockquote */
-    #editor-highlight .hljs-comment      { color: #6a737d; }
-    #editor-highlight .hljs-attr         { color: #22863a; }
-    #editor-highlight .hljs-keyword      { color: #d73a49; }
-    #editor-highlight .hljs-number       { color: #005cc5; }
-    #editor-highlight .hljs-literal      { color: #005cc5; }
-    #editor-highlight .hljs-deletion     { color: #b31d28; }                    /* diff - */
-    #editor-highlight .hljs-addition     { color: #22863a; }                    /* diff + */
-    #editor-highlight .hljs-meta        { color: #6a737d; }
-}
+/* --- CodeMirror Syntax Token Colors --- */
+.cm-header { color: var(--accent) !important; font-weight: bold; }
+.cm-strong { font-weight: bold; }
+.cm-em { font-style: italic; }
+.cm-link { color: var(--accent) !important; text-decoration: underline; }
+.cm-url { color: var(--text-secondary) !important; }
+.cm-string { color: var(--accent) !important; }
+.cm-comment { color: var(--text-secondary) !important; opacity: 0.6; }
+.cm-variable, .cm-variable-2, .cm-variable-3 { color: var(--text-primary) !important; }
+.cm-keyword { color: var(--accent) !important; }
+.cm-number { color: var(--accent) !important; }
+.cm-atom { color: var(--accent) !important; }
+.cm-tag { color: var(--accent) !important; }
+.cm-meta { color: var(--text-secondary) !important; }
+.cm-hr { color: var(--border) !important; }
+.cm-quote { color: var(--text-secondary) !important; font-style: italic; }
 
 /* --- Mermaid diagrams --- */
 .mermaid-block {
@@ -1695,8 +1646,7 @@ pre.hljs-pre:hover .copy-btn {
 .visibility-icon.readonly { cursor: not-allowed; opacity: 0.4; }
 
 
-/* Mobile editor (contenteditable) — hidden on desktop */
-#mobile-editor { display: none; }
+
 
 /* ═══════════════════════════════════════════════════════════════════════════
    MOBILE RESPONSIVE UI (≤ 768px)
@@ -1716,8 +1666,7 @@ pre.hljs-pre:hover .copy-btn {
     /* ─── Hide desktop panels ─── */
     .panel-left, .panel-right, .resize-handle { display: none !important; }
 
-    /* ─── Hide desktop editor textarea + highlight overlay (replaced by #mobile-editor) ─── */
-    #editor, #editor-highlight { display: none !important; }
+
 
     /* ─── Mobile header ─── */
     #mobile-header {
@@ -1856,33 +1805,7 @@ pre.hljs-pre:hover .copy-btn {
         flex: 1; display: flex !important; flex-direction: column;
         position: relative; overflow: hidden;
     }
-    #mobile-section-editor.expanded #editor-highlight { display: none !important; }
-    #mobile-section-editor.expanded #editor { display: none !important; }
-    #mobile-section-editor.expanded #mobile-editor {
-        display: block !important;
-        flex: 1;
-        min-height: 80px;
-        font-family: var(--font-mono);
-        font-size: 14px;
-        line-height: 1.6;
-        padding: 12px;
-        background: var(--bg-primary);
-        color: var(--text-primary);
-        caret-color: var(--accent);
-        overflow-y: auto;
-        white-space: pre-wrap;
-        word-wrap: break-word;
-        overflow-wrap: break-word;
-        outline: none;
-        tab-size: 4;
-        -moz-tab-size: 4;
-        -webkit-user-modify: read-write-plaintext-only;
-    }
-    #mobile-section-editor.expanded #mobile-editor:empty::before {
-        content: "Start typing...";
-        color: var(--text-muted);
-        font-style: italic;
-    }
+
 
     /* Chat in mobile — input always visible at bottom */
     #mobile-section-chat .mobile-section-body {
