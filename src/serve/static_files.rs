@@ -32,6 +32,10 @@ static ASSETS: LazyLock<HashMap<&'static str, &'static str>> = LazyLock::new(|| 
     m.insert("codemirror.css", include_str!("../../web/codemirror.css"));
     m.insert("codemirror.js", include_str!("../../web/codemirror.min.js"));
     m.insert(
+        "codemirror-modes.js",
+        include_str!("../../web/codemirror-modes.min.js"),
+    );
+    m.insert(
         "codemirror-markdown.js",
         include_str!("../../web/codemirror-markdown.min.js"),
     );
@@ -78,6 +82,14 @@ mod tests {
         assert!(
             get("codemirror-markdown.js").is_some(),
             "codemirror-markdown.js missing"
+        );
+    }
+
+    #[test]
+    fn test_codemirror_modes_present() {
+        assert!(
+            get("codemirror-modes.js").is_some(),
+            "codemirror-modes.js missing"
         );
     }
 
