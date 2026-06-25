@@ -264,6 +264,23 @@ impl EmbeddingEngine {
 
         let url = format!("{}/embeddings", base_url.trim_end_matches('/'));
 
+        // OpenRouter Zero Data Retention (ZDR) endpoints for some models (such as google/gemini-embedding-2)
+        // do not support batch embedding requests (returning 404 No endpoints found matching your data policy).
+        // To work around this, if we are calling OpenRouter with ZDR enabled and have multiple texts,
+        // we execute the requests for each text individually in parallel and combine them.
+        if url.contains("openrouter.ai") && self.config.openrouter_zdr && texts.len() > 1 {
+            let mut futures = Vec::with_capacity(texts.len());
+            for text in texts {
+                futures.push(self.embed_one(*text));
+            }
+            let results = futures::future::join_all(futures).await;
+            let mut vectors = Vec::with_capacity(texts.len());
+            for res in results {
+                vectors.push(res?);
+            }
+            return Ok(vectors);
+        }
+
         let api_key = self.get_bearer_token().await?;
 
         let mut body = serde_json::json!({
