@@ -214,26 +214,51 @@ function setEditorValue(text) {
 
 // --- marked.js configuration (v15+) ---
 if (typeof marked !== 'undefined') {
-    // Custom renderer: syntax-highlight code blocks with highlight.js
+    const getLineAttr = (token) => {
+        return (token && typeof token.startLine === 'number') ? ` data-line="${token.startLine}"` : '';
+    };
+
     const renderer = new marked.Renderer();
-    renderer.code = function({ text, lang }) {
-        // Mermaid: output a special div, rendered later
+
+    // Helper to wrap renderer methods to inject data-line attributes
+    const wrap = (methodName) => {
+        const original = renderer[methodName];
+        renderer[methodName] = function(token) {
+            const html = original.call(this, token);
+            const lineAttr = getLineAttr(token);
+            if (lineAttr && html) {
+                return html.replace(/^<([a-z0-9]+)/i, `<$1${lineAttr}`);
+            }
+            return html;
+        };
+    };
+
+    wrap('paragraph');
+    wrap('heading');
+    wrap('blockquote');
+    wrap('list');
+    wrap('listitem');
+
+    renderer.code = function(token) {
+        const { text, lang } = token;
+        const lineAttr = getLineAttr(token);
         if (lang && lang.toLowerCase() === 'mermaid') {
             const id = 'mermaid-' + Math.random().toString(36).slice(2);
-            return `<div class="mermaid-block" id="${id}" data-src="${text.replace(/"/g,'&quot;')}"></div>`;
+            return `<div class="mermaid-block"${lineAttr} id="${id}" data-src="${text.replace(/"/g,'&quot;')}"></div>`;
         }
-        const raw = text.replace(/"/g, '&quot;'); // for data attribute
+        const raw = text.replace(/"/g, '&quot;');
         if (typeof hljs !== 'undefined') {
             const language = lang && hljs.getLanguage(lang) ? lang : null;
             const highlighted = language
                 ? hljs.highlight(text, { language }).value
                 : hljs.highlightAuto(text).value;
             const langClass = language ? ` class="language-${language}"` : '';
-            return `<pre class="hljs-pre" data-raw="${raw}"><code class="hljs${langClass}">${highlighted}</code></pre>`;
+            return `<pre class="hljs-pre"${lineAttr} data-raw="${raw}"><code class="hljs${langClass}">${highlighted}</code></pre>`;
         }
         const safe = text.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-        return `<pre class="hljs-pre" data-raw="${raw}"><code>${safe}</code></pre>`;
+        return `<pre class="hljs-pre"${lineAttr} data-raw="${raw}"><code>${safe}</code></pre>`;
     };
+
     // hooks: unwrap <svg> mistakenly wrapped in <p>
     const hooks = {
         postprocess(html) {
@@ -1115,7 +1140,32 @@ function initPreviewScrollSync() {
 
 function renderPreview() {
     if (typeof marked !== 'undefined') {
-        preview.innerHTML = marked.parse(specContent);
+        const assignLines = (tokens, startLine = 0) => {
+            let currentLine = startLine;
+            for (const token of tokens) {
+                token.startLine = currentLine;
+                if (token.items && token.items.length > 0) {
+                    let itemLine = currentLine;
+                    for (const item of token.items) {
+                        item.startLine = itemLine;
+                        if (item.tokens) {
+                            assignLines(item.tokens, itemLine);
+                        }
+                        const itemNewlines = (item.raw.match(/\n/g) || []).length;
+                        itemLine += itemNewlines;
+                    }
+                }
+                if (token.tokens && token.tokens.length > 0) {
+                    assignLines(token.tokens, currentLine);
+                }
+                const newlines = (token.raw.match(/\n/g) || []).length;
+                currentLine += newlines;
+            }
+        };
+
+        const tokens = marked.lexer(specContent);
+        assignLines(tokens, 0);
+        preview.innerHTML = marked.parser(tokens);
         // Render LaTeX math expressions with KaTeX
         if (typeof renderMathInElement !== 'undefined') {
             renderMathInElement(preview, {
