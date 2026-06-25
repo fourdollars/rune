@@ -221,6 +221,9 @@ pub struct RuneConfig {
     /// Enforce Zero Data Retention (ZDR) model filtering for OpenRouter.
     #[serde(default)]
     pub openrouter_zdr: bool,
+    /// Do not auto-load AGENTS.md from the current directory.
+    #[serde(default)]
+    pub no_agents_md: bool,
     /// Approximate model context window in tokens.
     pub context_window: usize,
     /// Trigger automatic compaction once this fraction of context_window is reached.
@@ -278,6 +281,7 @@ impl Default for RuneConfig {
             json_output: false,
             auto_approve: false,
             openrouter_zdr: false,
+            no_agents_md: false,
             context_window: 128000,
             compact_threshold: 0.85,
             compact_keep_last: 6,
@@ -317,6 +321,7 @@ struct PartialConfig {
     system_prompt: Option<String>,
     thinking: Option<String>,
     openrouter_zdr: Option<bool>,
+    no_agents_md: Option<bool>,
     notes: Option<NotesConfig>,
     #[serde(default)]
     agents: Option<std::collections::HashMap<String, AgentProfile>>,
@@ -452,6 +457,15 @@ struct CliArgs {
     )]
     openrouter_zdr: bool,
 
+    /// Do not auto-load AGENTS.md from the current directory
+    #[arg(
+        long = "no-agents-md",
+        env = "RUNE_NO_AGENTS_MD",
+        action = clap::ArgAction::SetTrue,
+        help_heading = "Input"
+    )]
+    no_agents_md: bool,
+
     /// Prompt to send (one-shot mode). Alternative to piping stdin.
     #[arg(long = "prompt", short = 'p', help_heading = "Input")]
     prompt: Option<String>,
@@ -532,6 +546,9 @@ pub fn load() -> anyhow::Result<RuneConfig> {
         openrouter_zdr: env::var("RUNE_OPENROUTER_ZDR")
             .ok()
             .and_then(|v| parse_boolish(&v)),
+        no_agents_md: env::var("RUNE_NO_AGENTS_MD")
+            .ok()
+            .and_then(|v| parse_boolish(&v)),
         notes: None,
         agents: None,
         loop_config: None,
@@ -541,6 +558,9 @@ pub fn load() -> anyhow::Result<RuneConfig> {
         .and_then(|v| parse_boolish(&v));
     let env_auto_approve = env::var("RUNE_YES").ok().and_then(|v| parse_boolish(&v));
     let env_openrouter_zdr = env::var("RUNE_OPENROUTER_ZDR")
+        .ok()
+        .and_then(|v| parse_boolish(&v));
+    let env_no_agents_md = env::var("RUNE_NO_AGENTS_MD")
         .ok()
         .and_then(|v| parse_boolish(&v));
 
@@ -713,6 +733,15 @@ pub fn load() -> anyhow::Result<RuneConfig> {
                     .or(uc.and_then(|c| c.openrouter_zdr))
                     .unwrap_or(defaults.openrouter_zdr),
             ),
+        no_agents_md: cli.no_agents_md
+            || env_no_agents_md.unwrap_or(
+                ec.and_then(|c| c.no_agents_md)
+                    .or(env_partial.no_agents_md)
+                    .or(cwdc.and_then(|c| c.no_agents_md))
+                    .or(lc.and_then(|c| c.no_agents_md))
+                    .or(uc.and_then(|c| c.no_agents_md))
+                    .unwrap_or(defaults.no_agents_md),
+            ),
         context_window: ec
             .and_then(|c| c.context_window)
             .or(env_partial.context_window)
@@ -845,11 +874,17 @@ pub fn load_without_clap() -> anyhow::Result<RuneConfig> {
         openrouter_zdr: env::var("RUNE_OPENROUTER_ZDR")
             .ok()
             .and_then(|v| parse_boolish(&v)),
+        no_agents_md: env::var("RUNE_NO_AGENTS_MD")
+            .ok()
+            .and_then(|v| parse_boolish(&v)),
         notes: None,
         agents: None,
         loop_config: None,
     };
     let env_openrouter_zdr = env::var("RUNE_OPENROUTER_ZDR")
+        .ok()
+        .and_then(|v| parse_boolish(&v));
+    let env_no_agents_md = env::var("RUNE_NO_AGENTS_MD")
         .ok()
         .and_then(|v| parse_boolish(&v));
 
@@ -952,6 +987,13 @@ pub fn load_without_clap() -> anyhow::Result<RuneConfig> {
                 .or(lc.and_then(|c| c.openrouter_zdr))
                 .or(uc.and_then(|c| c.openrouter_zdr))
                 .unwrap_or(defaults.openrouter_zdr),
+        ),
+        no_agents_md: env_no_agents_md.unwrap_or(
+            cwdc.and_then(|c| c.no_agents_md)
+                .or(env_partial.no_agents_md)
+                .or(lc.and_then(|c| c.no_agents_md))
+                .or(uc.and_then(|c| c.no_agents_md))
+                .unwrap_or(defaults.no_agents_md),
         ),
         context_window: env_partial
             .context_window
