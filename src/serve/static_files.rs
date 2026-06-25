@@ -176,6 +176,18 @@ mod tests {
             "app.js missing togglePreview()"
         );
         assert!(
+            js.contains("toggleSyncScroll"),
+            "app.js missing toggleSyncScroll()"
+        );
+        assert!(
+            js.contains("handleEditorScroll"),
+            "app.js missing handleEditorScroll()"
+        );
+        assert!(
+            js.contains("handlePreviewScroll"),
+            "app.js missing handlePreviewScroll()"
+        );
+        assert!(
             js.contains("applyPanelLayout"),
             "app.js missing applyPanelLayout()"
         );
@@ -183,6 +195,10 @@ mod tests {
         assert!(
             js.contains("showPreview"),
             "app.js missing showPreview state"
+        );
+        assert!(
+            js.contains("syncScrollEnabled"),
+            "app.js missing syncScrollEnabled state"
         );
     }
 
@@ -209,6 +225,10 @@ mod tests {
         assert!(
             html.contains("togglePreview()"),
             "index.html missing togglePreview()"
+        );
+        assert!(
+            html.contains("toggleSyncScroll()"),
+            "index.html missing toggleSyncScroll()"
         );
         assert!(
             html.contains("center-body"),

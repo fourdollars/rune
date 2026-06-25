@@ -58,6 +58,7 @@ let _pendingFile   = null;
 // --- State ---
 let showEdit    = true;
 let showPreview = true;
+let syncScrollEnabled = true;
 let _editorStateRestored = false;
 let currentFilename = '';
 let fileList = [];
@@ -1100,42 +1101,122 @@ function setMode(mode) {
 }
 
 // --- Edit ↔ Preview scroll sync ---
-let _scrollSyncLock = false;
-
-function handleEditorScroll() {
-    if (!editorInstance || !showPreview || !showEdit) return;
-    if (_scrollSyncLock) return;
-    const info = editorInstance.getScrollInfo();
-    const maxScroll = info.height - info.clientHeight;
-    if (maxScroll <= 0) return;
-    const pct = info.top / maxScroll;
-    const pc = previewContainer;
-    const pcMax = pc.scrollHeight - pc.clientHeight;
-    if (pcMax <= 0) return;
-    _scrollSyncLock = true;
-    pc.scrollTop = pct * pcMax;
-    requestAnimationFrame(() => { _scrollSyncLock = false; });
+function toggleSyncScroll() {
+    syncScrollEnabled = !syncScrollEnabled;
+    const btn = document.getElementById('btn-sync-scroll');
+    if (btn) {
+        if (syncScrollEnabled) btn.classList.add('active');
+        else btn.classList.remove('active');
+    }
+    try {
+        localStorage.setItem('rune_sync_scroll', syncScrollEnabled ? '1' : '0');
+    } catch {}
 }
 
-function syncPreviewToEditor() {
-    if (!editorInstance || !showPreview || !showEdit) return;
-    if (_scrollSyncLock) return;
-    const pc = previewContainer;
-    const pcMax = pc.scrollHeight - pc.clientHeight;
-    if (pcMax <= 0) return;
-    const pct = pc.scrollTop / pcMax;
-    const info = editorInstance.getScrollInfo();
-    const maxScroll = info.height - info.clientHeight;
-    if (maxScroll <= 0) return;
-    _scrollSyncLock = true;
-    editorInstance.scrollTo(null, pct * maxScroll);
-    requestAnimationFrame(() => { _scrollSyncLock = false; });
+let activeScrollSource = null;
+let scrollTimeout = null;
+
+function handleEditorScroll() {
+    if (!syncScrollEnabled || !showPreview || !showEdit || !editorInstance) return;
+    if (activeScrollSource === 'preview') return;
+    
+    activeScrollSource = 'editor';
+    clearTimeout(scrollTimeout);
+
+    const scrollInfo = editorInstance.getScrollInfo();
+    const topLine = editorInstance.lineAtHeight(scrollInfo.top, 'local');
+
+    const elements = Array.from(previewContainer.querySelectorAll('[data-line]'));
+    if (elements.length === 0) {
+        activeScrollSource = null;
+        return;
+    }
+
+    let low = 0;
+    let high = elements.length - 1;
+    let targetIdx = 0;
+
+    while (low <= high) {
+        const mid = Math.floor((low + high) / 2);
+        const line = parseInt(elements[mid].dataset.line, 10);
+        if (line <= topLine) {
+            targetIdx = mid;
+            low = mid + 1;
+        } else {
+            high = mid - 1;
+        }
+    }
+
+    const elLow = elements[targetIdx];
+    const elHigh = elements[targetIdx + 1];
+    
+    const lineLow = parseInt(elLow.dataset.line, 10);
+    const offsetLow = elLow.offsetTop;
+    let targetScrollTop = offsetLow;
+
+    if (elHigh) {
+        const lineHigh = parseInt(elHigh.dataset.line, 10);
+        const offsetHigh = elHigh.offsetTop;
+        const ratio = (topLine - lineLow) / (lineHigh - lineLow || 1);
+        targetScrollTop = offsetLow + ratio * (offsetHigh - offsetLow);
+    }
+
+    previewContainer.scrollTop = targetScrollTop;
+
+    scrollTimeout = setTimeout(() => { activeScrollSource = null; }, 100);
+}
+
+function handlePreviewScroll() {
+    if (!syncScrollEnabled || !showPreview || !showEdit || !editorInstance) return;
+    if (activeScrollSource === 'editor') return;
+    
+    activeScrollSource = 'preview';
+    clearTimeout(scrollTimeout);
+
+    const scrollTop = previewContainer.scrollTop;
+    const elements = Array.from(previewContainer.querySelectorAll('[data-line]'));
+    if (elements.length === 0) {
+        activeScrollSource = null;
+        return;
+    }
+
+    let low = 0;
+    let high = elements.length - 1;
+    let targetIdx = 0;
+
+    while (low <= high) {
+        const mid = Math.floor((low + high) / 2);
+        const offset = elements[mid].offsetTop;
+        if (offset <= scrollTop) {
+            targetIdx = mid;
+            low = mid + 1;
+        } else {
+            high = mid - 1;
+        }
+    }
+
+    const elLow = elements[targetIdx];
+    const elHigh = elements[targetIdx + 1];
+    
+    const lineLow = parseInt(elLow.dataset.line, 10);
+    const offsetLow = elLow.offsetTop;
+    let targetEditorLine = lineLow;
+
+    if (elHigh) {
+        const lineHigh = parseInt(elHigh.dataset.line, 10);
+        const offsetHigh = elHigh.offsetTop;
+        const ratio = (scrollTop - offsetLow) / (offsetHigh - offsetLow || 1);
+        targetEditorLine = lineLow + ratio * (lineHigh - lineLow);
+    }
+
+    const editorScrollTop = editorInstance.heightAtLine(targetEditorLine, 'local');
+    editorInstance.scrollTo(null, editorScrollTop);
+
+    scrollTimeout = setTimeout(() => { activeScrollSource = null; }, 100);
 }
 
 function initPreviewScrollSync() {
-    previewContainer.addEventListener('scroll', () => {
-        syncPreviewToEditor();
-    });
+    previewContainer.addEventListener('scroll', handlePreviewScroll);
 }
 
 function renderPreview() {
@@ -2643,6 +2724,19 @@ try {
     if (se !== null) showEdit    = se === '1';
     if (sp !== null) showPreview = sp === '1';
 } catch {}
+try {
+    const val = localStorage.getItem('rune_sync_scroll');
+    if (val !== null) {
+        syncScrollEnabled = val === '1';
+    }
+} catch {}
+document.addEventListener('DOMContentLoaded', () => {
+    const btnSync = document.getElementById('btn-sync-scroll');
+    if (btnSync) {
+        if (syncScrollEnabled) btnSync.classList.add('active');
+        else btnSync.classList.remove('active');
+    }
+});
 applyPanelLayout();
 // Session init: verify session via /api/me, then connect, or redirect to login
 function getSessionId() {
