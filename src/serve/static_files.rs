@@ -547,4 +547,73 @@ mod tests {
             "login.html must have <meta name=\"color-scheme\" content=\"light dark\">"
         );
     }
+
+    #[test]
+    fn test_app_js_has_formatting_and_keyboard_shortcuts() {
+        let js = get("app.js").unwrap();
+        assert!(
+            js.contains("insertFormat"),
+            "app.js must contain insertFormat function"
+        );
+        assert!(
+            js.contains("extraKeys: {"),
+            "app.js must define extraKeys config for CodeMirror"
+        );
+        assert!(
+            js.contains("\"Ctrl-B\": () => insertFormat('bold')"),
+            "app.js must bind Ctrl-B"
+        );
+        assert!(
+            js.contains("\"Cmd-B\": () => insertFormat('bold')"),
+            "app.js must bind Cmd-B"
+        );
+        assert!(
+            js.contains("\"Ctrl-I\": () => insertFormat('italic')"),
+            "app.js must bind Ctrl-I"
+        );
+        assert!(
+            js.contains("\"Cmd-I\": () => insertFormat('italic')"),
+            "app.js must bind Cmd-I"
+        );
+        assert!(
+            js.contains("\"Ctrl-H\": () => insertFormat('header')"),
+            "app.js must bind Ctrl-H"
+        );
+        assert!(
+            js.contains("\"Cmd-H\": () => insertFormat('header')"),
+            "app.js must bind Cmd-H"
+        );
+        assert!(
+            js.contains("\"Ctrl-K\": () => insertFormat('link')"),
+            "app.js must bind Ctrl-K"
+        );
+        assert!(
+            js.contains("\"Cmd-K\": () => insertFormat('link')"),
+            "app.js must bind Cmd-K"
+        );
+
+        // Check for specific formatting types handled in switch
+        assert!(js.contains("case 'bold':"), "insertFormat must handle bold");
+        assert!(
+            js.contains("case 'italic':"),
+            "insertFormat must handle italic"
+        );
+        assert!(
+            js.contains("case 'header':"),
+            "insertFormat must handle header"
+        );
+        assert!(js.contains("case 'link':"), "insertFormat must handle link");
+        assert!(
+            js.contains("case 'image':"),
+            "insertFormat must handle image"
+        );
+        assert!(js.contains("case 'code':"), "insertFormat must handle code");
+        assert!(js.contains("case 'ul':"), "insertFormat must handle ul");
+        assert!(js.contains("case 'ol':"), "insertFormat must handle ol");
+        assert!(js.contains("case 'task':"), "insertFormat must handle task");
+        assert!(
+            js.contains("case 'table':"),
+            "insertFormat must handle table"
+        );
+    }
 }
