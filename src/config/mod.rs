@@ -453,8 +453,8 @@ struct CliArgs {
     openrouter_zdr: bool,
 
     /// Prompt to send (one-shot mode). Alternative to piping stdin.
-    #[arg(trailing_var_arg = true, help_heading = "Input")]
-    prompt: Vec<String>,
+    #[arg(long = "prompt", short = 'p', help_heading = "Input")]
+    prompt: Option<String>,
 }
 
 fn parse_boolish(value: &str) -> Option<bool> {
@@ -790,11 +790,7 @@ pub fn load() -> anyhow::Result<RuneConfig> {
             .or_else(|| lc.and_then(|c| c.loop_config.clone()))
             .or_else(|| uc.and_then(|c| c.loop_config.clone()))
             .unwrap_or_default(),
-        cli_prompt: if cli.prompt.is_empty() {
-            None
-        } else {
-            Some(cli.prompt.join(" "))
-        },
+        cli_prompt: cli.prompt.clone(),
     };
 
     // Post-processing: expand ~ in all path-like config fields
