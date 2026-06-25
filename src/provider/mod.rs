@@ -538,7 +538,11 @@ impl Provider for OpenAiProvider {
                 let provider_id = if self.provider_name == "openrouter"
                     || self.base_url.contains("openrouter.ai")
                 {
-                    "openrouter".to_string()
+                    if self.openrouter_zdr {
+                        "openrouter-zdr".to_string()
+                    } else {
+                        "openrouter".to_string()
+                    }
                 } else if self.base_url == "https://api.openai.com/v1" {
                     "openai".to_string()
                 } else {
@@ -679,7 +683,11 @@ impl Provider for OpenAiProvider {
                 let provider_id = if self.provider_name == "openrouter"
                     || self.base_url.contains("openrouter.ai")
                 {
-                    "openrouter".to_string()
+                    if self.openrouter_zdr {
+                        "openrouter-zdr".to_string()
+                    } else {
+                        "openrouter".to_string()
+                    }
                 } else if self.base_url == "https://api.openai.com/v1" {
                     "openai".to_string()
                 } else {
@@ -714,6 +722,7 @@ impl Provider for OpenAiProvider {
         let base_url = self.base_url.clone();
         let is_openrouter =
             self.provider_name == "openrouter" || self.base_url.contains("openrouter.ai");
+        let openrouter_zdr = self.openrouter_zdr;
 
         let mut request = request;
         if is_openrouter {
@@ -748,6 +757,12 @@ impl Provider for OpenAiProvider {
                         })
                     };
                     payload_value["reasoning"] = reasoning_obj;
+                }
+                if openrouter_zdr {
+                    payload_value["provider"] = serde_json::json!({
+                        "data_collection": "deny",
+                        "zdr": true
+                    });
                 }
             } else {
                 if let Some(ref thinking) = request.thinking {
@@ -851,6 +866,7 @@ impl Provider for OpenAiProvider {
         let base_url = self.base_url.clone();
         let is_openrouter =
             self.provider_name == "openrouter" || self.base_url.contains("openrouter.ai");
+        let openrouter_zdr = self.openrouter_zdr;
 
         let mut request = request.clone();
         if is_openrouter {
@@ -886,6 +902,15 @@ impl Provider for OpenAiProvider {
                             })
                         };
                         map.insert("reasoning".to_string(), reasoning_obj);
+                    }
+                    if openrouter_zdr {
+                        map.insert(
+                            "provider".to_string(),
+                            serde_json::json!({
+                                "data_collection": "deny",
+                                "zdr": true
+                            }),
+                        );
                     }
                 } else {
                     if let Some(ref thinking) = request.thinking {

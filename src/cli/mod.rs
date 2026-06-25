@@ -1479,6 +1479,7 @@ pub async fn run() {
 
     let embedding_engine = if cfg.embedding.enabled {
         let mut emb_cfg = cfg.embedding.clone();
+        emb_cfg.openrouter_zdr = cfg.openrouter_zdr;
         // Fallback: use main api_key if embedding-specific key not set
         if emb_cfg.api_key.is_none() {
             emb_cfg.api_key = cfg.api_key.clone();

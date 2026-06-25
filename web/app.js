@@ -1523,6 +1523,8 @@ function showModelDialog() {
                 friendlyProvider = 'GitHub Copilot';
             } else if (lower === 'openrouter') {
                 friendlyProvider = 'OpenRouter';
+            } else if (lower === 'openrouter-zdr') {
+                friendlyProvider = 'OpenRouter w/ ZDR';
             } else if (lower === 'openai') {
                 friendlyProvider = 'OpenAI';
             } else if (lower === 'openai-compatible') {

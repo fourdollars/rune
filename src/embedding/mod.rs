@@ -4,7 +4,7 @@ use std::fs;
 use std::path::PathBuf;
 
 /// Embedding configuration from rune.toml [embedding] section.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct EmbeddingConfig {
     #[serde(default = "default_true")]
     pub enabled: bool,
@@ -16,10 +16,16 @@ pub struct EmbeddingConfig {
     /// Maximum number of skills to inject via semantic search (default: 3).
     #[serde(default = "default_max_skills")]
     pub max_skills: usize,
+    #[serde(default = "default_false")]
+    pub openrouter_zdr: bool,
 }
 
 fn default_true() -> bool {
     true
+}
+
+fn default_false() -> bool {
+    false
 }
 
 fn default_threshold() -> f32 {
@@ -39,6 +45,7 @@ impl Default for EmbeddingConfig {
             api_key: None,
             threshold: 0.3,
             max_skills: 3,
+            openrouter_zdr: false,
         }
     }
 }
@@ -259,10 +266,22 @@ impl EmbeddingEngine {
 
         let api_key = self.get_bearer_token().await?;
 
-        let body = serde_json::json!({
+        let mut body = serde_json::json!({
             "input": texts,
             "model": model,
         });
+
+        if url.contains("openrouter.ai") && self.config.openrouter_zdr {
+            if let serde_json::Value::Object(ref mut map) = body {
+                map.insert(
+                    "provider".to_string(),
+                    serde_json::json!({
+                        "data_collection": "deny",
+                        "zdr": true
+                    }),
+                );
+            }
+        }
 
         let mut req = self
             .client

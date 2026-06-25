@@ -652,11 +652,8 @@ async fn fetch_openrouter_embedding_models(openrouter_zdr: bool) -> Option<(Vec<
         }
 
         let zdr_body: OpenRouterZdrEndpointsResponse = zdr_resp.json().await.ok()?;
-        let set: std::collections::HashSet<String> = zdr_body
-            .data
-            .into_iter()
-            .map(|e| e.model_id)
-            .collect();
+        let set: std::collections::HashSet<String> =
+            zdr_body.data.into_iter().map(|e| e.model_id).collect();
         Some(set)
     } else {
         None

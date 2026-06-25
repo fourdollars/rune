@@ -2644,6 +2644,7 @@ async fn build_embedding(config: &RuneConfig) -> Option<EmbeddingEngine> {
         return None;
     }
     let mut emb_config = config.embedding.clone();
+    emb_config.openrouter_zdr = config.openrouter_zdr;
     if emb_config.api_key.is_none() {
         emb_config.api_key = Some(api_key.clone());
     }
