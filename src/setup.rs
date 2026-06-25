@@ -392,11 +392,39 @@ async fn fetch_openrouter_models() -> Option<Vec<String>> {
         .timeout(std::time::Duration::from_secs(5))
         .build()
         .ok()?;
+
+    // Fetch ZDR endpoints to filter models by ZDR support
+    let zdr_resp = client
+        .get("https://openrouter.ai/api/v1/endpoints/zdr")
+        .send()
+        .await
+        .ok()?;
+    if !zdr_resp.status().is_success() {
+        return None;
+    }
+
+    #[derive(serde::Deserialize)]
+    struct OpenRouterZdrEndpoint {
+        model_id: String,
+    }
+
+    #[derive(serde::Deserialize)]
+    struct OpenRouterZdrEndpointsResponse {
+        data: Vec<OpenRouterZdrEndpoint>,
+    }
+
+    let zdr_body: OpenRouterZdrEndpointsResponse = zdr_resp.json().await.ok()?;
+    let zdr_set: std::collections::HashSet<String> =
+        zdr_body.data.into_iter().map(|e| e.model_id).collect();
+
     let resp = client
         .get("https://openrouter.ai/api/v1/models")
         .send()
         .await
         .ok()?;
+    if !resp.status().is_success() {
+        return None;
+    }
     let body: OpenRouterModelsResponse = resp.json().await.ok()?;
 
     let model_ids: Vec<String> = body.data.into_iter().map(|m| m.id).collect();
@@ -404,7 +432,7 @@ async fn fetch_openrouter_models() -> Option<Vec<String>> {
 
     let mut filtered = Vec::new();
     for m in &model_ids {
-        if !m.ends_with(":free") {
+        if zdr_set.contains(m) && !m.ends_with(":free") {
             let free = format!("{}:free", m);
             if model_set.contains(&free) {
                 filtered.push(m.clone());
@@ -2308,9 +2336,17 @@ allowed_domains = ["example.com"]"#;
         let model_ids: Vec<String> = body.data.into_iter().map(|m| m.id).collect();
         let model_set: std::collections::HashSet<String> = model_ids.iter().cloned().collect();
 
+        // Simulate ZDR list where gemini and llama support ZDR, but others do not
+        let zdr_set: std::collections::HashSet<String> = vec![
+            "meta-llama/llama-3.3-70b-instruct".to_string(),
+            "google/gemini-2.0-flash".to_string(),
+        ]
+        .into_iter()
+        .collect();
+
         let mut filtered = Vec::new();
         for m in &model_ids {
-            if !m.ends_with(":free") {
+            if zdr_set.contains(m) && !m.ends_with(":free") {
                 let free = format!("{}:free", m);
                 if model_set.contains(&free) {
                     filtered.push(m.clone());
