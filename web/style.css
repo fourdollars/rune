@@ -877,7 +877,22 @@ pre.hljs-pre:hover .copy-btn {
 .cm-s-rune-light .cm-property  { color: #005cc5; }   /* property key   → blue   */
 .cm-s-rune-light .cm-error     { color: #cb2431; }   /* error          → red    */
 
+/* --- KaTeX math blocks --- */
+.math-block {
+    margin: 16px 0;
+    overflow-x: auto;
+    text-align: center;
+}
+.math-inline {
+    display: inline;
+}
+.math-error {
+    color: var(--error, #cb2431);
+    font-style: italic;
+}
+
 /* --- Mermaid diagrams --- */
+
 .mermaid-block {
     margin: 16px 0;
     padding: 12px;

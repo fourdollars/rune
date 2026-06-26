@@ -382,7 +382,56 @@ if (typeof marked !== 'undefined') {
             return html.replace(/<p>(\s*<svg[\s\S]*?<\/svg>\s*)<\/p>/gi, '$1');
         }
     };
-    marked.use({ renderer, hooks, breaks: true, gfm: true });
+
+    // --- Math extensions: intercept $$ and $ before marked mangles the content ---
+    // Block math: $$...$$  (must be registered before inline to take priority)
+    const blockMathExtension = {
+        name: 'blockMath',
+        level: 'block',
+        start(src) { return src.indexOf('$$'); },
+        tokenizer(src) {
+            const match = src.match(/^\$\$([\s\S]+?)\$\$/);
+            if (match) {
+                return { type: 'blockMath', raw: match[0], text: match[1].trim() };
+            }
+        },
+        renderer(token) {
+            if (typeof katex !== 'undefined') {
+                try {
+                    return '<div class="math-block">' + katex.renderToString(token.text, { displayMode: true, throwOnError: false }) + '</div>';
+                } catch (e) {
+                    return '<div class="math-block math-error">' + escapeHtml(token.text) + '</div>';
+                }
+            }
+            return '<div class="math-block">$$' + escapeHtml(token.text) + '$$</div>';
+        }
+    };
+
+    // Inline math: $...$
+    const inlineMathExtension = {
+        name: 'inlineMath',
+        level: 'inline',
+        start(src) { return src.indexOf('$'); },
+        tokenizer(src) {
+            // Avoid matching $$ (already handled by block extension)
+            const match = src.match(/^\$(?!\$)((?:[^$\\]|\\[\s\S])+?)\$/);
+            if (match) {
+                return { type: 'inlineMath', raw: match[0], text: match[1] };
+            }
+        },
+        renderer(token) {
+            if (typeof katex !== 'undefined') {
+                try {
+                    return '<span class="math-inline">' + katex.renderToString(token.text, { displayMode: false, throwOnError: false }) + '</span>';
+                } catch (e) {
+                    return '<span class="math-inline math-error">$' + escapeHtml(token.text) + '$</span>';
+                }
+            }
+            return '<span class="math-inline">$' + escapeHtml(token.text) + '$</span>';
+        }
+    };
+
+    marked.use({ renderer, hooks, breaks: true, gfm: true, extensions: [blockMathExtension, inlineMathExtension] });
 }
 
 // Enter key on nickname input (no-op: nickname modal removed, login handled by GitHub OAuth)
