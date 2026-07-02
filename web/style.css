@@ -1380,6 +1380,25 @@ pre.hljs-pre:hover .copy-btn {
 
 
 
+/* ─── File search / filter input in Notes panel ─── */
+.file-search-input {
+    width: 100%;
+    background: var(--bg-surface);
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    color: var(--text);
+    font-size: 12px;
+    padding: 5px 10px;
+    outline: none;
+    transition: border-color 0.15s;
+    box-sizing: border-box;
+    flex-shrink: 0;
+    margin-bottom: 6px;
+}
+.file-search-input:focus {
+    border-color: var(--accent);
+}
+
 /* ─── VSCode Explorer ─── */
 .note-tree {
     flex: 1;

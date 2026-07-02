@@ -2050,9 +2050,22 @@ function renderNoteList() {
     tree.innerHTML = '';
     if (notes.length === 0) {
         tree.innerHTML = '<div class="explorer-empty">No notes yet.<br>Click <b>+</b> to create one.</div>';
+        // Hide search input when no notes
+        const si = document.getElementById('file-search-input');
+        if (si) si.style.display = 'none';
         return;
     }
+
+    // Show search input
+    const searchInput = document.getElementById('file-search-input');
+    if (searchInput) searchInput.style.display = '';
+
+    const query = searchInput ? searchInput.value.toLowerCase().trim() : '';
+
     notes.forEach(s => {
+        const files = (s.files || []).filter(fname => !query || fname.toLowerCase().includes(query));
+        if (query && files.length === 0 && !s.name.toLowerCase().includes(query)) return;
+
         const section = document.createElement('div');
         section.className = 'explorer-section';
 
@@ -2136,7 +2149,9 @@ function renderNoteList() {
         // Children (files)
         const children = document.createElement('div');
         children.className = 'explorer-children';
-        (s.files || []).forEach(fname => {
+        // When searching, auto-expand all sections so results are visible
+        if (query) children.classList.remove('collapsed');
+        files.forEach(fname => {
             const fileRow = document.createElement('div');
             fileRow.className = 'explorer-row';
             fileRow.style.paddingLeft = '20px';
@@ -2219,6 +2234,12 @@ function renderNoteList() {
         section.appendChild(children);
         tree.appendChild(section);
     });
+
+    // Wire up the search input (idempotent — reassigning oninput is safe)
+    if (searchInput && !searchInput._runeWired) {
+        searchInput._runeWired = true;
+        searchInput.oninput = () => renderNoteList();
+    }
 }
 
 
