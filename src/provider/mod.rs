@@ -1437,6 +1437,57 @@ impl GeminiProvider {
         model.starts_with("gemini-3.")
     }
 
+    /// Map an abstract thinking level to a `thinkingBudget` integer for Gemini 2.x models.
+    ///
+    /// Per official docs (ai.google.dev/gemini-api/docs/generate-content/thinking#set-budget):
+    ///   - 2.5 Pro:        range 128–32768, cannot disable thinking
+    ///   - 2.5 Flash/Lite: range 0–24576,  0 = disable, -1 = dynamic
+    ///
+    /// Returns `None` when the level should not set a budget (e.g. "none"/"off" on Pro,
+    /// which cannot disable thinking so we leave the API default in place).
+    fn thinking_budget_for_level(level: &str, model: &str) -> Option<i64> {
+        let m = model.to_lowercase();
+        let is_pro = m.contains("-pro");
+        // Flash-Lite min active budget is 512; regular Flash min is 0.
+        let is_lite = m.contains("-lite");
+
+        match level {
+            // "minimal" = disable where possible, or clamp to model minimum.
+            "minimal" => {
+                if is_pro {
+                    Some(128) // Pro cannot disable; use minimum valid budget
+                } else {
+                    Some(0) // disable thinking
+                }
+            }
+            "low" => {
+                if is_pro {
+                    Some(2048)
+                } else if is_lite {
+                    Some(512) // Lite minimum active budget
+                } else {
+                    Some(1024)
+                }
+            }
+            "medium" => Some(8192),
+            "high" => {
+                if is_pro {
+                    Some(32768) // Pro max
+                } else {
+                    Some(24576) // Flash / Lite max
+                }
+            }
+            "none" | "off" => {
+                if is_pro {
+                    None // Pro cannot disable thinking; leave API default
+                } else {
+                    Some(0)
+                }
+            }
+            _ => None,
+        }
+    }
+
     /// Convert OpenAI-format messages to Gemini format.
     fn convert_messages(messages: &[LlmMessage]) -> (Option<Value>, Vec<Value>) {
         let mut system_instruction: Option<Value> = None;
@@ -1704,15 +1755,8 @@ impl Provider for GeminiProvider {
                         }
                     } else {
                         // Gemini 2.5.x series: use thinkingBudget integer
-                        // -1 = dynamic, 0 = disable, >0 = fixed budget
-                        let budget: Option<i64> = match thinking.as_str() {
-                            "minimal" => Some(0),
-                            "low" => Some(1024),
-                            "medium" => Some(4096),
-                            "high" => Some(8192),
-                            "none" | "off" => Some(0),
-                            _ => None,
-                        };
+                        // Map using model-aware budgeting
+                        let budget = Self::thinking_budget_for_level(thinking.as_str(), &model);
                         if let Some(b) = budget {
                             payload["generationConfig"] = serde_json::json!({
                                 "thinkingConfig": { "thinkingBudget": b }
@@ -1918,15 +1962,8 @@ impl Provider for GeminiProvider {
                         }
                     } else {
                         // Gemini 2.5.x series: use thinkingBudget integer
-                        // -1 = dynamic, 0 = disable, >0 = fixed budget
-                        let budget: Option<i64> = match thinking.as_str() {
-                            "minimal" => Some(0),
-                            "low" => Some(1024),
-                            "medium" => Some(4096),
-                            "high" => Some(8192),
-                            "none" | "off" => Some(0),
-                            _ => None,
-                        };
+                        // Map using model-aware budgeting
+                        let budget = Self::thinking_budget_for_level(thinking.as_str(), &model);
                         if let Some(b) = budget {
                             payload["generationConfig"] = serde_json::json!({
                                 "thinkingConfig": { "thinkingBudget": b }
@@ -3350,6 +3387,59 @@ mod tests {
         );
         assert_eq!(p.model, "gemini-1.5-pro");
         assert_eq!(p.base_url, "https://custom.endpoint.com/v1beta");
+    }
+
+    #[test]
+    fn test_gemini_thinking_budget_for_level() {
+        // Test Gemini 2.5 Pro (cannot disable, range 128-32768)
+        let pro = "gemini-2.5-pro";
+        assert_eq!(
+            GeminiProvider::thinking_budget_for_level("minimal", pro),
+            Some(128)
+        );
+        assert_eq!(
+            GeminiProvider::thinking_budget_for_level("low", pro),
+            Some(2048)
+        );
+        assert_eq!(
+            GeminiProvider::thinking_budget_for_level("medium", pro),
+            Some(8192)
+        );
+        assert_eq!(
+            GeminiProvider::thinking_budget_for_level("high", pro),
+            Some(32768)
+        );
+        assert_eq!(GeminiProvider::thinking_budget_for_level("off", pro), None);
+
+        // Test Gemini 2.5 Flash (can disable, range 0-24576)
+        let flash = "gemini-2.5-flash";
+        assert_eq!(
+            GeminiProvider::thinking_budget_for_level("minimal", flash),
+            Some(0)
+        );
+        assert_eq!(
+            GeminiProvider::thinking_budget_for_level("low", flash),
+            Some(1024)
+        );
+        assert_eq!(
+            GeminiProvider::thinking_budget_for_level("medium", flash),
+            Some(8192)
+        );
+        assert_eq!(
+            GeminiProvider::thinking_budget_for_level("high", flash),
+            Some(24576)
+        );
+        assert_eq!(
+            GeminiProvider::thinking_budget_for_level("off", flash),
+            Some(0)
+        );
+
+        // Test Gemini 2.5 Flash Lite (min active is 512, range 512-24576)
+        let lite = "gemini-2.5-flash-lite";
+        assert_eq!(
+            GeminiProvider::thinking_budget_for_level("low", lite),
+            Some(512)
+        );
     }
 
     #[test]
