@@ -1655,8 +1655,14 @@ impl Provider for GeminiProvider {
                 None => return Ok(Vec::new()),
             };
 
-            let thinking_levels = vec![
+            let thinking_levels_2_5 = vec![
                 "auto".to_string(),
+                "minimal".to_string(),
+                "low".to_string(),
+                "medium".to_string(),
+                "high".to_string(),
+            ];
+            let thinking_levels_3 = vec![
                 "minimal".to_string(),
                 "low".to_string(),
                 "medium".to_string(),
@@ -1682,12 +1688,17 @@ impl Provider for GeminiProvider {
                     if supports_thinking {
                         thinking_set.insert(id.clone());
                     }
+                    let is_gemini_3 = id.starts_with("gemini-3.");
                     Some(ModelInfo {
                         id,
                         provider: Some(self.name().to_string()),
                         context_window: m.get("inputTokenLimit").and_then(|v| v.as_u64()),
                         reasoning_efforts: if supports_thinking {
-                            thinking_levels.clone()
+                            if is_gemini_3 {
+                                thinking_levels_3.clone()
+                            } else {
+                                thinking_levels_2_5.clone()
+                            }
                         } else {
                             vec![]
                         },
