@@ -1452,6 +1452,7 @@ impl GeminiProvider {
         let is_lite = m.contains("-lite");
 
         match level {
+            "auto" => Some(-1),
             // "minimal" = disable where possible, or clamp to model minimum.
             "minimal" => {
                 if is_pro {
@@ -1655,6 +1656,7 @@ impl Provider for GeminiProvider {
             };
 
             let thinking_levels = vec![
+                "auto".to_string(),
                 "minimal".to_string(),
                 "low".to_string(),
                 "medium".to_string(),
@@ -3394,6 +3396,10 @@ mod tests {
         // Test Gemini 2.5 Pro (cannot disable, range 128-32768)
         let pro = "gemini-2.5-pro";
         assert_eq!(
+            GeminiProvider::thinking_budget_for_level("auto", pro),
+            Some(-1)
+        );
+        assert_eq!(
             GeminiProvider::thinking_budget_for_level("minimal", pro),
             Some(128)
         );
@@ -3413,6 +3419,10 @@ mod tests {
 
         // Test Gemini 2.5 Flash (can disable, range 0-24576)
         let flash = "gemini-2.5-flash";
+        assert_eq!(
+            GeminiProvider::thinking_budget_for_level("auto", flash),
+            Some(-1)
+        );
         assert_eq!(
             GeminiProvider::thinking_budget_for_level("minimal", flash),
             Some(0)
@@ -3436,6 +3446,10 @@ mod tests {
 
         // Test Gemini 2.5 Flash Lite (min active is 512, range 512-24576)
         let lite = "gemini-2.5-flash-lite";
+        assert_eq!(
+            GeminiProvider::thinking_budget_for_level("auto", lite),
+            Some(-1)
+        );
         assert_eq!(
             GeminiProvider::thinking_budget_for_level("low", lite),
             Some(512)
