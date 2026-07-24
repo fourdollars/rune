@@ -1437,6 +1437,20 @@ impl GeminiProvider {
         model.starts_with("gemini-3.")
     }
 
+    /// Map "off"/"none" to the lowest possible thinkingLevel for Gemini 3 models.
+    ///
+    /// Per official docs:
+    ///   - Gemini 3.1 Pro: does not support 'minimal'; use 'low' to minimize thinking.
+    ///   - Gemini 3 Flash / Flash-Lite: supports 'minimal'.
+    fn thinking_level_for_off(model: &str) -> &'static str {
+        let m = model.to_lowercase();
+        if m.contains("3.1-pro") {
+            "low"
+        } else {
+            "minimal"
+        }
+    }
+
     /// Map an abstract thinking level to a `thinkingBudget` integer for Gemini 2.x models.
     ///
     /// Per official docs (ai.google.dev/gemini-api/docs/generate-content/thinking#set-budget):
@@ -1758,7 +1772,7 @@ impl Provider for GeminiProvider {
                             "low" => Some("low"),
                             "medium" => Some("medium"),
                             "high" => Some("high"),
-                            "none" | "off" => None,
+                            "none" | "off" => Some(Self::thinking_level_for_off(&model)),
                             _ => None,
                         };
                         if let Some(l) = level {
@@ -1965,7 +1979,7 @@ impl Provider for GeminiProvider {
                             "low" => Some("low"),
                             "medium" => Some("medium"),
                             "high" => Some("high"),
-                            "none" | "off" => None,
+                            "none" | "off" => Some(Self::thinking_level_for_off(&model)),
                             _ => None,
                         };
                         if let Some(l) = level {
@@ -3464,6 +3478,29 @@ mod tests {
         assert_eq!(
             GeminiProvider::thinking_budget_for_level("low", lite),
             Some(512)
+        );
+    }
+
+    #[test]
+    fn test_gemini_thinking_level_for_off() {
+        // 3.1 Pro should map to 'low' since 'minimal' is unsupported.
+        assert_eq!(
+            GeminiProvider::thinking_level_for_off("gemini-3.1-pro"),
+            "low"
+        );
+        assert_eq!(
+            GeminiProvider::thinking_level_for_off("gemini-3.1-pro-preview"),
+            "low"
+        );
+
+        // Flash/Flash-Lite should map to 'minimal'.
+        assert_eq!(
+            GeminiProvider::thinking_level_for_off("gemini-3.5-flash"),
+            "minimal"
+        );
+        assert_eq!(
+            GeminiProvider::thinking_level_for_off("gemini-3.1-flash-lite"),
+            "minimal"
         );
     }
 
