@@ -1431,6 +1431,12 @@ impl GeminiProvider {
             || model.contains("thinking")
     }
 
+    /// Returns true if the model uses `thinkingLevel` (string, Gemini 3.x).
+    /// Returns false if the model uses `thinkingBudget` (integer, Gemini 2.x).
+    fn model_uses_thinking_level(model: &str) -> bool {
+        model.starts_with("gemini-3.")
+    }
+
     /// Convert OpenAI-format messages to Gemini format.
     fn convert_messages(messages: &[LlmMessage]) -> (Option<Value>, Vec<Value>) {
         let mut system_instruction: Option<Value> = None;
@@ -1676,23 +1682,42 @@ impl Provider for GeminiProvider {
                 payload["tools"] = t;
             }
 
-            // Gemini thinking config — for models that support thinkingLevel (2.5+ and 3.x series)
+            // Gemini thinking config:
+            //   Gemini 3.x → thinkingLevel (string)
+            //   Gemini 2.5.x → thinkingBudget (integer)
             if thinking_capable {
                 if let Some(ref thinking) = request.thinking {
-                    let level = match thinking.as_str() {
-                        "minimal" => Some("minimal"),
-                        "low" => Some("low"),
-                        "medium" => Some("medium"),
-                        "high" => Some("high"),
-                        "none" | "off" => None,
-                        _ => None,
-                    };
-                    if let Some(l) = level {
-                        payload["generationConfig"] = serde_json::json!({
-                            "thinkingConfig": {
-                                "thinkingLevel": l
-                            }
-                        });
+                    if Self::model_uses_thinking_level(&model) {
+                        // Gemini 3.x series: use thinkingLevel string
+                        let level = match thinking.as_str() {
+                            "minimal" => Some("minimal"),
+                            "low" => Some("low"),
+                            "medium" => Some("medium"),
+                            "high" => Some("high"),
+                            "none" | "off" => None,
+                            _ => None,
+                        };
+                        if let Some(l) = level {
+                            payload["generationConfig"] = serde_json::json!({
+                                "thinkingConfig": { "thinkingLevel": l }
+                            });
+                        }
+                    } else {
+                        // Gemini 2.5.x series: use thinkingBudget integer
+                        // -1 = dynamic, 0 = disable, >0 = fixed budget
+                        let budget: Option<i64> = match thinking.as_str() {
+                            "minimal" => Some(0),
+                            "low" => Some(1024),
+                            "medium" => Some(4096),
+                            "high" => Some(8192),
+                            "none" | "off" => Some(0),
+                            _ => None,
+                        };
+                        if let Some(b) = budget {
+                            payload["generationConfig"] = serde_json::json!({
+                                "thinkingConfig": { "thinkingBudget": b }
+                            });
+                        }
                     }
                 }
             }
@@ -1871,23 +1896,42 @@ impl Provider for GeminiProvider {
                 payload["tools"] = t;
             }
 
-            // Gemini thinking config — for models that support thinkingLevel (2.5+ and 3.x series)
+            // Gemini thinking config:
+            //   Gemini 3.x → thinkingLevel (string)
+            //   Gemini 2.5.x → thinkingBudget (integer)
             if thinking_capable {
                 if let Some(ref thinking) = request.thinking {
-                    let level = match thinking.as_str() {
-                        "minimal" => Some("minimal"),
-                        "low" => Some("low"),
-                        "medium" => Some("medium"),
-                        "high" => Some("high"),
-                        "none" | "off" => None,
-                        _ => None,
-                    };
-                    if let Some(l) = level {
-                        payload["generationConfig"] = serde_json::json!({
-                            "thinkingConfig": {
-                                "thinkingLevel": l
-                            }
-                        });
+                    if Self::model_uses_thinking_level(&model) {
+                        // Gemini 3.x series: use thinkingLevel string
+                        let level = match thinking.as_str() {
+                            "minimal" => Some("minimal"),
+                            "low" => Some("low"),
+                            "medium" => Some("medium"),
+                            "high" => Some("high"),
+                            "none" | "off" => None,
+                            _ => None,
+                        };
+                        if let Some(l) = level {
+                            payload["generationConfig"] = serde_json::json!({
+                                "thinkingConfig": { "thinkingLevel": l }
+                            });
+                        }
+                    } else {
+                        // Gemini 2.5.x series: use thinkingBudget integer
+                        // -1 = dynamic, 0 = disable, >0 = fixed budget
+                        let budget: Option<i64> = match thinking.as_str() {
+                            "minimal" => Some(0),
+                            "low" => Some(1024),
+                            "medium" => Some(4096),
+                            "high" => Some(8192),
+                            "none" | "off" => Some(0),
+                            _ => None,
+                        };
+                        if let Some(b) = budget {
+                            payload["generationConfig"] = serde_json::json!({
+                                "thinkingConfig": { "thinkingBudget": b }
+                            });
+                        }
                     }
                 }
             }
