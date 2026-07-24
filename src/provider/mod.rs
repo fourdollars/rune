@@ -1426,7 +1426,9 @@ impl GeminiProvider {
             }
         }
         // Cache not yet populated — conservative name-based fallback
-        model.starts_with("gemini-2.5") || model.contains("thinking")
+        model.starts_with("gemini-2.5")
+            || model.starts_with("gemini-3.")
+            || model.contains("thinking")
     }
 
     /// Convert OpenAI-format messages to Gemini format.
@@ -1595,7 +1597,12 @@ impl Provider for GeminiProvider {
                 None => return Ok(Vec::new()),
             };
 
-            let thinking_levels = vec!["low".to_string(), "medium".to_string(), "high".to_string()];
+            let thinking_levels = vec![
+                "minimal".to_string(),
+                "low".to_string(),
+                "medium".to_string(),
+                "high".to_string(),
+            ];
             let mut thinking_set = std::collections::HashSet::new();
 
             let mut models: Vec<ModelInfo> = arr
@@ -1669,21 +1676,21 @@ impl Provider for GeminiProvider {
                 payload["tools"] = t;
             }
 
-            // Gemini thinking config — only for models that support it (2.5+ series)
+            // Gemini thinking config — for models that support thinkingLevel (2.5+ and 3.x series)
             if thinking_capable {
                 if let Some(ref thinking) = request.thinking {
-                    let budget = match thinking.as_str() {
-                        "low" => Some(1024),
-                        "medium" => Some(4096),
-                        "high" => Some(8192),
-                        "xhigh" => Some(16384),
-                        "none" | "off" => Some(0),
+                    let level = match thinking.as_str() {
+                        "minimal" => Some("minimal"),
+                        "low" => Some("low"),
+                        "medium" => Some("medium"),
+                        "high" => Some("high"),
+                        "none" | "off" => None,
                         _ => None,
                     };
-                    if let Some(b) = budget {
+                    if let Some(l) = level {
                         payload["generationConfig"] = serde_json::json!({
                             "thinkingConfig": {
-                                "thinkingBudget": b
+                                "thinkingLevel": l
                             }
                         });
                     }
@@ -1864,21 +1871,21 @@ impl Provider for GeminiProvider {
                 payload["tools"] = t;
             }
 
-            // Gemini thinking config — only for models that support it (2.5+ series)
+            // Gemini thinking config — for models that support thinkingLevel (2.5+ and 3.x series)
             if thinking_capable {
                 if let Some(ref thinking) = request.thinking {
-                    let budget = match thinking.as_str() {
-                        "low" => Some(1024),
-                        "medium" => Some(4096),
-                        "high" => Some(8192),
-                        "xhigh" => Some(16384),
-                        "none" | "off" => Some(0),
+                    let level = match thinking.as_str() {
+                        "minimal" => Some("minimal"),
+                        "low" => Some("low"),
+                        "medium" => Some("medium"),
+                        "high" => Some("high"),
+                        "none" | "off" => None,
                         _ => None,
                     };
-                    if let Some(b) = budget {
+                    if let Some(l) = level {
                         payload["generationConfig"] = serde_json::json!({
                             "thinkingConfig": {
-                                "thinkingBudget": b
+                                "thinkingLevel": l
                             }
                         });
                     }
