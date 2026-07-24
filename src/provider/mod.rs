@@ -1529,7 +1529,7 @@ impl GeminiProvider {
                         }
                     }
                     contents.push(serde_json::json!({
-                        "role": "function",
+                        "role": "user",
                         "parts": [fr_part]
                     }));
                 }
