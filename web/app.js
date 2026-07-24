@@ -1527,10 +1527,12 @@ function updateThinkingSelect() {
         return;
     }
 
-    // Build options: prepend "off" only when "none" is not already in the list
+    const isGemini3 = activeModel && activeModel.startsWith('gemini-3.');
+
+    // Build options: prepend "off" only when "none" is not already in the list, and not Gemini 3.x
     selects.forEach(select => {
         select.innerHTML = '';
-        if (!efforts.includes('none')) {
+        if (!efforts.includes('none') && !isGemini3) {
             const offOpt = document.createElement('option');
             offOpt.value = 'off';
             offOpt.textContent = 'off';
@@ -1544,7 +1546,11 @@ function updateThinkingSelect() {
             select.appendChild(opt);
         });
 
-        select.value = currentThinking || 'off';
+        let val = currentThinking || 'off';
+        if (isGemini3 && (val === 'off' || val === 'none')) {
+            val = efforts[0] || 'medium';
+        }
+        select.value = val;
         select.style.display = '';
     });
 }
