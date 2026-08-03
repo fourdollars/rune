@@ -5,7 +5,7 @@ WORKDIR /app
 COPY Cargo.toml Cargo.lock ./
 COPY src ./src
 COPY web ./web
-RUN cargo build --release --locked
+RUN cargo build --release --locked --features notes
 
 FROM debian:bookworm-slim
 ENV DEBIAN_FRONTEND=noninteractive

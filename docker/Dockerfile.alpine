@@ -8,7 +8,7 @@ RUN apk add --no-cache build-base musl-dev
 COPY Cargo.toml Cargo.lock ./
 COPY src ./src
 COPY web ./web
-RUN cargo build --release --locked --target x86_64-unknown-linux-musl
+RUN cargo build --release --locked --features notes --target x86_64-unknown-linux-musl
 
 FROM alpine:latest
 RUN apk add --no-cache ca-certificates curl strace
