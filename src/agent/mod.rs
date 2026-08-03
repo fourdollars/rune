@@ -107,6 +107,7 @@ pub struct Agent {
     pub files: Option<Arc<RwLock<std::collections::HashMap<String, String>>>>,
     /// Currently active filename.
     pub active_file: Option<Arc<RwLock<String>>>,
+    #[cfg(feature = "notes")]
     /// Chat DB for search_chat tool (serve mode only).
     pub chat_db: Option<crate::serve::db::ChatDb>,
     /// Archive directory for search_chat tool.
@@ -236,6 +237,7 @@ impl Agent {
             approval_callback: None,
             files: None,
             active_file: None,
+            #[cfg(feature = "notes")]
             chat_db: None,
             chat_archive_dir: None,
             chat_note_id: None,
@@ -336,6 +338,7 @@ impl Agent {
     pub fn mcp_manager_ref(&self) -> Option<&Arc<TokioMutex<McpManager>>> {
         self.mcp_manager.as_ref()
     }
+    #[cfg(feature = "notes")]
     /// Prepend conversation history (user/assistant pairs) after the system prompt.
     /// Call this AFTER set_system_prompt() and BEFORE run().
     pub fn load_history(&mut self, records: &[crate::serve::db::ChatRecord]) {
@@ -1485,36 +1488,44 @@ impl Agent {
 
     /// Handle search_chat tool for serve mode — full-text search across live DB + archives.
     async fn handle_search_chat_tool(&self, args: &serde_json::Value) -> Option<String> {
-        let db = self.chat_db.as_ref()?;
-        let query = args.get("query").and_then(|v| v.as_str())?;
-        let session_id = self.chat_note_id.as_deref().unwrap_or("default");
-        let archive_dir = self
-            .chat_archive_dir
-            .clone()
-            .unwrap_or_else(|| std::path::PathBuf::from("."));
-        let results = db
-            .search_async(session_id.to_string(), query.to_string(), archive_dir)
-            .await;
-        if results.is_empty() {
-            return Some(format!("No messages found for query: \"{}\"", query));
+        #[cfg(feature = "notes")]
+        {
+            let db = self.chat_db.as_ref()?;
+            let query = args.get("query").and_then(|v| v.as_str())?;
+            let session_id = self.chat_note_id.as_deref().unwrap_or("default");
+            let archive_dir = self
+                .chat_archive_dir
+                .clone()
+                .unwrap_or_else(|| std::path::PathBuf::from("."));
+            let results = db
+                .search_async(session_id.to_string(), query.to_string(), archive_dir)
+                .await;
+            if results.is_empty() {
+                return Some(format!("No messages found for query: \"{}\"", query));
+            }
+            let lines: Vec<String> = results
+                .iter()
+                .map(|r| {
+                    format!(
+                        "[ts={}] {}: {}",
+                        r.created_at,
+                        r.nickname,
+                        char_preview(&r.content, 200)
+                    )
+                })
+                .collect();
+            Some(format!(
+                "{} result(s) for \"{}\":\n{}",
+                lines.len(),
+                query,
+                lines.join("\n")
+            ))
         }
-        let lines: Vec<String> = results
-            .iter()
-            .map(|r| {
-                format!(
-                    "[ts={}] {}: {}",
-                    r.created_at,
-                    r.nickname,
-                    char_preview(&r.content, 200)
-                )
-            })
-            .collect();
-        Some(format!(
-            "{} result(s) for \"{}\":\n{}",
-            lines.len(),
-            query,
-            lines.join("\n")
-        ))
+        #[cfg(not(feature = "notes"))]
+        {
+            let _ = args;
+            None
+        }
     }
 
     /// Handle markdown tools (list_markdown / read_markdown / write_markdown) for serve mode.
@@ -3201,130 +3212,135 @@ read(3, "root:x:0:0:...", 4096) = 1234"#;
         assert_eq!(result, Some("/home/user/.gitconfig".to_string()));
     }
 
-    #[test]
-    fn test_load_history_injects_messages() {
-        use crate::provider::Provider;
+    #[cfg(feature = "notes")]
+    mod notes_history_tests {
+        use super::*;
         use crate::serve::db::ChatRecord;
-        // Minimal stub: just test load_history inserts messages correctly
-        // We can't easily build a full Agent without a provider, so test via
-        // direct message count inspection after load_history.
-        // Build a dummy config
-        let config = crate::config::RuneConfig {
-            model: "gpt-4o".to_string(),
-            api_key: Some("test".to_string()),
-            ..Default::default()
-        };
-        // We need a provider — skip if unavailable in test env
-        // Instead, test load_history logic via a minimal agent construction:
-        let records = vec![
-            ChatRecord {
-                id: 1,
-                note_id: "default".into(),
-                role: "user".into(),
-                nickname: "alice".into(),
-                content: "hello".into(),
-                created_at: 0,
-                model: None,
-                tokens_in: None,
-                tokens_out: None,
-                steps: None,
-                tool_calls: None,
-                thinking: None,
-                context_tokens: None,
-            },
-            ChatRecord {
-                id: 2,
-                note_id: "default".into(),
-                role: "assistant".into(),
-                nickname: "rune".into(),
-                content: "hi there".into(),
-                created_at: 1,
-                model: None,
-                tokens_in: None,
-                tokens_out: None,
-                steps: None,
-                tool_calls: None,
-                thinking: None,
-                context_tokens: None,
-            },
-        ];
-        // Verify filtering: tool_call roles should be excluded
-        let filtered: Vec<_> = records
-            .iter()
-            .filter(|r| r.role == "user" || r.role == "assistant")
-            .collect();
-        assert_eq!(filtered.len(), 2);
-        assert_eq!(filtered[0].content, "hello");
-        assert_eq!(filtered[1].content, "hi there");
-    }
 
-    // ─── token-aware history trimming ────────────────────────────────────────
-
-    fn make_chat_record(id: i64, role: &str, content: &str) -> crate::serve::db::ChatRecord {
-        crate::serve::db::ChatRecord {
-            id,
-            note_id: "default".into(),
-            role: role.into(),
-            nickname: "".into(),
-            content: content.into(),
-            created_at: id,
-            model: None,
-            tokens_in: None,
-            tokens_out: None,
-            steps: None,
-            tool_calls: None,
-            thinking: None,
-            context_tokens: None,
+        #[test]
+        fn test_load_history_injects_messages() {
+            use crate::provider::Provider;
+            // Minimal stub: just test load_history inserts messages correctly
+            // We can't easily build a full Agent without a provider, so test via
+            // direct message count inspection after load_history.
+            // Build a dummy config
+            let config = crate::config::RuneConfig {
+                model: "gpt-4o".to_string(),
+                api_key: Some("test".to_string()),
+                ..Default::default()
+            };
+            // We need a provider — skip if unavailable in test env
+            // Instead, test load_history logic via a minimal agent construction:
+            let records = vec![
+                ChatRecord {
+                    id: 1,
+                    note_id: "default".into(),
+                    role: "user".into(),
+                    nickname: "alice".into(),
+                    content: "hello".into(),
+                    created_at: 0,
+                    model: None,
+                    tokens_in: None,
+                    tokens_out: None,
+                    steps: None,
+                    tool_calls: None,
+                    thinking: None,
+                    context_tokens: None,
+                },
+                ChatRecord {
+                    id: 2,
+                    note_id: "default".into(),
+                    role: "assistant".into(),
+                    nickname: "rune".into(),
+                    content: "hi there".into(),
+                    created_at: 1,
+                    model: None,
+                    tokens_in: None,
+                    tokens_out: None,
+                    steps: None,
+                    tool_calls: None,
+                    thinking: None,
+                    context_tokens: None,
+                },
+            ];
+            // Verify filtering: tool_call roles should be excluded
+            let filtered: Vec<_> = records
+                .iter()
+                .filter(|r| r.role == "user" || r.role == "assistant")
+                .collect();
+            assert_eq!(filtered.len(), 2);
+            assert_eq!(filtered[0].content, "hello");
+            assert_eq!(filtered[1].content, "hi there");
         }
-    }
 
-    #[test]
-    fn test_load_history_token_aware_trims_oldest() {
-        // context_window = 1000 tokens → budget = 400 tokens.
-        // 10 user+assistant pairs, each ~50 ASCII tokens (200-char content).
-        // Total ~1000 tokens > 400 → oldest pairs should be trimmed.
-        let mut agent = make_test_agent();
-        agent.config.context_window = 1000;
-        // 200 chars ≈ 50 ASCII tokens each
-        let long_content: String = "x".repeat(200);
-        let records: Vec<_> = (0..10i64)
-            .flat_map(|i| {
-                let base = i * 2;
-                vec![
-                    make_chat_record(base, "user", &long_content),
-                    make_chat_record(base + 1, "assistant", &long_content),
-                ]
-            })
-            .collect();
-        agent.load_history(&records);
-        // Each pair ≈ (50+4)*2 = 108 tokens; budget=400 → at most ~3–4 pairs
-        let history_msgs = agent.message_count().saturating_sub(1); // subtract system msg
-        assert!(
-            history_msgs <= 8,
-            "expected ≤8 history msgs, got {}",
-            history_msgs
-        );
-        // The last message must be the newest assistant reply
-        let last = &agent.messages[agent.message_count() - 1];
-        assert_eq!(last.role, "assistant");
-        assert_eq!(last.content.as_deref(), Some(long_content.as_str()));
-    }
+        // ─── token-aware history trimming ────────────────────────────────────────
 
-    #[test]
-    fn test_load_history_small_history_not_trimmed() {
-        // Small history well within budget → nothing trimmed.
-        let mut agent = make_test_agent();
-        agent.config.context_window = 128_000;
-        let records = vec![
-            make_chat_record(1, "user", "hello"),
-            make_chat_record(2, "assistant", "hi"),
-            make_chat_record(3, "user", "how are you"),
-            make_chat_record(4, "assistant", "great"),
-        ];
-        agent.load_history(&records);
-        // All 4 history messages present (plus whatever system msg make_test_agent has)
-        // make_test_agent starts with 0 messages, load_history adds 4
-        assert_eq!(agent.message_count(), 4);
+        fn make_chat_record(id: i64, role: &str, content: &str) -> crate::serve::db::ChatRecord {
+            crate::serve::db::ChatRecord {
+                id,
+                note_id: "default".into(),
+                role: role.into(),
+                nickname: "".into(),
+                content: content.into(),
+                created_at: id,
+                model: None,
+                tokens_in: None,
+                tokens_out: None,
+                steps: None,
+                tool_calls: None,
+                thinking: None,
+                context_tokens: None,
+            }
+        }
+
+        #[test]
+        fn test_load_history_token_aware_trims_oldest() {
+            // context_window = 1000 tokens → budget = 400 tokens.
+            // 10 user+assistant pairs, each ~50 ASCII tokens (200-char content).
+            // Total ~1000 tokens > 400 → oldest pairs should be trimmed.
+            let mut agent = make_test_agent();
+            agent.config.context_window = 1000;
+            // 200 chars ≈ 50 ASCII tokens each
+            let long_content: String = "x".repeat(200);
+            let records: Vec<_> = (0..10i64)
+                .flat_map(|i| {
+                    let base = i * 2;
+                    vec![
+                        make_chat_record(base, "user", &long_content),
+                        make_chat_record(base + 1, "assistant", &long_content),
+                    ]
+                })
+                .collect();
+            agent.load_history(&records);
+            // Each pair ≈ (50+4)*2 = 108 tokens; budget=400 → at most ~3–4 pairs
+            let history_msgs = agent.message_count().saturating_sub(1); // subtract system msg
+            assert!(
+                history_msgs <= 8,
+                "expected ≤8 history msgs, got {}",
+                history_msgs
+            );
+            // The last message must be the newest assistant reply
+            let last = &agent.messages[agent.message_count() - 1];
+            assert_eq!(last.role, "assistant");
+            assert_eq!(last.content.as_deref(), Some(long_content.as_str()));
+        }
+
+        #[test]
+        fn test_load_history_small_history_not_trimmed() {
+            // Small history well within budget → nothing trimmed.
+            let mut agent = make_test_agent();
+            agent.config.context_window = 128_000;
+            let records = vec![
+                make_chat_record(1, "user", "hello"),
+                make_chat_record(2, "assistant", "hi"),
+                make_chat_record(3, "user", "how are you"),
+                make_chat_record(4, "assistant", "great"),
+            ];
+            agent.load_history(&records);
+            // All 4 history messages present (plus whatever system msg make_test_agent has)
+            // make_test_agent starts with 0 messages, load_history adds 4
+            assert_eq!(agent.message_count(), 4);
+        }
     }
 
     // ─── LLM-based compaction ────────────────────────────────────────────────
@@ -4347,6 +4363,7 @@ read(3, "root:x:0:0:...", 4096) = 1234"#;
         assert!(agent.approval_callback.is_none());
         assert!(agent.files.is_none());
         assert!(agent.active_file.is_none());
+        #[cfg(feature = "notes")]
         assert!(agent.chat_db.is_none());
         assert!(agent.chat_archive_dir.is_none());
         assert!(agent.chat_note_id.is_none());

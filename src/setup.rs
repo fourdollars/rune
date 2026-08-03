@@ -469,11 +469,10 @@ async fn fetch_provider_models(
     cfg.base_url = base_url.map(|s| s.to_string());
 
     // Try via full provider machinery (PAT → session token exchange for Copilot).
-    if let Ok(registry) = crate::serve::api::build_provider_pub(&cfg) {
-        if let Ok(models) = registry.list_models().await {
-            if !models.is_empty() {
-                return Some(models);
-            }
+    let registry = crate::cli::init_provider(&cfg);
+    if let Ok(models) = registry.list_models().await {
+        if !models.is_empty() {
+            return Some(models);
         }
     }
 

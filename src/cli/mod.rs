@@ -1738,7 +1738,7 @@ pub async fn run() {
                 let adapter = CliLoopAdapter;
                 let engine = crate::loop_engine::LoopEngine::new(
                     cfg.clone(),
-                    crate::serve::data_dir().join("loops"),
+                    crate::config::data_dir().join("loops"),
                 );
                 let repo_path =
                     std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
@@ -1779,7 +1779,7 @@ pub async fn run() {
                     let adapter = CliLoopAdapter;
                     let engine = crate::loop_engine::LoopEngine::new(
                         cfg.clone(),
-                        crate::serve::data_dir().join("loops"),
+                        crate::config::data_dir().join("loops"),
                     );
                     let repo_path =
                         std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));

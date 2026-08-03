@@ -30,11 +30,7 @@ use std::sync::Arc;
 use tokio::sync::{broadcast, RwLock};
 use tracing::{info, warn};
 
-/// Get the Rune data directory (~/.rune).
-pub fn data_dir() -> PathBuf {
-    let home = std::env::var("HOME").unwrap_or_else(|_| ".".into());
-    PathBuf::from(home).join(".rune")
-}
+pub use crate::config::data_dir;
 
 /// Get the markdown directory for a session: ~/.rune/sessions/<session>/markdown/
 pub fn note_markdown_dir(session: &str) -> PathBuf {
@@ -684,7 +680,7 @@ fn is_localhost(ip: IpAddr) -> bool {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "notes"))]
 mod tests {
     use super::*;
     use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};

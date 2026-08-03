@@ -14,6 +14,7 @@ mod mcp;
 mod precommands;
 mod provider;
 mod sandbox;
+#[cfg(feature = "notes")]
 mod serve;
 mod setup;
 mod skills;
@@ -76,56 +77,65 @@ async fn async_main() {
 
     // Handle `rune notes` subcommand
     if args.len() > 1 && args[1] == "notes" {
-        let cfg = config::load_without_clap().unwrap_or_else(|e| {
-            eprintln!("warning: config load failed: {}", e);
-            config::RuneConfig::default()
-        });
+        #[cfg(feature = "notes")]
+        {
+            let cfg = config::load_without_clap().unwrap_or_else(|e| {
+                eprintln!("warning: config load failed: {}", e);
+                config::RuneConfig::default()
+            });
 
-        tracing_subscriber::fmt()
-            .with_env_filter(
-                EnvFilter::try_from_default_env()
-                    .unwrap_or_else(|_| EnvFilter::new(&cfg.log_level)),
-            )
-            .with_target(false)
-            .init();
+            tracing_subscriber::fmt()
+                .with_env_filter(
+                    EnvFilter::try_from_default_env()
+                        .unwrap_or_else(|_| EnvFilter::new(&cfg.log_level)),
+                )
+                .with_target(false)
+                .init();
 
-        // Parse notes-specific args
-        // Priority: CLI flags > env vars > [serve] section in rune.toml
-        let notes_cfg = &cfg.notes;
-        let mut opts = serve::NotesOptions {
-            port: notes_cfg.port.unwrap_or(9527),
-            bind: notes_cfg
-                .bind
-                .as_deref()
-                .and_then(|b| b.parse().ok())
-                .unwrap_or(IpAddr::V4(Ipv4Addr::LOCALHOST)),
-        };
+            // Parse notes-specific args
+            // Priority: CLI flags > env vars > [serve] section in rune.toml
+            let notes_cfg = &cfg.notes;
+            let mut opts = serve::NotesOptions {
+                port: notes_cfg.port.unwrap_or(9527),
+                bind: notes_cfg
+                    .bind
+                    .as_deref()
+                    .and_then(|b| b.parse().ok())
+                    .unwrap_or(IpAddr::V4(Ipv4Addr::LOCALHOST)),
+            };
 
-        // CLI flags override config file
-        let mut i = 2;
-        while i < args.len() {
-            match args[i].as_str() {
-                "--port" | "-p" => {
-                    if i + 1 < args.len() {
-                        opts.port = args[i + 1].parse().unwrap_or(9527);
-                        i += 1;
+            // CLI flags override config file
+            let mut i = 2;
+            while i < args.len() {
+                match args[i].as_str() {
+                    "--port" | "-p" => {
+                        if i + 1 < args.len() {
+                            opts.port = args[i + 1].parse().unwrap_or(9527);
+                            i += 1;
+                        }
                     }
-                }
-                "--bind" | "-b" => {
-                    if i + 1 < args.len() {
-                        opts.bind = args[i + 1]
-                            .parse()
-                            .unwrap_or(IpAddr::V4(Ipv4Addr::LOCALHOST));
-                        i += 1;
+                    "--bind" | "-b" => {
+                        if i + 1 < args.len() {
+                            opts.bind = args[i + 1]
+                                .parse()
+                                .unwrap_or(IpAddr::V4(Ipv4Addr::LOCALHOST));
+                            i += 1;
+                        }
                     }
+                    _ => {}
                 }
-                _ => {}
+                i += 1;
             }
-            i += 1;
-        }
 
-        serve::run(cfg, opts).await;
-        return;
+            serve::run(cfg, opts).await;
+            return;
+        }
+        #[cfg(not(feature = "notes"))]
+        {
+            eprintln!("error: 'notes' feature is not enabled in this build.");
+            eprintln!("To enable it, please compile with: cargo build --features notes");
+            std::process::exit(1);
+        }
     }
 
     // Detect Concourse CI mode BEFORE clap parses args (in/out receive positional args)
