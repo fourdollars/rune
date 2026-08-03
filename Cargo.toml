@@ -8,7 +8,7 @@ license = "MIT"
 description = "High-performance zero-trust AI Agent"
 
 [dependencies]
-rusqlite = { version = "0.32", features = ["bundled", "backup"] }
+rusqlite = { version = "0.35", features = ["bundled", "backup"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 toml = "1"
@@ -26,7 +26,7 @@ futures = "0.3"
 async-stream = "0.3"
 tokio-stream = "0.1"
 tokio-util = { version = "0.7", features = ["rt"] }
-base64 = "0.22"
+base64 = "0.23"
 sha2 = "0.11.0"
 hex = "0.4.3"
 axum = { version = "0.8", optional = true }
