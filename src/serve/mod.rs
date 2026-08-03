@@ -20,7 +20,7 @@ use axum::{
     http::{header, StatusCode},
     middleware as axum_mw,
     response::{Html, IntoResponse},
-    routing::{get, post},
+    routing::{delete, get, patch, post, put},
     Router,
 };
 use std::collections::HashMap;
@@ -436,12 +436,11 @@ pub async fn run(config: RuneConfig, opts: NotesOptions) {
         let is_admin = session.is_admin();
         let is_guest = session.is_guest();
 
-        // Guest: block all mutations (only allow read-only endpoints)
+        // Guest: block all mutations (only allow GET and session selection)
         if is_guest && req.method() != axum::http::Method::GET {
             let path = req.uri().path().to_string();
-            let allowed_guest_paths =
-                ["/api/note/switch", "/api/file/switch", "/api/system-prompt"];
-            if !allowed_guest_paths.iter().any(|p| path == *p) {
+            let is_session_put = path == "/api/session" && req.method() == axum::http::Method::PUT;
+            if !is_session_put {
                 let body = axum::Json(
                     serde_json::json!({"ok": false, "error": "Guest access is read-only"}),
                 );
@@ -449,20 +448,15 @@ pub async fn run(config: RuneConfig, opts: NotesOptions) {
             }
         }
 
-        // Admin-only endpoints: note management, model switch, visibility
+        // Admin-only endpoints: note create/delete, note patch (rename/model/visibility), file patch (visibility/rename), system prompt PUT
         if !is_admin {
             let path = req.uri().path().to_string();
-            let admin_only_paths = [
-                "/api/note/create",
-                "/api/note/rename",
-                "/api/note/delete",
-                "/api/model/switch",
-                "/api/model/thinking",
-                "/api/note/visibility",
-                "/api/file/visibility",
-            ];
-            let is_admin_only = admin_only_paths.iter().any(|p| path == *p)
-                || (path == "/api/system-prompt" && req.method() == axum::http::Method::POST);
+            let method = req.method();
+            let is_admin_only = (path == "/api/notes" && method == axum::http::Method::POST)
+                || (path.starts_with("/api/notes/") && !path.contains("/files") && !path.contains("/system-prompt") && method == axum::http::Method::DELETE)
+                || (path.starts_with("/api/notes/") && !path.contains("/files") && !path.contains("/system-prompt") && method == axum::http::Method::PATCH)
+                || (path.starts_with("/api/notes/") && path.contains("/files/") && method == axum::http::Method::PATCH)
+                || (path.ends_with("/system-prompt") && method == axum::http::Method::PUT);
             if is_admin_only {
                 let body = axum::Json(
                     serde_json::json!({"ok": false, "error": "Admin privileges required"}),
@@ -475,32 +469,43 @@ pub async fn run(config: RuneConfig, opts: NotesOptions) {
 
     // API routes with auth middleware
     let api_routes = Router::new()
-        .route("/api/chat", post(api::chat_handler))
-        .route("/api/chat/cancel", post(api::chat_cancel_handler))
-        .route("/api/goal/set", post(api::goal_set_handler))
-        .route("/api/goal/clear", post(api::goal_clear_handler))
-        .route("/api/file/create", post(api::file_create_handler))
-        .route("/api/file/delete", post(api::file_delete_handler))
-        .route("/api/file/rename", post(api::file_rename_handler))
-        .route("/api/file/switch", post(api::file_switch_handler))
-        .route("/api/file/update", post(api::file_update_handler))
-        .route("/api/notes", get(api::notes_list_json_handler))
-        .route("/api/note/create", post(api::note_create_handler))
-        .route("/api/note/rename", post(api::note_rename_handler))
-        .route("/api/note/delete", post(api::note_delete_handler))
-        .route("/api/note/switch", post(api::note_switch_handler))
-        .route("/api/model/switch", post(api::model_switch_handler))
-        .route("/api/model/thinking", post(api::thinking_switch_handler))
+        // Notes
+        .route(
+            "/api/notes",
+            get(api::notes_list_json_handler).post(api::note_create_handler),
+        )
+        .route(
+            "/api/notes/{note}",
+            patch(api::note_patch_handler).delete(api::note_delete_handler),
+        )
+        .route("/api/notes/{note}/files", post(api::file_create_handler))
+        .route(
+            "/api/notes/{note}/files/{file}",
+            put(api::file_update_handler)
+                .patch(api::file_patch_handler)
+                .delete(api::file_delete_handler),
+        )
+        .route(
+            "/api/notes/{note}/system-prompt",
+            get(api::system_prompt_get_handler).put(api::system_prompt_handler),
+        )
+        // Session (active note/file for SSE stream)
+        .route("/api/session", put(api::session_handler))
+        // Chat
+        .route(
+            "/api/chat",
+            post(api::chat_handler).delete(api::chat_cancel_handler),
+        )
         .route("/api/chat/archive", post(api::archive_handler))
         .route("/api/chat/search", post(api::search_handler))
-        .route("/api/approval", post(api::approval_handler))
-        .route("/api/dir/browse", post(api::dir_browse_handler))
-        .route("/api/note/visibility", post(api::note_visibility_handler))
-        .route("/api/file/visibility", post(api::file_visibility_handler))
+        // Goal
         .route(
-            "/api/system-prompt",
-            get(api::system_prompt_get_handler).post(api::system_prompt_handler),
+            "/api/goal",
+            put(api::goal_set_handler).delete(api::goal_clear_handler),
         )
+        // Tool callbacks
+        .route("/api/approval", post(api::approval_handler))
+        .route("/api/dirs", get(api::dir_browse_handler))
         .layer(axum_mw::from_fn_with_state(state.clone(), auth_middleware));
 
     // Static + SSE routes (SSE has its own auth logic inside the handler)
@@ -519,21 +524,17 @@ pub async fn run(config: RuneConfig, opts: NotesOptions) {
         .route("/assets/{*path}", get(static_handler))
         .route("/assets-bin/{*path}", get(binary_asset_handler))
         // SPA routes — authenticated editor (client-side routing handles note/file within)
-        .route("/notes", get(index_handler))
-        .route("/notes/", get(index_handler))
-        .route("/notes/{note}", get(index_handler))
-        .route("/notes/{note}/", get(index_handler))
-        .route("/notes/{note}/{file}", get(index_handler))
+        .route("/edit", get(index_handler))
+        .route("/edit/", get(index_handler))
+        .route("/edit/{note}", get(index_handler))
+        .route("/edit/{note}/", get(index_handler))
+        .route("/edit/{note}/{file}", get(index_handler))
         // Public (no-auth) routes
-        .route("/public", get(api::public_notes_list_handler))
-        .route("/public/", get(api::public_notes_list_handler))
-        .route("/public/{note}/", get(api::public_note_index_handler))
-        .route("/public/{note}", get(api::public_note_index_handler))
-        .route("/public/{note}/{file}", get(api::public_preview_handler))
-        .route(
-            "/api/public/raw/{note}/{file}",
-            get(api::public_raw_handler),
-        )
+        .route("/notes/", get(api::public_notes_list_handler))
+        .route("/notes/{note}", get(api::public_note_index_handler))
+        .route("/notes/{note}/", get(api::public_note_index_handler))
+        .route("/notes/{note}/{file}", get(api::public_preview_handler))
+        .route("/raw/{note}/{file}", get(api::public_raw_handler))
         .merge(api_routes)
         .with_state(state);
 
@@ -939,10 +940,10 @@ mod tests {
             next.run(req).await
         }
 
-        // Test login_handler (/) and index_handler (/notes/) separately
+        // Test login_handler (/) and index_handler (/edit/) separately
         let app = Router::new()
             .route("/", get(login_handler))
-            .route("/notes/", get(index_handler));
+            .route("/edit/", get(index_handler));
         let req = Request::builder()
             .uri("/")
             .body(axum::body::Body::empty())
@@ -955,7 +956,7 @@ mod tests {
             resp.status()
         );
         let req2 = Request::builder()
-            .uri("/notes/")
+            .uri("/edit/")
             .body(axum::body::Body::empty())
             .unwrap();
         let resp2 = app.oneshot(req2).await.unwrap();

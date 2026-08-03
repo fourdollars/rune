@@ -414,8 +414,8 @@ guests = ["guest:guest123"]
 
 Admin can toggle visibility (👁/🙈) for individual notes and files. When both the note and file are set to public, anyone can view the rendered Markdown at:
 
-- **Index:** `http://host:port/public/` — lists all public notes
-- **Preview:** `http://host:port/public/{note}/{filename}` — rendered Markdown page
+- **Index:** `http://host:port/notes/` — lists all public notes
+- **Preview:** `http://host:port/notes/{note}/{filename}` — rendered Markdown page
 
 No authentication required for public pages.
 

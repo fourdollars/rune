@@ -467,12 +467,12 @@ mod tests {
             "login.html missing local-login-form"
         );
         assert!(
-            html.contains("/public/"),
-            "login.html missing link to /public/"
+            html.contains("/notes/"),
+            "login.html missing link to /notes/"
         );
         assert!(
-            html.contains("/notes/"),
-            "login.html missing redirect to /notes/"
+            html.contains("/edit/"),
+            "login.html missing redirect to /edit/"
         );
         assert!(
             !html.contains("nickname-modal"),

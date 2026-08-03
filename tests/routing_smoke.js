@@ -1,5 +1,5 @@
 // Rune Routing Smoke Test — Playwright
-// Tests the URL routing spec: /, /notes/*, /public/*
+// Tests the URL routing spec: /, /edit/*, /notes/*, /raw/*
 const { chromium } = require('/tmp/node_modules/playwright');
 
 const BASE = 'http://localhost:9527';
@@ -35,92 +35,92 @@ async function withPage(browser, fn) {
     else ko('/ has #login-submit (login page)', 'not found');
     if (!hasModalOverlay) ok('/ does NOT have #nickname-modal (no modal pattern)');
     else ko('/ does NOT have #nickname-modal (no modal pattern)', 'modal found');
-    // Must have link to /public/
+    // Must have link to /notes/
     const html = await page.content();
-    if (html.includes('/public/')) ok('/ has link to /public/');
-    else ko('/ has link to /public/', 'not found');
+    if (html.includes('/notes/')) ok('/ has link to /notes/');
+    else ko('/ has link to /notes/', 'not found');
   });
 
-  // ── Test 2: /notes/ returns SPA ──────────────────────────────────
+  // ── Test 2: /edit/ returns SPA ──────────────────────────────────
+  await withPage(browser, async (page) => {
+    const resp = await page.goto(BASE + '/edit/');
+    if (resp.status() === 200) ok('GET /edit/ returns 200');
+    else ko('GET /edit/ returns 200', `got ${resp.status()}`);
+    const title = await page.title();
+    if (title === 'Rune' || title.includes('\u16B1')) ok('/edit/ serves SPA');
+    else ko('/edit/ serves SPA', `got: ${title}`);
+    const hasModal = await page.$('#nickname-modal') !== null;
+    if (hasModal) ok('/edit/ has #nickname-modal (SPA)');
+    else ko('/edit/ has #nickname-modal (SPA)', 'modal not found — SPA should still have it');
+  });
+
+  // ── Test 3: /edit/{note}/{file} returns SPA ─────────────────────
+  await withPage(browser, async (page) => {
+    const resp = await page.goto(BASE + '/edit/Rune/routing');
+    if (resp.status() === 200) ok('GET /edit/Rune/routing returns 200');
+    else ko('GET /edit/Rune/routing returns 200', `got ${resp.status()}`);
+    const title = await page.title();
+    if (title === 'Rune' || title.includes('\u16B1')) ok('/edit/{note}/{file} serves SPA');
+    else ko('/edit/{note}/{file} serves SPA', `got: ${title}`);
+  });
+
+  // ── Test 4: /edit/{note}/{file}.md also returns SPA ─────────────
+  await withPage(browser, async (page) => {
+    const resp = await page.goto(BASE + '/edit/Rune/routing.md');
+    if (resp.status() === 200) ok('GET /edit/Rune/routing.md returns 200 (SPA)');
+    else ko('GET /edit/Rune/routing.md returns 200 (SPA)', `got ${resp.status()}`);
+    const title = await page.title();
+    if (title === 'Rune' || title.includes('\u16B1')) ok('/edit/{note}/{file}.md serves SPA');
+    else ko('/edit/{note}/{file}.md serves SPA', `got: ${title}`);
+  });
+
+  // ── Test 5: /notes/ returns Public Notes page ────────────────────
   await withPage(browser, async (page) => {
     const resp = await page.goto(BASE + '/notes/');
     if (resp.status() === 200) ok('GET /notes/ returns 200');
     else ko('GET /notes/ returns 200', `got ${resp.status()}`);
     const title = await page.title();
-    if (title === 'Rune' || title.includes('\u16B1')) ok('/notes/ serves SPA');
-    else ko('/notes/ serves SPA', `got: ${title}`);
-    const hasModal = await page.$('#nickname-modal') !== null;
-    if (hasModal) ok('/notes/ has #nickname-modal (SPA)');
-    else ko('/notes/ has #nickname-modal (SPA)', 'modal not found — SPA should still have it');
+    if (title === 'Public Notes') ok('/notes/ title is "Public Notes"');
+    else ko('/notes/ title is "Public Notes"', `got: ${title}`);
   });
 
-  // ── Test 3: /notes/{note}/{file} returns SPA ─────────────────────
+  // ── Test 6: /notes/ links use /notes/, not /edit/ ─────────────
+  await withPage(browser, async (page) => {
+    await page.goto(BASE + '/notes/');
+    const html = await page.content();
+    if (html.includes('/notes/')) ok('/notes/ page has /notes/ links');
+    else ko('/notes/ page has /notes/ links', 'no /notes/ hrefs found');
+    if (!html.includes('/edit/')) ok('/notes/ page has NO /edit/ links');
+    else ko('/notes/ page has NO /edit/ links', 'found stale /edit/ hrefs');
+  });
+
+  // ── Test 7: /notes/{note}/ returns note index page ──────────────
+  await withPage(browser, async (page) => {
+    const resp = await page.goto(BASE + '/notes/Rune/');
+    if (resp.status() === 200) ok('GET /notes/Rune/ returns 200');
+    else ko('GET /notes/Rune/ returns 200', `got ${resp.status()}`);
+  });
+
+  // ── Test 8: /notes/{note}/{file} returns preview page ───────────
   await withPage(browser, async (page) => {
     const resp = await page.goto(BASE + '/notes/Rune/routing');
     if (resp.status() === 200) ok('GET /notes/Rune/routing returns 200');
     else ko('GET /notes/Rune/routing returns 200', `got ${resp.status()}`);
-    const title = await page.title();
-    if (title === 'Rune' || title.includes('\u16B1')) ok('/notes/{note}/{file} serves SPA');
-    else ko('/notes/{note}/{file} serves SPA', `got: ${title}`);
+    const html = await page.content();
+    if (html.includes('/notes/Rune/')) ok('/notes/Rune/routing back-link uses /notes/');
+    else ko('/notes/Rune/routing back-link uses /notes/', 'no /notes/Rune/ link found');
+    // Check links in HTML attributes only (not in text content which may reference /edit/ in docs)
+    const editHrefs = (html.match(/href="[^"]*\/edit\/[^"]*"/g) || []).concat(
+                      (html.match(/href='[^']*\/edit\/[^']*'/g) || []));
+    if (editHrefs.length === 0) ok('/notes/Rune/routing has no stale /edit/ hrefs');
+    else ko('/notes/Rune/routing has no stale /edit/ hrefs', `found: ${editHrefs[0]}`);
   });
 
-  // ── Test 4: /notes/{note}/{file}.md also returns SPA ─────────────
+  // ── Test 9: /notes/{note}/{file}.md also works ──────────────────
   await withPage(browser, async (page) => {
     const resp = await page.goto(BASE + '/notes/Rune/routing.md');
-    if (resp.status() === 200) ok('GET /notes/Rune/routing.md returns 200 (SPA)');
-    else ko('GET /notes/Rune/routing.md returns 200 (SPA)', `got ${resp.status()}`);
-    const title = await page.title();
-    if (title === 'Rune' || title.includes('\u16B1')) ok('/notes/{note}/{file}.md serves SPA');
-    else ko('/notes/{note}/{file}.md serves SPA', `got: ${title}`);
-  });
-
-  // ── Test 5: /public/ returns Public Notes page ────────────────────
-  await withPage(browser, async (page) => {
-    const resp = await page.goto(BASE + '/public/');
-    if (resp.status() === 200) ok('GET /public/ returns 200');
-    else ko('GET /public/ returns 200', `got ${resp.status()}`);
-    const title = await page.title();
-    if (title === 'Public Notes') ok('/public/ title is "Public Notes"');
-    else ko('/public/ title is "Public Notes"', `got: ${title}`);
-  });
-
-  // ── Test 6: /public/ links use /public/, not /notes/ ─────────────
-  await withPage(browser, async (page) => {
-    await page.goto(BASE + '/public/');
-    const html = await page.content();
-    if (html.includes('/public/')) ok('/public/ page has /public/ links');
-    else ko('/public/ page has /public/ links', 'no /public/ hrefs found');
-    if (!html.includes('/notes/')) ok('/public/ page has NO /notes/ links');
-    else ko('/public/ page has NO /notes/ links', 'found stale /notes/ hrefs');
-  });
-
-  // ── Test 7: /public/{note}/ returns note index page ──────────────
-  await withPage(browser, async (page) => {
-    const resp = await page.goto(BASE + '/public/Rune/');
-    if (resp.status() === 200) ok('GET /public/Rune/ returns 200');
-    else ko('GET /public/Rune/ returns 200', `got ${resp.status()}`);
-  });
-
-  // ── Test 8: /public/{note}/{file} returns preview page ───────────
-  await withPage(browser, async (page) => {
-    const resp = await page.goto(BASE + '/public/Rune/routing');
-    if (resp.status() === 200) ok('GET /public/Rune/routing returns 200');
-    else ko('GET /public/Rune/routing returns 200', `got ${resp.status()}`);
-    const html = await page.content();
-    if (html.includes('/public/Rune/')) ok('/public/Rune/routing back-link uses /public/');
-    else ko('/public/Rune/routing back-link uses /public/', 'no /public/Rune/ link found');
-    // Check links in HTML attributes only (not in text content which may reference /notes/ in docs)
-    const notesHrefs = (html.match(/href="[^"]*\/notes\/[^"]*"/g) || []).concat(
-                       (html.match(/href='[^']*\/notes\/[^']*'/g) || []));
-    if (notesHrefs.length === 0) ok('/public/Rune/routing has no stale /notes/ hrefs');
-    else ko('/public/Rune/routing has no stale /notes/ hrefs', `found: ${notesHrefs[0]}`);
-  });
-
-  // ── Test 9: /public/{note}/{file}.md also works ──────────────────
-  await withPage(browser, async (page) => {
-    const resp = await page.goto(BASE + '/public/Rune/routing.md');
-    if (resp.status() === 200) ok('GET /public/Rune/routing.md returns 200');
-    else ko('GET /public/Rune/routing.md returns 200', `got ${resp.status()}`);
+    if (resp.status() === 200) ok('GET /notes/Rune/routing.md returns 200');
+    else ko('GET /notes/Rune/routing.md returns 200', `got ${resp.status()}`);
   });
 
   // ── Test 10: app.js routing functions present ────────────────────
@@ -143,7 +143,7 @@ async function withPage(browser, fn) {
 
   // ── Test 11: SPA URL — login then URL preserved ──────────────────
   await withPage(browser, async (page) => {
-    await page.goto(BASE + '/notes/Rune/routing');
+    await page.goto(BASE + '/edit/Rune/routing');
     await page.waitForSelector('#nickname-modal:not(.hidden)', { timeout: 5000 }).catch(() => {});
     await page.fill('#nickname-input', 'testbot');
     await page.fill('#token-input', ADMIN_TOKEN);
@@ -154,31 +154,31 @@ async function withPage(browser, fn) {
       return el && !el.textContent.includes('\uD83D\uDD34'); // 🔴
     }, { timeout: 8000 }).catch(() => {});
     const url = page.url();
-    if (url.includes('/notes/Rune/routing')) ok('URL preserved after login (/notes/Rune/routing)');
+    if (url.includes('/edit/Rune/routing')) ok('URL preserved after login (/edit/Rune/routing)');
     else ok(`URL after login: ${url}`); // informational, not a hard fail
   });
 
-  // ── Test 12: app.js public links use /public/, not /notes/ ───────
+  // ── Test 12: app.js public links use /notes/, not /edit/ ───────
   await withPage(browser, async (page) => {
     const resp = await page.goto(BASE + '/assets/app.js');
     const body = await resp.text();
-    // noteLink and fileLink in updateDocTitle must use /public/
+    // noteLink and fileLink in updateDocTitle must use /notes/
     const noteLink = body.match(/function noteLink[\s\S]*?(?=function fileLink)/);
     const fileLink = body.match(/function fileLink[\s\S]*?(?=function buildTitleNodes|\n\s*function )/);
-    if (noteLink && noteLink[0].includes("'/public/")) ok('noteLink uses /public/ prefix');
-    else ko('noteLink uses /public/ prefix', 'still using /notes/ or not found');
-    if (fileLink && fileLink[0].includes("'/public/")) ok('fileLink uses /public/ prefix');
-    else ko('fileLink uses /public/ prefix', 'still using /notes/ or not found');
-    // updateBrowserUrl must still use /notes/ (SPA internal routing)
+    if (noteLink && noteLink[0].includes("'/notes/")) ok('noteLink uses /notes/ prefix');
+    else ko('noteLink uses /notes/ prefix', 'still using /public/ or not found');
+    if (fileLink && fileLink[0].includes("'/notes/")) ok('fileLink uses /notes/ prefix');
+    else ko('fileLink uses /notes/ prefix', 'still using /public/ or not found');
+    // updateBrowserUrl must use /edit/ (SPA internal routing)
     const browserUrl = body.match(/function updateBrowserUrl[\s\S]*?(?=\n\s*\/\/ Pending|\nlet _pending)/);
-    if (browserUrl && browserUrl[0].includes("'/notes/")) ok('updateBrowserUrl still uses /notes/ (SPA routing)');
-    else ko('updateBrowserUrl still uses /notes/ (SPA routing)', 'not found or changed');
+    if (browserUrl && browserUrl[0].includes("'/edit/")) ok('updateBrowserUrl uses /edit/ (SPA routing)');
+    else ko('updateBrowserUrl uses /edit/ (SPA routing)', 'not found or changed');
   });
 
   // ── Test 12+: Logout redirects to / ────────────────────────────
   await withPage(browser, async (page) => {
     // Login first
-    await page.goto(BASE + '/notes/Rune/routing');
+    await page.goto(BASE + '/edit/Rune/routing');
     await page.waitForSelector('#nickname-modal:not(.hidden)', { timeout: 5000 }).catch(() => {});
     await page.fill('#nickname-input', 'testbot');
     await page.fill('#token-input', ADMIN_TOKEN);
@@ -211,7 +211,7 @@ async function withPage(browser, fn) {
   // ── Test 13: Hide context-overlay when chat-input is not empty ───────
   await withPage(browser, async (page) => {
     // Login first
-    await page.goto(BASE + '/notes/Rune/routing');
+    await page.goto(BASE + '/edit/Rune/routing');
     await page.waitForSelector('#nickname-modal:not(.hidden)', { timeout: 5000 }).catch(() => {});
     await page.fill('#nickname-input', 'testbot');
     await page.fill('#token-input', ADMIN_TOKEN);

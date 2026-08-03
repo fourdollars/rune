@@ -4,7 +4,7 @@
 'use strict';
 
 // --- URL Routing helpers ---
-// Parse /notes/{note}/{file} from pathname; strip trailing .md
+// Parse /edit/{note}/{file} from pathname; strip trailing .md
 function parseNotesUrl() {
     const path = window.location.pathname;
     // Strip .md suffix and redirect to clean URL
@@ -16,9 +16,9 @@ function parseNotesUrl() {
     return parseNotesUrlFromPath(path);
 }
 function parseNotesUrlFromPath(path) {
-    const m = path.match(/^\/notes\/([^\/]+)\/([^\/]+)$/);
+    const m = path.match(/^\/edit\/([^\/]+)\/([^\/]+)$/);
     if (m) return { noteId: decodeURIComponent(m[1]), file: decodeURIComponent(m[2]) };
-    const m2 = path.match(/^\/notes\/([^\/]+)\/?$/);
+    const m2 = path.match(/^\/edit\/([^\/]+)\/?$/);
     if (m2) return { noteId: decodeURIComponent(m2[1]), file: null };
     return { noteId: null, file: null };
 }
@@ -26,8 +26,8 @@ function updateBrowserUrl(noteId, filename) {
     if (!noteId) return;
     const slug = filename ? filename.replace(/\.md$/, '') : null;
     const url = slug
-        ? '/notes/' + encodeURIComponent(noteId) + '/' + encodeURIComponent(slug)
-        : '/notes/' + encodeURIComponent(noteId) + '/';
+        ? '/edit/' + encodeURIComponent(noteId) + '/' + encodeURIComponent(slug)
+        : '/edit/' + encodeURIComponent(noteId) + '/';
     if (window.location.pathname !== url) {
         history.pushState({ noteId, filename }, '', url);
     }
@@ -215,7 +215,7 @@ function initEditor() {
         debounceTimer = setTimeout(() => {
             if (showPreview) renderPreview();
             if (editorDirty && currentNoteId) {
-                api('file/update', { note_id: currentNoteId, filename: currentFilename, content: specContent });
+                api('notes/' + encodeURIComponent(currentNoteId) + '/files/' + encodeURIComponent(currentFilename), { content: specContent }, 'PUT');
                 editorDirty = false;
             }
         }, 300);
@@ -544,16 +544,16 @@ function connect(noteId) {
     });
 }
 
-// Helper for POST requests
-async function api(endpoint, body) {
+// Helper for API requests
+async function api(endpoint, body, method) {
+    method = method || (body !== undefined ? 'POST' : 'GET');
     const headers = { 'Content-Type': 'application/json' };
     try {
-        const resp = await fetch('/api/' + endpoint, {
-            method: 'POST',
-            headers,
-            credentials: 'include',
-            body: JSON.stringify(body),
-        });
+        const opts = { method, headers, credentials: 'include' };
+        if (body !== undefined && method !== 'GET' && method !== 'DELETE') {
+            opts.body = JSON.stringify(body);
+        }
+        const resp = await fetch('/api/' + endpoint, opts);
         const data = await resp.json();
         if (!data.ok && data.error) {
             addSystemMessage('Error: ' + data.error);
@@ -1557,7 +1557,7 @@ function updateThinkingSelect() {
 
 function switchThinking(level) {
     if (isConnected) {
-        api('model/thinking', { note_id: currentNoteId, thinking: level });
+        api('notes/' + encodeURIComponent(currentNoteId), { thinking: level }, 'PATCH');
     }
 }
 
@@ -1669,7 +1669,7 @@ function hideModelDialog() {
 
 function switchModel(model) {
     if (isConnected) {
-        api('model/switch', { model, note_id: currentNoteId });
+        api('notes/' + encodeURIComponent(currentNoteId), { model }, 'PATCH');
     }
 }
 
@@ -1766,7 +1766,7 @@ function updateDocTitle(name) {
     function noteLink(label) {
         if (!notePublic) return document.createTextNode(label);
         const a = document.createElement('a');
-        a.href = '/public/' + encodeURIComponent(currentNoteId) + '/';
+        a.href = '/notes/' + encodeURIComponent(currentNoteId) + '/';
         a.target = '_blank'; a.rel = 'noopener';
         a.className = 'title-public-link';
         a.textContent = label;
@@ -1776,7 +1776,7 @@ function updateDocTitle(name) {
         const slug = (label || '').replace(/\.md$/, '');
         if (!filePublic) return document.createTextNode(label);
         const a = document.createElement('a');
-        a.href = '/public/' + encodeURIComponent(currentNoteId) + '/' + encodeURIComponent(slug);
+        a.href = '/notes/' + encodeURIComponent(currentNoteId) + '/' + encodeURIComponent(slug);
         a.target = '_blank'; a.rel = 'noopener';
         a.className = 'title-public-link';
         a.textContent = label;
@@ -1826,20 +1826,20 @@ async function createFile() {
     if (!name) return;
     if (!name.endsWith('.md')) { addSystemMessage('Error: filename must end in .md'); return; }
     if (!/^[a-zA-Z0-9_\-\.]+\.md$/.test(name)) { addSystemMessage('Error: invalid filename'); return; }
-    api('file/create', { note_id: currentNoteId, name });
+    api('notes/' + encodeURIComponent(currentNoteId) + '/files', { name });
 }
 
 async function deleteCurrentFile() {
     const ok = await showDialog({ title: 'Delete File', message: 'Delete ' + currentFilename + '?', danger: true });
     if (!ok) return;
-    api('file/delete', { note_id: currentNoteId, name: currentFilename });
+    api('notes/' + encodeURIComponent(currentNoteId) + '/files/' + encodeURIComponent(currentFilename), undefined, 'DELETE');
 }
 
 async function switchFile(name) {
-    const data = await api('file/switch', { note_id: currentNoteId, name });
+    const data = await api('session', { note: currentNoteId, file: name }, 'PUT');
     if (!data || !data.ok) return;
-    currentFilename = data.filename || name;
-    specContent = data.content || '';
+    currentFilename = data.current_file || name;
+    specContent = data.file_content || '';
     setEditorValue(specContent);
     if (showPreview) renderPreview();
     updateDocTitle(currentFilename);
@@ -1852,7 +1852,7 @@ function renameCurrentFile(newName) {
     if (!clean || clean === currentFilename) return;
     if (!clean.endsWith('.md')) { addSystemMessage('Error: filename must end in .md'); return; }
     if (!/^[a-zA-Z0-9_\-\.]+\.md$/.test(clean)) { addSystemMessage('Error: invalid filename'); return; }
-    api('file/rename', { note_id: currentNoteId, old_name: currentFilename, new_name: clean });
+    api('notes/' + encodeURIComponent(currentNoteId) + '/files/' + encodeURIComponent(currentFilename), { name: clean }, 'PATCH');
 }
 
 
@@ -2112,7 +2112,7 @@ function renderNoteList() {
                 const nextPublic = !notePublic;
                 s.public = nextPublic;
                 renderNoteList();
-                api('note/visibility', { note_id: s.id, public: nextPublic });
+                api('notes/' + encodeURIComponent(s.id), { public: nextPublic }, 'PATCH');
             };
         }
 
@@ -2178,7 +2178,7 @@ function renderNoteList() {
                     if (!s.fileVisibility) s.fileVisibility = {};
                     s.fileVisibility[fname] = nextPublic;
                     renderNoteList();
-                    api('file/visibility', { note_id: s.id, filename: fname, public: nextPublic });
+                    api('notes/' + encodeURIComponent(s.id) + '/files/' + encodeURIComponent(fname), { public: nextPublic }, 'PATCH');
                 };
             }
 
@@ -2200,7 +2200,7 @@ function renderNoteList() {
                     e.stopPropagation();
                     const newName = await showDialog({ title: 'Rename File', input: true, inputValue: fname, placeholder: 'new-name.md' });
                     if (newName && newName !== fname) {
-                        api('file/rename', { note_id: s.id, old_name: fname, new_name: newName });
+                        api('notes/' + encodeURIComponent(s.id) + '/files/' + encodeURIComponent(fname), { name: newName }, 'PATCH');
                     }
                 };
                 fileActions.appendChild(renameBtn);
@@ -2211,7 +2211,7 @@ function renderNoteList() {
                 delBtn.onclick = async (e) => {
                     e.stopPropagation();
                     const ok = await showDialog({ title: 'Delete File', message: 'Delete "' + fname + '"?', danger: true });
-                    if (ok) api('file/delete', { note_id: s.id, name: fname });
+                    if (ok) api('notes/' + encodeURIComponent(s.id) + '/files/' + encodeURIComponent(fname), undefined, 'DELETE');
                 };
                 fileActions.appendChild(delBtn);
 
@@ -2263,7 +2263,7 @@ async function switchNote(sessionId, forceFile = null) {
     // Close existing SSE immediately (stop receiving events from old room)
     if (evtSource) { evtSource.close(); evtSource = null; }
 
-    const data = await api('note/switch', { note_id: sessionId });
+    const data = await api('session', { note: sessionId }, 'PUT');
     if (!data || !data.ok) return;
 
     // Update active model for this note
@@ -2300,8 +2300,8 @@ async function switchNote(sessionId, forceFile = null) {
         currentFilename = targetFile;
         // If not the one server sent, fetch it
         if (targetFile !== data.current_file || data.file_content === undefined) {
-            const fileData = await api('file/switch', { note_id: sessionId, name: targetFile });
-            specContent = (fileData && fileData.content) || '';
+            const fileData = await api('session', { note: sessionId, file: targetFile }, 'PUT');
+            specContent = (fileData && fileData.file_content) || '';
         } else {
             specContent = data.file_content || '';
         }
@@ -2330,7 +2330,7 @@ function hideNewNoteDialog() {
 function createNote() {
     const name = document.getElementById('new-note-name').value.trim();
     if (!name) return;
-    api("note/create", { name }).then(() => switchNote(name));
+    api('notes', { name }).then(() => switchNote(name));
     hideNewNoteDialog();
 }
 
@@ -2839,7 +2839,7 @@ function saveNoteSettings() {
     const s = notes.find(x => x.id === settingsNoteId);
     if (s && name) {
         if (name !== s.name || selectedNoteIcon !== (s.icon || null)) {
-            api('note/rename', { note_id: settingsNoteId, name, icon: selectedNoteIcon });
+            api('notes/' + encodeURIComponent(settingsNoteId), { name, icon: selectedNoteIcon }, 'PATCH');
         }
     }
     hideNoteSettings();
@@ -2850,7 +2850,7 @@ async function deleteCurrentNote() {
     const ok = await showDialog({ title: 'Delete Note', message: 'Delete this note? Chat history will be preserved.', danger: true, okLabel: 'Delete Note' });
     if (!ok) return;
     const deletedId = settingsNoteId;
-    api('note/delete', { note_id: deletedId });
+    api('notes/' + encodeURIComponent(deletedId), undefined, 'DELETE');
     hideNoteSettings();
     if (currentNoteId === deletedId) {
         // Close current SSE to prevent reconnect loop to deleted note
@@ -2880,7 +2880,7 @@ function hideDirBrowser() {
 
 function navigateDir(path) {
     document.getElementById('dir-browser-path').value = path;
-    api('dir/browse', { path }).then(r => { if (r.ok && r.data) handleMessage(r.data); });
+    api('dirs?path=' + encodeURIComponent(path), undefined, 'GET').then(r => { if (r.ok && r.data) handleMessage(r.data); });
 }
 
 function renderDirBrowser(path, parent, entries) {

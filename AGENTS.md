@@ -211,13 +211,13 @@ rune notes --bind 0.0.0.0
 | `/auth/local` | Local username/password validation |
 | `/auth/logout` | Clear session and redirect to `/` |
 | `/auth/denied` | Access denied / not on allowlist |
-| `/notes/` | Authenticated editor SPA |
+| `/edit/` | Authenticated editor SPA |
 | `/api/me` | Current user info (login, role, avatar) |
 | `/api/auth/config` | Exposes enabled authentication methods |
-| `/api/public/raw/{note}/{file}` | Raw markdown content (no auth required) |
-| `/public/` | Lists all public notes |
-| `/public/{note}/` | Lists public files in a note |
-| `/public/{note}/{file}` | Rendered markdown preview (client-side with marked.js) |
+| `/raw/{note}/{file}` | Raw markdown content (no auth required) |
+| `/notes/` | Lists all public notes |
+| `/notes/{note}/` | Lists public files in a note |
+| `/notes/{note}/{file}` | Rendered markdown preview (client-side with marked.js) |
 
 ### SSE Events
 

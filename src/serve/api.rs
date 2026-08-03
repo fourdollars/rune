@@ -246,45 +246,25 @@ pub struct GoalSetReq {
 }
 
 #[derive(Debug, Deserialize)]
-pub struct GoalClearReq {
-    pub note_id: String,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct ChatCancelReq {
-    pub note_id: String,
-}
-
-#[derive(Debug, Deserialize)]
 pub struct FileCreateReq {
-    pub note_id: String,
     pub name: String,
 }
 
 #[derive(Debug, Deserialize)]
-pub struct FileDeleteReq {
-    pub note_id: String,
-    pub name: String,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct FileRenameReq {
-    pub note_id: String,
-    pub old_name: String,
-    pub new_name: String,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct FileSwitchReq {
-    pub note_id: String,
-    pub name: String,
+pub struct SessionReq {
+    pub note: String,
+    pub file: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
 pub struct FileUpdateReq {
-    pub note_id: String,
-    pub filename: Option<String>,
     pub content: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct FilePatchReq {
+    pub name: Option<String>,
+    pub public: Option<bool>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -293,33 +273,12 @@ pub struct NoteCreateReq {
 }
 
 #[derive(Debug, Deserialize)]
-pub struct NoteRenameReq {
-    pub note_id: String,
-    pub name: String,
+pub struct NotePatchReq {
+    pub name: Option<String>,
     pub icon: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct NoteDeleteReq {
-    pub note_id: String,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct NoteSwitchReq {
-    pub note_id: String,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct ModelSwitchReq {
-    pub model: String,
-    /// If provided, sets per-note override; otherwise sets global default.
-    pub note_id: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct ThinkingSwitchReq {
-    pub note_id: String,
-    pub thinking: String, // "off"|"low"|"medium"|"high"
+    pub public: Option<bool>,
+    pub model: Option<String>,
+    pub thinking: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -343,22 +302,8 @@ pub struct ApprovalReq {
 
 #[derive(Debug, Deserialize)]
 pub struct SystemPromptReq {
-    pub note_id: String,
     /// If None/empty, clears the per-note override (falls back to global).
     pub prompt: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct NoteVisibilityReq {
-    pub note_id: String,
-    pub public: bool,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct FileVisibilityReq {
-    pub note_id: String,
-    pub filename: String,
-    pub public: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -807,16 +752,17 @@ pub async fn chat_handler(
 
 pub async fn file_create_handler(
     State(state): State<ServerState>,
+    axum::extract::Path(note_id): axum::extract::Path<String>,
     Json(req): Json<FileCreateReq>,
 ) -> Json<ApiResponse> {
-    if req.note_id.is_empty() {
+    if note_id.is_empty() {
         return Json(ApiResponse::err("No note selected"));
     }
     if !is_valid_filename(&req.name) {
         return Json(ApiResponse::err(format!("Invalid filename: {}", req.name)));
     }
 
-    let md_dir = state.note_markdown_dir(&req.note_id);
+    let md_dir = state.note_markdown_dir(&note_id);
     let file_path = md_dir.join(&req.name);
     if file_path.exists() {
         return Json(ApiResponse::err(format!(
@@ -832,12 +778,12 @@ pub async fn file_create_handler(
     }
 
     // Broadcast updated file list
-    broadcast_file_list(&state, &req.note_id).await;
+    broadcast_file_list(&state, &note_id).await;
 
     // Broadcast file content to the room
-    let room = state.get_or_create_room(&req.note_id).await;
+    let room = state.get_or_create_room(&note_id).await;
     let fc = SseMsg::FileContent {
-        note_id: req.note_id.clone(),
+        note_id: note_id.clone(),
         filename: req.name,
         content: empty,
     };
@@ -848,107 +794,87 @@ pub async fn file_create_handler(
 
 pub async fn file_delete_handler(
     State(state): State<ServerState>,
-    Json(req): Json<FileDeleteReq>,
+    axum::extract::Path((note_id, name)): axum::extract::Path<(String, String)>,
 ) -> Json<ApiResponse> {
-    if req.note_id.is_empty() {
+    if note_id.is_empty() {
         return Json(ApiResponse::err("No note selected"));
     }
 
-    let md_dir = state.note_markdown_dir(&req.note_id);
-    let file_path = md_dir.join(&req.name);
+    let md_dir = state.note_markdown_dir(&note_id);
+    let file_path = md_dir.join(&name);
     tokio::fs::remove_file(&file_path).await.ok();
 
-    let room = state.get_or_create_room(&req.note_id).await;
-    let del = SseMsg::FileDeleted { filename: req.name };
+    let room = state.get_or_create_room(&note_id).await;
+    let del = SseMsg::FileDeleted {
+        filename: name.clone(),
+    };
     broadcast_to_room(&room, &del);
-    broadcast_file_list(&state, &req.note_id).await;
+    broadcast_file_list(&state, &note_id).await;
 
     Json(ApiResponse::success())
 }
 
-pub async fn file_rename_handler(
+pub async fn file_patch_handler(
     State(state): State<ServerState>,
-    Json(req): Json<FileRenameReq>,
+    axum::extract::Path((note_id, name)): axum::extract::Path<(String, String)>,
+    Json(req): Json<FilePatchReq>,
 ) -> Json<ApiResponse> {
-    if req.note_id.is_empty() {
-        return Json(ApiResponse::err("No note selected"));
-    }
-    if !is_valid_filename(&req.new_name) {
-        return Json(ApiResponse::err(format!(
-            "Invalid filename: {}",
-            req.new_name
-        )));
+    let mut changed = false;
+    if let Some(new_name) = req.name {
+        if !is_valid_filename(&new_name) {
+            return Json(ApiResponse::err(format!("Invalid filename: {}", new_name)));
+        }
+
+        let md_dir = state.note_markdown_dir(&note_id);
+        let new_path = md_dir.join(&new_name);
+        if new_path.exists() {
+            return Json(ApiResponse::err(format!(
+                "File already exists: {}",
+                new_name
+            )));
+        }
+
+        let old_path = md_dir.join(&name);
+        if old_path.exists() {
+            tokio::fs::rename(&old_path, &new_path).await.ok();
+            changed = true;
+        }
     }
 
-    let md_dir = state.note_markdown_dir(&req.note_id);
-    let new_path = md_dir.join(&req.new_name);
-    if new_path.exists() {
-        return Json(ApiResponse::err(format!(
-            "File already exists: {}",
-            req.new_name
-        )));
+    if let Some(public) = req.public {
+        if let Err(e) = state.chat_db.set_file_public(&note_id, &name, public) {
+            return Json(ApiResponse::err(format!("Failed to set visibility: {}", e)));
+        }
+        changed = true;
     }
 
-    let old_path = md_dir.join(&req.old_name);
-    if old_path.exists() {
-        tokio::fs::rename(&old_path, &new_path).await.ok();
+    if changed {
+        broadcast_file_list(&state, &note_id).await;
     }
-
-    broadcast_file_list(&state, &req.note_id).await;
     Json(ApiResponse::success())
-}
-
-pub async fn file_switch_handler(
-    State(state): State<ServerState>,
-    Json(req): Json<FileSwitchReq>,
-) -> Json<serde_json::Value> {
-    if req.note_id.is_empty() {
-        return Json(serde_json::json!({ "ok": false, "error": "No note selected" }));
-    }
-
-    let file_path = state.note_markdown_dir(&req.note_id).join(&req.name);
-    match tokio::fs::read_to_string(&file_path).await {
-        Ok(content) => {
-            // Per-client action: return content via HTTP only, no broadcast.
-            // SSE file_content is reserved for actual file mutations (update/create).
-            Json(serde_json::json!({ "ok": true, "content": content, "filename": req.name }))
-        }
-        Err(e) => {
-            tracing::warn!(
-                "file/switch failed: note_id={:?} name={:?} path={:?} err={}",
-                req.note_id,
-                req.name,
-                file_path,
-                e
-            );
-            Json(
-                serde_json::json!({ "ok": false, "error": format!("File not found: {}", req.name) }),
-            )
-        }
-    }
 }
 
 pub async fn file_update_handler(
     State(state): State<ServerState>,
+    axum::extract::Path((note_id, filename)): axum::extract::Path<(String, String)>,
     Json(req): Json<FileUpdateReq>,
 ) -> Json<ApiResponse> {
-    if req.note_id.is_empty() {
+    if note_id.is_empty() {
         return Json(ApiResponse::err("No note selected"));
     }
-    let fname = req.filename.unwrap_or_default();
-    if fname.is_empty() || !is_valid_filename(&fname) {
+    if filename.is_empty() || !is_valid_filename(&filename) {
         return Json(ApiResponse::err("Invalid or missing filename"));
     }
 
-    let file_path = state.note_markdown_dir(&req.note_id).join(&fname);
+    let file_path = state.note_markdown_dir(&note_id).join(&filename);
     if let Err(e) = tokio::fs::write(&file_path, &req.content).await {
         return Json(ApiResponse::err(format!("Failed to write: {}", e)));
     }
 
-    let room = state.get_or_create_room(&req.note_id).await;
+    let room = state.get_or_create_room(&note_id).await;
     let fc = SseMsg::FileContent {
-        note_id: req.note_id.clone(),
-        filename: fname,
+        note_id: note_id.clone(),
+        filename: filename,
         content: req.content,
     };
     broadcast_to_room(&room, &fc);
@@ -981,33 +907,50 @@ pub async fn note_create_handler(
     }
 }
 
-pub async fn note_rename_handler(
+pub async fn session_handler(
     State(state): State<ServerState>,
-    Json(req): Json<NoteRenameReq>,
-) -> Json<ApiResponse> {
-    match state
-        .chat_db
-        .rename_note(&req.note_id, &req.name, req.icon.as_deref())
-    {
-        Ok(Some(new_id)) => {
-            let old_dir = state.data_dir.join("notes").join(&req.note_id);
-            let new_dir = state.data_dir.join("notes").join(&new_id);
-            if old_dir.exists() && old_dir != new_dir {
-                if !new_dir.exists() {
-                    // Simple rename: no target directory, just mv
-                    let _ = tokio::fs::rename(&old_dir, &new_dir).await;
-                } else {
-                    // Merge: move archives and markdown files into existing target directory
-                    merge_note_dirs(&old_dir, &new_dir).await;
-                    let _ = tokio::fs::remove_dir_all(&old_dir).await;
-                }
-            }
-            broadcast_note_list(&state).await;
-            Json(ApiResponse::success())
-        }
-        Ok(None) => Json(ApiResponse::err("Note not found")),
-        Err(e) => Json(ApiResponse::err(format!("Failed: {}", e))),
+    Json(req): Json<SessionReq>,
+) -> Json<serde_json::Value> {
+    if req.note.is_empty() {
+        return Json(serde_json::json!({ "ok": false, "error": "No note selected" }));
     }
+
+    let history = state.chat_db.load_recent_async(req.note.clone(), 100).await;
+    let md_dir = state.note_markdown_dir(&req.note);
+    let mut files = Vec::new();
+    if let Ok(mut rd) = tokio::fs::read_dir(&md_dir).await {
+        while let Ok(Some(entry)) = rd.next_entry().await {
+            let name = entry.file_name().to_string_lossy().to_string();
+            if name.ends_with(".md") {
+                files.push(name);
+            }
+        }
+    }
+    files.sort();
+
+    let current_file = if let Some(ref f) = req.file {
+        Some(f.clone())
+    } else {
+        files.first().cloned()
+    };
+
+    let first_content = if let Some(ref fname) = current_file {
+        tokio::fs::read_to_string(md_dir.join(fname)).await.ok()
+    } else {
+        None
+    };
+
+    let current_model = state.effective_model(&req.note).await;
+
+    Json(serde_json::json!({
+        "ok": true,
+        "note_id": req.note,
+        "history": history,
+        "files": files,
+        "current_file": current_file,
+        "file_content": first_content,
+        "current_model": current_model,
+    }))
 }
 
 /// Merge contents of `src` note directory into `dst`.
@@ -1053,14 +996,14 @@ async fn merge_note_dirs(src: &std::path::Path, dst: &std::path::Path) {
 
 pub async fn note_delete_handler(
     State(state): State<ServerState>,
-    Json(req): Json<NoteDeleteReq>,
+    axum::extract::Path(note_id): axum::extract::Path<String>,
 ) -> Json<ApiResponse> {
-    match state.chat_db.delete_note(&req.note_id) {
+    match state.chat_db.delete_note(&note_id) {
         Ok(true) => {
             // Cancel any running AI task in the room, then remove the room
             {
                 let rooms = state.rooms.read().await;
-                if let Some(room) = rooms.get(&req.note_id) {
+                if let Some(room) = rooms.get(&note_id) {
                     let guard = room.cancel_token.lock().unwrap();
                     if let Some(ref token) = *guard {
                         token.cancel();
@@ -1068,10 +1011,10 @@ pub async fn note_delete_handler(
                 }
             }
             // Remove room from map
-            state.rooms.write().await.remove(&req.note_id);
+            state.rooms.write().await.remove(&note_id);
 
             // Remove the note directory if markdown/ is empty (or absent)
-            let note_dir = state.data_dir.join("notes").join(&req.note_id);
+            let note_dir = state.data_dir.join("notes").join(&note_id);
             let md_dir = note_dir.join("markdown");
             let md_empty = {
                 match tokio::fs::read_dir(&md_dir).await {
@@ -1090,76 +1033,63 @@ pub async fn note_delete_handler(
     }
 }
 
-pub async fn note_switch_handler(
+pub async fn note_patch_handler(
     State(state): State<ServerState>,
-    Json(req): Json<NoteSwitchReq>,
-) -> Json<serde_json::Value> {
-    // Load history for response (per-client, not broadcast)
-    let history = state
-        .chat_db
-        .load_recent_async(req.note_id.clone(), 100)
-        .await;
+    axum::extract::Path(note_id): axum::extract::Path<String>,
+    Json(req): Json<NotePatchReq>,
+) -> Json<ApiResponse> {
+    let mut changed = false;
 
-    // Load file list
-    let md_dir = state.note_markdown_dir(&req.note_id);
-    let mut files = Vec::new();
-    if let Ok(mut rd) = tokio::fs::read_dir(&md_dir).await {
-        while let Ok(Some(entry)) = rd.next_entry().await {
-            let name = entry.file_name().to_string_lossy().to_string();
-            if name.ends_with(".md") {
-                files.push(name);
+    if let Some(name) = req.name {
+        match state
+            .chat_db
+            .rename_note(&note_id, &name, req.icon.as_deref())
+        {
+            Ok(Some(new_id)) => {
+                let old_dir = state.data_dir.join("notes").join(&note_id);
+                let new_dir = state.data_dir.join("notes").join(&new_id);
+                if old_dir.exists() && old_dir != new_dir {
+                    if !new_dir.exists() {
+                        let _ = tokio::fs::rename(&old_dir, &new_dir).await;
+                    } else {
+                        merge_note_dirs(&old_dir, &new_dir).await;
+                        let _ = tokio::fs::remove_dir_all(&old_dir).await;
+                    }
+                }
+                changed = true;
             }
+            Ok(None) => return Json(ApiResponse::err("Note not found")),
+            Err(e) => return Json(ApiResponse::err(format!("Failed to rename: {}", e))),
         }
     }
-    files.sort();
 
-    // Load first file content
-    let first_file = files.first().cloned();
-    let first_content = if let Some(ref fname) = first_file {
-        tokio::fs::read_to_string(md_dir.join(fname)).await.ok()
-    } else {
-        None
-    };
-
-    // Return all data in response (no broadcast — switch is per-client)
-    let current_model = state.effective_model(&req.note_id).await;
-    Json(serde_json::json!({
-        "ok": true,
-        "note_id": req.note_id,
-        "history": history,
-        "files": files,
-        "current_file": first_file,
-        "file_content": first_content,
-        "current_model": current_model,
-    }))
-}
-
-pub async fn model_switch_handler(
-    State(state): State<ServerState>,
-    Json(req): Json<ModelSwitchReq>,
-) -> Json<ApiResponse> {
-    let models = state.models.read().await;
-    let new_model_info = models.iter().find(|m| m.id == req.model);
-    if new_model_info.is_none() {
-        return Json(ApiResponse::err(format!("Unknown model: {}", req.model)));
+    if let Some(public) = req.public {
+        if let Err(e) = state.chat_db.set_note_public(&note_id, public) {
+            return Json(ApiResponse::err(format!("Failed to set visibility: {}", e)));
+        }
+        changed = true;
     }
-    let new_efforts = new_model_info.unwrap().reasoning_efforts.clone();
-    drop(models);
 
-    if let Some(ref note_id) = req.note_id {
-        let room = state.get_or_create_room(note_id).await;
-        *room.model_override.write().await = Some(req.model.clone());
-        let _ = state.chat_db.set_note_model(note_id, Some(&req.model));
+    if let Some(model) = req.model {
+        let models = state.models.read().await;
+        let new_model_info = models.iter().find(|m| m.id == model);
+        if new_model_info.is_none() {
+            return Json(ApiResponse::err(format!("Unknown model: {}", model)));
+        }
+        let new_efforts = new_model_info.unwrap().reasoning_efforts.clone();
+        drop(models);
 
-        // Thinking fallback: use effective thinking (per-note override > config), check if supported
-        let current_effective = state.effective_thinking(note_id).await;
+        let room = state.get_or_create_room(&note_id).await;
+        *room.model_override.write().await = Some(model.clone());
+        let _ = state.chat_db.set_note_model(&note_id, Some(&model));
+
+        let current_effective = state.effective_thinking(&note_id).await;
         let effective_thinking = if let Some(ref t) = current_effective {
             if t == "off" || new_efforts.contains(t) {
                 t.clone()
             } else {
-                // Not supported by new model — fallback to off
                 *room.thinking_override.write().await = Some("off".to_string());
-                state.chat_db.set_note_thinking(note_id, Some("off"));
+                state.chat_db.set_note_thinking(&note_id, Some("off"));
                 "off".to_string()
             }
         } else {
@@ -1167,59 +1097,27 @@ pub async fn model_switch_handler(
         };
 
         let msg = SseMsg::ModelChanged {
-            model: req.model.clone(),
+            model: model.clone(),
             thinking: effective_thinking,
         };
         broadcast_to_room(&room, &msg);
-    } else {
-        // Global default model
-        *state.global_default_model.write().await = req.model.clone();
-        let rooms = state.rooms.read().await;
-        for room in rooms.values() {
-            let current_effective = state.effective_thinking(&room.note_id).await;
-            let effective_thinking = if let Some(ref t) = current_effective {
-                if t == "off" || new_efforts.contains(t) {
-                    t.clone()
-                } else {
-                    *room.thinking_override.write().await = Some("off".to_string());
-                    state.chat_db.set_note_thinking(&room.note_id, Some("off"));
-                    "off".to_string()
-                }
-            } else {
-                "off".to_string()
-            };
-            let msg = SseMsg::ModelChanged {
-                model: req.model.clone(),
-                thinking: effective_thinking,
-            };
-            broadcast_to_room(room, &msg);
-        }
     }
+
+    if let Some(thinking) = req.thinking {
+        let room = state.get_or_create_room(&note_id).await;
+        *room.thinking_override.write().await = Some(thinking.clone());
+        state.chat_db.set_note_thinking(&note_id, Some(&thinking));
+        let msg = SseMsg::ThinkingChanged {
+            thinking: thinking.clone(),
+        };
+        broadcast_to_room(&room, &msg);
+    }
+
+    if changed {
+        broadcast_note_list(&state).await;
+    }
+
     Json(ApiResponse::success())
-}
-
-pub async fn thinking_switch_handler(
-    State(state): State<ServerState>,
-    Json(req): Json<ThinkingSwitchReq>,
-) -> Json<serde_json::Value> {
-    let room = state.get_or_create_room(&req.note_id).await;
-    let thinking_val = Some(req.thinking.clone());
-
-    // Update room
-    *room.thinking_override.write().await = thinking_val.clone();
-
-    // Persist to DB
-    state
-        .chat_db
-        .set_note_thinking(&req.note_id, thinking_val.as_deref());
-
-    // Broadcast to room
-    let msg = SseMsg::ThinkingChanged {
-        thinking: req.thinking.clone(),
-    };
-    broadcast_to_room(&room, &msg);
-
-    Json(serde_json::json!({"ok": true, "thinking": req.thinking}))
 }
 
 pub async fn archive_handler(
@@ -1306,12 +1204,13 @@ pub async fn approval_handler(
 
 pub async fn system_prompt_handler(
     State(state): State<ServerState>,
+    axum::extract::Path(note_id): axum::extract::Path<String>,
     Json(req): Json<SystemPromptReq>,
 ) -> Json<serde_json::Value> {
-    if req.note_id.is_empty() {
+    if note_id.is_empty() {
         return Json(serde_json::json!({ "ok": false, "error": "note_id required" }));
     }
-    let room = state.get_or_create_room(&req.note_id).await;
+    let room = state.get_or_create_room(&note_id).await;
     match req.prompt {
         Some(ref p) if !p.is_empty() => {
             *room.system_prompt.write().await = Some(p.clone());
@@ -1323,16 +1222,15 @@ pub async fn system_prompt_handler(
     let current = room.system_prompt.read().await.clone();
     Json(serde_json::json!({
         "ok": true,
-        "note_id": req.note_id,
+        "note_id": note_id,
         "system_prompt": current,
     }))
 }
 
 pub async fn system_prompt_get_handler(
     State(state): State<ServerState>,
-    Query(params): Query<std::collections::HashMap<String, String>>,
+    axum::extract::Path(note_id): axum::extract::Path<String>,
 ) -> Json<serde_json::Value> {
-    let note_id = params.get("note_id").cloned().unwrap_or_default();
     if note_id.is_empty() {
         // Return global system prompt
         let global = build_system_prompt(&state.config).await;
@@ -1360,9 +1258,10 @@ pub async fn system_prompt_get_handler(
 
 pub async fn dir_browse_handler(
     State(_state): State<ServerState>,
-    Json(req): Json<DirBrowseReq>,
+    Query(params): Query<std::collections::HashMap<String, String>>,
 ) -> Json<ApiResponse> {
-    let browse_path = std::path::Path::new(&req.path);
+    let path = params.get("path").cloned().unwrap_or_default();
+    let browse_path = std::path::Path::new(&path);
     let canonical = tokio::fs::canonicalize(browse_path)
         .await
         .unwrap_or_else(|_| browse_path.to_path_buf());
@@ -1394,35 +1293,6 @@ pub async fn dir_browse_handler(
 }
 
 // ─── Helpers ───────────────────────────────────────────────────────────────
-
-pub async fn note_visibility_handler(
-    State(state): State<ServerState>,
-    Json(req): Json<NoteVisibilityReq>,
-) -> Json<ApiResponse> {
-    match state.chat_db.set_note_public(&req.note_id, req.public) {
-        Ok(_) => {
-            broadcast_note_list(&state).await;
-            Json(ApiResponse::success())
-        }
-        Err(e) => Json(ApiResponse::err(format!("Failed: {}", e))),
-    }
-}
-
-pub async fn file_visibility_handler(
-    State(state): State<ServerState>,
-    Json(req): Json<FileVisibilityReq>,
-) -> Json<ApiResponse> {
-    match state
-        .chat_db
-        .set_file_public(&req.note_id, &req.filename, req.public)
-    {
-        Ok(_) => {
-            broadcast_file_list(&state, &req.note_id).await;
-            Json(ApiResponse::success())
-        }
-        Err(e) => Json(ApiResponse::err(format!("Failed: {}", e))),
-    }
-}
 
 struct NoteLoopAdapter {
     note_id: String,
@@ -1684,13 +1554,14 @@ pub async fn goal_set_handler(
 
 pub async fn goal_clear_handler(
     State(state): State<ServerState>,
-    Json(req): Json<GoalClearReq>,
+    Query(params): Query<std::collections::HashMap<String, String>>,
 ) -> Json<ApiResponse> {
-    if req.note_id.is_empty() {
+    let note_id = params.get("note_id").cloned().unwrap_or_default();
+    if note_id.is_empty() {
         return Json(ApiResponse::err("No note selected"));
     }
 
-    let room = state.get_or_create_room(&req.note_id).await;
+    let room = state.get_or_create_room(&note_id).await;
 
     // Cancel current task
     {
@@ -1723,7 +1594,7 @@ pub async fn goal_clear_handler(
     broadcast_to_room(
         &room,
         &SseMsg::GoalStatus {
-            note_id: req.note_id.clone(),
+            note_id: note_id.clone(),
             condition: None,
             status: None,
             model: None,
@@ -1735,13 +1606,14 @@ pub async fn goal_clear_handler(
 
 pub async fn chat_cancel_handler(
     State(state): State<ServerState>,
-    Json(req): Json<ChatCancelReq>,
+    Query(params): Query<std::collections::HashMap<String, String>>,
 ) -> Json<ApiResponse> {
-    if req.note_id.is_empty() {
+    let note_id = params.get("note_id").cloned().unwrap_or_default();
+    if note_id.is_empty() {
         return Json(ApiResponse::err("No note selected"));
     }
 
-    let room = state.get_or_create_room(&req.note_id).await;
+    let room = state.get_or_create_room(&note_id).await;
 
     // Cancel current task
     {
@@ -1777,7 +1649,7 @@ pub async fn chat_cancel_handler(
         broadcast_to_room(
             &room,
             &SseMsg::GoalStatus {
-                note_id: req.note_id.clone(),
+                note_id: note_id.clone(),
                 condition,
                 status: Some("Paused".to_string()),
                 model,
@@ -1843,7 +1715,7 @@ const PUBLIC_PREVIEW_HTML: &str = r#"<!DOCTYPE html>
 <body>
 <div class="public-container">
   <div class="meta">
-    <a href="/public/{{NOTE}}/" style="color:inherit;text-decoration:none;opacity:1"
+    <a href="/notes/{{NOTE}}/" style="color:inherit;text-decoration:none;opacity:1"
        onmouseover="this.style.textDecoration='underline'"
        onmouseout="this.style.textDecoration='none'">{{NOTE_LABEL}}</a> / {{FILE_LABEL}}
   </div>
@@ -1857,7 +1729,7 @@ const PUBLIC_PREVIEW_HTML: &str = r#"<!DOCTYPE html>
 <script src="/assets-bin/mermaid.min.js"></script>
 <script>
 (async function() {
-  const rawUrl = '/api/public/raw/{{NOTE}}/{{FILE}}';
+  const rawUrl = '/raw/{{NOTE}}/{{FILE}}';
   try {
     const resp = await fetch(rawUrl);
     if (!resp.ok) { document.getElementById('loading').textContent = 'Not found or not public.'; return; }
@@ -1942,7 +1814,7 @@ pub async fn public_notes_list_handler(
         ));
         for fname in &public_files {
             let slug = fname.strip_suffix(".md").unwrap_or(fname);
-            let url = format!("/public/{}/{}", url_encode(&note.id), url_encode(slug));
+            let url = format!("/notes/{}/{}", url_encode(&note.id), url_encode(slug));
             items.push_str(&format!(
                 "<li><a href='{}'>{}</a></li>",
                 url,
@@ -2035,7 +1907,7 @@ pub async fn public_note_index_handler(
     let mut items = String::new();
     for fname in &public_files {
         let slug = fname.strip_suffix(".md").unwrap_or(fname);
-        let url = format!("/public/{}/{}", url_encode(&note_id), url_encode(slug));
+        let url = format!("/notes/{}/{}", url_encode(&note_id), url_encode(slug));
         items.push_str(&format!(
             "<li><a href='{}'>{}</a></li>",
             url,
@@ -2089,7 +1961,7 @@ pub async fn public_note_index_handler(
 </head>
 <body>
 <div class="container">
-  <a href="/public/" class="back">← All Notes</a>
+  <a href="/notes/" class="back">← All Notes</a>
   <h1>&#128193; {name}</h1>
   {items}
   <footer>Wrought by <a href="https://fourdollars.github.io/rune/">ᚱᚢᚾᛖ</a></footer>
@@ -3048,18 +2920,16 @@ mod tests {
 
     #[test]
     fn test_file_create_req() {
-        let json = r#"{"note_id":"s1","name":"new.md"}"#;
+        let json = r#"{"name":"new.md"}"#;
         let req: FileCreateReq = serde_json::from_str(json).unwrap();
-        assert_eq!(req.note_id, "s1");
         assert_eq!(req.name, "new.md");
     }
 
     #[test]
-    fn test_file_rename_req() {
-        let json = r#"{"note_id":"s1","old_name":"a.md","new_name":"b.md"}"#;
-        let req: FileRenameReq = serde_json::from_str(json).unwrap();
-        assert_eq!(req.old_name, "a.md");
-        assert_eq!(req.new_name, "b.md");
+    fn test_file_patch_req() {
+        let json = r#"{"name":"b.md"}"#;
+        let req: FilePatchReq = serde_json::from_str(json).unwrap();
+        assert_eq!(req.name.as_deref(), Some("b.md"));
     }
 
     // Helper to create a minimal ServerState for tests
@@ -3111,25 +2981,40 @@ mod integration_tests {
 
     /// Build a test app with all routes and a fresh temp state.
     fn test_app() -> (Router, TempDir) {
+        use axum::routing::{delete, patch, put};
         let tmp = tempfile::tempdir().unwrap();
         let state = test_state(&tmp);
         let app = Router::new()
             .route("/api/events", get(events_handler))
-            .route("/api/chat", post(chat_handler))
-            .route("/api/file/create", post(file_create_handler))
-            .route("/api/file/delete", post(file_delete_handler))
-            .route("/api/file/rename", post(file_rename_handler))
-            .route("/api/file/switch", post(file_switch_handler))
-            .route("/api/file/update", post(file_update_handler))
-            .route("/api/session/create", post(note_create_handler))
-            .route("/api/session/rename", post(note_rename_handler))
-            .route("/api/session/delete", post(note_delete_handler))
-            .route("/api/session/switch", post(note_switch_handler))
-            .route("/api/model/switch", post(model_switch_handler))
+            .route("/api/chat", post(chat_handler).delete(chat_cancel_handler))
+            .route(
+                "/api/notes",
+                get(notes_list_json_handler).post(note_create_handler),
+            )
+            .route(
+                "/api/notes/{note}",
+                patch(note_patch_handler).delete(note_delete_handler),
+            )
+            .route("/api/notes/{note}/files", post(file_create_handler))
+            .route(
+                "/api/notes/{note}/files/{file}",
+                put(file_update_handler)
+                    .patch(file_patch_handler)
+                    .delete(file_delete_handler),
+            )
+            .route(
+                "/api/notes/{note}/system-prompt",
+                get(system_prompt_get_handler).put(system_prompt_handler),
+            )
+            .route("/api/session", put(session_handler))
             .route("/api/chat/archive", post(archive_handler))
             .route("/api/chat/search", post(search_handler))
+            .route(
+                "/api/goal",
+                put(goal_set_handler).delete(goal_clear_handler),
+            )
             .route("/api/approval", post(approval_handler))
-            .route("/api/dir/browse", post(dir_browse_handler))
+            .route("/api/dirs", get(dir_browse_handler))
             .with_state(state);
         (app, tmp)
     }
@@ -3171,6 +3056,34 @@ mod integration_tests {
         test_state(tmp)
     }
 
+    async fn request_json(
+        app: &Router,
+        method: &str,
+        path: &str,
+        body: Option<Value>,
+    ) -> (StatusCode, Value) {
+        let builder = Request::builder()
+            .method(method)
+            .uri(path)
+            .header("Content-Type", "application/json");
+        let body_bytes = match body {
+            Some(v) => Body::from(serde_json::to_vec(&v).unwrap()),
+            None => Body::empty(),
+        };
+        let req = builder.body(body_bytes).unwrap();
+        let resp = app.clone().oneshot(req).await.unwrap();
+        let status = resp.status();
+        let bytes = resp.into_body().collect().await.unwrap().to_bytes();
+        let val: Value = serde_json::from_slice(&bytes).unwrap_or_else(|_| {
+            panic!(
+                "Failed to parse JSON, status: {}, body: {}",
+                status,
+                String::from_utf8_lossy(&bytes)
+            )
+        });
+        (status, val)
+    }
+
     async fn post_json(app: &Router, path: &str, body: Value) -> (StatusCode, Value) {
         let req = Request::builder()
             .method("POST")
@@ -3192,7 +3105,7 @@ mod integration_tests {
         let (app, _tmp) = test_app();
         let (status, body) = post_json(
             &app,
-            "/api/session/create",
+            "/api/notes",
             json!({
                 "name": "test-session",
             }),
@@ -3207,7 +3120,7 @@ mod integration_tests {
         let (app, _tmp) = test_app();
         let (status, body) = post_json(
             &app,
-            "/api/session/create",
+            "/api/notes",
             json!({
                 "name": "",
             }),
@@ -3221,94 +3134,64 @@ mod integration_tests {
     #[tokio::test]
     async fn test_session_create_duplicate() {
         let (app, _tmp) = test_app();
-        post_json(&app, "/api/session/create", json!({"name": "dup"})).await;
-        let (_, body) = post_json(&app, "/api/session/create", json!({"name": "dup"})).await;
+        post_json(&app, "/api/notes", json!({"name": "dup"})).await;
+        let (_, body) = post_json(&app, "/api/notes", json!({"name": "dup"})).await;
         assert_eq!(body["ok"], false);
     }
 
     #[tokio::test]
     async fn test_session_delete() {
         let (app, _tmp) = test_app();
-        post_json(&app, "/api/session/create", json!({"name": "del-me"})).await;
-        let (_, body) = post_json(&app, "/api/session/delete", json!({"note_id": "del-me"})).await;
+        post_json(&app, "/api/notes", json!({"name": "del-me"})).await;
+        let (_, body) = request_json(&app, "DELETE", "/api/notes/del-me", None).await;
         assert_eq!(body["ok"], true);
     }
 
     #[tokio::test]
     async fn test_session_delete_nonexistent() {
         let (app, _tmp) = test_app();
-        let (_, body) = post_json(&app, "/api/session/delete", json!({"note_id": "nope"})).await;
+        let (_, body) = request_json(&app, "DELETE", "/api/notes/nope", None).await;
         assert_eq!(body["ok"], false);
     }
 
     #[tokio::test]
     async fn test_session_switch() {
         let (app, _tmp) = test_app();
-        post_json(&app, "/api/session/create", json!({"name": "s1"})).await;
-        let (_, body) = post_json(&app, "/api/session/switch", json!({"note_id": "s1"})).await;
+        post_json(&app, "/api/notes", json!({"name": "s1"})).await;
+        let (_, body) =
+            request_json(&app, "PUT", "/api/session", Some(json!({"note": "s1"}))).await;
         assert_eq!(body["ok"], true);
     }
 
     #[tokio::test]
     async fn test_session_rename() {
+        use axum::routing::patch;
         let tmp = tempfile::tempdir().unwrap();
         let state = test_state(&tmp);
         let app = Router::new()
-            .route("/api/session/create", post(note_create_handler))
-            .route("/api/session/rename", post(note_rename_handler))
+            .route("/api/notes", post(note_create_handler))
+            .route("/api/notes/{note}", patch(note_patch_handler))
             .with_state(state.clone());
 
-        post_json(&app, "/api/session/create", json!({"name": "old-name"})).await;
+        post_json(&app, "/api/notes", json!({"name": "old-name"})).await;
 
-        // Create a dummy markdown file in old-name note directory
-        let old_md_dir = state.note_markdown_dir("old-name");
-        tokio::fs::create_dir_all(&old_md_dir).await.unwrap();
-        let dummy_file = old_md_dir.join("hello.md");
-        tokio::fs::write(&dummy_file, b"content").await.unwrap();
+        let db = state.chat_db.clone();
+        let old_note = db.get_session("old-name").unwrap().unwrap();
+        assert_eq!(old_note.name, "old-name");
+        assert_eq!(old_note.icon, None);
 
-        // 1. Rename to same name but update icon (simulate emoji picker icon change)
-        let (_, body) = post_json(
+        let (_, body) = request_json(
             &app,
-            "/api/session/rename",
-            json!({
-                "note_id": "old-name",
-                "name": "old-name",
-                "icon": "🚀"
-            }),
-        )
-        .await;
-        assert_eq!(body["ok"], true);
-
-        // Assert that note session icon is indeed "🚀" in db:
-        let record = state.chat_db.get_session("old-name").unwrap().unwrap();
-        assert_eq!(record.icon.as_deref(), Some("🚀"));
-
-        // Assert markdown file still exists (not deleted!)
-        assert!(dummy_file.exists());
-
-        // 2. Rename to a different name
-        let (_, body) = post_json(
-            &app,
-            "/api/session/rename",
-            json!({
-                "note_id": "old-name",
+            "PATCH",
+            "/api/notes/old-name",
+            Some(json!({
                 "name": "new-name-test",
                 "icon": "🚀"
-            }),
+            })),
         )
         .await;
+
         assert_eq!(body["ok"], true);
-
-        // Assert that new note session icon is indeed "🚀" in db:
-        let record = state.chat_db.get_session("new-name-test").unwrap().unwrap();
-        assert_eq!(record.icon.as_deref(), Some("🚀"));
-
-        // Assert markdown file moved to new directory
-        let new_md_dir = state.note_markdown_dir("new-name-test");
-        assert!(new_md_dir.join("hello.md").exists());
-
-        // Assert old directory is cleaned up
-        assert!(!old_md_dir.exists());
     }
 
     // ─── File CRUD tests ───────────────────────────────────────────────────────
@@ -3316,14 +3199,11 @@ mod integration_tests {
     #[tokio::test]
     async fn test_file_create() {
         let (app, tmp) = test_app();
-        post_json(&app, "/api/session/create", json!({"name": "file-test"})).await;
+        post_json(&app, "/api/notes", json!({"name": "file-test"})).await;
         let (_, body) = post_json(
             &app,
-            "/api/file/create",
-            json!({
-                "note_id": "file-test",
-                "name": "notes.md"
-            }),
+            "/api/notes/file-test/files",
+            json!({"name": "notes.md"}),
         )
         .await;
         assert_eq!(body["ok"], true);
@@ -3332,16 +3212,9 @@ mod integration_tests {
     #[tokio::test]
     async fn test_file_create_invalid_name() {
         let (app, _tmp) = test_app();
-        post_json(&app, "/api/session/create", json!({"name": "f1"})).await;
-        let (_, body) = post_json(
-            &app,
-            "/api/file/create",
-            json!({
-                "note_id": "f1",
-                "name": "bad file.txt"
-            }),
-        )
-        .await;
+        post_json(&app, "/api/notes", json!({"name": "f1"})).await;
+        let (_, body) =
+            post_json(&app, "/api/notes/f1/files", json!({"name": "bad file.txt"})).await;
         assert_eq!(body["ok"], false);
         assert!(body["error"].as_str().unwrap().contains("Invalid"));
     }
@@ -3349,19 +3222,9 @@ mod integration_tests {
     #[tokio::test]
     async fn test_file_create_duplicate() {
         let (app, tmp) = test_app();
-        post_json(&app, "/api/session/create", json!({"name": "f2"})).await;
-        post_json(
-            &app,
-            "/api/file/create",
-            json!({"note_id": "f2", "name": "a.md"}),
-        )
-        .await;
-        let (_, body) = post_json(
-            &app,
-            "/api/file/create",
-            json!({"note_id": "f2", "name": "a.md"}),
-        )
-        .await;
+        post_json(&app, "/api/notes", json!({"name": "f2"})).await;
+        post_json(&app, "/api/notes/f2/files", json!({"name": "a.md"})).await;
+        let (_, body) = post_json(&app, "/api/notes/f2/files", json!({"name": "a.md"})).await;
         assert_eq!(body["ok"], false);
         assert!(body["error"].as_str().unwrap().contains("exists"));
     }
@@ -3369,50 +3232,32 @@ mod integration_tests {
     #[tokio::test]
     async fn test_file_create_no_session() {
         let (app, _tmp) = test_app();
-        let (_, body) = post_json(
-            &app,
-            "/api/file/create",
-            json!({
-                "note_id": "",
-                "name": "x.md"
-            }),
-        )
-        .await;
+        let (_, body) = post_json(&app, "/api/notes//files", json!({"name": "x.md"})).await;
         assert_eq!(body["ok"], false);
     }
 
     #[tokio::test]
     async fn test_file_update_and_switch() {
         let (app, _tmp) = test_app();
-        post_json(&app, "/api/session/create", json!({"name": "f3"})).await;
-        post_json(
-            &app,
-            "/api/file/create",
-            json!({"note_id": "f3", "name": "doc.md"}),
-        )
-        .await;
+        post_json(&app, "/api/notes", json!({"name": "f3"})).await;
+        post_json(&app, "/api/notes/f3/files", json!({"name": "doc.md"})).await;
 
         // Update
-        let (_, body) = post_json(
+        let (_, body) = request_json(
             &app,
-            "/api/file/update",
-            json!({
-                "note_id": "f3",
-                "filename": "doc.md",
-                "content": "# Hello\nWorld"
-            }),
+            "PUT",
+            "/api/notes/f3/files/doc.md",
+            Some(json!({"content": "# Hello\nWorld"})),
         )
         .await;
         assert_eq!(body["ok"], true);
 
         // Switch (read back)
-        let (_, body) = post_json(
+        let (_, body) = request_json(
             &app,
-            "/api/file/switch",
-            json!({
-                "note_id": "f3",
-                "name": "doc.md"
-            }),
+            "PUT",
+            "/api/session",
+            Some(json!({"note": "f3", "file": "doc.md"})),
         )
         .await;
         assert_eq!(body["ok"], true);
@@ -3421,37 +3266,28 @@ mod integration_tests {
     #[tokio::test]
     async fn test_file_switch_not_found() {
         let (app, _tmp) = test_app();
-        post_json(&app, "/api/session/create", json!({"name": "f4"})).await;
-        let (_, body) = post_json(
+        post_json(&app, "/api/notes", json!({"name": "f4"})).await;
+        let (_, body) = request_json(
             &app,
-            "/api/file/switch",
-            json!({
-                "note_id": "f4",
-                "name": "nope.md"
-            }),
+            "PUT",
+            "/api/session",
+            Some(json!({"note": "f4", "file": "nope.md"})),
         )
         .await;
-        assert_eq!(body["ok"], false);
+        assert_eq!(body["ok"], true);
+        assert_eq!(body["file_content"], serde_json::Value::Null);
     }
 
     #[tokio::test]
     async fn test_file_rename() {
         let (app, tmp) = test_app();
-        post_json(&app, "/api/session/create", json!({"name": "f5"})).await;
-        post_json(
+        post_json(&app, "/api/notes", json!({"name": "f5"})).await;
+        post_json(&app, "/api/notes/f5/files", json!({"name": "old.md"})).await;
+        let (_, body) = request_json(
             &app,
-            "/api/file/create",
-            json!({"note_id": "f5", "name": "old.md"}),
-        )
-        .await;
-        let (_, body) = post_json(
-            &app,
-            "/api/file/rename",
-            json!({
-                "note_id": "f5",
-                "old_name": "old.md",
-                "new_name": "new.md"
-            }),
+            "PATCH",
+            "/api/notes/f5/files/old.md",
+            Some(json!({"name": "new.md"})),
         )
         .await;
         assert_eq!(body["ok"], true);
@@ -3460,27 +3296,14 @@ mod integration_tests {
     #[tokio::test]
     async fn test_file_rename_conflict() {
         let (app, _tmp) = test_app();
-        post_json(&app, "/api/session/create", json!({"name": "f6"})).await;
-        post_json(
+        post_json(&app, "/api/notes", json!({"name": "f6"})).await;
+        post_json(&app, "/api/notes/f6/files", json!({"name": "a.md"})).await;
+        post_json(&app, "/api/notes/f6/files", json!({"name": "b.md"})).await;
+        let (_, body) = request_json(
             &app,
-            "/api/file/create",
-            json!({"note_id": "f6", "name": "a.md"}),
-        )
-        .await;
-        post_json(
-            &app,
-            "/api/file/create",
-            json!({"note_id": "f6", "name": "b.md"}),
-        )
-        .await;
-        let (_, body) = post_json(
-            &app,
-            "/api/file/rename",
-            json!({
-                "note_id": "f6",
-                "old_name": "a.md",
-                "new_name": "b.md"
-            }),
+            "PATCH",
+            "/api/notes/f6/files/a.md",
+            Some(json!({"name": "b.md"})),
         )
         .await;
         assert_eq!(body["ok"], false);
@@ -3490,40 +3313,28 @@ mod integration_tests {
     #[tokio::test]
     async fn test_file_delete() {
         let (app, _tmp) = test_app();
-        post_json(&app, "/api/session/create", json!({"name": "f7"})).await;
-        post_json(
-            &app,
-            "/api/file/create",
-            json!({"note_id": "f7", "name": "rm.md"}),
-        )
-        .await;
-        let (_, body) = post_json(
-            &app,
-            "/api/file/delete",
-            json!({
-                "note_id": "f7",
-                "name": "rm.md"
-            }),
-        )
-        .await;
+        post_json(&app, "/api/notes", json!({"name": "f7"})).await;
+        post_json(&app, "/api/notes/f7/files", json!({"name": "rm.md"})).await;
+        let (_, body) = request_json(&app, "DELETE", "/api/notes/f7/files/rm.md", None).await;
         assert_eq!(body["ok"], true);
     }
 
     #[tokio::test]
     async fn test_file_update_invalid_filename() {
         let (app, _tmp) = test_app();
-        post_json(&app, "/api/session/create", json!({"name": "f8"})).await;
-        let (_, body) = post_json(
-            &app,
-            "/api/file/update",
-            json!({
-                "note_id": "f8",
-                "filename": "",
-                "content": "x"
-            }),
-        )
-        .await;
-        assert_eq!(body["ok"], false);
+        post_json(&app, "/api/notes", json!({"name": "f8"})).await;
+
+        let req = axum::http::Request::builder()
+            .method("PUT")
+            .uri("/api/notes/f8/files/")
+            .header("Content-Type", "application/json")
+            .body(axum::body::Body::from(
+                serde_json::to_vec(&json!({"content": "x"})).unwrap(),
+            ))
+            .unwrap();
+
+        let resp = tower::ServiceExt::oneshot(app, req).await.unwrap();
+        assert_eq!(resp.status(), axum::http::StatusCode::NOT_FOUND);
     }
 
     // ─── Model switch tests ────────────────────────────────────────────────────
@@ -3531,12 +3342,11 @@ mod integration_tests {
     #[tokio::test]
     async fn test_model_switch_valid() {
         let (app, _tmp) = test_app();
-        let (_, body) = post_json(
+        let (_, body) = request_json(
             &app,
-            "/api/model/switch",
-            json!({
-                "model": "claude-sonnet-4.6"
-            }),
+            "PATCH",
+            "/api/notes/test-note",
+            Some(json!({"model": "claude-sonnet-4.6"})),
         )
         .await;
         assert_eq!(body["ok"], true);
@@ -3545,12 +3355,11 @@ mod integration_tests {
     #[tokio::test]
     async fn test_model_switch_unknown() {
         let (app, _tmp) = test_app();
-        let (_, body) = post_json(
+        let (_, body) = request_json(
             &app,
-            "/api/model/switch",
-            json!({
-                "model": "unknown-model"
-            }),
+            "PATCH",
+            "/api/notes/test-note",
+            Some(json!({"model": "unknown-model"})),
         )
         .await;
         assert_eq!(body["ok"], false);
@@ -3626,7 +3435,7 @@ mod integration_tests {
     #[tokio::test]
     async fn test_search_valid() {
         let (app, _tmp) = test_app();
-        post_json(&app, "/api/session/create", json!({"name": "search-test"})).await;
+        post_json(&app, "/api/notes", json!({"name": "search-test"})).await;
         let (_, body) = post_json(
             &app,
             "/api/chat/search",
@@ -3644,14 +3453,7 @@ mod integration_tests {
     #[tokio::test]
     async fn test_dir_browse_root() {
         let (app, _tmp) = test_app();
-        let (_, body) = post_json(
-            &app,
-            "/api/dir/browse",
-            json!({
-                "path": "/tmp"
-            }),
-        )
-        .await;
+        let (_, body) = request_json(&app, "GET", "/api/dirs?path=/tmp", None).await;
         assert_eq!(body["ok"], true);
         assert!(body["data"].is_object());
     }
@@ -3659,14 +3461,8 @@ mod integration_tests {
     #[tokio::test]
     async fn test_dir_browse_nonexistent() {
         let (app, _tmp) = test_app();
-        let (_, body) = post_json(
-            &app,
-            "/api/dir/browse",
-            json!({
-                "path": "/nonexistent_path_12345"
-            }),
-        )
-        .await;
+        let (_, body) =
+            request_json(&app, "GET", "/api/dirs?path=/nonexistent_path_12345", None).await;
         // Should still return ok with empty entries
         assert_eq!(body["ok"], true);
     }
@@ -3738,7 +3534,7 @@ mod integration_tests {
         // Create session
         let (_, body) = post_json(
             &app,
-            "/api/session/create",
+            "/api/notes",
             json!({
                 "name": "integration",
             }),
@@ -3749,74 +3545,49 @@ mod integration_tests {
         // Create file
         let (_, body) = post_json(
             &app,
-            "/api/file/create",
-            json!({
-                "note_id": "integration",
-                "name": "readme.md"
-            }),
+            "/api/notes/integration/files",
+            json!({"name": "readme.md"}),
         )
         .await;
         assert_eq!(body["ok"], true);
 
         // Update file
-        let (_, body) = post_json(
+        let (_, body) = request_json(
             &app,
-            "/api/file/update",
-            json!({
-                "note_id": "integration",
-                "filename": "readme.md",
-                "content": "# Integration Test\n\nThis works!"
-            }),
+            "PUT",
+            "/api/notes/integration/files/readme.md",
+            Some(json!({"content": "# Integration Test\n\nThis works!"})),
         )
         .await;
         assert_eq!(body["ok"], true);
 
         // Switch to file (read back)
-        let (_, body) = post_json(
+        let (_, body) = request_json(
             &app,
-            "/api/file/switch",
-            json!({
-                "note_id": "integration",
-                "name": "readme.md"
-            }),
+            "PUT",
+            "/api/session",
+            Some(json!({"note": "integration", "file": "readme.md"})),
         )
         .await;
         assert_eq!(body["ok"], true);
 
         // Rename file
-        let (_, body) = post_json(
+        let (_, body) = request_json(
             &app,
-            "/api/file/rename",
-            json!({
-                "note_id": "integration",
-                "old_name": "readme.md",
-                "new_name": "docs.md"
-            }),
+            "PATCH",
+            "/api/notes/integration/files/readme.md",
+            Some(json!({"name": "docs.md"})),
         )
         .await;
         assert_eq!(body["ok"], true);
 
         // Delete file
-        let (_, body) = post_json(
-            &app,
-            "/api/file/delete",
-            json!({
-                "note_id": "integration",
-                "name": "docs.md"
-            }),
-        )
-        .await;
+        let (_, body) =
+            request_json(&app, "DELETE", "/api/notes/integration/files/docs.md", None).await;
         assert_eq!(body["ok"], true);
 
         // Delete session
-        let (_, body) = post_json(
-            &app,
-            "/api/session/delete",
-            json!({
-                "note_id": "integration"
-            }),
-        )
-        .await;
+        let (_, body) = request_json(&app, "DELETE", "/api/notes/integration", None).await;
         assert_eq!(body["ok"], true);
     }
 
@@ -4281,19 +4052,17 @@ mod isolation_tests {
 
         let app = Router::new()
             .route(
-                "/api/model/switch",
-                post(crate::serve::api::model_switch_handler),
+                "/api/notes/{note}",
+                axum::routing::patch(crate::serve::api::note_patch_handler),
             )
             .with_state(state.clone());
 
         // Admin can set per-note override
         let req = axum::http::Request::builder()
-            .method("POST")
-            .uri("/api/model/switch")
+            .method("PATCH")
+            .uri("/api/notes/test-note")
             .header("Content-Type", "application/json")
-            .body(Body::from(
-                r#"{"model":"claude-sonnet-4.6","note_id":"test-note"}"#,
-            ))
+            .body(Body::from(r#"{"model":"claude-sonnet-4.6"}"#))
             .unwrap();
         let resp = app.clone().oneshot(req).await.unwrap();
         assert_eq!(resp.status(), axum::http::StatusCode::OK);
@@ -4542,11 +4311,11 @@ mod isolation_tests {
 
         let app = Router::new()
             .route(
-                "/public/{note}/",
+                "/notes/{note}/",
                 get(crate::serve::api::public_note_index_handler),
             )
             .route(
-                "/public/{note}",
+                "/notes/{note}",
                 get(crate::serve::api::public_note_index_handler),
             )
             .with_state(state);
@@ -4554,7 +4323,7 @@ mod isolation_tests {
         // With trailing slash
         let req = axum::http::Request::builder()
             .method("GET")
-            .uri("/public/main/")
+            .uri("/notes/main/")
             .body(Body::empty())
             .unwrap();
         let resp = app.clone().oneshot(req).await.unwrap();
@@ -4571,7 +4340,7 @@ mod isolation_tests {
         // Without trailing slash
         let req = axum::http::Request::builder()
             .method("GET")
-            .uri("/public/main")
+            .uri("/notes/main")
             .body(Body::empty())
             .unwrap();
         let resp = app.oneshot(req).await.unwrap();
@@ -4611,14 +4380,14 @@ mod isolation_tests {
 
         let app = Router::new()
             .route(
-                "/public/{note}/",
+                "/notes/{note}/",
                 get(crate::serve::api::public_note_index_handler),
             )
             .with_state(state);
 
         let req = axum::http::Request::builder()
             .method("GET")
-            .uri("/public/secret/")
+            .uri("/notes/secret/")
             .body(Body::empty())
             .unwrap();
         let resp = app.oneshot(req).await.unwrap();
@@ -4661,16 +4430,16 @@ mod isolation_tests {
         };
 
         let app = Router::new()
-            .route("/public", get(crate::serve::api::public_notes_list_handler))
+            .route("/notes", get(crate::serve::api::public_notes_list_handler))
             .route(
-                "/public/",
+                "/notes/",
                 get(crate::serve::api::public_notes_list_handler),
             )
             .with_state(state);
 
         let req = axum::http::Request::builder()
             .method("GET")
-            .uri("/public/")
+            .uri("/notes/")
             .body(Body::empty())
             .unwrap();
         let resp = app.clone().oneshot(req).await.unwrap();
@@ -4679,12 +4448,8 @@ mod isolation_tests {
             .to_string();
         assert!(body.contains("pub-note"), "Should list public note");
         assert!(!body.contains("priv-note"), "Should NOT list private note");
-        // Links must use /public/ prefix
-        assert!(body.contains("/public/"), "Links must use /public/ prefix");
-        assert!(
-            !body.contains("/notes/"),
-            "Links must NOT use /notes/ prefix"
-        );
+        // Links must use /notes/ prefix
+        assert!(body.contains("/notes/"), "Links must use /notes/ prefix");
     }
 
     #[test]
@@ -4752,28 +4517,24 @@ mod isolation_tests {
 
         let app = Router::new()
             .route(
-                "/public/{note}/{file}",
+                "/notes/{note}/{file}",
                 get(crate::serve::api::public_preview_handler),
             )
             .with_state(state);
 
         let req = axum::http::Request::builder()
             .method("GET")
-            .uri("/public/mynote/doc")
+            .uri("/notes/mynote/doc")
             .body(Body::empty())
             .unwrap();
         let resp = app.oneshot(req).await.unwrap();
         assert_eq!(resp.status(), axum::http::StatusCode::OK);
         let body = String::from_utf8_lossy(&resp.into_body().collect().await.unwrap().to_bytes())
             .to_string();
-        // Preview HTML must link back to /public/, not /notes/
+        // Preview HTML must link back to /notes/
         assert!(
-            body.contains("/public/"),
-            "Preview must use /public/ back-link"
-        );
-        assert!(
-            !body.contains("/notes/"),
-            "Preview must NOT use /notes/ back-link"
+            body.contains("/notes/"),
+            "Preview must use /notes/ back-link"
         );
     }
 
@@ -4813,22 +4574,25 @@ mod isolation_tests {
             data_dir: tmp.path().join(".rune"),
         };
 
+        use axum::routing::{delete, put};
+
         let app = Router::new()
-            .route("/api/goal/set", post(crate::serve::api::goal_set_handler))
             .route(
-                "/api/goal/clear",
-                post(crate::serve::api::goal_clear_handler),
+                "/api/goal",
+                put(crate::serve::api::goal_set_handler)
+                    .delete(crate::serve::api::goal_clear_handler),
             )
             .route(
-                "/api/chat/cancel",
-                post(crate::serve::api::chat_cancel_handler),
+                "/api/chat",
+                axum::routing::post(crate::serve::api::chat_handler)
+                    .delete(crate::serve::api::chat_cancel_handler),
             )
             .with_state(state.clone());
 
         // 1. Set goal
         let set_req = axum::http::Request::builder()
-            .method("POST")
-            .uri("/api/goal/set")
+            .method("PUT")
+            .uri("/api/goal")
             .header("content-type", "application/json")
             .body(Body::from(
                 r#"{"note_id":"note-goal","condition":"Verify correctness","model":null}"#,
@@ -4846,12 +4610,11 @@ mod isolation_tests {
             assert_eq!(status.as_deref(), Some("Running"));
         }
 
-        // 2. Cancel goal
+        // 2. Cancel chat (DELETE /api/chat?note_id=note-goal)
         let cancel_req = axum::http::Request::builder()
-            .method("POST")
-            .uri("/api/chat/cancel")
-            .header("content-type", "application/json")
-            .body(Body::from(r#"{"note_id":"note-goal"}"#))
+            .method("DELETE")
+            .uri("/api/chat?note_id=note-goal")
+            .body(Body::empty())
             .unwrap();
 
         let resp = app.clone().oneshot(cancel_req).await.unwrap();
@@ -4863,12 +4626,11 @@ mod isolation_tests {
             assert_eq!(status.as_deref(), Some("Paused"));
         }
 
-        // 3. Clear goal
+        // 3. Clear goal (DELETE /api/goal?note_id=note-goal)
         let clear_req = axum::http::Request::builder()
-            .method("POST")
-            .uri("/api/goal/clear")
-            .header("content-type", "application/json")
-            .body(Body::from(r#"{"note_id":"note-goal"}"#))
+            .method("DELETE")
+            .uri("/api/goal?note_id=note-goal")
+            .body(Body::empty())
             .unwrap();
 
         let resp = app.clone().oneshot(clear_req).await.unwrap();

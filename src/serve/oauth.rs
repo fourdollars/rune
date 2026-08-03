@@ -3,7 +3,7 @@
 //! Flow:
 //!   1. `GET /auth/github` → redirect to GitHub with CSRF state cookie
 //!   2. `GET /auth/github/callback` → verify state, exchange code, fetch user,
-//!      resolve role, create session, set cookies, redirect to /notes/
+//!      resolve role, create session, set cookies, redirect to /edit/
 //!   3. `GET /auth/logout` → clear session + cookies, redirect to /
 //!   4. `GET /auth/denied` → 403 "not authorized" page
 
@@ -527,9 +527,9 @@ pub async fn oauth_callback_handler(
     let mut response_headers = HeaderMap::new();
     response_headers.insert(
         header::LOCATION,
-        "/notes/"
+        "/edit/"
             .parse()
-            .unwrap_or_else(|_| axum::http::HeaderValue::from_static("/notes/")),
+            .unwrap_or_else(|_| axum::http::HeaderValue::from_static("/edit/")),
     );
     if let Ok(val) = http_only.parse() {
         response_headers.append(header::SET_COOKIE, val);

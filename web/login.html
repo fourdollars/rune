@@ -168,7 +168,7 @@
         </form>
 
         <div class="login-guest-link">
-            or <a href="/public/">browse public notes</a>
+            or <a href="/notes/">browse public notes</a>
         </div>
     </div>
 
@@ -210,12 +210,12 @@
         if (err) setError('Sign-in failed: ' + decodeURIComponent(err));
     })();
 
-    // After login, go to the URL the user originally tried to reach, or /notes/
+    // After login, go to the URL the user originally tried to reach, or /edit/
     const redirectTo = (function() {
         const params = new URLSearchParams(window.location.search);
         const next = params.get('next');
-        if (next && next.startsWith('/notes')) return next;
-        return '/notes/';
+        if (next && next.startsWith('/edit')) return next;
+        return '/edit/';
     })();
 
     // Load auth configuration and display appropriate methods
@@ -273,7 +273,7 @@
         setLoading(false);
     }
 
-    // If already authenticated (session cookie present), skip to /notes/
+    // If already authenticated (session cookie present), skip to /edit/
     (async function checkExistingSession() {
         // rune_session_id is the JS-readable cookie set alongside the HttpOnly rune_sid
         const hasCookie = document.cookie.match(/(?:^|;\s*)rune_session_id=([^;]+)/);

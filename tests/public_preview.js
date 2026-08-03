@@ -18,10 +18,11 @@ async function withPage(browser, fn, opts = {}) {
   try { await fn(page); } finally { await ctx.close(); }
 }
 
-function apiPost(path, body) {
-  const json = JSON.stringify(body).replace(/'/g, "'\\''");
+function apiReq(path, body, method = 'POST') {
+  const json = body ? JSON.stringify(body).replace(/'/g, "'\\''") : '';
+  const bodyArg = body ? `-d '${json}'` : '';
   return execSync(
-    `curl -sf -X POST '${BASE}${path}' -H 'Authorization: Bearer ${ADMIN_TOKEN}' -H 'Content-Type: application/json' -d '${json}'`,
+    `curl -sf -X ${method} '${BASE}${path}' -H 'Authorization: Bearer ${ADMIN_TOKEN}' -H 'Content-Type: application/json' ${bodyArg}`,
     { encoding: 'utf8' }
   );
 }
@@ -30,9 +31,9 @@ function apiPost(path, body) {
 
 function setup() {
   // Create note
-  try { apiPost('/api/note/create', { id: 'playwright-pub', name: 'Playwright Public Test' }); } catch(e) {}
+  try { apiReq('/api/notes', { name: 'Playwright Public Test' }); } catch(e) {}
   // Make note public
-  apiPost('/api/note/visibility', { note_id: 'playwright-pub', public: true });
+  apiReq('/api/notes/Playwright Public Test', { public: true }, 'PATCH');
 
   const lines = Array.from({length: 60}, (_, i) =>
     `Line ${i + 1}: Lorem ipsum dolor sit amet, consectetur adipiscing elit.`
@@ -67,17 +68,19 @@ $$\\sum_{i=1}^{n} i = \\frac{n(n+1)}{2}$$
 ${lines}
 `;
 
-  // Write content to temp file to avoid shell quoting issues
+  // Create file
+  apiReq('/api/notes/Playwright Public Test/files', { name: 'test.md' });
+  // Update file content
   const fs = require('fs');
-  const payload = JSON.stringify({ note_id: 'playwright-pub', name: 'test.md', content });
+  const payload = JSON.stringify({ content });
   fs.writeFileSync('/tmp/rune_test_payload.json', payload);
   execSync(
-    `curl -sf -X POST '${BASE}/api/file/create' -H 'Authorization: Bearer ${ADMIN_TOKEN}' -H 'Content-Type: application/json' -d @/tmp/rune_test_payload.json`,
+    `curl -sf -X PUT '${BASE}/api/notes/Playwright%20Public%20Test/files/test.md' -H 'Authorization: Bearer ${ADMIN_TOKEN}' -H 'Content-Type: application/json' -d @/tmp/rune_test_payload.json`,
     { encoding: 'utf8' }
   );
 
   // Make file public
-  apiPost('/api/file/visibility', { note_id: 'playwright-pub', filename: 'test.md', public: true });
+  apiReq('/api/notes/Playwright Public Test/files/test.md', { public: true }, 'PATCH');
 
   console.log('  setup: note + file created and made public');
 }
@@ -86,7 +89,7 @@ ${lines}
 
 async function testScrollable(browser) {
   await withPage(browser, async (page) => {
-    await page.goto(`${BASE}/public/playwright-pub/test`, { waitUntil: 'networkidle' });
+    await page.goto(`${BASE}/notes/Playwright%20Public%20Test/test`, { waitUntil: 'networkidle' });
     await page.waitForSelector('#preview', { state: 'visible', timeout: 10000 });
 
     const bodyOverflow = await page.evaluate(() => getComputedStyle(document.body).overflow);
@@ -118,7 +121,7 @@ async function testScrollable(browser) {
 
 async function testSharedStyleCss(browser) {
   await withPage(browser, async (page) => {
-    await page.goto(`${BASE}/public/playwright-pub/test`, { waitUntil: 'networkidle' });
+    await page.goto(`${BASE}/notes/Playwright%20Public%20Test/test`, { waitUntil: 'networkidle' });
     await page.waitForSelector('#preview', { state: 'visible', timeout: 10000 });
 
     const stylesheets = await page.evaluate(() =>
@@ -152,7 +155,7 @@ async function testSharedStyleCss(browser) {
 
 async function testSyntaxHighlight(browser) {
   await withPage(browser, async (page) => {
-    await page.goto(`${BASE}/public/playwright-pub/test`, { waitUntil: 'networkidle' });
+    await page.goto(`${BASE}/notes/Playwright%20Public%20Test/test`, { waitUntil: 'networkidle' });
     await page.waitForSelector('#preview', { state: 'visible', timeout: 10000 });
 
     const hljsCount = await page.evaluate(() =>
@@ -178,7 +181,7 @@ async function testSyntaxHighlight(browser) {
 
 async function testKaTeX(browser) {
   await withPage(browser, async (page) => {
-    await page.goto(`${BASE}/public/playwright-pub/test`, { waitUntil: 'networkidle' });
+    await page.goto(`${BASE}/notes/Playwright%20Public%20Test/test`, { waitUntil: 'networkidle' });
     await page.waitForSelector('#preview', { state: 'visible', timeout: 10000 });
 
     const katexCount = await page.evaluate(() =>
@@ -195,7 +198,7 @@ async function testKaTeX(browser) {
 async function testLightMode(browser) {
   await withPage(browser, async (page) => {
     await page.emulateMedia({ colorScheme: 'light' });
-    await page.goto(`${BASE}/public/playwright-pub/test`, { waitUntil: 'networkidle' });
+    await page.goto(`${BASE}/notes/Playwright%20Public%20Test/test`, { waitUntil: 'networkidle' });
     await page.waitForSelector('#preview', { state: 'visible', timeout: 10000 });
 
     const bodyBg = await page.evaluate(() => getComputedStyle(document.body).backgroundColor);
@@ -230,7 +233,7 @@ async function testLightMode(browser) {
 async function testDarkMode(browser) {
   await withPage(browser, async (page) => {
     await page.emulateMedia({ colorScheme: 'dark' });
-    await page.goto(`${BASE}/public/playwright-pub/test`, { waitUntil: 'networkidle' });
+    await page.goto(`${BASE}/notes/Playwright%20Public%20Test/test`, { waitUntil: 'networkidle' });
     await page.waitForSelector('#preview', { state: 'visible', timeout: 10000 });
 
     const bodyBg = await page.evaluate(() => getComputedStyle(document.body).backgroundColor);
@@ -254,7 +257,7 @@ async function testDarkMode(browser) {
 
 function cleanup() {
   try {
-    apiPost('/api/note/delete', { note_id: 'playwright-pub' });
+    apiReq('/api/notes/Playwright Public Test', null, 'DELETE');
   } catch(e) {}
   console.log('  cleanup: done');
 }
