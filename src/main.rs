@@ -24,6 +24,7 @@ mod trace;
 use tracing_subscriber::EnvFilter;
 
 fn main() {
+    provider::init_crypto_provider();
     // Internal sandbox subcommands — synchronous, must run before tokio.
     // These exec() into the child process and never return.
     let args: Vec<String> = env::args().collect();

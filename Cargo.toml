@@ -21,7 +21,8 @@ tokio = { version = "1", features = ["rt-multi-thread", "time", "process", "sync
 indicatif = "0.18"
 rustyline = "18"
 libc = "0.2"
-reqwest = { version = "0.13.3", default-features = false, features = ["json", "stream", "rustls", "charset", "http2"] }
+reqwest = { version = "0.13.3", default-features = false, features = ["json", "stream", "rustls-no-provider"] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
 futures = "0.3"
 async-stream = "0.3"
 tokio-stream = "0.1"

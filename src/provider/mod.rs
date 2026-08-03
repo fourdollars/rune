@@ -2189,8 +2189,13 @@ fn is_transient_error(err: &anyhow::Error) -> bool {
         || err_str.contains("503")
 }
 
+pub fn init_crypto_provider() {
+    let _ = rustls::crypto::ring::default_provider().install_default();
+}
+
 impl ProviderRegistry {
     pub fn new() -> Self {
+        init_crypto_provider();
         ProviderRegistry {
             providers: Vec::new(),
             default_provider: 0,

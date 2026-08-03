@@ -179,6 +179,7 @@ pub struct EmbeddingEngine {
 
 impl EmbeddingEngine {
     pub fn new(config: EmbeddingConfig) -> Self {
+        crate::provider::init_crypto_provider();
         Self {
             config,
             client: reqwest::Client::new(),
