@@ -556,6 +556,18 @@ impl ChatDb {
 
     // ── Visibility ────────────────────────────────────────────────────────────
 
+    /// Check if a note is public.
+    pub fn is_note_public(&self, id: &str) -> bool {
+        let conn = self.conn.lock().unwrap();
+        conn.query_row(
+            "SELECT public FROM sessions WHERE id = ?1",
+            params![id],
+            |row| row.get::<_, i32>(0),
+        )
+        .map(|v| v != 0)
+        .unwrap_or(false)
+    }
+
     /// Set note-level public flag. Returns new state.
     pub fn set_note_public(&self, id: &str, public: bool) -> anyhow::Result<bool> {
         let conn = self.conn.lock().unwrap();

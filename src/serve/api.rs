@@ -362,17 +362,22 @@ pub fn is_valid_filename(name: &str) -> bool {
 
 // ─── Helper: build session list ────────────────────────────────────────────
 
-pub async fn build_note_list(state: &ServerState) -> Vec<NoteListEntry> {
+pub async fn build_note_list(state: &ServerState, is_guest: bool) -> Vec<NoteListEntry> {
     let notes = state.chat_db.list_notes().unwrap_or_default();
     let mut entries = Vec::new();
     for s in notes {
+        if is_guest && !s.public {
+            continue;
+        }
         let md_dir = state.note_markdown_dir(&s.id);
         let mut files = Vec::new();
         if let Ok(mut rd) = tokio::fs::read_dir(&md_dir).await {
             while let Ok(Some(entry)) = rd.next_entry().await {
                 let name = entry.file_name().to_string_lossy().to_string();
                 if name.ends_with(".md") {
-                    files.push(name);
+                    if !is_guest || state.chat_db.is_file_public(&s.id, &name) {
+                        files.push(name);
+                    }
                 }
             }
         }
@@ -452,7 +457,20 @@ pub async fn events_handler(
         }
     };
 
-    let notes = build_note_list(&state).await;
+    let notes = build_note_list(&state, is_guest).await;
+
+    if is_guest && !state.chat_db.is_note_public(&note_id) {
+        let err_stream = futures::stream::once(async {
+            Ok::<_, Infallible>(
+                Event::default()
+                    .event("auth_error")
+                    .data(r#"{"type":"auth_error","message":"Guests cannot access private notes"}"#.to_string()),
+            )
+        });
+        return Sse::new(err_stream)
+            .keep_alive(KeepAlive::default())
+            .into_response();
+    }
 
     // Verify note exists
     if !notes.iter().any(|n| n.id == note_id) {
@@ -909,10 +927,22 @@ pub async fn note_create_handler(
 
 pub async fn session_handler(
     State(state): State<ServerState>,
+    headers: axum::http::HeaderMap,
     Json(req): Json<SessionReq>,
 ) -> Json<serde_json::Value> {
     if req.note.is_empty() {
         return Json(serde_json::json!({ "ok": false, "error": "No note selected" }));
+    }
+
+    let sid = crate::serve::oauth::get_cookie(&headers, "rune_sid");
+    let session = match sid {
+        Some(ref id) => state.sessions.get(id).await,
+        None => None,
+    };
+    let is_guest = session.as_ref().map(|s| s.is_guest()).unwrap_or(false);
+
+    if is_guest && !state.chat_db.is_note_public(&req.note) {
+        return Json(serde_json::json!({ "ok": false, "error": "Guests cannot access private notes" }));
     }
 
     let history = state.chat_db.load_recent_async(req.note.clone(), 100).await;
@@ -922,17 +952,30 @@ pub async fn session_handler(
         while let Ok(Some(entry)) = rd.next_entry().await {
             let name = entry.file_name().to_string_lossy().to_string();
             if name.ends_with(".md") {
-                files.push(name);
+                if !is_guest || state.chat_db.is_file_public(&req.note, &name) {
+                    files.push(name);
+                }
             }
         }
     }
     files.sort();
 
-    let current_file = if let Some(ref f) = req.file {
-        Some(f.clone())
+    let requested_file_allowed = if let Some(ref f) = req.file {
+        if !is_guest || state.chat_db.is_file_public(&req.note, f) {
+            Some(f.clone())
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
+    let current_file = if requested_file_allowed.is_some() {
+        requested_file_allowed
     } else {
         files.first().cloned()
     };
+    
 
     let first_content = if let Some(ref fname) = current_file {
         tokio::fs::read_to_string(md_dir.join(fname)).await.ok()
@@ -2111,7 +2154,7 @@ async fn broadcast_file_list(state: &ServerState, note_id: &str) {
 }
 
 async fn broadcast_note_list(state: &ServerState) {
-    let notes = build_note_list(state).await;
+    let notes = build_note_list(state, false).await;
     let msg = SseMsg::NoteList {
         notes,
         active: String::new(),
@@ -2124,8 +2167,17 @@ async fn broadcast_note_list(state: &ServerState) {
 }
 
 /// GET /api/notes — JSON list of notes (authenticated users only)
-pub async fn notes_list_json_handler(State(state): State<ServerState>) -> Json<serde_json::Value> {
-    let notes = build_note_list(&state).await;
+pub async fn notes_list_json_handler(
+    State(state): State<ServerState>,
+    headers: axum::http::HeaderMap,
+) -> Json<serde_json::Value> {
+    let sid = crate::serve::oauth::get_cookie(&headers, "rune_sid");
+    let session = match sid {
+        Some(ref id) => state.sessions.get(id).await,
+        None => None,
+    };
+    let is_guest = session.as_ref().map(|s| s.is_guest()).unwrap_or(false);
+    let notes = build_note_list(&state, is_guest).await;
     Json(serde_json::json!({ "ok": true, "notes": notes }))
 }
 
@@ -4642,5 +4694,156 @@ mod isolation_tests {
             let status = room.goal_status.read().await;
             assert!(status.is_none());
         }
+    }
+
+    #[tokio::test]
+    async fn test_guest_session_put_private_note_rejected() {
+        use axum::body::Body;
+        use axum::{routing::put, Router};
+        use http_body_util::BodyExt;
+        use tower::ServiceExt;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let (admin_broadcast_tx, _) = broadcast::channel(256);
+        let db = crate::serve::db::ChatDb::open(&tmp.path().join("t.db")).unwrap();
+        let _ = db.create_note("private-note", "private-note", None);
+
+        let state = crate::serve::ServerState {
+            config: crate::config::RuneConfig::default(),
+            sessions: crate::serve::oauth::SessionStore::new(),
+            files: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
+            active_file: Arc::new(tokio::sync::RwLock::new(String::new())),
+            models: Arc::new(tokio::sync::RwLock::new(vec![ModelInfo {
+                provider: None,
+                id: "m1".into(),
+                context_window: None,
+                reasoning_efforts: vec![],
+                supported_endpoints: vec![],
+            }])),
+            rooms: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
+            global_default_model: Arc::new(tokio::sync::RwLock::new("m1".into())),
+            admin_broadcast_tx,
+            chat_db: db,
+            data_dir: tmp.path().join(".rune"),
+        };
+
+        let session = crate::serve::oauth::Session {
+            id: "session-guest".to_string(),
+            login: "guest-user".to_string(),
+            role: crate::serve::oauth::Role::Guest,
+            avatar_url: "".to_string(),
+            expires_at: std::time::Instant::now() + std::time::Duration::from_secs(3600),
+        };
+        state.sessions.insert(session).await;
+
+        let app = Router::new()
+            .route("/api/session", put(crate::serve::api::session_handler))
+            .with_state(state);
+
+        let req = axum::http::Request::builder()
+            .method("PUT")
+            .uri("/api/session")
+            .header(axum::http::header::COOKIE, "rune_sid=session-guest")
+            .header(axum::http::header::CONTENT_TYPE, "application/json")
+            .body(Body::from("{\"note\":\"private-note\"}"))
+            .unwrap();
+
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), axum::http::StatusCode::OK);
+        let body_bytes = resp.into_body().collect().await.unwrap().to_bytes();
+        let body: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
+
+        assert_eq!(body["ok"], false);
+        assert_eq!(body["error"], "Guests cannot access private notes");
+    }
+
+    #[tokio::test]
+    async fn test_guest_session_put_filters_private_files() {
+        use axum::body::Body;
+        use axum::{routing::put, Router};
+        use http_body_util::BodyExt;
+        use tower::ServiceExt;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let (admin_broadcast_tx, _) = broadcast::channel(256);
+        let db = crate::serve::db::ChatDb::open(&tmp.path().join("t.db")).unwrap();
+        let _ = db.create_note("pub-note", "pub-note", None);
+        let _ = db.set_note_public("pub-note", true);
+
+        let md_dir = tmp.path().join(".rune").join("notes").join("pub-note").join("markdown");
+        std::fs::create_dir_all(&md_dir).unwrap();
+        std::fs::write(md_dir.join("public.md"), "# Public File Content").unwrap();
+        std::fs::write(md_dir.join("secret.md"), "# Secret File Content").unwrap();
+
+        let _ = db.set_file_public("pub-note", "public.md", true);
+        let _ = db.set_file_public("pub-note", "secret.md", false);
+
+        let state = crate::serve::ServerState {
+            config: crate::config::RuneConfig::default(),
+            sessions: crate::serve::oauth::SessionStore::new(),
+            files: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
+            active_file: Arc::new(tokio::sync::RwLock::new(String::new())),
+            models: Arc::new(tokio::sync::RwLock::new(vec![ModelInfo {
+                provider: None,
+                id: "m1".into(),
+                context_window: None,
+                reasoning_efforts: vec![],
+                supported_endpoints: vec![],
+            }])),
+            rooms: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
+            global_default_model: Arc::new(tokio::sync::RwLock::new("m1".into())),
+            admin_broadcast_tx,
+            chat_db: db,
+            data_dir: tmp.path().join(".rune"),
+        };
+
+        let session = crate::serve::oauth::Session {
+            id: "session-guest".to_string(),
+            login: "guest-user".to_string(),
+            role: crate::serve::oauth::Role::Guest,
+            avatar_url: "".to_string(),
+            expires_at: std::time::Instant::now() + std::time::Duration::from_secs(3600),
+        };
+        state.sessions.insert(session).await;
+
+        let app = Router::new()
+            .route("/api/session", put(crate::serve::api::session_handler))
+            .with_state(state);
+
+        // 1. Ask for public file
+        let req = axum::http::Request::builder()
+            .method("PUT")
+            .uri("/api/session")
+            .header(axum::http::header::COOKIE, "rune_sid=session-guest")
+            .header(axum::http::header::CONTENT_TYPE, "application/json")
+            .body(Body::from("{\"note\":\"pub-note\",\"file\":\"public.md\"}"))
+            .unwrap();
+
+        let resp = app.clone().oneshot(req).await.unwrap();
+        let body_bytes = resp.into_body().collect().await.unwrap().to_bytes();
+        let body: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
+
+        assert_eq!(body["ok"], true);
+        let files: Vec<String> = serde_json::from_value(body["files"].clone()).unwrap();
+        assert_eq!(files, vec!["public.md"]);
+        assert_eq!(body["current_file"], "public.md");
+        assert_eq!(body["file_content"], "# Public File Content");
+
+        // 2. Try to ask for secret.md
+        let req2 = axum::http::Request::builder()
+            .method("PUT")
+            .uri("/api/session")
+            .header(axum::http::header::COOKIE, "rune_sid=session-guest")
+            .header(axum::http::header::CONTENT_TYPE, "application/json")
+            .body(Body::from("{\"note\":\"pub-note\",\"file\":\"secret.md\"}"))
+            .unwrap();
+
+        let resp2 = app.oneshot(req2).await.unwrap();
+        let body_bytes2 = resp2.into_body().collect().await.unwrap().to_bytes();
+        let body2: serde_json::Value = serde_json::from_slice(&body_bytes2).unwrap();
+
+        assert_eq!(body2["ok"], true);
+        assert_eq!(body2["current_file"], "public.md");
+        assert_eq!(body2["file_content"], "# Public File Content");
     }
 }
