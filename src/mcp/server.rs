@@ -5,13 +5,32 @@ pub const SUPPORTED_PROTOCOL_VERSIONS: &[&str] = &["2026-07-28", "2024-11-05"];
 
 /// Legacy protocol versions that get a `Mcp-Session-Id` + GET stream compatibility path
 /// (see MCP_Backward_Compat_GET_Stream_Spec.md, Appendix 1). These are accepted by
-/// `initialize` in addition to `SUPPORTED_PROTOCOL_VERSIONS`, but do NOT change the
-/// server's own `protocolVersion` in the initialize response (still 2026-07-28).
+/// `initialize` in addition to `SUPPORTED_PROTOCOL_VERSIONS`. Per the MCP spec, `initialize`
+/// must echo back the negotiated `protocolVersion` in its response (not the server's own
+/// newest version) — MCP SDK clients (e.g. the official TypeScript SDK) reject the
+/// `initialize` result outright if `protocolVersion` is a value they don't recognize.
 pub const LEGACY_SESSION_PROTOCOL_VERSIONS: &[&str] = &["2025-03-26", "2025-06-18", "2025-11-25"];
 
 /// True if `version` is accepted at all by `initialize` (current + legacy session versions).
 pub fn is_initialize_protocol_version_acceptable(version: &str) -> bool {
     SUPPORTED_PROTOCOL_VERSIONS.contains(&version) || LEGACY_SESSION_PROTOCOL_VERSIONS.contains(&version)
+}
+
+/// Compute the `protocolVersion` the server should echo back in an `initialize` response,
+/// given the client's requested version. If the requested version is one we accept
+/// (current or legacy), echo it back unchanged (per MCP spec: this is what the client
+/// negotiated and understands). Otherwise (unrecognized/missing), fall back to our
+/// latest supported version.
+pub fn negotiate_initialize_protocol_version(requested_version: &str) -> &'static str {
+    if let Some(v) = SUPPORTED_PROTOCOL_VERSIONS
+        .iter()
+        .chain(LEGACY_SESSION_PROTOCOL_VERSIONS.iter())
+        .find(|&&v| v == requested_version)
+    {
+        v
+    } else {
+        SUPPORTED_PROTOCOL_VERSIONS[0]
+    }
 }
 
 // JSON-RPC 2.0 Request according to MCP spec
@@ -288,6 +307,25 @@ mod tests {
         assert!(is_initialize_protocol_version_acceptable("2025-11-25"));
         assert!(!is_initialize_protocol_version_acceptable("1999-01-01"));
         assert!(!is_initialize_protocol_version_acceptable(""));
+    }
+
+    #[test]
+    fn test_negotiate_initialize_protocol_version_echoes_current() {
+        assert_eq!(negotiate_initialize_protocol_version("2026-07-28"), "2026-07-28");
+        assert_eq!(negotiate_initialize_protocol_version("2024-11-05"), "2024-11-05");
+    }
+
+    #[test]
+    fn test_negotiate_initialize_protocol_version_echoes_legacy() {
+        assert_eq!(negotiate_initialize_protocol_version("2025-03-26"), "2025-03-26");
+        assert_eq!(negotiate_initialize_protocol_version("2025-06-18"), "2025-06-18");
+        assert_eq!(negotiate_initialize_protocol_version("2025-11-25"), "2025-11-25");
+    }
+
+    #[test]
+    fn test_negotiate_initialize_protocol_version_falls_back_for_unknown() {
+        assert_eq!(negotiate_initialize_protocol_version("1999-01-01"), "2026-07-28");
+        assert_eq!(negotiate_initialize_protocol_version(""), "2026-07-28");
     }
 
     #[test]

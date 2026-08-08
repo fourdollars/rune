@@ -7,14 +7,16 @@ use axum::{
 use futures::stream::Stream;
 use serde_json::{json, Value};
 use std::convert::Infallible;
+use std::pin::Pin;
+use std::task::{Context, Poll};
 use std::time::Duration;
 use tracing::warn;
 
-use crate::mcp::mcp_session::is_legacy_session_protocol_version;
+use crate::mcp::mcp_session::{is_legacy_session_protocol_version, McpSessionStore};
 use crate::mcp::resources;
 use crate::mcp::server::{
-    validate_header_body_consistency, validate_header_body_consistency_lenient,
-    McpJsonRpcRequest, McpJsonRpcResponse,
+    negotiate_initialize_protocol_version, validate_header_body_consistency,
+    validate_header_body_consistency_lenient, McpJsonRpcRequest, McpJsonRpcResponse,
 };
 use crate::mcp::tools;
 use crate::serve::ServerState;
@@ -162,8 +164,10 @@ pub async fn handle_mcp_post(
                 None
             };
 
+            let negotiated_version = negotiate_initialize_protocol_version(requested_version);
+
             let result = json!({
-                "protocolVersion": "2026-07-28",
+                "protocolVersion": negotiated_version,
                 "capabilities": {
                     "tools": { "listChanged": false },
                     "resources": { "subscribe": false, "listChanged": false }
@@ -251,6 +255,43 @@ pub async fn handle_mcp_post(
     }
 }
 
+/// A wrapper `Stream` that clears the session's `sse_open` flag as soon as the
+/// underlying stream is dropped (client disconnect, server shutdown of the
+/// connection, or normal completion) — not just via the periodic `touch()` loop.
+///
+/// This closes the gap described in MCP_Backward_Compat_GET_Stream_Spec.md Appendix 1
+/// where a client that disconnects and immediately reconnects with the same
+/// `Mcp-Session-Id` (e.g. the official Python MCP SDK's `handle_get_stream` retry loop)
+/// would otherwise see a stale `sse_open = true` and get bounced with 409 Conflict,
+/// which the SDK counts as a failed reconnection attempt and can exhaust its retry
+/// budget, permanently losing the stream.
+struct SseOpenGuardStream {
+    inner: Pin<Box<dyn Stream<Item = Result<Event, Infallible>> + Send>>,
+    sessions: McpSessionStore,
+    session_id: String,
+}
+
+impl Stream for SseOpenGuardStream {
+    type Item = Result<Event, Infallible>;
+
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        self.inner.as_mut().poll_next(cx)
+    }
+}
+
+impl Drop for SseOpenGuardStream {
+    fn drop(&mut self) {
+        let sessions = self.sessions.clone();
+        let session_id = self.session_id.clone();
+        // Drop can't be async; spawn a short-lived task to clear the flag. If the
+        // runtime is already shutting down this is a best-effort no-op (session
+        // will still be cleaned up by the TTL sweep).
+        tokio::spawn(async move {
+            sessions.set_sse_open(&session_id, false).await;
+        });
+    }
+}
+
 /// GET /mcp — legacy (2025-03-26 ~ 2025-11-25) SSE stream compatibility endpoint.
 ///
 /// Per MCP_Backward_Compat_GET_Stream_Spec.md Appendix 1: a valid `Mcp-Session-Id` for
@@ -280,7 +321,7 @@ pub async fn handle_mcp_get(
 
     let sessions = state.mcp_sessions.clone();
     let sid_for_stream = session_id.clone();
-    let stream = async_stream::stream! {
+    let inner_stream = async_stream::stream! {
         let mut interval = tokio::time::interval(Duration::from_secs(20));
         loop {
             interval.tick().await;
@@ -293,10 +334,14 @@ pub async fn handle_mcp_get(
         }
     };
 
-    // Ensure we clear the sse_open flag once the stream ends (client disconnect, etc.)
-    // Note: axum's Sse wrapper doesn't give us an on-drop hook directly, so rely on the
-    // periodic touch() loop above; a disconnected client will simply stop polling and
-    // the session will expire via TTL sweep, which also clears sse_open implicitly.
+    // Wrap in the drop-guard so `sse_open` is cleared the moment this stream is torn
+    // down for any reason (client disconnect, task cancellation, normal end), rather
+    // than relying solely on the periodic touch()/TTL sweep.
+    let stream = SseOpenGuardStream {
+        inner: Box::pin(inner_stream),
+        sessions: state.mcp_sessions.clone(),
+        session_id: session_id.clone(),
+    };
 
     sse_response(stream)
 }
@@ -364,5 +409,80 @@ mod tests {
         assert!(is_origin_allowed("https://rune.sylee.org"));
         assert!(is_origin_allowed("https://foo.tail0a1999.ts.net"));
         assert!(!is_origin_allowed("https://evil.example.com"));
+    }
+
+    #[tokio::test]
+    async fn test_sse_open_guard_stream_passes_through_items() {
+        use futures::StreamExt;
+
+        let sessions = McpSessionStore::new();
+        let session_id = sessions.create("2025-11-25").await;
+        sessions.set_sse_open(&session_id, true).await;
+
+        let inner = async_stream::stream! {
+            yield Ok::<Event, Infallible>(Event::default().comment("hello"));
+        };
+        let mut guarded = SseOpenGuardStream {
+            inner: Box::pin(inner),
+            sessions: sessions.clone(),
+            session_id: session_id.clone(),
+        };
+
+        // Item passes through unchanged.
+        assert!(guarded.next().await.is_some());
+        // Stream ends (no more items).
+        assert!(guarded.next().await.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_sse_open_guard_stream_clears_flag_on_drop() {
+        let sessions = McpSessionStore::new();
+        let session_id = sessions.create("2025-11-25").await;
+        sessions.set_sse_open(&session_id, true).await;
+        assert!(sessions.get(&session_id).await.unwrap().sse_open);
+
+        let inner = async_stream::stream! {
+            yield Ok::<Event, Infallible>(Event::default().comment("x"));
+        };
+        let guarded = SseOpenGuardStream {
+            inner: Box::pin(inner),
+            sessions: sessions.clone(),
+            session_id: session_id.clone(),
+        };
+
+        // Dropping the stream (simulating client disconnect / task cancellation)
+        // should schedule clearing of sse_open even though we never polled it to
+        // completion.
+        drop(guarded);
+
+        // Drop spawns a fire-and-forget tokio task to clear the flag; give it a
+        // chance to run.
+        tokio::time::sleep(Duration::from_millis(50)).await;
+
+        assert!(!sessions.get(&session_id).await.unwrap().sse_open);
+    }
+
+    #[tokio::test]
+    async fn test_sse_open_guard_stream_clears_flag_after_natural_completion() {
+        let sessions = McpSessionStore::new();
+        let session_id = sessions.create("2025-11-25").await;
+        sessions.set_sse_open(&session_id, true).await;
+
+        {
+            use futures::StreamExt;
+            let inner = async_stream::stream! {
+                yield Ok::<Event, Infallible>(Event::default().comment("x"));
+            };
+            let mut guarded = SseOpenGuardStream {
+                inner: Box::pin(inner),
+                sessions: sessions.clone(),
+                session_id: session_id.clone(),
+            };
+            while guarded.next().await.is_some() {}
+            // guarded dropped at end of this scope
+        }
+
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        assert!(!sessions.get(&session_id).await.unwrap().sse_open);
     }
 }
