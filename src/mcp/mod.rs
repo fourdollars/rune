@@ -761,3 +761,12 @@ mod tests_extra {
         assert!(cfg.timeout_secs.is_none());
     }
 }
+
+pub mod server;
+
+#[cfg(feature = "notes")]
+pub mod resources;
+#[cfg(feature = "notes")]
+pub mod streamable_http;
+#[cfg(feature = "notes")]
+pub mod tools;

@@ -841,6 +841,19 @@ pub fn load() -> anyhow::Result<RuneConfig> {
 /// Load configuration without clap CLI arg parsing.
 /// Used by `rune serve` to avoid clap choking on unknown subcommands.
 /// Reads: env vars > ./rune.toml > .rune/rune.toml > ~/.rune/rune.toml > defaults
+pub fn load_without_clap_path(override_path: Option<&std::path::Path>) -> anyhow::Result<RuneConfig> {
+    if let Some(path) = override_path {
+        if let Some(partial) = load_toml(&path.to_path_buf()) {
+            let mut cfg = load_without_clap()?;
+            if let Some(notes) = partial.notes {
+                cfg.notes = notes;
+            }
+            return Ok(cfg);
+        }
+    }
+    load_without_clap()
+}
+
 pub fn load_without_clap() -> anyhow::Result<RuneConfig> {
     let env_partial = PartialConfig {
         model: env::var("RUNE_MODEL").ok(),

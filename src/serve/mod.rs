@@ -535,6 +535,7 @@ pub async fn run(config: RuneConfig, opts: NotesOptions) {
         .route("/notes/{note}/", get(api::public_note_index_handler))
         .route("/notes/{note}/{file}", get(api::public_preview_handler))
         .route("/raw/{note}/{file}", get(api::public_raw_handler))
+        .route("/mcp", post(crate::mcp::streamable_http::handle_mcp_post).get(crate::mcp::streamable_http::handle_mcp_not_allowed).delete(crate::mcp::streamable_http::handle_mcp_not_allowed))
         .merge(api_routes)
         .with_state(state);
 
