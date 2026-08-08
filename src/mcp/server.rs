@@ -52,7 +52,7 @@ impl McpJsonRpcResponse {
             id,
             -32020,
             "HeaderMismatch: HTTP headers do not match JSON-RPC body parameters",
-            Some(serde_json::json!({"details": details.into()})),
+            Some(serde_json::json!({ "details": details.into() })),
         )
     }
 }
@@ -65,60 +65,104 @@ pub struct McpJsonRpcError {
     pub data: Option<Value>,
 }
 
-/// Helper function to decode Mcp-Method / Mcp-Name header which may be raw string or Base64 encoded
+/// Helper function to decode Mcp-Method / Mcp-Name header which may be raw string or Base64 encoded RFC 9110 sentinel
 pub fn decode_mcp_header(header_val: &str) -> String {
     let trimmed = header_val.trim();
-    if let Ok(decoded_bytes) = base64::Engine::decode(&base64::engine::general_purpose::STANDARD, trimmed) {
-        if let Ok(decoded_str) = String::from_utf8(decoded_bytes) {
-            // Only accept if it looks valid UTF-8 string
-            if !decoded_str.is_empty() && decoded_str.chars().all(|c| !c.is_control() || c == '\n' || c == '\r' || c == '\t') {
+    if trimmed.starts_with("=?base64?") && trimmed.ends_with("?=") {
+        let b64 = &trimmed[9..trimmed.len() - 2];
+        if let Ok(decoded_bytes) = base64::Engine::decode(&base64::engine::general_purpose::STANDARD, b64) {
+            if let Ok(decoded_str) = String::from_utf8(decoded_bytes) {
                 return decoded_str;
+            }
+        }
+    }
+    // Fallback: try direct base64 decode if valid base64 and not plain ascii text
+    if !trimmed.contains('/') && !trimmed.contains(' ') && trimmed.contains('=') {
+        if let Ok(decoded_bytes) = base64::Engine::decode(&base64::engine::general_purpose::STANDARD, trimmed) {
+            if let Ok(decoded_str) = String::from_utf8(decoded_bytes) {
+                if !decoded_str.is_empty() && decoded_str.chars().all(|c| !c.is_control() || c == '\n' || c == '\r' || c == '\t') {
+                    return decoded_str;
+                }
             }
         }
     }
     trimmed.to_string()
 }
 
-/// Validate HTTP headers (Mcp-Method, Mcp-Name) against JSON-RPC request body according to 2026-07-28 spec
+/// Validate HTTP headers (MCP-Protocol-Version, Mcp-Method, Mcp-Name) against JSON-RPC request body according to 2026-07-28 spec
 pub fn validate_header_body_consistency(
+    header_protocol_version: Option<&str>,
     header_method: Option<&str>,
     header_name: Option<&str>,
     req: &McpJsonRpcRequest,
 ) -> Result<(), String> {
-    if let Some(h_method) = header_method {
-        let decoded_method = decode_mcp_header(h_method);
-        if decoded_method != req.method {
-            return Err(format!(
-                "Mcp-Method header '{}' (decoded: '{}') does not match body method '{}'",
-                h_method, decoded_method, req.method
-            ));
+    // 1. MCP-Protocol-Version validation
+    let proto_ver = match header_protocol_version {
+        Some(v) => v.trim(),
+        None => {
+            return Err("Required MCP-Protocol-Version header is missing".to_string());
         }
-    }
+    };
 
-    if let Some(h_name) = header_name {
-        let decoded_name = decode_mcp_header(h_name);
-        let body_name = req
-            .params
-            .as_ref()
-            .and_then(|p| p.get("name"))
-            .and_then(|n| n.as_str());
-
-        match body_name {
-            Some(b_name) => {
-                if decoded_name != b_name {
+    if let Some(params) = &req.params {
+        if let Some(meta) = params.get("_meta") {
+            if let Some(body_proto) = meta.get("io.modelcontextprotocol/protocolVersion").and_then(|v| v.as_str()) {
+                if proto_ver != body_proto {
                     return Err(format!(
-                        "Mcp-Name header '{}' (decoded: '{}') does not match body params.name '{}'",
-                        h_name, decoded_name, b_name
+                        "MCP-Protocol-Version header '{}' does not match body _meta protocolVersion '{}'",
+                        proto_ver, body_proto
                     ));
                 }
             }
-            None => {
+        }
+    }
+
+    // 2. Mcp-Method validation
+    let h_method = match header_method {
+        Some(m) => m,
+        None => {
+            return Err("Required Mcp-Method header is missing".to_string());
+        }
+    };
+
+    let decoded_method = decode_mcp_header(h_method);
+    if decoded_method != req.method {
+        return Err(format!(
+            "Mcp-Method header '{}' (decoded: '{}') does not match body method '{}'",
+            h_method, decoded_method, req.method
+        ));
+    }
+
+    // 3. Mcp-Name validation
+    let is_name_required = matches!(req.method.as_str(), "tools/call" | "resources/read" | "prompts/get");
+
+    let body_name_or_uri = req.params.as_ref().and_then(|p| {
+        p.get("name").or_else(|| p.get("uri")).and_then(|v| v.as_str())
+    });
+
+    match (header_name, body_name_or_uri) {
+        (Some(h_name), Some(b_val)) => {
+            let decoded_name = decode_mcp_header(h_name);
+            if decoded_name != b_val {
                 return Err(format!(
-                    "Mcp-Name header provided ('{}'), but body params.name is missing",
-                    h_name
+                    "Mcp-Name header '{}' (decoded: '{}') does not match body name/uri '{}'",
+                    h_name, decoded_name, b_val
                 ));
             }
         }
+        (None, Some(_)) if is_name_required => {
+            return Err(format!(
+                "Required Mcp-Name header is missing for method '{}'",
+                req.method
+            ));
+        }
+        (Some(h_name), None) => {
+            return Err(format!(
+                "Mcp-Name header provided ('{}'), but body name/uri parameter is missing",
+                h_name
+            ));
+        }
+        _ => {}
     }
 
     Ok(())
@@ -131,8 +175,7 @@ mod tests {
     #[test]
     fn test_header_decoding() {
         assert_eq!(decode_mcp_header("tools/call"), "tools/call");
-        // base64 of "tools/call" is "dG9vbHMvY2FsbA=="
-        assert_eq!(decode_mcp_header("dG9vbHMvY2FsbA=="), "tools/call");
+        assert_eq!(decode_mcp_header("=?base64?dG9vbHMvY2FsbA==?="), "tools/call");
     }
 
     #[test]
@@ -141,11 +184,21 @@ mod tests {
             jsonrpc: "2.0".to_string(),
             id: Some(serde_json::json!(1)),
             method: "tools/call".to_string(),
-            params: Some(serde_json::json!({"name": "read_note_file", "arguments": {}})),
+            params: Some(serde_json::json!({
+                "name": "read_note_file",
+                "arguments": {},
+                "_meta": {
+                    "io.modelcontextprotocol/protocolVersion": "2026-07-28"
+                }
+            })),
         };
 
-        assert!(validate_header_body_consistency(Some("tools/call"), Some("read_note_file"), &req).is_ok());
-        assert!(validate_header_body_consistency(Some("dG9vbHMvY2FsbA=="), None, &req).is_ok());
+        assert!(validate_header_body_consistency(
+            Some("2026-07-28"),
+            Some("tools/call"),
+            Some("read_note_file"),
+            &req
+        ).is_ok());
     }
 
     #[test]
@@ -157,10 +210,15 @@ mod tests {
             params: Some(serde_json::json!({"name": "read_note_file"})),
         };
 
-        let err = validate_header_body_consistency(Some("tools/list"), None, &req).unwrap_err();
+        // Missing protocol version header
+        assert!(validate_header_body_consistency(None, Some("tools/call"), Some("read_note_file"), &req).is_err());
+
+        // Mismatched method
+        let err = validate_header_body_consistency(Some("2026-07-28"), Some("tools/list"), Some("read_note_file"), &req).unwrap_err();
         assert!(err.contains("does not match body method"));
 
-        let err2 = validate_header_body_consistency(Some("tools/call"), Some("write_note_file"), &req).unwrap_err();
-        assert!(err2.contains("does not match body params.name"));
+        // Mismatched name
+        let err2 = validate_header_body_consistency(Some("2026-07-28"), Some("tools/call"), Some("write_note_file"), &req).unwrap_err();
+        assert!(err2.contains("does not match body"));
     }
 }

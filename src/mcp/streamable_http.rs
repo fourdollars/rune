@@ -23,7 +23,13 @@ pub async fn handle_mcp_post(
         if let Ok(origin_str) = origin.to_str() {
             if !is_origin_allowed(origin_str) {
                 warn!(origin = %origin_str, "MCP request rejected due to disallowed origin");
-                return (StatusCode::FORBIDDEN, "Forbidden: Invalid Origin").into_response();
+                let resp = McpJsonRpcResponse::error(None, -32000, "Forbidden: Invalid Origin", None);
+                return (
+                    StatusCode::FORBIDDEN,
+                    [("content-type", "application/json")],
+                    serde_json::to_string(&resp).unwrap_or_default(),
+                )
+                    .into_response();
             }
         }
     }
@@ -48,7 +54,7 @@ pub async fn handle_mcp_post(
                     role = Some(crate::serve::oauth::Role::User);
                 } else if token == "guest" {
                     role = Some(crate::serve::oauth::Role::Guest);
-                } else if let Some((u, p)) = token.split_once(":") {
+                } else if let Some((u, p)) = token.split_once(':') {
                     if let Some(ref local_cfg) = state.config.notes.local.as_ref() {
                         role = crate::serve::oauth::verify_local_credentials(u, p, local_cfg);
                     }
@@ -63,11 +69,15 @@ pub async fn handle_mcp_post(
     let role = match user_role {
         Some(r) => r,
         None => {
-            return (StatusCode::UNAUTHORIZED, "Unauthorized: Invalid or missing authentication").into_response();
+            let resp = McpJsonRpcResponse::error(None, -32001, "Unauthorized: Invalid or missing authentication", None);
+            return (
+                StatusCode::UNAUTHORIZED,
+                [("content-type", "application/json")],
+                serde_json::to_string(&resp).unwrap_or_default(),
+            )
+                .into_response();
         }
     };
-
-
 
     // 3. Parse JSON-RPC Request
     let req: McpJsonRpcRequest = match serde_json::from_slice(&body_bytes) {
@@ -77,26 +87,27 @@ pub async fn handle_mcp_post(
             return (
                 StatusCode::BAD_REQUEST,
                 [("content-type", "application/json")],
-                serde_json::to_string(&resp).unwrap(),
+                serde_json::to_string(&resp).unwrap_or_default(),
             )
                 .into_response();
         }
     };
 
-    // 4. Validate Header-Body consistency (Mcp-Method, Mcp-Name)
+    // 4. Validate Header-Body consistency (MCP-Protocol-Version, Mcp-Method, Mcp-Name)
+    let header_protocol_version = headers.get("mcp-protocol-version").and_then(|v| v.to_str().ok());
     let header_method = headers.get("mcp-method").and_then(|v| v.to_str().ok());
     let header_name = headers.get("mcp-name").and_then(|v| v.to_str().ok());
 
-    if let Err(mismatch_msg) = validate_header_body_consistency(header_method, header_name, &req) {
+    if let Err(mismatch_msg) = validate_header_body_consistency(header_protocol_version, header_method, header_name, &req) {
         warn!(error = %mismatch_msg, "Header-Body mismatch in MCP request");
         let resp = McpJsonRpcResponse::header_mismatch(req.id, mismatch_msg);
         return (
-            StatusCode::OK,
+            StatusCode::BAD_REQUEST,
             [
                 ("content-type", "application/json"),
                 ("x-accel-buffering", "no"),
             ],
-            serde_json::to_string(&resp).unwrap(),
+            serde_json::to_string(&resp).unwrap_or_default(),
         )
             .into_response();
     }
@@ -105,7 +116,7 @@ pub async fn handle_mcp_post(
     match req.method.as_str() {
         "initialize" => {
             let result = json!({
-                "protocolVersion": "2024-11-05",
+                "protocolVersion": "2026-07-28",
                 "capabilities": {
                     "tools": { "listChanged": false },
                     "resources": { "subscribe": false, "listChanged": false }
@@ -119,7 +130,7 @@ pub async fn handle_mcp_post(
             json_response(resp)
         }
         "notifications/initialized" => {
-            (StatusCode::NO_CONTENT).into_response()
+            (StatusCode::ACCEPTED).into_response()
         }
         "ping" => {
             let resp = McpJsonRpcResponse::success(req.id, json!({}));
@@ -171,7 +182,12 @@ pub async fn handle_mcp_post(
         }
         _ => {
             let resp = McpJsonRpcResponse::error(req.id, -32601, format!("Method not found: {}", req.method), None);
-            json_response(resp)
+            (
+                StatusCode::NOT_FOUND,
+                [("content-type", "application/json")],
+                serde_json::to_string(&resp).unwrap_or_default(),
+            )
+                .into_response()
         }
     }
 }
