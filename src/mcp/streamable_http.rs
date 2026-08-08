@@ -35,18 +35,13 @@ pub async fn handle_mcp_post(
         None => None,
     };
 
-    let (is_authenticated, is_guest) = match session {
-        Some(s) => {
-            let role_str = s.role.as_str().to_string();
-            let is_g = role_str.to_lowercase() == "guest";
-            (true, is_g)
-        }
+    let user_role = match session {
+        Some(s) => Some(s.role.clone()),
         None => {
             // Check Authorization header for Bearer token or username:password
             let auth_header = headers.get("authorization").and_then(|v| v.to_str().ok());
             if let Some(token) = auth_header.and_then(|h| h.strip_prefix("Bearer ")) {
                 let mut role = None;
-                // 1. Check legacy fixed tokens
                 if token == "admin" {
                     role = Some(crate::serve::oauth::Role::Admin);
                 } else if token == "user" {
@@ -54,26 +49,25 @@ pub async fn handle_mcp_post(
                 } else if token == "guest" {
                     role = Some(crate::serve::oauth::Role::Guest);
                 } else if let Some((u, p)) = token.split_once(":") {
-                    // 2. Check local credentials if token is username:password
                     if let Some(ref local_cfg) = state.config.notes.local.as_ref() {
                         role = crate::serve::oauth::verify_local_credentials(u, p, local_cfg);
                     }
                 }
-
-                match role {
-                    Some(crate::serve::oauth::Role::Admin) | Some(crate::serve::oauth::Role::User) => (true, false),
-                    Some(crate::serve::oauth::Role::Guest) => (true, true),
-                    None => (false, false),
-                }
+                role
             } else {
-                (false, false)
+                None
             }
         }
     };
 
-    if !is_authenticated {
-        return (StatusCode::UNAUTHORIZED, "Unauthorized: Invalid or missing authentication").into_response();
-    }
+    let role = match user_role {
+        Some(r) => r,
+        None => {
+            return (StatusCode::UNAUTHORIZED, "Unauthorized: Invalid or missing authentication").into_response();
+        }
+    };
+
+
 
     // 3. Parse JSON-RPC Request
     let req: McpJsonRpcRequest = match serde_json::from_slice(&body_bytes) {
@@ -132,7 +126,7 @@ pub async fn handle_mcp_post(
             json_response(resp)
         }
         "tools/list" => {
-            let available_tools = tools::get_available_tools(is_guest);
+            let available_tools = tools::get_available_tools(role.clone());
             let resp = McpJsonRpcResponse::success(req.id, json!({ "tools": available_tools }));
             json_response(resp)
         }
@@ -141,7 +135,7 @@ pub async fn handle_mcp_post(
             let tool_name = params.get("name").and_then(|v| v.as_str()).unwrap_or("");
             let tool_args = params.get("arguments").cloned().unwrap_or(json!({}));
 
-            match tools::handle_tool_call(&state, tool_name, tool_args, is_guest).await {
+            match tools::handle_tool_call(&state, tool_name, tool_args, role.clone()).await {
                 Ok(res) => {
                     let resp = McpJsonRpcResponse::success(req.id, res);
                     json_response(resp)
