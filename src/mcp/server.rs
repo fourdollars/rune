@@ -3,6 +3,17 @@ use serde_json::Value;
 
 pub const SUPPORTED_PROTOCOL_VERSIONS: &[&str] = &["2026-07-28", "2024-11-05"];
 
+/// Legacy protocol versions that get a `Mcp-Session-Id` + GET stream compatibility path
+/// (see MCP_Backward_Compat_GET_Stream_Spec.md, Appendix 1). These are accepted by
+/// `initialize` in addition to `SUPPORTED_PROTOCOL_VERSIONS`, but do NOT change the
+/// server's own `protocolVersion` in the initialize response (still 2026-07-28).
+pub const LEGACY_SESSION_PROTOCOL_VERSIONS: &[&str] = &["2025-03-26", "2025-06-18", "2025-11-25"];
+
+/// True if `version` is accepted at all by `initialize` (current + legacy session versions).
+pub fn is_initialize_protocol_version_acceptable(version: &str) -> bool {
+    SUPPORTED_PROTOCOL_VERSIONS.contains(&version) || LEGACY_SESSION_PROTOCOL_VERSIONS.contains(&version)
+}
+
 // JSON-RPC 2.0 Request according to MCP spec
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct McpJsonRpcRequest {
@@ -76,6 +87,60 @@ pub struct McpJsonRpcError {
     pub data: Option<Value>,
 }
 
+/// Header-metadata presence classification used by the Lenient Legacy Client Mode
+/// (see MCP_Backward_Compat_GET_Stream_Spec.md, Appendix 2).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HeaderMetadataPresence {
+    /// None of MCP-Protocol-Version / Mcp-Method / Mcp-Name are present.
+    None,
+    /// At least one but not all three are present.
+    Partial,
+    /// All three headers are present (full 2026-07-28 client behavior).
+    Full,
+}
+
+/// Classify how much MCP Request Metadata header machinery a request is using.
+pub fn classify_header_metadata_presence(
+    header_protocol_version: Option<&str>,
+    header_method: Option<&str>,
+    header_name: Option<&str>,
+) -> HeaderMetadataPresence {
+    let present = [
+        header_protocol_version.is_some(),
+        header_method.is_some(),
+        header_name.is_some(),
+    ];
+    let count = present.iter().filter(|p| **p).count();
+    match count {
+        0 => HeaderMetadataPresence::None,
+        3 => HeaderMetadataPresence::Full,
+        _ => HeaderMetadataPresence::Partial,
+    }
+}
+
+/// Validate a request against the Lenient Legacy Client Mode rules:
+///
+/// - No header metadata at all → skip header-body consistency validation entirely
+///   (body-only dispatch; legacy/unaware client).
+/// - Some but not all header metadata → still enforce strict validation (client
+///   attempted partial support; do not mask incomplete implementations).
+/// - All header metadata present → strict validation (current 2026-07-28 behavior).
+///
+/// This must only be called when Lenient Legacy Client Mode is enabled by config.
+pub fn validate_header_body_consistency_lenient(
+    header_protocol_version: Option<&str>,
+    header_method: Option<&str>,
+    header_name: Option<&str>,
+    req: &McpJsonRpcRequest,
+) -> Result<(), (i32, String)> {
+    match classify_header_metadata_presence(header_protocol_version, header_method, header_name) {
+        HeaderMetadataPresence::None => Ok(()),
+        HeaderMetadataPresence::Partial | HeaderMetadataPresence::Full => {
+            validate_header_body_consistency(header_protocol_version, header_method, header_name, req)
+        }
+    }
+}
+
 /// Helper function to decode Mcp-Method / Mcp-Name header which may be raw string or Base64 encoded RFC 9110 sentinel
 pub fn decode_mcp_header(header_val: &str) -> String {
     let trimmed = header_val.trim();
@@ -115,12 +180,12 @@ pub fn validate_header_body_consistency(
         }
     };
 
-    if !SUPPORTED_PROTOCOL_VERSIONS.contains(&proto_ver) {
+    if !SUPPORTED_PROTOCOL_VERSIONS.contains(&proto_ver) && !LEGACY_SESSION_PROTOCOL_VERSIONS.contains(&proto_ver) {
         return Err((
             -32021,
             format!(
-                "MCP-Protocol-Version '{}' is not supported. Supported versions: {:?}",
-                proto_ver, SUPPORTED_PROTOCOL_VERSIONS
+                "MCP-Protocol-Version '{}' is not supported. Supported versions: {:?} (plus legacy session versions {:?})",
+                proto_ver, SUPPORTED_PROTOCOL_VERSIONS, LEGACY_SESSION_PROTOCOL_VERSIONS
             ),
         ));
     }
@@ -215,6 +280,102 @@ mod tests {
     }
 
     #[test]
+    fn test_is_initialize_protocol_version_acceptable() {
+        assert!(is_initialize_protocol_version_acceptable("2026-07-28"));
+        assert!(is_initialize_protocol_version_acceptable("2024-11-05"));
+        assert!(is_initialize_protocol_version_acceptable("2025-03-26"));
+        assert!(is_initialize_protocol_version_acceptable("2025-06-18"));
+        assert!(is_initialize_protocol_version_acceptable("2025-11-25"));
+        assert!(!is_initialize_protocol_version_acceptable("1999-01-01"));
+        assert!(!is_initialize_protocol_version_acceptable(""));
+    }
+
+    #[test]
+    fn test_classify_header_metadata_presence_none() {
+        assert_eq!(
+            classify_header_metadata_presence(None, None, None),
+            HeaderMetadataPresence::None
+        );
+    }
+
+    #[test]
+    fn test_classify_header_metadata_presence_full() {
+        assert_eq!(
+            classify_header_metadata_presence(Some("2026-07-28"), Some("tools/call"), Some("read_note_file")),
+            HeaderMetadataPresence::Full
+        );
+    }
+
+    #[test]
+    fn test_classify_header_metadata_presence_partial() {
+        assert_eq!(
+            classify_header_metadata_presence(Some("2026-07-28"), None, None),
+            HeaderMetadataPresence::Partial
+        );
+        assert_eq!(
+            classify_header_metadata_presence(None, Some("tools/call"), None),
+            HeaderMetadataPresence::Partial
+        );
+        assert_eq!(
+            classify_header_metadata_presence(Some("2026-07-28"), Some("tools/call"), None),
+            HeaderMetadataPresence::Partial
+        );
+    }
+
+    #[test]
+    fn test_lenient_validation_no_headers_bypasses_check() {
+        // Fully legacy/unaware client: no header metadata at all, body-only dispatch.
+        let req = McpJsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: Some(serde_json::json!(1)),
+            method: "tools/call".to_string(),
+            params: Some(serde_json::json!({"name": "read_note_file", "arguments": {}})),
+        };
+        assert!(validate_header_body_consistency_lenient(None, None, None, &req).is_ok());
+    }
+
+    #[test]
+    fn test_lenient_validation_partial_headers_still_strict() {
+        // Only MCP-Protocol-Version present (e.g. user manually added header, SDK didn't
+        // add Mcp-Method) — must still fail with HeaderMismatch, not be silently accepted.
+        let req = McpJsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: Some(serde_json::json!(1)),
+            method: "tools/call".to_string(),
+            params: Some(serde_json::json!({"name": "read_note_file", "arguments": {}})),
+        };
+        let (code, msg) = validate_header_body_consistency_lenient(Some("2026-07-28"), None, None, &req).unwrap_err();
+        assert_eq!(code, -32020);
+        assert!(msg.contains("Required Mcp-Method header is missing"));
+    }
+
+    #[test]
+    fn test_lenient_validation_full_headers_matches_strict() {
+        let req = McpJsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: Some(serde_json::json!(1)),
+            method: "tools/call".to_string(),
+            params: Some(serde_json::json!({"name": "read_note_file", "arguments": {}})),
+        };
+        assert!(validate_header_body_consistency_lenient(
+            Some("2026-07-28"),
+            Some("tools/call"),
+            Some("read_note_file"),
+            &req
+        ).is_ok());
+
+        // Mismatched method still rejected even with full headers.
+        let (code, msg) = validate_header_body_consistency_lenient(
+            Some("2026-07-28"),
+            Some("tools/list"),
+            Some("read_note_file"),
+            &req,
+        ).unwrap_err();
+        assert_eq!(code, -32020);
+        assert!(msg.contains("does not match body method"));
+    }
+
+    #[test]
     fn test_header_body_validation_success() {
         let req = McpJsonRpcRequest {
             jsonrpc: "2.0".to_string(),
@@ -265,5 +426,21 @@ mod tests {
         let (code_n, msg_n) = validate_header_body_consistency(Some("2026-07-28"), Some("tools/call"), Some("write_note_file"), &req).unwrap_err();
         assert_eq!(code_n, -32020);
         assert!(msg_n.contains("does not match body"));
+    }
+
+    #[test]
+    fn test_header_body_validation_accepts_legacy_session_protocol_version() {
+        let req = McpJsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: Some(serde_json::json!(1)),
+            method: "tools/call".to_string(),
+            params: Some(serde_json::json!({"name": "read_note_file"})),
+        };
+
+        // A client that sends full headers but negotiated a legacy session protocol
+        // version should NOT be rejected as "unsupported protocol version".
+        for v in LEGACY_SESSION_PROTOCOL_VERSIONS {
+            assert!(validate_header_body_consistency(Some(v), Some("tools/call"), Some("read_note_file"), &req).is_ok());
+        }
     }
 }

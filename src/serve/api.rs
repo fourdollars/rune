@@ -3004,6 +3004,7 @@ mod tests {
             admin_broadcast_tx,
             chat_db: crate::serve::db::ChatDb::open(std::path::Path::new(":memory:")).unwrap(),
             data_dir: std::path::PathBuf::from("/tmp/rune-test"),
+            mcp_sessions: crate::mcp::mcp_session::McpSessionStore::new(),
         }
     }
 }
@@ -3101,6 +3102,7 @@ mod integration_tests {
             admin_broadcast_tx,
             chat_db: db,
             data_dir: tmp.path().join(".rune"),
+            mcp_sessions: crate::mcp::mcp_session::McpSessionStore::new(),
         }
     }
 
@@ -3675,6 +3677,7 @@ mod integration_tests {
             admin_broadcast_tx,
             chat_db: db,
             data_dir: tmp.path().join(".rune"),
+            mcp_sessions: crate::mcp::mcp_session::McpSessionStore::new(),
         };
 
         // Subscribe to note-a's room BEFORE triggering visibility change on note-b
@@ -3751,6 +3754,7 @@ mod isolation_tests {
             admin_broadcast_tx,
             chat_db: db,
             data_dir: tmp.path().join(".rune"),
+            mcp_sessions: crate::mcp::mcp_session::McpSessionStore::new(),
         };
         (state, tmp)
     }
@@ -3814,6 +3818,7 @@ mod isolation_tests {
             admin_broadcast_tx,
             chat_db: db,
             data_dir: tmp.path().join(".rune"),
+            mcp_sessions: crate::mcp::mcp_session::McpSessionStore::new(),
         };
         let active_model = state.effective_model("note-x").await;
         assert_eq!(active_model, model_id);
@@ -4097,6 +4102,7 @@ mod isolation_tests {
             admin_broadcast_tx,
             chat_db: db,
             data_dir: tmp.path().join(".rune"),
+            mcp_sessions: crate::mcp::mcp_session::McpSessionStore::new(),
         };
 
         // Create note in DB so room can be created
@@ -4155,6 +4161,7 @@ mod isolation_tests {
             admin_broadcast_tx,
             chat_db: db,
             data_dir: tmp.path().join(".rune"),
+            mcp_sessions: crate::mcp::mcp_session::McpSessionStore::new(),
         };
 
         let session = crate::serve::oauth::Session {
@@ -4220,6 +4227,7 @@ mod isolation_tests {
             admin_broadcast_tx,
             chat_db: db,
             data_dir: tmp.path().join(".rune"),
+            mcp_sessions: crate::mcp::mcp_session::McpSessionStore::new(),
         };
 
         let session = crate::serve::oauth::Session {
@@ -4283,6 +4291,7 @@ mod isolation_tests {
             admin_broadcast_tx,
             chat_db: db,
             data_dir: tmp.path().join(".rune"),
+            mcp_sessions: crate::mcp::mcp_session::McpSessionStore::new(),
         };
 
         let session = crate::serve::oauth::Session {
@@ -4359,6 +4368,7 @@ mod isolation_tests {
             admin_broadcast_tx,
             chat_db: db,
             data_dir: tmp.path().join(".rune"),
+            mcp_sessions: crate::mcp::mcp_session::McpSessionStore::new(),
         };
 
         let app = Router::new()
@@ -4428,6 +4438,7 @@ mod isolation_tests {
             admin_broadcast_tx,
             chat_db: db,
             data_dir: tmp.path().join(".rune"),
+            mcp_sessions: crate::mcp::mcp_session::McpSessionStore::new(),
         };
 
         let app = Router::new()
@@ -4479,6 +4490,7 @@ mod isolation_tests {
             admin_broadcast_tx,
             chat_db: db,
             data_dir: tmp.path().join(".rune"),
+            mcp_sessions: crate::mcp::mcp_session::McpSessionStore::new(),
         };
 
         let app = Router::new()
@@ -4565,6 +4577,7 @@ mod isolation_tests {
             admin_broadcast_tx,
             chat_db: db,
             data_dir: tmp.path().join(".rune"),
+            mcp_sessions: crate::mcp::mcp_session::McpSessionStore::new(),
         };
 
         let app = Router::new()
@@ -4624,6 +4637,7 @@ mod isolation_tests {
             admin_broadcast_tx,
             chat_db: db,
             data_dir: tmp.path().join(".rune"),
+            mcp_sessions: crate::mcp::mcp_session::McpSessionStore::new(),
         };
 
         use axum::routing::{delete, put};
@@ -4725,6 +4739,7 @@ mod isolation_tests {
             admin_broadcast_tx,
             chat_db: db,
             data_dir: tmp.path().join(".rune"),
+            mcp_sessions: crate::mcp::mcp_session::McpSessionStore::new(),
         };
 
         let session = crate::serve::oauth::Session {
@@ -4795,6 +4810,7 @@ mod isolation_tests {
             admin_broadcast_tx,
             chat_db: db,
             data_dir: tmp.path().join(".rune"),
+            mcp_sessions: crate::mcp::mcp_session::McpSessionStore::new(),
         };
 
         let session = crate::serve::oauth::Session {

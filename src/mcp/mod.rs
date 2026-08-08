@@ -765,6 +765,8 @@ mod tests_extra {
 pub mod server;
 
 #[cfg(feature = "notes")]
+pub mod mcp_session;
+#[cfg(feature = "notes")]
 pub mod resources;
 #[cfg(feature = "notes")]
 pub mod streamable_http;

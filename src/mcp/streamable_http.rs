@@ -1,14 +1,20 @@
 use axum::{
     extract::State,
     http::{HeaderMap, StatusCode},
+    response::sse::{Event, KeepAlive, Sse},
     response::{IntoResponse, Response},
 };
+use futures::stream::Stream;
 use serde_json::{json, Value};
+use std::convert::Infallible;
+use std::time::Duration;
 use tracing::warn;
 
+use crate::mcp::mcp_session::is_legacy_session_protocol_version;
 use crate::mcp::resources;
 use crate::mcp::server::{
-    validate_header_body_consistency, McpJsonRpcRequest, McpJsonRpcResponse,
+    validate_header_body_consistency, validate_header_body_consistency_lenient,
+    McpJsonRpcRequest, McpJsonRpcResponse,
 };
 use crate::mcp::tools;
 use crate::serve::ServerState;
@@ -94,31 +100,68 @@ pub async fn handle_mcp_post(
     };
 
     // 4. Validate Header-Body consistency (MCP-Protocol-Version, Mcp-Method, Mcp-Name)
-    let header_protocol_version = headers.get("mcp-protocol-version").and_then(|v| v.to_str().ok());
-    let header_method = headers.get("mcp-method").and_then(|v| v.to_str().ok());
-    let header_name = headers.get("mcp-name").and_then(|v| v.to_str().ok());
+    //
+    // If a legacy session (2025-03-26 ~ 2025-11-25) is already established for this
+    // request via `Mcp-Session-Id`, that legacy protocol doesn't define these headers
+    // at all, so skip the check entirely for those requests (spec Appendix 1, point 3).
+    // Otherwise, fall back to strict or Lenient Legacy Client Mode validation depending
+    // on config (spec Appendix 2).
+    let mcp_session_id = headers.get("mcp-session-id").and_then(|v| v.to_str().ok());
+    let active_legacy_session = match mcp_session_id {
+        Some(id) => state
+            .mcp_sessions
+            .touch(id)
+            .await
+            .filter(|s| is_legacy_session_protocol_version(&s.protocol_version)),
+        None => None,
+    };
 
-    if let Err((code, err_msg)) = validate_header_body_consistency(header_protocol_version, header_method, header_name, &req) {
-        warn!(error = %err_msg, code = code, "Header-Body validation failed in MCP request");
-        let resp = if code == -32021 {
-            McpJsonRpcResponse::unsupported_protocol_version(req.id, err_msg)
+    if active_legacy_session.is_none() {
+        let header_protocol_version = headers.get("mcp-protocol-version").and_then(|v| v.to_str().ok());
+        let header_method = headers.get("mcp-method").and_then(|v| v.to_str().ok());
+        let header_name = headers.get("mcp-name").and_then(|v| v.to_str().ok());
+
+        let validation = if state.config.notes.mcp_lenient_legacy_clients {
+            validate_header_body_consistency_lenient(header_protocol_version, header_method, header_name, &req)
         } else {
-            McpJsonRpcResponse::header_mismatch(req.id, err_msg)
+            validate_header_body_consistency(header_protocol_version, header_method, header_name, &req)
         };
-        return (
-            StatusCode::BAD_REQUEST,
-            [
-                ("content-type", "application/json"),
-                ("x-accel-buffering", "no"),
-            ],
-            serde_json::to_string(&resp).unwrap_or_default(),
-        )
-            .into_response();
+
+        if let Err((code, err_msg)) = validation {
+            warn!(error = %err_msg, code = code, "Header-Body validation failed in MCP request");
+            let resp = if code == -32021 {
+                McpJsonRpcResponse::unsupported_protocol_version(req.id, err_msg)
+            } else {
+                McpJsonRpcResponse::header_mismatch(req.id, err_msg)
+            };
+            return (
+                StatusCode::BAD_REQUEST,
+                [
+                    ("content-type", "application/json"),
+                    ("x-accel-buffering", "no"),
+                ],
+                serde_json::to_string(&resp).unwrap_or_default(),
+            )
+                .into_response();
+        }
     }
 
     // 5. Dispatch MCP Methods
     match req.method.as_str() {
         "initialize" => {
+            let requested_version = req
+                .params
+                .as_ref()
+                .and_then(|p| p.get("protocolVersion"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+
+            let legacy_session_id = if is_legacy_session_protocol_version(requested_version) {
+                Some(state.mcp_sessions.create(requested_version).await)
+            } else {
+                None
+            };
+
             let result = json!({
                 "protocolVersion": "2026-07-28",
                 "capabilities": {
@@ -131,7 +174,19 @@ pub async fn handle_mcp_post(
                 }
             });
             let resp = McpJsonRpcResponse::success(req.id, result);
-            json_response(resp)
+
+            match legacy_session_id {
+                Some(session_id) => (
+                    StatusCode::OK,
+                    [
+                        ("content-type", "application/json"),
+                        ("mcp-session-id", session_id.as_str()),
+                    ],
+                    serde_json::to_string(&resp).unwrap_or_default(),
+                )
+                    .into_response(),
+                None => json_response(resp),
+            }
         }
         "notifications/initialized" => {
             (StatusCode::ACCEPTED).into_response()
@@ -196,6 +251,80 @@ pub async fn handle_mcp_post(
     }
 }
 
+/// GET /mcp — legacy (2025-03-26 ~ 2025-11-25) SSE stream compatibility endpoint.
+///
+/// Per MCP_Backward_Compat_GET_Stream_Spec.md Appendix 1: a valid `Mcp-Session-Id` for
+/// a legacy-protocol session is required, otherwise this remains 405 Method Not Allowed
+/// (matching the current 2026-07-28-only behavior). Servers speaking only 2026-07-28
+/// have no legacy sessions in the store, so this endpoint degrades to a plain 405 for them.
+pub async fn handle_mcp_get(
+    State(state): State<ServerState>,
+    headers: HeaderMap,
+) -> Response {
+    let session_id = match headers.get("mcp-session-id").and_then(|v| v.to_str().ok()) {
+        Some(id) => id.to_string(),
+        None => return handle_mcp_not_allowed().await,
+    };
+
+    let session = match state.mcp_sessions.get(&session_id).await {
+        Some(s) if is_legacy_session_protocol_version(&s.protocol_version) => s,
+        _ => return handle_mcp_not_allowed().await,
+    };
+
+    if session.sse_open {
+        // Same session already has an open GET stream.
+        return (StatusCode::CONFLICT, "409 Conflict: session already has an open GET stream").into_response();
+    }
+
+    state.mcp_sessions.set_sse_open(&session_id, true).await;
+
+    let sessions = state.mcp_sessions.clone();
+    let sid_for_stream = session_id.clone();
+    let stream = async_stream::stream! {
+        let mut interval = tokio::time::interval(Duration::from_secs(20));
+        loop {
+            interval.tick().await;
+            // Refresh last-seen and bail out once the session has been removed
+            // (e.g. via DELETE) so the connection is closed server-side too.
+            if sessions.touch(&sid_for_stream).await.is_none() {
+                break;
+            }
+            yield Ok::<Event, Infallible>(Event::default().comment(""));
+        }
+    };
+
+    // Ensure we clear the sse_open flag once the stream ends (client disconnect, etc.)
+    // Note: axum's Sse wrapper doesn't give us an on-drop hook directly, so rely on the
+    // periodic touch() loop above; a disconnected client will simply stop polling and
+    // the session will expire via TTL sweep, which also clears sse_open implicitly.
+
+    sse_response(stream)
+}
+
+/// DELETE /mcp — terminate a legacy MCP session.
+pub async fn handle_mcp_delete(
+    State(state): State<ServerState>,
+    headers: HeaderMap,
+) -> Response {
+    let session_id = match headers.get("mcp-session-id").and_then(|v| v.to_str().ok()) {
+        Some(id) => id.to_string(),
+        None => return handle_mcp_not_allowed().await,
+    };
+
+    if state.mcp_sessions.remove(&session_id).await {
+        StatusCode::OK.into_response()
+    } else {
+        handle_mcp_not_allowed().await
+    }
+}
+
+fn sse_response<S>(stream: S) -> Response
+where
+    S: Stream<Item = Result<Event, Infallible>> + Send + 'static,
+{
+    Sse::new(stream).keep_alive(KeepAlive::default()).into_response()
+}
+
 pub async fn handle_mcp_not_allowed() -> Response {
     (
         StatusCode::METHOD_NOT_ALLOWED,
@@ -222,4 +351,18 @@ fn is_origin_allowed(origin: &str) -> bool {
         || origin.contains("127.0.0.1")
         || origin.contains("rune.sylee.org")
         || origin.contains("tail0a1999.ts.net")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_is_origin_allowed() {
+        assert!(is_origin_allowed("http://localhost:9527"));
+        assert!(is_origin_allowed("http://127.0.0.1:9527"));
+        assert!(is_origin_allowed("https://rune.sylee.org"));
+        assert!(is_origin_allowed("https://foo.tail0a1999.ts.net"));
+        assert!(!is_origin_allowed("https://evil.example.com"));
+    }
 }

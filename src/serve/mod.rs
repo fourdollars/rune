@@ -58,6 +58,8 @@ pub struct ServerState {
     pub chat_db: ChatDb,
     /// Base data directory (default: ~/.rune). Injectable for testing.
     pub data_dir: PathBuf,
+    /// Legacy MCP protocol session store (2025-03-26 ~ 2025-11-25 Streamable HTTP compat).
+    pub mcp_sessions: crate::mcp::mcp_session::McpSessionStore,
 }
 
 impl ServerState {
@@ -349,6 +351,7 @@ pub async fn run(config: RuneConfig, opts: NotesOptions) {
         admin_broadcast_tx,
         chat_db,
         data_dir: data_dir(),
+        mcp_sessions: crate::mcp::mcp_session::McpSessionStore::new(),
     };
 
     // Session sweep (every 5 minutes, removes expired sessions)
@@ -359,6 +362,18 @@ pub async fn run(config: RuneConfig, opts: NotesOptions) {
             loop {
                 interval.tick().await;
                 sessions_clone.sweep_expired().await;
+            }
+        });
+    }
+
+    // MCP legacy session sweep (every 5 minutes, removes expired legacy MCP sessions)
+    {
+        let mcp_sessions_clone = state.mcp_sessions.clone();
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(std::time::Duration::from_secs(300));
+            loop {
+                interval.tick().await;
+                mcp_sessions_clone.sweep_expired().await;
             }
         });
     }
@@ -535,7 +550,7 @@ pub async fn run(config: RuneConfig, opts: NotesOptions) {
         .route("/notes/{note}/", get(api::public_note_index_handler))
         .route("/notes/{note}/{file}", get(api::public_preview_handler))
         .route("/raw/{note}/{file}", get(api::public_raw_handler))
-        .route("/mcp", post(crate::mcp::streamable_http::handle_mcp_post).get(crate::mcp::streamable_http::handle_mcp_not_allowed).delete(crate::mcp::streamable_http::handle_mcp_not_allowed))
+        .route("/mcp", post(crate::mcp::streamable_http::handle_mcp_post).get(crate::mcp::streamable_http::handle_mcp_get).delete(crate::mcp::streamable_http::handle_mcp_delete))
         .merge(api_routes)
         .with_state(state);
 
@@ -1354,6 +1369,7 @@ mod tests {
             admin_broadcast_tx,
             chat_db: db,
             data_dir: std::path::PathBuf::from("/tmp/rune-test"),
+            mcp_sessions: crate::mcp::mcp_session::McpSessionStore::new(),
         };
 
         assert_eq!(*state.global_default_model.read().await, first_model);
@@ -1386,6 +1402,7 @@ mod tests {
             admin_broadcast_tx,
             chat_db: db,
             data_dir: std::path::PathBuf::from("/tmp/rune-test"),
+            mcp_sessions: crate::mcp::mcp_session::McpSessionStore::new(),
         };
 
         assert_eq!(*state.active_file.read().await, "main.md");
@@ -1412,6 +1429,7 @@ mod tests {
             admin_broadcast_tx,
             chat_db: db,
             data_dir: std::path::PathBuf::from("/tmp/rune-test"),
+            mcp_sessions: crate::mcp::mcp_session::McpSessionStore::new(),
         };
 
         // Verify per-room broadcast channel is functional

@@ -106,6 +106,14 @@ pub struct NotesConfig {
     pub github: Option<GitHubOAuthConfig>,
     /// Local credentials configuration.
     pub local: Option<LocalConfig>,
+    /// Enable "Lenient Legacy Client Mode" for the MCP Streamable HTTP endpoint:
+    /// requests with NO MCP-Protocol-Version/Mcp-Method/Mcp-Name headers at all skip
+    /// header-body consistency validation (body-only dispatch), to support MCP
+    /// clients that never implemented the 2026-07-28 Request Metadata mechanism.
+    /// Requests with a partial set of these headers are still rejected as before.
+    /// Default: false (disabled; safest/strictest behavior).
+    #[serde(default)]
+    pub mcp_lenient_legacy_clients: bool,
 }
 
 /// Local credentials configuration for Rune Notes.
@@ -2356,6 +2364,41 @@ guests = ["guest:guest123"]
             cfg.agents.get("builder").unwrap().system_prompt.as_deref(),
             Some("Builder prompt")
         );
+    }
+
+    #[test]
+    fn test_mcp_lenient_legacy_clients_defaults_false() {
+        let notes_cfg = NotesConfig::default();
+        assert!(!notes_cfg.mcp_lenient_legacy_clients);
+    }
+
+    #[test]
+    fn test_mcp_lenient_legacy_clients_toml_true() {
+        let toml_str = r#"
+            [notes]
+            port = 9527
+            mcp_lenient_legacy_clients = true
+        "#;
+        #[derive(Deserialize)]
+        struct Wrapper {
+            notes: NotesConfig,
+        }
+        let w: Wrapper = toml::from_str(toml_str).unwrap();
+        assert!(w.notes.mcp_lenient_legacy_clients);
+    }
+
+    #[test]
+    fn test_mcp_lenient_legacy_clients_toml_absent_defaults_false() {
+        let toml_str = r#"
+            [notes]
+            port = 9527
+        "#;
+        #[derive(Deserialize)]
+        struct Wrapper {
+            notes: NotesConfig,
+        }
+        let w: Wrapper = toml::from_str(toml_str).unwrap();
+        assert!(!w.notes.mcp_lenient_legacy_clients);
     }
 }
 
