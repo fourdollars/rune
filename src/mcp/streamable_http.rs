@@ -98,9 +98,13 @@ pub async fn handle_mcp_post(
     let header_method = headers.get("mcp-method").and_then(|v| v.to_str().ok());
     let header_name = headers.get("mcp-name").and_then(|v| v.to_str().ok());
 
-    if let Err(mismatch_msg) = validate_header_body_consistency(header_protocol_version, header_method, header_name, &req) {
-        warn!(error = %mismatch_msg, "Header-Body mismatch in MCP request");
-        let resp = McpJsonRpcResponse::header_mismatch(req.id, mismatch_msg);
+    if let Err((code, err_msg)) = validate_header_body_consistency(header_protocol_version, header_method, header_name, &req) {
+        warn!(error = %err_msg, code = code, "Header-Body validation failed in MCP request");
+        let resp = if code == -32021 {
+            McpJsonRpcResponse::unsupported_protocol_version(req.id, err_msg)
+        } else {
+            McpJsonRpcResponse::header_mismatch(req.id, err_msg)
+        };
         return (
             StatusCode::BAD_REQUEST,
             [

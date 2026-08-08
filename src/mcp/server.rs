@@ -1,6 +1,8 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+pub const SUPPORTED_PROTOCOL_VERSIONS: &[&str] = &["2026-07-28", "2024-11-05"];
+
 // JSON-RPC 2.0 Request according to MCP spec
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct McpJsonRpcRequest {
@@ -55,6 +57,15 @@ impl McpJsonRpcResponse {
             Some(serde_json::json!({ "details": details.into() })),
         )
     }
+
+    pub fn unsupported_protocol_version(id: Option<Value>, details: impl Into<String>) -> Self {
+        Self::error(
+            id,
+            -32021,
+            "UnsupportedProtocolVersionError: Unsupported MCP-Protocol-Version",
+            Some(serde_json::json!({ "details": details.into() })),
+        )
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -95,22 +106,35 @@ pub fn validate_header_body_consistency(
     header_method: Option<&str>,
     header_name: Option<&str>,
     req: &McpJsonRpcRequest,
-) -> Result<(), String> {
+) -> Result<(), (i32, String)> {
     // 1. MCP-Protocol-Version validation
     let proto_ver = match header_protocol_version {
         Some(v) => v.trim(),
         None => {
-            return Err("Required MCP-Protocol-Version header is missing".to_string());
+            return Err((-32020, "Required MCP-Protocol-Version header is missing".to_string()));
         }
     };
+
+    if !SUPPORTED_PROTOCOL_VERSIONS.contains(&proto_ver) {
+        return Err((
+            -32021,
+            format!(
+                "MCP-Protocol-Version '{}' is not supported. Supported versions: {:?}",
+                proto_ver, SUPPORTED_PROTOCOL_VERSIONS
+            ),
+        ));
+    }
 
     if let Some(params) = &req.params {
         if let Some(meta) = params.get("_meta") {
             if let Some(body_proto) = meta.get("io.modelcontextprotocol/protocolVersion").and_then(|v| v.as_str()) {
                 if proto_ver != body_proto {
-                    return Err(format!(
-                        "MCP-Protocol-Version header '{}' does not match body _meta protocolVersion '{}'",
-                        proto_ver, body_proto
+                    return Err((
+                        -32020,
+                        format!(
+                            "MCP-Protocol-Version header '{}' does not match body _meta protocolVersion '{}'",
+                            proto_ver, body_proto
+                        ),
                     ));
                 }
             }
@@ -121,15 +145,18 @@ pub fn validate_header_body_consistency(
     let h_method = match header_method {
         Some(m) => m,
         None => {
-            return Err("Required Mcp-Method header is missing".to_string());
+            return Err((-32020, "Required Mcp-Method header is missing".to_string()));
         }
     };
 
     let decoded_method = decode_mcp_header(h_method);
     if decoded_method != req.method {
-        return Err(format!(
-            "Mcp-Method header '{}' (decoded: '{}') does not match body method '{}'",
-            h_method, decoded_method, req.method
+        return Err((
+            -32020,
+            format!(
+                "Mcp-Method header '{}' (decoded: '{}') does not match body method '{}'",
+                h_method, decoded_method, req.method
+            ),
         ));
     }
 
@@ -144,22 +171,31 @@ pub fn validate_header_body_consistency(
         (Some(h_name), Some(b_val)) => {
             let decoded_name = decode_mcp_header(h_name);
             if decoded_name != b_val {
-                return Err(format!(
-                    "Mcp-Name header '{}' (decoded: '{}') does not match body name/uri '{}'",
-                    h_name, decoded_name, b_val
+                return Err((
+                    -32020,
+                    format!(
+                        "Mcp-Name header '{}' (decoded: '{}') does not match body name/uri '{}'",
+                        h_name, decoded_name, b_val
+                    ),
                 ));
             }
         }
         (None, Some(_)) if is_name_required => {
-            return Err(format!(
-                "Required Mcp-Name header is missing for method '{}'",
-                req.method
+            return Err((
+                -32020,
+                format!(
+                    "Required Mcp-Name header is missing for method '{}'",
+                    req.method
+                ),
             ));
         }
         (Some(h_name), None) => {
-            return Err(format!(
-                "Mcp-Name header provided ('{}'), but body name/uri parameter is missing",
-                h_name
+            return Err((
+                -32020,
+                format!(
+                    "Mcp-Name header provided ('{}'), but body name/uri parameter is missing",
+                    h_name
+                ),
             ));
         }
         _ => {}
@@ -211,14 +247,23 @@ mod tests {
         };
 
         // Missing protocol version header
-        assert!(validate_header_body_consistency(None, Some("tools/call"), Some("read_note_file"), &req).is_err());
+        let (code, msg) = validate_header_body_consistency(None, Some("tools/call"), Some("read_note_file"), &req).unwrap_err();
+        assert_eq!(code, -32020);
+        assert!(msg.contains("Required MCP-Protocol-Version header is missing"));
+
+        // Unsupported protocol version
+        let (code_unsupported, msg_unsupported) = validate_header_body_consistency(Some("1999-01-01"), Some("tools/call"), Some("read_note_file"), &req).unwrap_err();
+        assert_eq!(code_unsupported, -32021);
+        assert!(msg_unsupported.contains("is not supported"));
 
         // Mismatched method
-        let err = validate_header_body_consistency(Some("2026-07-28"), Some("tools/list"), Some("read_note_file"), &req).unwrap_err();
-        assert!(err.contains("does not match body method"));
+        let (code_m, msg_m) = validate_header_body_consistency(Some("2026-07-28"), Some("tools/list"), Some("read_note_file"), &req).unwrap_err();
+        assert_eq!(code_m, -32020);
+        assert!(msg_m.contains("does not match body method"));
 
         // Mismatched name
-        let err2 = validate_header_body_consistency(Some("2026-07-28"), Some("tools/call"), Some("write_note_file"), &req).unwrap_err();
-        assert!(err2.contains("does not match body"));
+        let (code_n, msg_n) = validate_header_body_consistency(Some("2026-07-28"), Some("tools/call"), Some("write_note_file"), &req).unwrap_err();
+        assert_eq!(code_n, -32020);
+        assert!(msg_n.contains("does not match body"));
     }
 }
