@@ -468,9 +468,17 @@ pub async fn run(config: RuneConfig, opts: NotesOptions) {
             let path = req.uri().path().to_string();
             let method = req.method();
             let is_admin_only = (path == "/api/notes" && method == axum::http::Method::POST)
-                || (path.starts_with("/api/notes/") && !path.contains("/files") && !path.contains("/system-prompt") && method == axum::http::Method::DELETE)
-                || (path.starts_with("/api/notes/") && !path.contains("/files") && !path.contains("/system-prompt") && method == axum::http::Method::PATCH)
-                || (path.starts_with("/api/notes/") && path.contains("/files/") && method == axum::http::Method::PATCH)
+                || (path.starts_with("/api/notes/")
+                    && !path.contains("/files")
+                    && !path.contains("/system-prompt")
+                    && method == axum::http::Method::DELETE)
+                || (path.starts_with("/api/notes/")
+                    && !path.contains("/files")
+                    && !path.contains("/system-prompt")
+                    && method == axum::http::Method::PATCH)
+                || (path.starts_with("/api/notes/")
+                    && path.contains("/files/")
+                    && method == axum::http::Method::PATCH)
                 || (path.ends_with("/system-prompt") && method == axum::http::Method::PUT);
             if is_admin_only {
                 let body = axum::Json(
@@ -550,7 +558,12 @@ pub async fn run(config: RuneConfig, opts: NotesOptions) {
         .route("/notes/{note}/", get(api::public_note_index_handler))
         .route("/notes/{note}/{file}", get(api::public_preview_handler))
         .route("/raw/{note}/{file}", get(api::public_raw_handler))
-        .route("/mcp", post(crate::mcp::streamable_http::handle_mcp_post).get(crate::mcp::streamable_http::handle_mcp_get).delete(crate::mcp::streamable_http::handle_mcp_delete))
+        .route(
+            "/mcp",
+            post(crate::mcp::streamable_http::handle_mcp_post)
+                .get(crate::mcp::streamable_http::handle_mcp_get)
+                .delete(crate::mcp::streamable_http::handle_mcp_delete),
+        )
         .merge(api_routes)
         .with_state(state);
 

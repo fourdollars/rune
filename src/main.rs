@@ -80,11 +80,18 @@ async fn async_main() {
     if args.len() > 1 && args[1] == "notes" {
         #[cfg(feature = "notes")]
         {
-            let config_path = args.iter().enumerate().find_map(|(i, a)| if (a == "--config" || a == "-c") && i + 1 < args.len() { Some(args[i + 1].as_str()) } else { None });
-            let cfg = config::load_without_clap_path(config_path.map(std::path::Path::new)).unwrap_or_else(|e| {
-                eprintln!("warning: config load failed: {}", e);
-                config::RuneConfig::default()
+            let config_path = args.iter().enumerate().find_map(|(i, a)| {
+                if (a == "--config" || a == "-c") && i + 1 < args.len() {
+                    Some(args[i + 1].as_str())
+                } else {
+                    None
+                }
             });
+            let cfg = config::load_without_clap_path(config_path.map(std::path::Path::new))
+                .unwrap_or_else(|e| {
+                    eprintln!("warning: config load failed: {}", e);
+                    config::RuneConfig::default()
+                });
 
             tracing_subscriber::fmt()
                 .with_env_filter(

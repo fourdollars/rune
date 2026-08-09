@@ -31,7 +31,8 @@ pub async fn handle_mcp_post(
         if let Ok(origin_str) = origin.to_str() {
             if !is_origin_allowed(origin_str) {
                 warn!(origin = %origin_str, "MCP request rejected due to disallowed origin");
-                let resp = McpJsonRpcResponse::error(None, -32000, "Forbidden: Invalid Origin", None);
+                let resp =
+                    McpJsonRpcResponse::error(None, -32000, "Forbidden: Invalid Origin", None);
                 return (
                     StatusCode::FORBIDDEN,
                     [("content-type", "application/json")],
@@ -77,7 +78,12 @@ pub async fn handle_mcp_post(
     let role = match user_role {
         Some(r) => r,
         None => {
-            let resp = McpJsonRpcResponse::error(None, -32001, "Unauthorized: Invalid or missing authentication", None);
+            let resp = McpJsonRpcResponse::error(
+                None,
+                -32001,
+                "Unauthorized: Invalid or missing authentication",
+                None,
+            );
             return (
                 StatusCode::UNAUTHORIZED,
                 [("content-type", "application/json")],
@@ -119,14 +125,26 @@ pub async fn handle_mcp_post(
     };
 
     if active_legacy_session.is_none() {
-        let header_protocol_version = headers.get("mcp-protocol-version").and_then(|v| v.to_str().ok());
+        let header_protocol_version = headers
+            .get("mcp-protocol-version")
+            .and_then(|v| v.to_str().ok());
         let header_method = headers.get("mcp-method").and_then(|v| v.to_str().ok());
         let header_name = headers.get("mcp-name").and_then(|v| v.to_str().ok());
 
         let validation = if state.config.notes.mcp_lenient_legacy_clients {
-            validate_header_body_consistency_lenient(header_protocol_version, header_method, header_name, &req)
+            validate_header_body_consistency_lenient(
+                header_protocol_version,
+                header_method,
+                header_name,
+                &req,
+            )
         } else {
-            validate_header_body_consistency(header_protocol_version, header_method, header_name, &req)
+            validate_header_body_consistency(
+                header_protocol_version,
+                header_method,
+                header_name,
+                &req,
+            )
         };
 
         if let Err((code, err_msg)) = validation {
@@ -192,9 +210,7 @@ pub async fn handle_mcp_post(
                 None => json_response(resp),
             }
         }
-        "notifications/initialized" => {
-            (StatusCode::ACCEPTED).into_response()
-        }
+        "notifications/initialized" => (StatusCode::ACCEPTED).into_response(),
         "ping" => {
             let resp = McpJsonRpcResponse::success(req.id, json!({}));
             json_response(resp)
@@ -215,10 +231,13 @@ pub async fn handle_mcp_post(
                     json_response(resp)
                 }
                 Err(err) => {
-                    let resp = McpJsonRpcResponse::success(req.id, json!({
-                        "content": [{ "type": "text", "text": format!("Error: {}", err) }],
-                        "isError": true
-                    }));
+                    let resp = McpJsonRpcResponse::success(
+                        req.id,
+                        json!({
+                            "content": [{ "type": "text", "text": format!("Error: {}", err) }],
+                            "isError": true
+                        }),
+                    );
                     json_response(resp)
                 }
             }
@@ -244,7 +263,12 @@ pub async fn handle_mcp_post(
             }
         }
         _ => {
-            let resp = McpJsonRpcResponse::error(req.id, -32601, format!("Method not found: {}", req.method), None);
+            let resp = McpJsonRpcResponse::error(
+                req.id,
+                -32601,
+                format!("Method not found: {}", req.method),
+                None,
+            );
             (
                 StatusCode::NOT_FOUND,
                 [("content-type", "application/json")],
@@ -298,10 +322,7 @@ impl Drop for SseOpenGuardStream {
 /// a legacy-protocol session is required, otherwise this remains 405 Method Not Allowed
 /// (matching the current 2026-07-28-only behavior). Servers speaking only 2026-07-28
 /// have no legacy sessions in the store, so this endpoint degrades to a plain 405 for them.
-pub async fn handle_mcp_get(
-    State(state): State<ServerState>,
-    headers: HeaderMap,
-) -> Response {
+pub async fn handle_mcp_get(State(state): State<ServerState>, headers: HeaderMap) -> Response {
     let session_id = match headers.get("mcp-session-id").and_then(|v| v.to_str().ok()) {
         Some(id) => id.to_string(),
         None => return handle_mcp_not_allowed().await,
@@ -314,7 +335,11 @@ pub async fn handle_mcp_get(
 
     if session.sse_open {
         // Same session already has an open GET stream.
-        return (StatusCode::CONFLICT, "409 Conflict: session already has an open GET stream").into_response();
+        return (
+            StatusCode::CONFLICT,
+            "409 Conflict: session already has an open GET stream",
+        )
+            .into_response();
     }
 
     state.mcp_sessions.set_sse_open(&session_id, true).await;
@@ -347,10 +372,7 @@ pub async fn handle_mcp_get(
 }
 
 /// DELETE /mcp — terminate a legacy MCP session.
-pub async fn handle_mcp_delete(
-    State(state): State<ServerState>,
-    headers: HeaderMap,
-) -> Response {
+pub async fn handle_mcp_delete(State(state): State<ServerState>, headers: HeaderMap) -> Response {
     let session_id = match headers.get("mcp-session-id").and_then(|v| v.to_str().ok()) {
         Some(id) => id.to_string(),
         None => return handle_mcp_not_allowed().await,
@@ -367,7 +389,9 @@ fn sse_response<S>(stream: S) -> Response
 where
     S: Stream<Item = Result<Event, Infallible>> + Send + 'static,
 {
-    Sse::new(stream).keep_alive(KeepAlive::default()).into_response()
+    Sse::new(stream)
+        .keep_alive(KeepAlive::default())
+        .into_response()
 }
 
 pub async fn handle_mcp_not_allowed() -> Response {

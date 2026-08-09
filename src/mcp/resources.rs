@@ -1,6 +1,6 @@
+use crate::serve::ServerState;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use crate::serve::ServerState;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct McpResourceInfo {
@@ -49,13 +49,13 @@ pub async fn list_resources(state: &ServerState) -> Vec<McpResourceInfo> {
     resources
 }
 
-pub async fn read_resource(
-    state: &ServerState,
-    uri: &str,
-) -> Result<Value, String> {
+pub async fn read_resource(state: &ServerState, uri: &str) -> Result<Value, String> {
     if uri == "rune://notebooks" {
         let notes = state.chat_db.list_notes().map_err(|e| e.to_string())?;
-        let res: Vec<_> = notes.into_iter().map(|n| json!({"id": n.id, "name": n.name})).collect();
+        let res: Vec<_> = notes
+            .into_iter()
+            .map(|n| json!({"id": n.id, "name": n.name}))
+            .collect();
         return Ok(json!({
             "contents": [{
                 "uri": uri,

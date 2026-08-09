@@ -13,7 +13,8 @@ pub const LEGACY_SESSION_PROTOCOL_VERSIONS: &[&str] = &["2025-03-26", "2025-06-1
 
 /// True if `version` is accepted at all by `initialize` (current + legacy session versions).
 pub fn is_initialize_protocol_version_acceptable(version: &str) -> bool {
-    SUPPORTED_PROTOCOL_VERSIONS.contains(&version) || LEGACY_SESSION_PROTOCOL_VERSIONS.contains(&version)
+    SUPPORTED_PROTOCOL_VERSIONS.contains(&version)
+        || LEGACY_SESSION_PROTOCOL_VERSIONS.contains(&version)
 }
 
 /// Compute the `protocolVersion` the server should echo back in an `initialize` response,
@@ -66,7 +67,12 @@ impl McpJsonRpcResponse {
         }
     }
 
-    pub fn error(id: Option<Value>, code: i32, message: impl Into<String>, data: Option<Value>) -> Self {
+    pub fn error(
+        id: Option<Value>,
+        code: i32,
+        message: impl Into<String>,
+        data: Option<Value>,
+    ) -> Self {
         Self {
             jsonrpc: "2.0".to_string(),
             id,
@@ -155,7 +161,12 @@ pub fn validate_header_body_consistency_lenient(
     match classify_header_metadata_presence(header_protocol_version, header_method, header_name) {
         HeaderMetadataPresence::None => Ok(()),
         HeaderMetadataPresence::Partial | HeaderMetadataPresence::Full => {
-            validate_header_body_consistency(header_protocol_version, header_method, header_name, req)
+            validate_header_body_consistency(
+                header_protocol_version,
+                header_method,
+                header_name,
+                req,
+            )
         }
     }
 }
@@ -165,7 +176,9 @@ pub fn decode_mcp_header(header_val: &str) -> String {
     let trimmed = header_val.trim();
     if trimmed.starts_with("=?base64?") && trimmed.ends_with("?=") {
         let b64 = &trimmed[9..trimmed.len() - 2];
-        if let Ok(decoded_bytes) = base64::Engine::decode(&base64::engine::general_purpose::STANDARD, b64) {
+        if let Ok(decoded_bytes) =
+            base64::Engine::decode(&base64::engine::general_purpose::STANDARD, b64)
+        {
             if let Ok(decoded_str) = String::from_utf8(decoded_bytes) {
                 return decoded_str;
             }
@@ -173,9 +186,15 @@ pub fn decode_mcp_header(header_val: &str) -> String {
     }
     // Fallback: try direct base64 decode if valid base64 and not plain ascii text
     if !trimmed.contains('/') && !trimmed.contains(' ') && trimmed.contains('=') {
-        if let Ok(decoded_bytes) = base64::Engine::decode(&base64::engine::general_purpose::STANDARD, trimmed) {
+        if let Ok(decoded_bytes) =
+            base64::Engine::decode(&base64::engine::general_purpose::STANDARD, trimmed)
+        {
             if let Ok(decoded_str) = String::from_utf8(decoded_bytes) {
-                if !decoded_str.is_empty() && decoded_str.chars().all(|c| !c.is_control() || c == '\n' || c == '\r' || c == '\t') {
+                if !decoded_str.is_empty()
+                    && decoded_str
+                        .chars()
+                        .all(|c| !c.is_control() || c == '\n' || c == '\r' || c == '\t')
+                {
                     return decoded_str;
                 }
             }
@@ -195,11 +214,16 @@ pub fn validate_header_body_consistency(
     let proto_ver = match header_protocol_version {
         Some(v) => v.trim(),
         None => {
-            return Err((-32020, "Required MCP-Protocol-Version header is missing".to_string()));
+            return Err((
+                -32020,
+                "Required MCP-Protocol-Version header is missing".to_string(),
+            ));
         }
     };
 
-    if !SUPPORTED_PROTOCOL_VERSIONS.contains(&proto_ver) && !LEGACY_SESSION_PROTOCOL_VERSIONS.contains(&proto_ver) {
+    if !SUPPORTED_PROTOCOL_VERSIONS.contains(&proto_ver)
+        && !LEGACY_SESSION_PROTOCOL_VERSIONS.contains(&proto_ver)
+    {
         return Err((
             -32021,
             format!(
@@ -211,7 +235,10 @@ pub fn validate_header_body_consistency(
 
     if let Some(params) = &req.params {
         if let Some(meta) = params.get("_meta") {
-            if let Some(body_proto) = meta.get("io.modelcontextprotocol/protocolVersion").and_then(|v| v.as_str()) {
+            if let Some(body_proto) = meta
+                .get("io.modelcontextprotocol/protocolVersion")
+                .and_then(|v| v.as_str())
+            {
                 if proto_ver != body_proto {
                     return Err((
                         -32020,
@@ -245,10 +272,15 @@ pub fn validate_header_body_consistency(
     }
 
     // 3. Mcp-Name validation
-    let is_name_required = matches!(req.method.as_str(), "tools/call" | "resources/read" | "prompts/get");
+    let is_name_required = matches!(
+        req.method.as_str(),
+        "tools/call" | "resources/read" | "prompts/get"
+    );
 
     let body_name_or_uri = req.params.as_ref().and_then(|p| {
-        p.get("name").or_else(|| p.get("uri")).and_then(|v| v.as_str())
+        p.get("name")
+            .or_else(|| p.get("uri"))
+            .and_then(|v| v.as_str())
     });
 
     match (header_name, body_name_or_uri) {
@@ -295,7 +327,10 @@ mod tests {
     #[test]
     fn test_header_decoding() {
         assert_eq!(decode_mcp_header("tools/call"), "tools/call");
-        assert_eq!(decode_mcp_header("=?base64?dG9vbHMvY2FsbA==?="), "tools/call");
+        assert_eq!(
+            decode_mcp_header("=?base64?dG9vbHMvY2FsbA==?="),
+            "tools/call"
+        );
     }
 
     #[test]
@@ -311,20 +346,38 @@ mod tests {
 
     #[test]
     fn test_negotiate_initialize_protocol_version_echoes_current() {
-        assert_eq!(negotiate_initialize_protocol_version("2026-07-28"), "2026-07-28");
-        assert_eq!(negotiate_initialize_protocol_version("2024-11-05"), "2024-11-05");
+        assert_eq!(
+            negotiate_initialize_protocol_version("2026-07-28"),
+            "2026-07-28"
+        );
+        assert_eq!(
+            negotiate_initialize_protocol_version("2024-11-05"),
+            "2024-11-05"
+        );
     }
 
     #[test]
     fn test_negotiate_initialize_protocol_version_echoes_legacy() {
-        assert_eq!(negotiate_initialize_protocol_version("2025-03-26"), "2025-03-26");
-        assert_eq!(negotiate_initialize_protocol_version("2025-06-18"), "2025-06-18");
-        assert_eq!(negotiate_initialize_protocol_version("2025-11-25"), "2025-11-25");
+        assert_eq!(
+            negotiate_initialize_protocol_version("2025-03-26"),
+            "2025-03-26"
+        );
+        assert_eq!(
+            negotiate_initialize_protocol_version("2025-06-18"),
+            "2025-06-18"
+        );
+        assert_eq!(
+            negotiate_initialize_protocol_version("2025-11-25"),
+            "2025-11-25"
+        );
     }
 
     #[test]
     fn test_negotiate_initialize_protocol_version_falls_back_for_unknown() {
-        assert_eq!(negotiate_initialize_protocol_version("1999-01-01"), "2026-07-28");
+        assert_eq!(
+            negotiate_initialize_protocol_version("1999-01-01"),
+            "2026-07-28"
+        );
         assert_eq!(negotiate_initialize_protocol_version(""), "2026-07-28");
     }
 
@@ -339,7 +392,11 @@ mod tests {
     #[test]
     fn test_classify_header_metadata_presence_full() {
         assert_eq!(
-            classify_header_metadata_presence(Some("2026-07-28"), Some("tools/call"), Some("read_note_file")),
+            classify_header_metadata_presence(
+                Some("2026-07-28"),
+                Some("tools/call"),
+                Some("read_note_file")
+            ),
             HeaderMetadataPresence::Full
         );
     }
@@ -382,7 +439,9 @@ mod tests {
             method: "tools/call".to_string(),
             params: Some(serde_json::json!({"name": "read_note_file", "arguments": {}})),
         };
-        let (code, msg) = validate_header_body_consistency_lenient(Some("2026-07-28"), None, None, &req).unwrap_err();
+        let (code, msg) =
+            validate_header_body_consistency_lenient(Some("2026-07-28"), None, None, &req)
+                .unwrap_err();
         assert_eq!(code, -32020);
         assert!(msg.contains("Required Mcp-Method header is missing"));
     }
@@ -400,7 +459,8 @@ mod tests {
             Some("tools/call"),
             Some("read_note_file"),
             &req
-        ).is_ok());
+        )
+        .is_ok());
 
         // Mismatched method still rejected even with full headers.
         let (code, msg) = validate_header_body_consistency_lenient(
@@ -408,7 +468,8 @@ mod tests {
             Some("tools/list"),
             Some("read_note_file"),
             &req,
-        ).unwrap_err();
+        )
+        .unwrap_err();
         assert_eq!(code, -32020);
         assert!(msg.contains("does not match body method"));
     }
@@ -433,7 +494,8 @@ mod tests {
             Some("tools/call"),
             Some("read_note_file"),
             &req
-        ).is_ok());
+        )
+        .is_ok());
     }
 
     #[test]
@@ -446,22 +508,46 @@ mod tests {
         };
 
         // Missing protocol version header
-        let (code, msg) = validate_header_body_consistency(None, Some("tools/call"), Some("read_note_file"), &req).unwrap_err();
+        let (code, msg) = validate_header_body_consistency(
+            None,
+            Some("tools/call"),
+            Some("read_note_file"),
+            &req,
+        )
+        .unwrap_err();
         assert_eq!(code, -32020);
         assert!(msg.contains("Required MCP-Protocol-Version header is missing"));
 
         // Unsupported protocol version
-        let (code_unsupported, msg_unsupported) = validate_header_body_consistency(Some("1999-01-01"), Some("tools/call"), Some("read_note_file"), &req).unwrap_err();
+        let (code_unsupported, msg_unsupported) = validate_header_body_consistency(
+            Some("1999-01-01"),
+            Some("tools/call"),
+            Some("read_note_file"),
+            &req,
+        )
+        .unwrap_err();
         assert_eq!(code_unsupported, -32021);
         assert!(msg_unsupported.contains("is not supported"));
 
         // Mismatched method
-        let (code_m, msg_m) = validate_header_body_consistency(Some("2026-07-28"), Some("tools/list"), Some("read_note_file"), &req).unwrap_err();
+        let (code_m, msg_m) = validate_header_body_consistency(
+            Some("2026-07-28"),
+            Some("tools/list"),
+            Some("read_note_file"),
+            &req,
+        )
+        .unwrap_err();
         assert_eq!(code_m, -32020);
         assert!(msg_m.contains("does not match body method"));
 
         // Mismatched name
-        let (code_n, msg_n) = validate_header_body_consistency(Some("2026-07-28"), Some("tools/call"), Some("write_note_file"), &req).unwrap_err();
+        let (code_n, msg_n) = validate_header_body_consistency(
+            Some("2026-07-28"),
+            Some("tools/call"),
+            Some("write_note_file"),
+            &req,
+        )
+        .unwrap_err();
         assert_eq!(code_n, -32020);
         assert!(msg_n.contains("does not match body"));
     }
@@ -478,7 +564,13 @@ mod tests {
         // A client that sends full headers but negotiated a legacy session protocol
         // version should NOT be rejected as "unsupported protocol version".
         for v in LEGACY_SESSION_PROTOCOL_VERSIONS {
-            assert!(validate_header_body_consistency(Some(v), Some("tools/call"), Some("read_note_file"), &req).is_ok());
+            assert!(validate_header_body_consistency(
+                Some(v),
+                Some("tools/call"),
+                Some("read_note_file"),
+                &req
+            )
+            .is_ok());
         }
     }
 }

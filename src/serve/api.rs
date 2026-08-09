@@ -462,9 +462,10 @@ pub async fn events_handler(
     if is_guest && !state.chat_db.is_note_public(&note_id) {
         let err_stream = futures::stream::once(async {
             Ok::<_, Infallible>(
-                Event::default()
-                    .event("auth_error")
-                    .data(r#"{"type":"auth_error","message":"Guests cannot access private notes"}"#.to_string()),
+                Event::default().event("auth_error").data(
+                    r#"{"type":"auth_error","message":"Guests cannot access private notes"}"#
+                        .to_string(),
+                ),
             )
         });
         return Sse::new(err_stream)
@@ -942,7 +943,9 @@ pub async fn session_handler(
     let is_guest = session.as_ref().map(|s| s.is_guest()).unwrap_or(false);
 
     if is_guest && !state.chat_db.is_note_public(&req.note) {
-        return Json(serde_json::json!({ "ok": false, "error": "Guests cannot access private notes" }));
+        return Json(
+            serde_json::json!({ "ok": false, "error": "Guests cannot access private notes" }),
+        );
     }
 
     let history = state.chat_db.load_recent_async(req.note.clone(), 100).await;
@@ -975,7 +978,6 @@ pub async fn session_handler(
     } else {
         files.first().cloned()
     };
-    
 
     let first_content = if let Some(ref fname) = current_file {
         tokio::fs::read_to_string(md_dir.join(fname)).await.ok()
@@ -4495,10 +4497,7 @@ mod isolation_tests {
 
         let app = Router::new()
             .route("/notes", get(crate::serve::api::public_notes_list_handler))
-            .route(
-                "/notes/",
-                get(crate::serve::api::public_notes_list_handler),
-            )
+            .route("/notes/", get(crate::serve::api::public_notes_list_handler))
             .with_state(state);
 
         let req = axum::http::Request::builder()
@@ -4785,7 +4784,12 @@ mod isolation_tests {
         let _ = db.create_note("pub-note", "pub-note", None);
         let _ = db.set_note_public("pub-note", true);
 
-        let md_dir = tmp.path().join(".rune").join("notes").join("pub-note").join("markdown");
+        let md_dir = tmp
+            .path()
+            .join(".rune")
+            .join("notes")
+            .join("pub-note")
+            .join("markdown");
         std::fs::create_dir_all(&md_dir).unwrap();
         std::fs::write(md_dir.join("public.md"), "# Public File Content").unwrap();
         std::fs::write(md_dir.join("secret.md"), "# Secret File Content").unwrap();

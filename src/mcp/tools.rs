@@ -1,7 +1,7 @@
+use crate::serve::oauth::Role;
+use crate::serve::ServerState;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use crate::serve::ServerState;
-use crate::serve::oauth::Role;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct McpToolInfo {
@@ -181,7 +181,10 @@ pub async fn handle_tool_call(
             }))
         }
         "list_note_files" => {
-            let note_id = args.get("note_id").and_then(|v| v.as_str()).ok_or("Missing note_id")?;
+            let note_id = args
+                .get("note_id")
+                .and_then(|v| v.as_str())
+                .ok_or("Missing note_id")?;
             let md_dir = state.note_markdown_dir(note_id);
             let mut files: Vec<String> = Vec::new();
             if let Ok(mut rd) = tokio::fs::read_dir(&md_dir).await {
@@ -201,8 +204,14 @@ pub async fn handle_tool_call(
             }))
         }
         "read_note_file" => {
-            let note_id = args.get("note_id").and_then(|v| v.as_str()).ok_or("Missing note_id")?;
-            let filename = args.get("filename").and_then(|v| v.as_str()).ok_or("Missing filename")?;
+            let note_id = args
+                .get("note_id")
+                .and_then(|v| v.as_str())
+                .ok_or("Missing note_id")?;
+            let filename = args
+                .get("filename")
+                .and_then(|v| v.as_str())
+                .ok_or("Missing filename")?;
             let file_path = state.note_markdown_dir(note_id).join(filename);
             let content = tokio::fs::read_to_string(&file_path)
                 .await
@@ -215,7 +224,10 @@ pub async fn handle_tool_call(
             }))
         }
         "search_notes" => {
-            let query = args.get("query").and_then(|v| v.as_str()).ok_or("Missing query")?;
+            let query = args
+                .get("query")
+                .and_then(|v| v.as_str())
+                .ok_or("Missing query")?;
             let notes = state.chat_db.list_notes().map_err(|e| e.to_string())?;
             let mut matches = Vec::new();
 
@@ -254,9 +266,18 @@ pub async fn handle_tool_call(
             if role == Role::Guest {
                 return Err("Guest role is not permitted to mutate files".to_string());
             }
-            let note_id = args.get("note_id").and_then(|v| v.as_str()).ok_or("Missing note_id")?;
-            let filename = args.get("filename").and_then(|v| v.as_str()).ok_or("Missing filename")?;
-            let content = args.get("content").and_then(|v| v.as_str()).ok_or("Missing content")?;
+            let note_id = args
+                .get("note_id")
+                .and_then(|v| v.as_str())
+                .ok_or("Missing note_id")?;
+            let filename = args
+                .get("filename")
+                .and_then(|v| v.as_str())
+                .ok_or("Missing filename")?;
+            let content = args
+                .get("content")
+                .and_then(|v| v.as_str())
+                .ok_or("Missing content")?;
 
             let md_dir = state.note_markdown_dir(note_id);
             tokio::fs::create_dir_all(&md_dir)
@@ -279,8 +300,14 @@ pub async fn handle_tool_call(
             if role == Role::Guest {
                 return Err("Guest role is not permitted to delete files".to_string());
             }
-            let note_id = args.get("note_id").and_then(|v| v.as_str()).ok_or("Missing note_id")?;
-            let filename = args.get("filename").and_then(|v| v.as_str()).ok_or("Missing filename")?;
+            let note_id = args
+                .get("note_id")
+                .and_then(|v| v.as_str())
+                .ok_or("Missing note_id")?;
+            let filename = args
+                .get("filename")
+                .and_then(|v| v.as_str())
+                .ok_or("Missing filename")?;
 
             let file_path = state.note_markdown_dir(note_id).join(filename);
             if file_path.exists() {
@@ -300,7 +327,10 @@ pub async fn handle_tool_call(
             if role != Role::Admin {
                 return Err("Admin role required to create notebooks".to_string());
             }
-            let name = args.get("name").and_then(|v| v.as_str()).ok_or("Missing notebook name")?;
+            let name = args
+                .get("name")
+                .and_then(|v| v.as_str())
+                .ok_or("Missing notebook name")?;
             let icon = args.get("icon").and_then(|v| v.as_str());
 
             if name.is_empty() {
@@ -308,7 +338,10 @@ pub async fn handle_tool_call(
             }
 
             let _ = state.chat_db.ensure_persistent();
-            state.chat_db.create_note(name, name, icon).map_err(|e| format!("Failed to create notebook: {}", e))?;
+            state
+                .chat_db
+                .create_note(name, name, icon)
+                .map_err(|e| format!("Failed to create notebook: {}", e))?;
             let md_dir = state.note_markdown_dir(name);
             let _ = tokio::fs::create_dir_all(&md_dir).await;
 
@@ -323,15 +356,24 @@ pub async fn handle_tool_call(
             if role != Role::Admin {
                 return Err("Admin role required to rename notebooks".to_string());
             }
-            let note_id = args.get("note_id").and_then(|v| v.as_str()).ok_or("Missing note_id")?;
-            let new_name = args.get("new_name").and_then(|v| v.as_str()).ok_or("Missing new_name")?;
+            let note_id = args
+                .get("note_id")
+                .and_then(|v| v.as_str())
+                .ok_or("Missing note_id")?;
+            let new_name = args
+                .get("new_name")
+                .and_then(|v| v.as_str())
+                .ok_or("Missing new_name")?;
 
             if new_name.is_empty() {
                 return Err("New notebook name cannot be empty".to_string());
             }
 
             let _ = state.chat_db.ensure_persistent();
-            state.chat_db.rename_note(note_id, new_name, None).map_err(|e| format!("Failed to rename notebook: {}", e))?;
+            state
+                .chat_db
+                .rename_note(note_id, new_name, None)
+                .map_err(|e| format!("Failed to rename notebook: {}", e))?;
 
             Ok(json!({
                 "content": [{
@@ -344,10 +386,16 @@ pub async fn handle_tool_call(
             if role != Role::Admin {
                 return Err("Admin role required to delete notebooks".to_string());
             }
-            let note_id = args.get("note_id").and_then(|v| v.as_str()).ok_or("Missing note_id")?;
+            let note_id = args
+                .get("note_id")
+                .and_then(|v| v.as_str())
+                .ok_or("Missing note_id")?;
 
             let _ = state.chat_db.ensure_persistent();
-            state.chat_db.delete_note(note_id).map_err(|e| format!("Failed to delete notebook: {}", e))?;
+            state
+                .chat_db
+                .delete_note(note_id)
+                .map_err(|e| format!("Failed to delete notebook: {}", e))?;
 
             let md_dir = state.note_markdown_dir(note_id);
             if md_dir.exists() {
@@ -365,11 +413,20 @@ pub async fn handle_tool_call(
             if role != Role::Admin {
                 return Err("Admin role required to change note visibility".to_string());
             }
-            let note_id = args.get("note_id").and_then(|v| v.as_str()).ok_or("Missing note_id")?;
-            let public = args.get("public").and_then(|v| v.as_bool()).ok_or("Missing public boolean")?;
+            let note_id = args
+                .get("note_id")
+                .and_then(|v| v.as_str())
+                .ok_or("Missing note_id")?;
+            let public = args
+                .get("public")
+                .and_then(|v| v.as_bool())
+                .ok_or("Missing public boolean")?;
 
             let _ = state.chat_db.ensure_persistent();
-            state.chat_db.set_note_public(note_id, public).map_err(|e| format!("Failed to set note visibility: {}", e))?;
+            state
+                .chat_db
+                .set_note_public(note_id, public)
+                .map_err(|e| format!("Failed to set note visibility: {}", e))?;
 
             Ok(json!({
                 "content": [{
@@ -382,12 +439,24 @@ pub async fn handle_tool_call(
             if role != Role::Admin {
                 return Err("Admin role required to change file visibility".to_string());
             }
-            let note_id = args.get("note_id").and_then(|v| v.as_str()).ok_or("Missing note_id")?;
-            let filename = args.get("filename").and_then(|v| v.as_str()).ok_or("Missing filename")?;
-            let public = args.get("public").and_then(|v| v.as_bool()).ok_or("Missing public boolean")?;
+            let note_id = args
+                .get("note_id")
+                .and_then(|v| v.as_str())
+                .ok_or("Missing note_id")?;
+            let filename = args
+                .get("filename")
+                .and_then(|v| v.as_str())
+                .ok_or("Missing filename")?;
+            let public = args
+                .get("public")
+                .and_then(|v| v.as_bool())
+                .ok_or("Missing public boolean")?;
 
             let _ = state.chat_db.ensure_persistent();
-            state.chat_db.set_file_public(note_id, filename, public).map_err(|e| format!("Failed to set file visibility: {}", e))?;
+            state
+                .chat_db
+                .set_file_public(note_id, filename, public)
+                .map_err(|e| format!("Failed to set file visibility: {}", e))?;
 
             Ok(json!({
                 "content": [{
@@ -399,7 +468,6 @@ pub async fn handle_tool_call(
         _ => Err(format!("Unknown tool: {}", name)),
     }
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -415,8 +483,26 @@ mod tests {
         let user_names: Vec<&str> = user_tools.iter().map(|t| t.name.as_str()).collect();
         let guest_names: Vec<&str> = guest_tools.iter().map(|t| t.name.as_str()).collect();
 
-        assert_eq!(guest_names, vec!["list_notebooks", "list_note_files", "read_note_file", "search_notes"]);
-        assert_eq!(user_names, vec!["list_notebooks", "list_note_files", "read_note_file", "search_notes", "write_note_file", "delete_note_file"]);
+        assert_eq!(
+            guest_names,
+            vec![
+                "list_notebooks",
+                "list_note_files",
+                "read_note_file",
+                "search_notes"
+            ]
+        );
+        assert_eq!(
+            user_names,
+            vec![
+                "list_notebooks",
+                "list_note_files",
+                "read_note_file",
+                "search_notes",
+                "write_note_file",
+                "delete_note_file"
+            ]
+        );
         assert!(admin_names.contains(&"create_notebook"));
         assert!(admin_names.contains(&"rename_notebook"));
         assert!(admin_names.contains(&"delete_notebook"));
