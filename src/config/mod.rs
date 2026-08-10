@@ -83,6 +83,9 @@ pub struct PolicyConfig {
     /// Tmpfs size limit in MB for sandbox /tmp (default 100, 0 = use host /tmp).
     #[serde(default = "default_max_tmp_mb")]
     pub max_tmp_mb: u64,
+    /// Dynamically mount working directory as read-write and set default sandbox pwd to CWD.
+    #[serde(default)]
+    pub mount_pwd: bool,
 }
 
 fn default_policy_mode() -> String {
@@ -203,6 +206,7 @@ impl Default for PolicyConfig {
             max_memory_mb: 512,
             max_pids: 64,
             max_tmp_mb: 100,
+            mount_pwd: false,
         }
     }
 }
@@ -408,6 +412,10 @@ struct CliArgs {
     /// Auto-approve dangerous tool calls (does NOT bypass policy allowlist)
     #[arg(long, short = 'y', action = clap::ArgAction::SetTrue, help_heading = "Security")]
     yes: bool,
+
+    /// Dynamically mount working directory as read-write and set default sandbox pwd to CWD
+    #[arg(long = "mount-pwd", short = 'M', action = clap::ArgAction::SetTrue, help_heading = "Security")]
+    mount_pwd: bool,
 
     /// Maximum agent loop iterations [default: 50, 0 = unlimited]
     #[arg(long, env = "RUNE_MAX_STEPS", help_heading = "Limits")]
@@ -636,6 +644,22 @@ pub fn load() -> anyhow::Result<RuneConfig> {
     // CLI --unrestricted flag overrides policy mode
     if cli.unrestricted {
         policy.mode = "unrestricted".to_string();
+    }
+    // CLI --mount-pwd flag sets mount_pwd policy
+    if cli.mount_pwd {
+        policy.mount_pwd = true;
+    }
+    if policy.mount_pwd {
+        if let Ok(cwd) = env::current_dir() {
+            let cwd_str = cwd.to_string_lossy().to_string();
+            if !policy
+                .allowed_paths_rw
+                .iter()
+                .any(|p| cwd_str.starts_with(p.trim_end_matches('/')))
+            {
+                policy.allowed_paths_rw.push(cwd_str);
+            }
+        }
     }
     // Env var override for mode (legacy support)
     if let Some(mode) = env::var("RUNE_POLICY_MODE").ok() {
@@ -2401,6 +2425,29 @@ guests = ["guest:guest123"]
         }
         let w: Wrapper = toml::from_str(toml_str).unwrap();
         assert!(!w.notes.mcp_lenient_legacy_clients);
+    }
+
+    #[test]
+    fn test_mount_pwd_policy_defaults_false() {
+        let policy = PolicyConfig::default();
+        assert!(!policy.mount_pwd);
+    }
+
+    #[test]
+    fn test_mount_pwd_toml_deserialization() {
+        let toml_str = r#"
+            mode = "confirm"
+            mount_pwd = true
+        "#;
+        let policy: PolicyConfig = toml::from_str(toml_str).unwrap();
+        assert!(policy.mount_pwd);
+    }
+
+    #[test]
+    fn test_mount_pwd_short_flag_parsing() {
+        use clap::Parser;
+        let args = CliArgs::try_parse_from(["rune", "-M"]).unwrap();
+        assert!(args.mount_pwd);
     }
 }
 

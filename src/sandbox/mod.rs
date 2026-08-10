@@ -106,6 +106,11 @@ impl SandboxExecutor {
         Self::new(SandboxConfig::default())
     }
 
+    /// Access sandbox config.
+    pub fn config(&self) -> &SandboxConfig {
+        &self.config
+    }
+
     /// Execute a shell command with best-effort sandboxing.
     ///
     /// Layers applied (best-effort, each degrades independently):
@@ -276,6 +281,9 @@ impl SandboxExecutor {
 
         let inner_cmd = inner_cmd_parts.join(" ");
 
+        let target_cwd = cwd.unwrap_or("/tmp");
+        let escaped_target_cwd = shell_escape(target_cwd);
+
         // If tmpfs isolation is active, mount tmpfs + isolate /etc and /proc
         let inner_cmd = if use_tmpfs {
             // Build the full script that runs inside the mount namespace.
@@ -284,9 +292,8 @@ impl SandboxExecutor {
                 concat!(
                     "mount -t tmpfs -o size={size}M,mode=1777 tmpfs /tmp",
                     // cd re-resolves CWD through the new mount so that Landlock's
-                    // inode-based rule for /tmp matches the process's CWD inode.
-                    // Without this, the CWD still refers to the pre-mount inode.
-                    " && cd /tmp",
+                    // inode-based rule matches the process's CWD inode.
+                    " && cd {target_cwd}",
                     " && mkdir -p /tmp/.etc",
                     " && {{ cp /etc/ld.so.cache /tmp/.etc/ 2>/dev/null;",
                     " cp /etc/ld.so.conf /tmp/.etc/ 2>/dev/null;",
@@ -301,9 +308,10 @@ impl SandboxExecutor {
                     " && mount --bind /tmp/.etc /etc",
                     " && mount -t proc proc /proc",
                     " && mount -t tmpfs -o size=0 tmpfs /var/run",
-                    " && unset INVOCATION_ID JOURNAL_STREAM SYSTEMD_EXEC_PID MANAGERPID DBUS_SESSION_BUS_ADDRESS XDG_RUNTIME_DIR PWD && export PWD=/tmp HOME=/tmp && exec {cmd}",
+                    " && unset INVOCATION_ID JOURNAL_STREAM SYSTEMD_EXEC_PID MANAGERPID DBUS_SESSION_BUS_ADDRESS XDG_RUNTIME_DIR PWD && export PWD={target_cwd} HOME=/tmp && exec {cmd}",
                 ),
                 size = self.config.tmp_size_mb,
+                target_cwd = escaped_target_cwd,
                 cmd = inner_cmd,
             );
             // The mount_setup becomes the single arg to "sh -c" under unshare
@@ -676,6 +684,30 @@ mod tests {
             !result.active_layers.iter().any(|l| l.contains("tmpfs")),
             "tmpfs layer should not be present when disabled: {:?}",
             result.active_layers
+        );
+    }
+
+    #[tokio::test]
+    async fn test_sandbox_custom_cwd_with_tmpfs() {
+        let cwd = std::env::current_dir().unwrap();
+        let cwd_str = cwd.to_string_lossy();
+        let config = SandboxConfig {
+            tmp_size_mb: 10,
+            read_write_paths: vec![PathBuf::from("/tmp"), cwd.clone()],
+            ..SandboxConfig::default()
+        };
+        let executor = SandboxExecutor::new(config);
+
+        let result = executor
+            .run_shell_command("pwd", Some(&cwd_str), None)
+            .await
+            .expect("should succeed");
+
+        assert!(
+            result.stdout.trim().contains(&*cwd_str),
+            "Expected pwd to match custom CWD {} but got: {}",
+            cwd_str,
+            result.stdout
         );
     }
 

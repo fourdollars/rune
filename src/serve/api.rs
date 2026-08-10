@@ -4928,7 +4928,10 @@ mod isolation_tests {
         let (state, _tmp) = make_state();
 
         // Create a new note in the database
-        state.chat_db.create_note("test-note", "Test Note", None).ok();
+        state
+            .chat_db
+            .create_note("test-note", "Test Note", None)
+            .ok();
 
         // Get the note's markdown directory and create it
         let md_dir = state.note_markdown_dir("test-note");
@@ -4936,7 +4939,9 @@ mod isolation_tests {
 
         // Create a markdown file with h1 heading
         let md_path = md_dir.join("sample.md");
-        tokio::fs::write(&md_path, "# Loop Engineering — Rune\n\nSome content here.").await.unwrap();
+        tokio::fs::write(&md_path, "# Loop Engineering — Rune\n\nSome content here.")
+            .await
+            .unwrap();
 
         // Call build_note_list
         let result = super::build_note_list(&state, false).await;
@@ -4951,7 +4956,8 @@ mod isolation_tests {
         // Verify the title was extracted correctly from the first h1 heading
         let entry = test_note_entry.unwrap();
         assert_eq!(
-            entry.title, Some("Loop Engineering — Rune".to_string()),
+            entry.title,
+            Some("Loop Engineering — Rune".to_string()),
             "title should be extracted from the first h1 heading"
         );
     }

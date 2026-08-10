@@ -139,10 +139,19 @@ impl Agent {
         embedding: Option<EmbeddingEngine>,
     ) -> Self {
         let mut config = config;
-        // Auto-add CWD to allowed_paths_ro so read_file in project dir does not require confirm
+        // Auto-add CWD to allowed_paths_rw (if mount_pwd) or allowed_paths_ro (default) so read_file/write_file does not require confirm
         if let Ok(cwd) = std::env::current_dir() {
             let cwd_str = cwd.to_string_lossy().to_string();
-            if !config
+            if config.policy.mount_pwd {
+                if !config
+                    .policy
+                    .allowed_paths_rw
+                    .iter()
+                    .any(|p| cwd_str.starts_with(p.trim_end_matches("/")))
+                {
+                    config.policy.allowed_paths_rw.push(cwd_str.clone());
+                }
+            } else if !config
                 .policy
                 .allowed_paths_ro
                 .iter()
@@ -2969,6 +2978,28 @@ stderr: warning: unable to access '/home/user/.gitconfig': Permission denied";
             cfg.policy.allowed_paths_ro.is_empty(),
             "empty skills_dir should not be added"
         );
+    }
+
+    #[test]
+    fn test_mount_pwd_adds_cwd_to_allowed_paths_rw() {
+        use crate::config::RuneConfig;
+        let mut cfg = RuneConfig::default();
+        cfg.policy.mount_pwd = true;
+
+        if let Ok(cwd) = std::env::current_dir() {
+            let cwd_str = cwd.to_string_lossy().to_string();
+            if cfg.policy.mount_pwd {
+                if !cfg
+                    .policy
+                    .allowed_paths_rw
+                    .iter()
+                    .any(|p| cwd_str.starts_with(p.trim_end_matches("/")))
+                {
+                    cfg.policy.allowed_paths_rw.push(cwd_str.clone());
+                }
+            }
+            assert!(cfg.policy.allowed_paths_rw.contains(&cwd_str));
+        }
     }
 
     #[test]

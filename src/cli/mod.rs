@@ -1457,11 +1457,15 @@ pub async fn run() {
         }
     }
 
-    // Implicitly add CWD to allowed_paths_ro (runtime only, not persisted)
+    // Implicitly add CWD to allowed_paths_ro/rw (runtime only, not persisted)
     let mut cfg = cfg;
     if let Ok(cwd) = std::env::current_dir() {
         let cwd_str = cwd.to_string_lossy().to_string();
-        if !cfg.policy.allowed_paths_ro.contains(&cwd_str) {
+        if cfg.policy.mount_pwd {
+            if !cfg.policy.allowed_paths_rw.contains(&cwd_str) {
+                cfg.policy.allowed_paths_rw.push(cwd_str);
+            }
+        } else if !cfg.policy.allowed_paths_ro.contains(&cwd_str) {
             cfg.policy.allowed_paths_ro.push(cwd_str);
         }
     }

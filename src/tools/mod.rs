@@ -55,6 +55,7 @@ pub struct ToolRegistry {
     allowed_dirs: Vec<PathBuf>,
     allowed_domains: Vec<String>,
     tmp_size_mb: u64,
+    mount_pwd: bool,
 }
 
 impl ToolRegistry {
@@ -72,6 +73,7 @@ impl ToolRegistry {
             policy_allowed_files_ro: Vec::new(),
             policy_allowed_files_rw: Vec::new(),
             tmp_size_mb: 100,
+            mount_pwd: false,
         }
     }
 
@@ -139,6 +141,7 @@ impl ToolRegistry {
         self.policy_allowed_files_rw = policy.allowed_files_rw.clone();
         self.allowed_domains = policy.allowed_domains.clone();
         self.tmp_size_mb = policy.max_tmp_mb;
+        self.mount_pwd = policy.mount_pwd;
     }
 
     /// Create a sandbox executor with the registry's config.
@@ -197,6 +200,12 @@ impl ToolRegistry {
             .iter()
             .map(|p| std::fs::canonicalize(p).unwrap_or_else(|_| p.clone()))
             .collect();
+        for p in &self.policy_allowed_paths_rw {
+            let pb = std::fs::canonicalize(p).unwrap_or_else(|_| PathBuf::from(p));
+            if !rw_paths.contains(&pb) {
+                rw_paths.push(pb);
+            }
+        }
         // Essential device nodes that nearly all commands need
         rw_paths.push(PathBuf::from("/dev/null"));
         rw_paths.push(PathBuf::from("/dev/urandom"));
@@ -249,6 +258,15 @@ impl ToolRegistry {
 
     /// Run a command in sandbox and return ToolOutput.
     async fn sandboxed_cmd(&self, cmd: &str, timeout_secs: u64, cwd: Option<&str>) -> ToolOutput {
+        let effective_cwd = cwd.map(|s| s.to_string()).or_else(|| {
+            if self.mount_pwd {
+                std::env::current_dir()
+                    .ok()
+                    .map(|p| p.to_string_lossy().to_string())
+            } else {
+                None
+            }
+        });
         let executor = self.sandbox(timeout_secs);
 
         // Build a PATH that includes directories from allowed_paths_ro where allowed
@@ -273,7 +291,10 @@ impl ToolRegistry {
             cmd.to_string()
         };
 
-        match executor.run_shell_command(&effective_cmd, cwd, None).await {
+        match executor
+            .run_shell_command(&effective_cmd, effective_cwd.as_deref(), None)
+            .await
+        {
             Ok(result) => {
                 // Include sandbox diagnostics in all returned ToolOutput values
                 if result.timed_out {
@@ -572,10 +593,7 @@ stderr: {}",
             Some(c) => c.to_string(),
             None => return ToolOutput::err("missing required argument: cmd"),
         };
-        let cwd = args
-            .get("cwd")
-            .and_then(|v| v.as_str())
-            .map(|s| s.to_string());
+        let cwd = args.get("cwd").and_then(|v| v.as_str());
         let timeout_secs = args
             .get("timeout_secs")
             .and_then(|v| v.as_u64())
@@ -1418,6 +1436,35 @@ mod tests {
         assert!(
             !schema.contains("write_markdown"),
             "CLI mode should not have write_markdown"
+        );
+    }
+
+    #[test]
+    fn test_mount_pwd_policy_in_tool_registry() {
+        let mut registry = ToolRegistry::new(vec![]);
+        let mut policy = crate::config::PolicyConfig::default();
+        assert!(!registry.mount_pwd);
+
+        policy.mount_pwd = true;
+        registry.set_policy(&policy);
+        assert!(registry.mount_pwd);
+    }
+
+    #[test]
+    fn test_sandbox_includes_policy_allowed_paths_rw() {
+        let mut registry = ToolRegistry::new(vec![]);
+        let mut policy = crate::config::PolicyConfig::default();
+        policy.allowed_paths_rw = vec!["/tmp/test_rw_dir".to_string()];
+        registry.set_policy(&policy);
+
+        let executor = registry.sandbox(10);
+        assert!(
+            executor
+                .config()
+                .read_write_paths
+                .iter()
+                .any(|p| p.to_string_lossy().contains("test_rw_dir")),
+            "Landlock read_write_paths should include policy_allowed_paths_rw"
         );
     }
 }
