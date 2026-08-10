@@ -2118,7 +2118,7 @@ function renderNoteList() {
 
         const folderLabel = document.createElement('span');
         folderLabel.className = 'label';
-        folderLabel.textContent = s.name;
+        folderLabel.textContent = s.title || s.name;
         folderLabel.style.fontWeight = '500';
 
         folderRow.appendChild(chevron);

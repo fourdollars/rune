@@ -202,6 +202,8 @@ pub enum SseMsg {
 pub struct NoteListEntry {
     pub id: String,
     pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
     pub files: Vec<String>,
     pub public: bool,
     /// Which files are publicly visible (only names that are public=true)
@@ -386,6 +388,7 @@ pub async fn build_note_list(state: &ServerState, is_guest: bool) -> Vec<NoteLis
         entries.push(NoteListEntry {
             id: s.id.clone(),
             name: s.name.clone(),
+            title: first_heading(&md_dir).await,
             files,
             public: s.public,
             public_files,
@@ -393,6 +396,34 @@ pub async fn build_note_list(state: &ServerState, is_guest: bool) -> Vec<NoteLis
         });
     }
     entries
+}
+
+async fn first_heading(md_dir: &std::path::Path) -> Option<String> {
+    let mut rd = tokio::fs::read_dir(md_dir).await.ok()?;
+    let mut entries = Vec::new();
+    while let Ok(Some(entry)) = rd.next_entry().await {
+        entries.push(entry.file_name().to_string_lossy().to_string());
+    }
+    entries.sort();
+
+    for name in entries {
+        if !name.ends_with(".md") {
+            continue;
+        }
+        let path = md_dir.join(&name);
+        let content = tokio::fs::read_to_string(&path).await.ok()?;
+        for line in content.lines() {
+            let trimmed = line.trim_start();
+            if let Some(rest) = trimmed.strip_prefix("# ") {
+                let title = rest.trim();
+                if !title.is_empty() {
+                    return Some(title.to_string());
+                }
+            }
+        }
+    }
+
+    None
 }
 
 /// Broadcast a message to a specific note room only.
@@ -1853,6 +1884,7 @@ pub async fn public_notes_list_handler(
             continue;
         }
         any = true;
+        let md_dir = state.note_markdown_dir(&note.id);
         items.push_str(&format!(
             "<div class='note-section'><h3>&#128193; {}</h3><ul>",
             html_escape(&note.name)
@@ -1860,10 +1892,13 @@ pub async fn public_notes_list_handler(
         for fname in &public_files {
             let slug = fname.strip_suffix(".md").unwrap_or(fname);
             let url = format!("/notes/{}/{}", url_encode(&note.id), url_encode(slug));
+            let title = first_heading_from_file(&md_dir.join(fname))
+                .await
+                .unwrap_or_else(|| fname.clone());
             items.push_str(&format!(
                 "<li><a href='{}'>{}</a></li>",
                 url,
-                html_escape(fname)
+                html_escape(&title)
             ));
         }
         items.push_str("</ul></div>");
@@ -1949,14 +1984,18 @@ pub async fn public_note_index_handler(
     };
 
     let public_files = state.chat_db.list_public_files(&note_id);
+    let md_dir = state.note_markdown_dir(&note_id);
     let mut items = String::new();
     for fname in &public_files {
         let slug = fname.strip_suffix(".md").unwrap_or(fname);
         let url = format!("/notes/{}/{}", url_encode(&note_id), url_encode(slug));
+        let title = first_heading_from_file(&md_dir.join(fname))
+            .await
+            .unwrap_or_else(|| fname.clone());
         items.push_str(&format!(
             "<li><a href='{}'>{}</a></li>",
             url,
-            html_escape(fname)
+            html_escape(&title)
         ));
     }
     if items.is_empty() {
@@ -2082,6 +2121,7 @@ pub async fn public_raw_handler(
         )
             .into_response();
     }
+
     let file_path = state.note_markdown_dir(&note_id).join(&filename);
     match tokio::fs::read_to_string(&file_path).await {
         Ok(content) => (
@@ -2100,6 +2140,20 @@ pub async fn public_raw_handler(
         )
             .into_response(),
     }
+}
+
+async fn first_heading_from_file(file_path: &std::path::Path) -> Option<String> {
+    let content = tokio::fs::read_to_string(file_path).await.ok()?;
+    for line in content.lines() {
+        let trimmed = line.trim_start();
+        if let Some(rest) = trimmed.strip_prefix("# ") {
+            let title = rest.trim();
+            if !title.is_empty() {
+                return Some(title.to_string());
+            }
+        }
+    }
+    None
 }
 
 fn html_escape(s: &str) -> String {
@@ -2849,6 +2903,7 @@ mod tests {
             notes: vec![NoteListEntry {
                 id: "test".into(),
                 name: "Test".into(),
+                title: None,
                 files: vec!["spec.md".into()],
                 public: false,
                 public_files: vec![],
@@ -2955,6 +3010,7 @@ mod tests {
         let entry = NoteListEntry {
             id: "s1".into(),
             name: "Session One".into(),
+            title: None,
             files: vec!["readme.md".into()],
             public: false,
             public_files: vec![],
@@ -4865,5 +4921,38 @@ mod isolation_tests {
         assert_eq!(body2["ok"], true);
         assert_eq!(body2["current_file"], "public.md");
         assert_eq!(body2["file_content"], "# Public File Content");
+    }
+
+    #[tokio::test]
+    async fn test_build_note_list_uses_first_h1_as_title() {
+        let (state, _tmp) = make_state();
+
+        // Create a new note in the database
+        state.chat_db.create_note("test-note", "Test Note", None).ok();
+
+        // Get the note's markdown directory and create it
+        let md_dir = state.note_markdown_dir("test-note");
+        tokio::fs::create_dir_all(&md_dir).await.unwrap();
+
+        // Create a markdown file with h1 heading
+        let md_path = md_dir.join("sample.md");
+        tokio::fs::write(&md_path, "# Loop Engineering — Rune\n\nSome content here.").await.unwrap();
+
+        // Call build_note_list
+        let result = super::build_note_list(&state, false).await;
+
+        // Find our test note
+        let test_note_entry = result.iter().find(|n| n.name == "Test Note");
+        assert!(
+            test_note_entry.is_some(),
+            "test-note should be in the note list"
+        );
+
+        // Verify the title was extracted correctly from the first h1 heading
+        let entry = test_note_entry.unwrap();
+        assert_eq!(
+            entry.title, Some("Loop Engineering — Rune".to_string()),
+            "title should be extracted from the first h1 heading"
+        );
     }
 }
