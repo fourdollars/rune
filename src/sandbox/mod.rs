@@ -39,6 +39,8 @@ pub struct SandboxConfig {
     pub allowed_syscalls: Vec<String>,
     /// Tmpfs size for isolated /tmp in MB (0 = use host /tmp without isolation).
     pub tmp_size_mb: u64,
+    /// Session-scoped temporary directory to bind-mount over /tmp (None = use isolated per-invocation tmpfs).
+    pub session_tmp_dir: Option<PathBuf>,
 }
 
 impl Default for SandboxConfig {
@@ -74,6 +76,7 @@ impl Default for SandboxConfig {
             max_pids: 64,
             allowed_syscalls: Vec::new(),
             tmp_size_mb: 100,
+            session_tmp_dir: None,
         }
     }
 }
@@ -284,13 +287,26 @@ impl SandboxExecutor {
         let target_cwd = cwd.unwrap_or("/tmp");
         let escaped_target_cwd = shell_escape(target_cwd);
 
-        // If tmpfs isolation is active, mount tmpfs + isolate /etc and /proc
+        let mount_tmp = if let Some(ref session_dir) = self.config.session_tmp_dir {
+            let escaped_session_dir = shell_escape(&session_dir.to_string_lossy());
+            format!(
+                "mkdir -p {} && mount --bind {} /tmp",
+                escaped_session_dir, escaped_session_dir
+            )
+        } else {
+            format!(
+                "mount -t tmpfs -o size={}M,mode=1777 tmpfs /tmp",
+                self.config.tmp_size_mb
+            )
+        };
+
+        // If tmpfs isolation is active, mount tmpfs/session_dir + isolate /etc and /proc
         let inner_cmd = if use_tmpfs {
             // Build the full script that runs inside the mount namespace.
             // unshare -- needs a single command, so wrap in sh -c "script"
             let mount_setup = format!(
                 concat!(
-                    "mount -t tmpfs -o size={size}M,mode=1777 tmpfs /tmp",
+                    "{mount_tmp}",
                     // cd re-resolves CWD through the new mount so that Landlock's
                     // inode-based rule matches the process's CWD inode.
                     " && cd {target_cwd}",
@@ -310,7 +326,7 @@ impl SandboxExecutor {
                     " && mount -t tmpfs -o size=0 tmpfs /var/run",
                     " && unset INVOCATION_ID JOURNAL_STREAM SYSTEMD_EXEC_PID MANAGERPID DBUS_SESSION_BUS_ADDRESS XDG_RUNTIME_DIR PWD && export PWD={target_cwd} HOME=/tmp && exec {cmd}",
                 ),
-                size = self.config.tmp_size_mb,
+                mount_tmp = mount_tmp,
                 target_cwd = escaped_target_cwd,
                 cmd = inner_cmd,
             );

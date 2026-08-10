@@ -1,8 +1,44 @@
 use serde::Serialize;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
 use tracing::info;
 
 use crate::sandbox::{SandboxConfig, SandboxExecutor};
+
+static SESSION_COUNTER: AtomicU64 = AtomicU64::new(1);
+
+/// Session-scoped temporary directory manager for sandbox /tmp sharing.
+pub struct SessionTmp {
+    path: PathBuf,
+}
+
+impl SessionTmp {
+    pub fn new() -> Self {
+        let count = SESSION_COUNTER.fetch_add(1, Ordering::Relaxed);
+        let id = format!("rune-session-{}-{}", std::process::id(), count);
+        let base_dir = if std::path::Path::new("/var/tmp").exists() {
+            PathBuf::from("/var/tmp/rune-sessions")
+        } else {
+            std::env::temp_dir()
+        };
+        let path = base_dir.join(id);
+        let _ = std::fs::create_dir_all(&path);
+        Self { path }
+    }
+
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+}
+
+impl Drop for SessionTmp {
+    fn drop(&mut self) {
+        if self.path.exists() {
+            let _ = std::fs::remove_dir_all(&self.path);
+        }
+    }
+}
 
 const MAX_FILE_SIZE: usize = 32 * 1024; // 32KB
 
@@ -56,6 +92,7 @@ pub struct ToolRegistry {
     allowed_domains: Vec<String>,
     tmp_size_mb: u64,
     mount_pwd: bool,
+    session_tmp: Option<Arc<SessionTmp>>,
 }
 
 impl ToolRegistry {
@@ -74,6 +111,7 @@ impl ToolRegistry {
             policy_allowed_files_rw: Vec::new(),
             tmp_size_mb: 100,
             mount_pwd: false,
+            session_tmp: Some(Arc::new(SessionTmp::new())),
         }
     }
 
@@ -242,6 +280,14 @@ impl ToolRegistry {
             }
         }
 
+        let session_tmp_dir = self.session_tmp.as_ref().map(|s| s.path().to_path_buf());
+        if let Some(ref sdir) = session_tmp_dir {
+            let pb = std::fs::canonicalize(sdir).unwrap_or_else(|_| sdir.clone());
+            if !rw_paths.contains(&pb) {
+                rw_paths.push(pb);
+            }
+        }
+
         let config = SandboxConfig {
             timeout_secs,
             read_write_paths: rw_paths,
@@ -250,6 +296,7 @@ impl ToolRegistry {
             allowed_domains: self.allowed_domains.clone(),
             allowed_syscalls: self.policy_allowed_syscalls.clone(),
             tmp_size_mb: self.tmp_size_mb,
+            session_tmp_dir,
 
             ..SandboxConfig::default()
         };
@@ -1465,6 +1512,70 @@ mod tests {
                 .iter()
                 .any(|p| p.to_string_lossy().contains("test_rw_dir")),
             "Landlock read_write_paths should include policy_allowed_paths_rw"
+        );
+    }
+
+    #[test]
+    fn test_session_tmp_lifecycle() {
+        let path = {
+            let session = SessionTmp::new();
+            let path = session.path().to_path_buf();
+            assert!(
+                path.exists(),
+                "Session tmp directory should exist upon creation"
+            );
+            path
+        };
+        assert!(
+            !path.exists(),
+            "Session tmp directory should be removed after drop"
+        );
+    }
+
+    #[test]
+    fn test_tool_registry_creates_session_tmp() {
+        let registry = ToolRegistry::new(vec![]);
+        let executor = registry.sandbox(10);
+        assert!(
+            executor.config().session_tmp_dir.is_some(),
+            "ToolRegistry should populate session_tmp_dir in SandboxConfig"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_session_tmp_cross_tool_persistence_in_sandbox() {
+        let mut registry = ToolRegistry::new(vec![]);
+        let mut policy = crate::config::PolicyConfig::default();
+        policy.mode = "unrestricted".to_string();
+        registry.set_policy(&policy);
+
+        // Tool 1: write to /tmp/test_session_file.txt inside sandbox
+        let res1 = registry
+            .execute_cmd(serde_json::json!({
+                "cmd": "echo 'session_data_123' > /tmp/test_session_file.txt"
+            }))
+            .await;
+        assert_eq!(
+            res1.is_error, false,
+            "Tool 1 execution failed: {}",
+            res1.content
+        );
+
+        // Tool 2: read /tmp/test_session_file.txt in a subsequent tool invocation
+        let res2 = registry
+            .execute_cmd(serde_json::json!({
+                "cmd": "cat /tmp/test_session_file.txt"
+            }))
+            .await;
+        assert_eq!(
+            res2.is_error, false,
+            "Tool 2 execution failed: {}",
+            res2.content
+        );
+        assert!(
+            res2.content.contains("session_data_123"),
+            "Expected /tmp content to persist across tool calls within session, got: {}",
+            res2.content
         );
     }
 }
