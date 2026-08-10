@@ -1165,7 +1165,7 @@ async fn execute_prompt(agent: &mut Agent, input: &str) -> StopReason {
     if let Some(s) = spinner {
         s.finish_and_clear();
     }
-    display_result(&result, agent.is_interactive());
+    display_result(&result, false);
 
     // Show tool calls summary (all tools, not just execute_cmd)
     let log = agent.tool_calls_log();
