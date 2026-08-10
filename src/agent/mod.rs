@@ -259,6 +259,14 @@ impl Agent {
         }
     }
 
+    pub fn provider_usage(&self) -> Option<crate::provider::ProviderUsageStats> {
+        self.provider.usage()
+    }
+
+    pub fn copilot_usage(&self) -> Option<crate::provider::CopilotUsageStats> {
+        self.provider.copilot_usage()
+    }
+
     pub fn map_path_to_worktree(&self, path_str: &str) -> String {
         let wt_path = match &self.worktree_path {
             Some(p) => p,

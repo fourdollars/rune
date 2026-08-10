@@ -162,7 +162,12 @@ pub enum SseMsg {
         thinking: String,
     },
     #[serde(rename = "model_changed")]
-    ModelChanged { model: String, thinking: String },
+    ModelChanged {
+        model: String,
+        thinking: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        usage: Option<crate::provider::ProviderUsageStats>,
+    },
     #[serde(rename = "thinking_changed")]
     ThinkingChanged { thinking: String },
     #[serde(rename = "approval_request")]
@@ -1172,9 +1177,11 @@ pub async fn note_patch_handler(
             "off".to_string()
         };
 
+        let usage = state.provider_registry.read().await.usage();
         let msg = SseMsg::ModelChanged {
             model: model.clone(),
             thinking: effective_thinking,
+            usage,
         };
         broadcast_to_room(&room, &msg);
     }
@@ -2209,6 +2216,13 @@ async fn broadcast_file_list(state: &ServerState, note_id: &str) {
     broadcast_note_list(state).await;
 }
 
+/// GET /api/usage — return usage statistics for active LLM provider.
+pub async fn usage_handler(State(state): State<ServerState>) -> impl IntoResponse {
+    let registry = state.provider_registry.read().await;
+    let stats = registry.usage().unwrap_or_default();
+    Json(stats)
+}
+
 async fn broadcast_note_list(state: &ServerState) {
     let notes = build_note_list(state, false).await;
     let msg = SseMsg::NoteList {
@@ -3063,6 +3077,9 @@ mod tests {
             chat_db: crate::serve::db::ChatDb::open(std::path::Path::new(":memory:")).unwrap(),
             data_dir: std::path::PathBuf::from("/tmp/rune-test"),
             mcp_sessions: crate::mcp::mcp_session::McpSessionStore::new(),
+            provider_registry: Arc::new(tokio::sync::RwLock::new(
+                crate::provider::ProviderRegistry::new(),
+            )),
         }
     }
 }
@@ -3161,6 +3178,9 @@ mod integration_tests {
             chat_db: db,
             data_dir: tmp.path().join(".rune"),
             mcp_sessions: crate::mcp::mcp_session::McpSessionStore::new(),
+            provider_registry: Arc::new(tokio::sync::RwLock::new(
+                crate::provider::ProviderRegistry::new(),
+            )),
         }
     }
 
@@ -3736,6 +3756,9 @@ mod integration_tests {
             chat_db: db,
             data_dir: tmp.path().join(".rune"),
             mcp_sessions: crate::mcp::mcp_session::McpSessionStore::new(),
+            provider_registry: Arc::new(tokio::sync::RwLock::new(
+                crate::provider::ProviderRegistry::new(),
+            )),
         };
 
         // Subscribe to note-a's room BEFORE triggering visibility change on note-b
@@ -3813,6 +3836,9 @@ mod isolation_tests {
             chat_db: db,
             data_dir: tmp.path().join(".rune"),
             mcp_sessions: crate::mcp::mcp_session::McpSessionStore::new(),
+            provider_registry: Arc::new(tokio::sync::RwLock::new(
+                crate::provider::ProviderRegistry::new(),
+            )),
         };
         (state, tmp)
     }
@@ -3877,6 +3903,9 @@ mod isolation_tests {
             chat_db: db,
             data_dir: tmp.path().join(".rune"),
             mcp_sessions: crate::mcp::mcp_session::McpSessionStore::new(),
+            provider_registry: Arc::new(tokio::sync::RwLock::new(
+                crate::provider::ProviderRegistry::new(),
+            )),
         };
         let active_model = state.effective_model("note-x").await;
         assert_eq!(active_model, model_id);
@@ -4161,6 +4190,9 @@ mod isolation_tests {
             chat_db: db,
             data_dir: tmp.path().join(".rune"),
             mcp_sessions: crate::mcp::mcp_session::McpSessionStore::new(),
+            provider_registry: Arc::new(tokio::sync::RwLock::new(
+                crate::provider::ProviderRegistry::new(),
+            )),
         };
 
         // Create note in DB so room can be created
@@ -4220,6 +4252,9 @@ mod isolation_tests {
             chat_db: db,
             data_dir: tmp.path().join(".rune"),
             mcp_sessions: crate::mcp::mcp_session::McpSessionStore::new(),
+            provider_registry: Arc::new(tokio::sync::RwLock::new(
+                crate::provider::ProviderRegistry::new(),
+            )),
         };
 
         let session = crate::serve::oauth::Session {
@@ -4286,6 +4321,9 @@ mod isolation_tests {
             chat_db: db,
             data_dir: tmp.path().join(".rune"),
             mcp_sessions: crate::mcp::mcp_session::McpSessionStore::new(),
+            provider_registry: Arc::new(tokio::sync::RwLock::new(
+                crate::provider::ProviderRegistry::new(),
+            )),
         };
 
         let session = crate::serve::oauth::Session {
@@ -4350,6 +4388,9 @@ mod isolation_tests {
             chat_db: db,
             data_dir: tmp.path().join(".rune"),
             mcp_sessions: crate::mcp::mcp_session::McpSessionStore::new(),
+            provider_registry: Arc::new(tokio::sync::RwLock::new(
+                crate::provider::ProviderRegistry::new(),
+            )),
         };
 
         let session = crate::serve::oauth::Session {
@@ -4427,6 +4468,9 @@ mod isolation_tests {
             chat_db: db,
             data_dir: tmp.path().join(".rune"),
             mcp_sessions: crate::mcp::mcp_session::McpSessionStore::new(),
+            provider_registry: Arc::new(tokio::sync::RwLock::new(
+                crate::provider::ProviderRegistry::new(),
+            )),
         };
 
         let app = Router::new()
@@ -4497,6 +4541,9 @@ mod isolation_tests {
             chat_db: db,
             data_dir: tmp.path().join(".rune"),
             mcp_sessions: crate::mcp::mcp_session::McpSessionStore::new(),
+            provider_registry: Arc::new(tokio::sync::RwLock::new(
+                crate::provider::ProviderRegistry::new(),
+            )),
         };
 
         let app = Router::new()
@@ -4549,6 +4596,9 @@ mod isolation_tests {
             chat_db: db,
             data_dir: tmp.path().join(".rune"),
             mcp_sessions: crate::mcp::mcp_session::McpSessionStore::new(),
+            provider_registry: Arc::new(tokio::sync::RwLock::new(
+                crate::provider::ProviderRegistry::new(),
+            )),
         };
 
         let app = Router::new()
@@ -4633,6 +4683,9 @@ mod isolation_tests {
             chat_db: db,
             data_dir: tmp.path().join(".rune"),
             mcp_sessions: crate::mcp::mcp_session::McpSessionStore::new(),
+            provider_registry: Arc::new(tokio::sync::RwLock::new(
+                crate::provider::ProviderRegistry::new(),
+            )),
         };
 
         let app = Router::new()
@@ -4693,6 +4746,9 @@ mod isolation_tests {
             chat_db: db,
             data_dir: tmp.path().join(".rune"),
             mcp_sessions: crate::mcp::mcp_session::McpSessionStore::new(),
+            provider_registry: Arc::new(tokio::sync::RwLock::new(
+                crate::provider::ProviderRegistry::new(),
+            )),
         };
 
         use axum::routing::{delete, put};
@@ -4795,6 +4851,9 @@ mod isolation_tests {
             chat_db: db,
             data_dir: tmp.path().join(".rune"),
             mcp_sessions: crate::mcp::mcp_session::McpSessionStore::new(),
+            provider_registry: Arc::new(tokio::sync::RwLock::new(
+                crate::provider::ProviderRegistry::new(),
+            )),
         };
 
         let session = crate::serve::oauth::Session {
@@ -4871,6 +4930,9 @@ mod isolation_tests {
             chat_db: db,
             data_dir: tmp.path().join(".rune"),
             mcp_sessions: crate::mcp::mcp_session::McpSessionStore::new(),
+            provider_registry: Arc::new(tokio::sync::RwLock::new(
+                crate::provider::ProviderRegistry::new(),
+            )),
         };
 
         let session = crate::serve::oauth::Session {

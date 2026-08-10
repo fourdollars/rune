@@ -248,17 +248,11 @@ fn display_result(reason: &StopReason, streamed: bool) {
     use std::io::Write;
     match reason {
         StopReason::FinalAnswer(ans) => {
-            // Use stderr for separators but flush stdout between them
-            let _ = std::io::stderr().flush();
-            eprintln!();
-            eprintln!("{}", "─".repeat(60).dimmed());
-            let _ = std::io::stderr().flush();
             if !streamed {
+                let _ = std::io::stderr().flush();
                 println!("{}", ans);
                 let _ = std::io::stdout().flush();
             }
-            eprintln!("{}", "─".repeat(60).dimmed());
-            let _ = std::io::stderr().flush();
         }
         StopReason::MaxSteps => {
             eprintln!("\n{}", "⚠ Stopped: maximum steps reached".yellow());
@@ -1165,7 +1159,11 @@ async fn execute_prompt(agent: &mut Agent, input: &str) -> StopReason {
     if let Some(s) = spinner {
         s.finish_and_clear();
     }
-    display_result(&result, false);
+    display_result(&result, agent.is_interactive());
+    // Ensure ⚡ summary starts on a new line after streaming output
+    if agent.is_interactive() {
+        eprintln!();
+    }
 
     // Show tool calls summary (all tools, not just execute_cmd)
     let log = agent.tool_calls_log();
@@ -1187,13 +1185,27 @@ async fn execute_prompt(agent: &mut Agent, input: &str) -> StopReason {
     }
     // Run summary
     if agent.step_count() > 0 {
-        eprintln!(
-            "  {} [{} steps | {} tokens | {} tool calls]",
-            "⚡".dimmed(),
-            agent.step_count(),
-            agent.tokens_used(),
-            agent.tool_call_count()
-        );
+        let model_label = match &agent.config.thinking {
+            Some(t) if t != "off" && t != "none" => format!("{} {}", agent.config.model, t),
+            _ => agent.config.model.clone(),
+        };
+
+        let mut summary_parts = vec![
+            model_label,
+            format!("{} steps", agent.step_count()),
+            format!("{} tokens", agent.tokens_used()),
+            format!("{} tool calls", agent.tool_call_count()),
+        ];
+        if let Some(usage) = agent.provider_usage() {
+            if let (Some(pct), Some(rem), Some(ent)) = (
+                usage.quota_percent_remaining,
+                usage.quota_remaining,
+                usage.quota_entitlement,
+            ) {
+                summary_parts.push(format!("{:.1}% {}/{} quota", pct, rem, ent));
+            }
+        }
+        eprintln!("  {} [{}]", "⚡".dimmed(), summary_parts.join(" | "));
     }
     let _ = std::io::Write::flush(&mut std::io::stderr());
     result

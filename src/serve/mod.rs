@@ -60,6 +60,8 @@ pub struct ServerState {
     pub data_dir: PathBuf,
     /// Legacy MCP protocol session store (2025-03-26 ~ 2025-11-25 Streamable HTTP compat).
     pub mcp_sessions: crate::mcp::mcp_session::McpSessionStore,
+    /// Provider registry for LLM chat and usage tracking.
+    pub provider_registry: Arc<tokio::sync::RwLock<crate::provider::ProviderRegistry>>,
 }
 
 impl ServerState {
@@ -340,6 +342,10 @@ pub async fn run(config: RuneConfig, opts: NotesOptions) {
         .map(|m| m.id.clone())
         .unwrap_or_else(|| serve_model.clone());
 
+    let initial_registry = crate::serve::api::build_provider_pub(&config)
+        .unwrap_or_else(|_| crate::provider::ProviderRegistry::new());
+    let provider_registry = Arc::new(tokio::sync::RwLock::new(initial_registry));
+
     let state = ServerState {
         config: config.clone(),
         sessions: oauth::SessionStore::new(),
@@ -352,6 +358,7 @@ pub async fn run(config: RuneConfig, opts: NotesOptions) {
         chat_db,
         data_dir: data_dir(),
         mcp_sessions: crate::mcp::mcp_session::McpSessionStore::new(),
+        provider_registry,
     };
 
     // Session sweep (every 5 minutes, removes expired sessions)
@@ -536,6 +543,7 @@ pub async fn run(config: RuneConfig, opts: NotesOptions) {
         .route("/", get(login_handler))
         .route("/api/events", get(api::events_handler))
         .route("/api/me", get(api::me_handler))
+        .route("/api/usage", get(api::usage_handler))
         .route("/api/auth/config", get(oauth::auth_config_handler))
         .route("/auth/github", get(oauth::oauth_start_handler))
         .route("/auth/github/callback", get(oauth::oauth_callback_handler))
@@ -1383,6 +1391,9 @@ mod tests {
             chat_db: db,
             data_dir: std::path::PathBuf::from("/tmp/rune-test"),
             mcp_sessions: crate::mcp::mcp_session::McpSessionStore::new(),
+            provider_registry: Arc::new(tokio::sync::RwLock::new(
+                crate::provider::ProviderRegistry::new(),
+            )),
         };
 
         assert_eq!(*state.global_default_model.read().await, first_model);
@@ -1416,6 +1427,9 @@ mod tests {
             chat_db: db,
             data_dir: std::path::PathBuf::from("/tmp/rune-test"),
             mcp_sessions: crate::mcp::mcp_session::McpSessionStore::new(),
+            provider_registry: Arc::new(tokio::sync::RwLock::new(
+                crate::provider::ProviderRegistry::new(),
+            )),
         };
 
         assert_eq!(*state.active_file.read().await, "main.md");
@@ -1443,6 +1457,9 @@ mod tests {
             chat_db: db,
             data_dir: std::path::PathBuf::from("/tmp/rune-test"),
             mcp_sessions: crate::mcp::mcp_session::McpSessionStore::new(),
+            provider_registry: Arc::new(tokio::sync::RwLock::new(
+                crate::provider::ProviderRegistry::new(),
+            )),
         };
 
         // Verify per-room broadcast channel is functional

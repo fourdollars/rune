@@ -353,9 +353,173 @@ pub struct ModelInfo {
     pub supported_endpoints: Vec<String>,
 }
 
+/// Provider-agnostic usage and quota statistics.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct ProviderUsageStats {
+    /// Active provider name (e.g. "github-copilot", "gemini", "openai", "openrouter", "ollama", "anthropic")
+    pub provider: String,
+    /// Friendly plan/tier name (e.g. "Copilot Pro", "Gemini API", "OpenAI Pay-as-you-go", "OpenRouter API")
+    pub plan_name: String,
+    /// SKU or tier identifier (if available)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sku: Option<String>,
+    /// Cumulative tokens used in current session (prompt + completion)
+    pub session_tokens: u64,
+    /// Cumulative requests in current session
+    pub session_requests: u64,
+    /// Remaining quota percentage (e.g. 80.5)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub quota_percent_remaining: Option<f64>,
+    /// Remaining quota units (e.g. 36247)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub quota_remaining: Option<u64>,
+    /// Total entitlement quota units (e.g. 45000)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub quota_entitlement: Option<u64>,
+    /// Additional provider-specific metadata (e.g. quota snapshots, rate limits)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub details: Option<serde_json::Value>,
+}
+
+pub type CopilotUsageStats = ProviderUsageStats;
+
+impl ProviderUsageStats {
+    pub fn from_copilot_token_json(
+        json: &serde_json::Value,
+        session_tokens: u64,
+        session_requests: u64,
+    ) -> Self {
+        let sku = json
+            .get("sku")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+        let individual = json.get("individual").and_then(|v| v.as_bool());
+        let chat_enabled = json.get("chat_enabled").and_then(|v| v.as_bool());
+        let quota_snapshot = json.get("quota_snapshots").cloned();
+
+        let endpoint_api = json
+            .pointer("/endpoints/api")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+
+        let plan_name = match sku.as_deref() {
+            Some(s) if s.contains("business") => "Copilot Business".to_string(),
+            Some(s) if s.contains("enterprise") => "Copilot Enterprise".to_string(),
+            Some(s) if s.contains("pro") => "Copilot Pro".to_string(),
+            Some(s) if s.contains("individual") => "Copilot Individual".to_string(),
+            Some(s) if s.contains("team") => "Copilot Team".to_string(),
+            Some(s) if s.contains("free") => "Copilot Free".to_string(),
+            Some(s) => format!("Copilot ({})", s),
+            None => {
+                if endpoint_api.contains("business") {
+                    "Copilot Business".to_string()
+                } else if endpoint_api.contains("enterprise") {
+                    "Copilot Enterprise".to_string()
+                } else if endpoint_api.contains("individual") {
+                    "Copilot Individual".to_string()
+                } else if individual == Some(true) {
+                    "Copilot Individual".to_string()
+                } else {
+                    "GitHub Copilot".to_string()
+                }
+            }
+        };
+
+        let mut details = serde_json::Map::new();
+        if !endpoint_api.is_empty() {
+            details.insert(
+                "endpoint_api".to_string(),
+                serde_json::Value::String(endpoint_api.to_string()),
+            );
+        }
+        if let Some(ind) = individual {
+            details.insert("individual".to_string(), serde_json::Value::Bool(ind));
+        }
+        if let Some(chat) = chat_enabled {
+            details.insert("chat_enabled".to_string(), serde_json::Value::Bool(chat));
+        }
+
+        let mut quota_percent_remaining = None;
+        let mut quota_remaining = None;
+        let mut quota_entitlement = None;
+
+        if let Some(ref qs) = quota_snapshot {
+            details.insert("quota_snapshots".to_string(), qs.clone());
+            let snap = qs
+                .get("premium_interactions")
+                .or_else(|| qs.as_object().and_then(|m| m.values().next()));
+            if let Some(s) = snap {
+                quota_percent_remaining = s.get("percent_remaining").and_then(|v| v.as_f64());
+                quota_remaining = s
+                    .get("remaining")
+                    .and_then(|v| v.as_u64())
+                    .or_else(|| s.get("quota_remaining").and_then(|v| v.as_u64()));
+                quota_entitlement = s.get("entitlement").and_then(|v| v.as_u64());
+            }
+        }
+
+        Self {
+            provider: "github-copilot".to_string(),
+            plan_name,
+            sku,
+            session_tokens,
+            session_requests,
+            quota_percent_remaining,
+            quota_remaining,
+            quota_entitlement,
+            details: if details.is_empty() {
+                None
+            } else {
+                Some(serde_json::Value::Object(details))
+            },
+        }
+    }
+
+    pub fn from_token_json(
+        json: &serde_json::Value,
+        session_tokens: u64,
+        session_requests: u64,
+    ) -> Self {
+        Self::from_copilot_token_json(json, session_tokens, session_requests)
+    }
+
+    /// Formatted single-line summary for CLI output.
+    pub fn summary_line(&self) -> String {
+        let formatted_tokens = if self.session_tokens >= 1000 {
+            format!("{:.1}k", self.session_tokens as f64 / 1000.0)
+        } else {
+            self.session_tokens.to_string()
+        };
+        let quota_str = match (
+            self.quota_percent_remaining,
+            self.quota_remaining,
+            self.quota_entitlement,
+        ) {
+            (Some(pct), Some(rem), Some(ent)) => {
+                format!(" | Quota: {:.1}% ({}/{})", pct, rem, ent)
+            }
+            _ => String::new(),
+        };
+        format!(
+            "Provider: {} ({}) | Session Tokens: {} | Requests: {}{}",
+            self.provider, self.plan_name, formatted_tokens, self.session_requests, quota_str
+        )
+    }
+}
+
 /// Provider trait.
 pub trait Provider: Send + Sync {
     fn name(&self) -> &str;
+
+    /// Get usage statistics for the current provider.
+    fn usage(&self) -> Option<ProviderUsageStats> {
+        None
+    }
+
+    /// Get usage statistics if this provider is GitHub Copilot (backward compatibility helper).
+    fn copilot_usage(&self) -> Option<CopilotUsageStats> {
+        self.usage()
+    }
 
     /// List available models from this provider. Default: empty (not supported).
     fn list_models(&self) -> Pin<Box<dyn Future<Output = Result<Vec<ModelInfo>>> + Send + '_>> {
@@ -954,6 +1118,9 @@ pub struct CopilotProvider {
     model_endpoints: std::sync::Mutex<HashMap<String, Vec<String>>>,
     /// model_id → reasoning_efforts supported (e.g. ["low","medium","high"]).
     model_reasoning: std::sync::Mutex<HashMap<String, Vec<String>>>,
+    usage_stats: std::sync::Mutex<Option<CopilotUsageStats>>,
+    request_count: std::sync::atomic::AtomicU64,
+    session_tokens: std::sync::atomic::AtomicU64,
 }
 
 impl CopilotProvider {
@@ -964,6 +1131,9 @@ impl CopilotProvider {
             token_cache: std::sync::Mutex::new(None),
             model_endpoints: std::sync::Mutex::new(HashMap::new()),
             model_reasoning: std::sync::Mutex::new(HashMap::new()),
+            usage_stats: std::sync::Mutex::new(None),
+            request_count: std::sync::atomic::AtomicU64::new(0),
+            session_tokens: std::sync::atomic::AtomicU64::new(0),
         }
     }
 
@@ -1111,6 +1281,37 @@ impl CopilotProvider {
 
         info!(endpoint = %endpoint, expires_in = expires_at.saturating_sub(now_secs), "copilot token refreshed");
 
+        // Parse and cache usage/quota stats
+        let req_cnt = self
+            .request_count
+            .load(std::sync::atomic::Ordering::Relaxed);
+        let tok_cnt = self
+            .session_tokens
+            .load(std::sync::atomic::Ordering::Relaxed);
+        let mut stats = CopilotUsageStats::from_token_json(&v, tok_cnt, req_cnt);
+
+        // Fetch /copilot_internal/user for rich quota snapshots if missing
+        if stats.quota_remaining.is_none() {
+            if let Some((pct, rem, ent, snapshots)) = self.fetch_user_quota().await {
+                stats.quota_percent_remaining = Some(pct);
+                stats.quota_remaining = Some(rem);
+                stats.quota_entitlement = Some(ent);
+                if let Some(ref mut det) = stats.details {
+                    if let Some(obj) = det.as_object_mut() {
+                        obj.insert("quota_snapshots".to_string(), snapshots);
+                    }
+                } else {
+                    let mut obj = serde_json::Map::new();
+                    obj.insert("quota_snapshots".to_string(), snapshots);
+                    stats.details = Some(serde_json::Value::Object(obj));
+                }
+            }
+        }
+
+        if let Ok(mut u) = self.usage_stats.lock() {
+            *u = Some(stats);
+        }
+
         // Update cache
         {
             let mut cache = self.token_cache.lock().unwrap();
@@ -1119,11 +1320,67 @@ impl CopilotProvider {
 
         Ok((token, endpoint))
     }
+
+    async fn fetch_user_quota(&self) -> Option<(f64, u64, u64, serde_json::Value)> {
+        let client = Client::new();
+        let response = client
+            .get("https://api.github.com/copilot_internal/user")
+            .header("Authorization", format!("token {}", self.pat))
+            .header("User-Agent", "rune/0.1.0")
+            .header("editor-version", "vscode/1.96.0")
+            .timeout(std::time::Duration::from_secs(5))
+            .send()
+            .await
+            .ok()?;
+
+        if !response.status().is_success() {
+            return None;
+        }
+
+        let v: serde_json::Value = response.json().await.ok()?;
+        let snapshots = v.get("quota_snapshots")?;
+        let snap = snapshots
+            .get("premium_interactions")
+            .or_else(|| snapshots.as_object().and_then(|m| m.values().next()))?;
+
+        let percent_remaining = snap.get("percent_remaining").and_then(|v| v.as_f64())?;
+        let remaining = snap
+            .get("remaining")
+            .and_then(|v| v.as_u64())
+            .or_else(|| snap.get("quota_remaining").and_then(|v| v.as_u64()))?;
+        let entitlement = snap.get("entitlement").and_then(|v| v.as_u64())?;
+
+        Some((percent_remaining, remaining, entitlement, snapshots.clone()))
+    }
+
+    fn record_usage(&self, usage: &TokenUsage) {
+        self.request_count
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        if usage.total_tokens > 0 {
+            self.session_tokens.fetch_add(
+                usage.total_tokens as u64,
+                std::sync::atomic::Ordering::Relaxed,
+            );
+        }
+    }
 }
 
 impl Provider for CopilotProvider {
     fn name(&self) -> &str {
         &self.provider_name
+    }
+
+    fn usage(&self) -> Option<ProviderUsageStats> {
+        let mut stats = self.usage_stats.lock().ok()?.clone();
+        if let Some(ref mut s) = stats {
+            s.session_requests = self
+                .request_count
+                .load(std::sync::atomic::Ordering::Relaxed);
+            s.session_tokens = self
+                .session_tokens
+                .load(std::sync::atomic::Ordering::Relaxed);
+        }
+        stats
     }
 
     fn list_models(&self) -> Pin<Box<dyn Future<Output = Result<Vec<ModelInfo>>> + Send + '_>> {
@@ -1330,7 +1587,11 @@ impl Provider for CopilotProvider {
                     return Err(anyhow!("Copilot API error: {}", msg));
                 }
 
-                return parse_response_by_endpoint(&v, path);
+                let parsed = parse_response_by_endpoint(&v, path);
+                if let Ok(ref resp) = parsed {
+                    self.record_usage(&resp.usage);
+                }
+                return parsed;
             }
 
             Err(last_error
@@ -1378,7 +1639,10 @@ impl Provider for CopilotProvider {
                 };
 
                 match result {
-                    Ok(resp) => return Ok(resp),
+                    Ok(resp) => {
+                        self.record_usage(&resp.usage);
+                        return Ok(resp);
+                    }
                     Err(e) => {
                         if is_retriable_endpoint_error(&e) && endpoints.len() > 1 {
                             warn!(model = %request.model, endpoint = %path, error = %e, "streaming endpoint failed, trying next");
@@ -2217,6 +2481,20 @@ impl ProviderRegistry {
         }
         let idx = self.default_provider.min(self.providers.len() - 1);
         self.providers[idx].list_models().await
+    }
+
+    /// Return provider-agnostic usage statistics from the active provider if available.
+    pub fn usage(&self) -> Option<ProviderUsageStats> {
+        if self.providers.is_empty() {
+            return None;
+        }
+        let idx = self.default_provider.min(self.providers.len() - 1);
+        self.providers[idx].usage()
+    }
+
+    /// Return Copilot usage statistics (backward compatibility helper).
+    pub fn copilot_usage(&self) -> Option<CopilotUsageStats> {
+        self.usage()
     }
 
     /// Call default provider, fallback only on transient failure.
@@ -4620,5 +4898,104 @@ impl Provider for MockLoopProvider {
                 model: request.model.clone(),
             })
         })
+    }
+}
+
+#[cfg(test)]
+mod copilot_usage_tests {
+    use super::*;
+
+    #[test]
+    fn test_copilot_usage_stats_parsing() {
+        let json = serde_json::json!({
+            "sku": "copilot_pro",
+            "individual": true,
+            "chat_enabled": true,
+            "quota_snapshots": {"test": 123}
+        });
+        let stats = ProviderUsageStats::from_copilot_token_json(&json, 8500, 3);
+        assert_eq!(stats.provider, "github-copilot");
+        assert_eq!(stats.sku.as_deref(), Some("copilot_pro"));
+        assert_eq!(stats.plan_name, "Copilot Pro");
+        assert_eq!(stats.session_tokens, 8500);
+        assert_eq!(stats.session_requests, 3);
+        assert!(stats.details.is_some());
+        assert_eq!(
+            stats.summary_line(),
+            "Provider: github-copilot (Copilot Pro) | Session Tokens: 8.5k | Requests: 3"
+        );
+    }
+
+    #[test]
+    fn test_copilot_usage_stats_enterprise_and_business() {
+        let json_ent = serde_json::json!({"sku": "copilot_enterprise"});
+        let stats_ent = CopilotUsageStats::from_token_json(&json_ent, 500, 1);
+        assert_eq!(stats_ent.plan_name, "Copilot Enterprise");
+
+        let json_biz = serde_json::json!({"sku": "copilot_for_business"});
+        let stats_biz = CopilotUsageStats::from_token_json(&json_biz, 0, 0);
+        assert_eq!(stats_biz.plan_name, "Copilot Business");
+    }
+
+    #[test]
+    fn test_copilot_usage_stats_endpoint_api_fallback() {
+        let json = serde_json::json!({
+            "endpoints": {
+                "api": "https://api.business.githubcopilot.com"
+            }
+        });
+        let stats = ProviderUsageStats::from_copilot_token_json(&json, 1200, 2);
+        assert_eq!(stats.plan_name, "Copilot Business");
+        assert_eq!(
+            stats
+                .details
+                .as_ref()
+                .unwrap()
+                .get("endpoint_api")
+                .and_then(|v| v.as_str()),
+            Some("https://api.business.githubcopilot.com")
+        );
+    }
+
+    #[test]
+    fn test_copilot_provider_usage_tracking() {
+        let provider = CopilotProvider::new("ghu_test_token".to_string());
+        assert!(provider.copilot_usage().is_none());
+
+        provider.record_usage(&TokenUsage {
+            prompt_tokens: 100,
+            completion_tokens: 50,
+            total_tokens: 150,
+        });
+
+        let mut reg = ProviderRegistry::new();
+        reg.register(Box::new(provider));
+        assert!(reg.copilot_usage().is_none());
+
+        let json = serde_json::json!({"sku": "copilot_pro"});
+        let copilot_provider = CopilotProvider::new("ghu_test_token".to_string());
+        let req_cnt = copilot_provider
+            .request_count
+            .load(std::sync::atomic::Ordering::Relaxed);
+        let tok_cnt = copilot_provider
+            .session_tokens
+            .load(std::sync::atomic::Ordering::Relaxed);
+        let stats = CopilotUsageStats::from_token_json(&json, tok_cnt, req_cnt);
+        *copilot_provider.usage_stats.lock().unwrap() = Some(stats);
+        copilot_provider.record_usage(&TokenUsage {
+            prompt_tokens: 200,
+            completion_tokens: 100,
+            total_tokens: 300,
+        });
+
+        let usage = copilot_provider.copilot_usage().unwrap();
+        assert_eq!(usage.plan_name, "Copilot Pro");
+        assert_eq!(usage.session_requests, 1);
+        assert_eq!(usage.session_tokens, 300);
+
+        let mut reg2 = ProviderRegistry::new();
+        reg2.register(Box::new(copilot_provider));
+        let reg_usage = reg2.copilot_usage().unwrap();
+        assert_eq!(reg_usage.plan_name, "Copilot Pro");
     }
 }
