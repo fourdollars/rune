@@ -97,7 +97,7 @@ fn default_max_tmp_mb() -> u64 {
 }
 
 /// Configuration for `rune serve` mode.
-#[derive(Debug, Clone, Deserialize, Default)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct NotesConfig {
     /// Port to listen on (default: 9527).
     pub port: Option<u16>,
@@ -112,12 +112,28 @@ pub struct NotesConfig {
 
     /// Enable "Lenient Legacy Client Mode" for the MCP Streamable HTTP endpoint:
     /// requests with NO MCP-Protocol-Version/Mcp-Method/Mcp-Name headers at all skip
-    /// header-body consistency validation (body-only dispatch), to support MCP
-    /// clients that never implemented the 2026-07-28 Request Metadata mechanism.
-    /// Requests with a partial set of these headers are still rejected as before.
-    /// Default: false (disabled; safest/strictest behavior).
-    #[serde(default)]
+    /// header-body consistency validation (body-only dispatch), to support standard MCP
+    /// clients (Hermes, Claude Desktop, Cursor) that do not include draft HTTP headers.
+    /// Default: true (enabled; standard MCP client compatibility).
+    #[serde(default = "default_mcp_lenient_true")]
     pub mcp_lenient_legacy_clients: bool,
+}
+
+fn default_mcp_lenient_true() -> bool {
+    true
+}
+
+impl Default for NotesConfig {
+    fn default() -> Self {
+        Self {
+            port: None,
+            bind: None,
+            model: None,
+            github: None,
+            local: None,
+            mcp_lenient_legacy_clients: true,
+        }
+    }
 }
 
 /// Local credentials configuration for Rune Notes.
@@ -2394,31 +2410,17 @@ guests = ["guest:guest123"]
     }
 
     #[test]
-    fn test_mcp_lenient_legacy_clients_defaults_false() {
+    fn test_mcp_lenient_legacy_clients_defaults_true() {
         let notes_cfg = NotesConfig::default();
-        assert!(!notes_cfg.mcp_lenient_legacy_clients);
+        assert!(notes_cfg.mcp_lenient_legacy_clients);
     }
 
     #[test]
-    fn test_mcp_lenient_legacy_clients_toml_true() {
+    fn test_mcp_lenient_legacy_clients_toml_false() {
         let toml_str = r#"
             [notes]
             port = 9527
-            mcp_lenient_legacy_clients = true
-        "#;
-        #[derive(Deserialize)]
-        struct Wrapper {
-            notes: NotesConfig,
-        }
-        let w: Wrapper = toml::from_str(toml_str).unwrap();
-        assert!(w.notes.mcp_lenient_legacy_clients);
-    }
-
-    #[test]
-    fn test_mcp_lenient_legacy_clients_toml_absent_defaults_false() {
-        let toml_str = r#"
-            [notes]
-            port = 9527
+            mcp_lenient_legacy_clients = false
         "#;
         #[derive(Deserialize)]
         struct Wrapper {
@@ -2426,6 +2428,20 @@ guests = ["guest:guest123"]
         }
         let w: Wrapper = toml::from_str(toml_str).unwrap();
         assert!(!w.notes.mcp_lenient_legacy_clients);
+    }
+
+    #[test]
+    fn test_mcp_lenient_legacy_clients_toml_absent_defaults_true() {
+        let toml_str = r#"
+            [notes]
+            port = 9527
+        "#;
+        #[derive(Deserialize)]
+        struct Wrapper {
+            notes: NotesConfig,
+        }
+        let w: Wrapper = toml::from_str(toml_str).unwrap();
+        assert!(w.notes.mcp_lenient_legacy_clients);
     }
 
     #[test]
