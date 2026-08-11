@@ -207,8 +207,6 @@ pub enum SseMsg {
 pub struct NoteListEntry {
     pub id: String,
     pub name: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub title: Option<String>,
     pub files: Vec<String>,
     pub public: bool,
     /// Which files are publicly visible (only names that are public=true)
@@ -393,7 +391,6 @@ pub async fn build_note_list(state: &ServerState, is_guest: bool) -> Vec<NoteLis
         entries.push(NoteListEntry {
             id: s.id.clone(),
             name: s.name.clone(),
-            title: first_heading(&md_dir).await,
             files,
             public: s.public,
             public_files,
@@ -401,34 +398,6 @@ pub async fn build_note_list(state: &ServerState, is_guest: bool) -> Vec<NoteLis
         });
     }
     entries
-}
-
-async fn first_heading(md_dir: &std::path::Path) -> Option<String> {
-    let mut rd = tokio::fs::read_dir(md_dir).await.ok()?;
-    let mut entries = Vec::new();
-    while let Ok(Some(entry)) = rd.next_entry().await {
-        entries.push(entry.file_name().to_string_lossy().to_string());
-    }
-    entries.sort();
-
-    for name in entries {
-        if !name.ends_with(".md") {
-            continue;
-        }
-        let path = md_dir.join(&name);
-        let content = tokio::fs::read_to_string(&path).await.ok()?;
-        for line in content.lines() {
-            let trimmed = line.trim_start();
-            if let Some(rest) = trimmed.strip_prefix("# ") {
-                let title = rest.trim();
-                if !title.is_empty() {
-                    return Some(title.to_string());
-                }
-            }
-        }
-    }
-
-    None
 }
 
 /// Broadcast a message to a specific note room only.
