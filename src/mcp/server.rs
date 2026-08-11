@@ -252,39 +252,28 @@ pub fn validate_header_body_consistency(
         }
     }
 
-    // 2. Mcp-Method validation
-    let h_method = match header_method {
-        Some(m) => m,
-        None => {
-            return Err((-32020, "Required Mcp-Method header is missing".to_string()));
+    // 2. Mcp-Method validation (only if header is provided)
+    if let Some(h_method) = header_method {
+        let decoded_method = decode_mcp_header(h_method);
+        if decoded_method != req.method {
+            return Err((
+                -32020,
+                format!(
+                    "Mcp-Method header '{}' (decoded: '{}') does not match body method '{}'",
+                    h_method, decoded_method, req.method
+                ),
+            ));
         }
-    };
-
-    let decoded_method = decode_mcp_header(h_method);
-    if decoded_method != req.method {
-        return Err((
-            -32020,
-            format!(
-                "Mcp-Method header '{}' (decoded: '{}') does not match body method '{}'",
-                h_method, decoded_method, req.method
-            ),
-        ));
     }
 
-    // 3. Mcp-Name validation
-    let is_name_required = matches!(
-        req.method.as_str(),
-        "tools/call" | "resources/read" | "prompts/get"
-    );
-
-    let body_name_or_uri = req.params.as_ref().and_then(|p| {
-        p.get("name")
-            .or_else(|| p.get("uri"))
-            .and_then(|v| v.as_str())
-    });
-
-    match (header_name, body_name_or_uri) {
-        (Some(h_name), Some(b_val)) => {
+    // 3. Mcp-Name validation (only if header is provided)
+    if let Some(h_name) = header_name {
+        let body_name_or_uri = req.params.as_ref().and_then(|p| {
+            p.get("name")
+                .or_else(|| p.get("uri"))
+                .and_then(|v| v.as_str())
+        });
+        if let Some(b_val) = body_name_or_uri {
             let decoded_name = decode_mcp_header(h_name);
             if decoded_name != b_val {
                 return Err((
@@ -296,25 +285,6 @@ pub fn validate_header_body_consistency(
                 ));
             }
         }
-        (None, Some(_)) if is_name_required => {
-            return Err((
-                -32020,
-                format!(
-                    "Required Mcp-Name header is missing for method '{}'",
-                    req.method
-                ),
-            ));
-        }
-        (Some(h_name), None) => {
-            return Err((
-                -32020,
-                format!(
-                    "Mcp-Name header provided ('{}'), but body name/uri parameter is missing",
-                    h_name
-                ),
-            ));
-        }
-        _ => {}
     }
 
     Ok(())
@@ -430,20 +400,26 @@ mod tests {
     }
 
     #[test]
-    fn test_lenient_validation_partial_headers_still_strict() {
-        // Only MCP-Protocol-Version present (e.g. user manually added header, SDK didn't
-        // add Mcp-Method) — must still fail with HeaderMismatch, not be silently accepted.
+    fn test_lenient_validation_protocol_version_only_accepted() {
+        // Only MCP-Protocol-Version present (e.g. client negotiating version without draft Mcp-Method)
+        // should be accepted in lenient mode.
         let req = McpJsonRpcRequest {
             jsonrpc: "2.0".to_string(),
             id: Some(serde_json::json!(1)),
             method: "tools/call".to_string(),
             params: Some(serde_json::json!({"name": "read_note_file", "arguments": {}})),
         };
-        let (code, msg) =
+        assert!(
             validate_header_body_consistency_lenient(Some("2026-07-28"), None, None, &req)
+                .is_ok()
+        );
+
+        // Unsupported protocol version should still be rejected even without method.
+        let (code, msg) =
+            validate_header_body_consistency_lenient(Some("1999-01-01"), None, None, &req)
                 .unwrap_err();
-        assert_eq!(code, -32020);
-        assert!(msg.contains("Required Mcp-Method header is missing"));
+        assert_eq!(code, -32021);
+        assert!(msg.contains("is not supported"));
     }
 
     #[test]
