@@ -420,12 +420,10 @@ mod tests {
             params: Some(serde_json::json!({"name": "read_note_file", "arguments": {}})),
         };
         assert!(
-            validate_header_body_consistency_lenient(Some("2026-07-28"), None, None, &req)
-                .is_ok()
+            validate_header_body_consistency_lenient(Some("2026-07-28"), None, None, &req).is_ok()
         );
         assert!(
-            validate_header_body_consistency_lenient(Some("2024-11-05"), None, None, &req)
-                .is_ok()
+            validate_header_body_consistency_lenient(Some("2024-11-05"), None, None, &req).is_ok()
         );
 
         // Unsupported protocol version ("1999-01-01") should still be rejected.
