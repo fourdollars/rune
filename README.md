@@ -187,13 +187,85 @@ denied_paths = ["/root", "/etc/shadow"]
 max_memory_mb = 512
 max_pids = 64
 
-# MCP servers (optional)
-# [[mcp_servers]]
-# name = "example"
-# command = "node"
-# args = ["server.js"]
-# required = false
+# MCP client connections (optional) — Rune as MCP client connecting to external MCP servers
+# [[mcp]]
+# name = "my-mcp-server"   # unique name shown in /tools and /info
+# command = "node"         # executable to launch
+# args = ["server.js"]     # command-line arguments
+# required = false         # if true, Rune refuses to start when this server fails
+# timeout_secs = 30        # per-call timeout (default 30)
+# [mcp_servers.env]        # optional environment variables injected into the child process
+# API_KEY = "abc123"
 ```
+
+## MCP Client Configuration
+
+Rune can connect to any number of external MCP servers (acting as an **MCP client**). Each server runs as a child process communicating over stdio JSON-RPC.
+
+### Fields
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `name` | string | — | **Required.** Unique identifier shown in `/tools` and `/info`. |
+| `command` | string | — | **Required.** Executable to launch (resolved via `PATH`). |
+| `args` | array | `[]` | Command-line arguments passed to the executable. |
+| `env` | table | `{}` | Extra environment variables injected into the child process. |
+| `timeout_secs` | integer | `30` | Per-call timeout in seconds. Set to `0` for no timeout. |
+| `required` | bool | `false` | If `true`, Rune exits at startup when this server fails to connect. |
+
+### Single MCP Server
+
+```toml
+[[mcp]]
+name = "filesystem"
+command = "npx"
+args = ["-y", "@modelcontextprotocol/server-filesystem", "/home/user/docs"]
+```
+
+### Multiple MCP Servers
+
+Repeat `[[mcp]]` for each server — TOML array-of-tables syntax:
+
+```toml
+[[mcp]]
+name = "filesystem"
+command = "npx"
+args = ["-y", "@modelcontextprotocol/server-filesystem", "/home/user/docs"]
+required = true
+timeout_secs = 10
+
+[[mcp]]
+name = "github"
+command = "npx"
+args = ["-y", "@modelcontextprotocol/server-github"]
+[mcp.env]
+GITHUB_TOKEN = "ghp_your_token_here"
+
+[[mcp]]
+name = "zhtw-mcp"
+command = "zhtw-mcp"
+args = ["--stdio"]
+required = false
+timeout_secs = 60
+```
+
+### With Environment Variables
+
+Use `[mcp.env]` (inline table notation) to inject secrets without hardcoding them in args:
+
+```toml
+[[mcp]]
+name = "my-private-api"
+command = "/usr/local/bin/my-mcp-server"
+args = ["--port", "0"]
+[mcp.env]
+API_KEY = "secret"
+BASE_URL = "https://api.example.com"
+```
+
+> **Note:** `[[mcp]]` configures Rune as an **MCP client** connecting to external servers.
+> The built-in MCP server endpoint (`POST /mcp`) exposed by `rune notes` is separate and
+> always available when running in serve mode.
 
 ### Environment Variables
 
@@ -547,7 +619,7 @@ src/
 ├── cli/mod.rs           — Interactive CLI, commands, JSON mode
 ├── concourse/mod.rs     — Concourse CI check/in/out (sandboxed agent pipeline)
 ├── config/mod.rs        — Layered config + PolicyConfig
-├── mcp/mod.rs           — MCP client (stdio JSON-RPC)
+├── mcp/mod.rs           — MCP client (stdio JSON-RPC, [[mcp]] config)
 ├── precommands.rs       — Pre-command execution
 ├── provider/mod.rs      — LLM providers + retry backoff
 ├── sandbox/

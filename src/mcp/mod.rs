@@ -495,7 +495,7 @@ mod tests {
     #[test]
     fn test_mcp_server_config_in_toml() {
         let toml_str = r#"
-[[mcp_servers]]
+[[mcp]]
 name = "zhtw-mcp"
 command = "/home/u/zhtw-mcp/target/release/zhtw-mcp"
 args = []
@@ -504,37 +504,37 @@ required = false
 "#;
         #[derive(serde::Deserialize)]
         struct Wrapper {
-            mcp_servers: Vec<McpServerConfig>,
+            mcp: Vec<McpServerConfig>,
         }
         let w: Wrapper = toml::from_str(toml_str).unwrap();
-        assert_eq!(w.mcp_servers.len(), 1);
-        assert_eq!(w.mcp_servers[0].name, "zhtw-mcp");
-        assert!(!w.mcp_servers[0].required);
+        assert_eq!(w.mcp.len(), 1);
+        assert_eq!(w.mcp[0].name, "zhtw-mcp");
+        assert!(!w.mcp[0].required);
     }
 
     #[test]
     fn test_mcp_multiple_servers_in_toml() {
         let toml_str = r#"
-[[mcp_servers]]
+[[mcp]]
 name = "server-a"
 command = "/bin/a"
 required = true
 
-[[mcp_servers]]
+[[mcp]]
 name = "server-b"
 command = "/bin/b"
 args = ["--flag"]
 "#;
         #[derive(serde::Deserialize)]
         struct Wrapper {
-            mcp_servers: Vec<McpServerConfig>,
+            mcp: Vec<McpServerConfig>,
         }
         let w: Wrapper = toml::from_str(toml_str).unwrap();
-        assert_eq!(w.mcp_servers.len(), 2);
-        assert_eq!(w.mcp_servers[0].name, "server-a");
-        assert!(w.mcp_servers[0].required);
-        assert_eq!(w.mcp_servers[1].name, "server-b");
-        assert_eq!(w.mcp_servers[1].args, vec!["--flag"]);
+        assert_eq!(w.mcp.len(), 2);
+        assert_eq!(w.mcp[0].name, "server-a");
+        assert!(w.mcp[0].required);
+        assert_eq!(w.mcp[1].name, "server-b");
+        assert_eq!(w.mcp[1].args, vec!["--flag"]);
     }
 }
 

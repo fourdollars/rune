@@ -386,11 +386,11 @@ fn show_skills(cfg: &config::RuneConfig) {
 /// Display MCP servers summary.
 fn show_mcps_summary(cfg: &config::RuneConfig, agent: &crate::agent::Agent) {
     println!("{}", "MCP Servers:".bold());
-    if cfg.mcp_servers.is_empty() {
+    if cfg.mcp.is_empty() {
         println!("  {} (none configured)", "•".dimmed());
         return;
     }
-    for server_cfg in &cfg.mcp_servers {
+    for server_cfg in &cfg.mcp {
         let tool_count = if let Some(mcp_ref) = agent.mcp_manager_ref() {
             if let Ok(mgr) = mcp_ref.try_lock() {
                 mgr.all_tools()
@@ -428,11 +428,11 @@ fn show_mcps_summary(cfg: &config::RuneConfig, agent: &crate::agent::Agent) {
 fn show_mcps_full(cfg: &config::RuneConfig, agent: &crate::agent::Agent) {
     println!("{}", "MCP Servers (full):".bold());
     println!();
-    if cfg.mcp_servers.is_empty() {
+    if cfg.mcp.is_empty() {
         println!("  {} (none configured)", "•".dimmed());
         return;
     }
-    for server_cfg in &cfg.mcp_servers {
+    for server_cfg in &cfg.mcp {
         println!("  {} {}", "▸".cyan(), server_cfg.name.cyan().bold());
         println!("    {} {}", "command:".dimmed(), server_cfg.command);
         if !server_cfg.args.is_empty() {
@@ -803,10 +803,10 @@ fn show_info(cfg: &config::RuneConfig, agent: &crate::agent::Agent) {
 
     // MCP
     println!("  {}", "MCP Servers:".bold());
-    if cfg.mcp_servers.is_empty() {
+    if cfg.mcp.is_empty() {
         println!("    {} (none configured)", "•".dimmed());
     } else {
-        for server in &cfg.mcp_servers {
+        for server in &cfg.mcp {
             println!(
                 "    {} {} ({})",
                 "•".dimmed(),
@@ -1429,15 +1429,15 @@ pub async fn run() {
 
     // Start MCP servers if configured
     let mut mcp_manager = crate::mcp::McpManager::new();
-    if !cfg.mcp_servers.is_empty() {
+    if !cfg.mcp.is_empty() {
         if !is_json_mode(&cfg) {
             eprintln!(
                 "  {} Starting {} MCP server(s)...",
                 "⚙".dimmed(),
-                cfg.mcp_servers.len()
+                cfg.mcp.len()
             );
         }
-        if let Err(e) = mcp_manager.start_all(cfg.mcp_servers.clone()).await {
+        if let Err(e) = mcp_manager.start_all(cfg.mcp.clone()).await {
             eprintln!("  {} MCP startup failed: {}", "✗".red(), e);
         } else if !is_json_mode(&cfg) {
             let tools = mcp_manager.all_tools();

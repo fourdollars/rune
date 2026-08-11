@@ -245,7 +245,7 @@ pub struct RuneConfig {
     #[serde(default)]
     pub policy: PolicyConfig,
     #[serde(default)]
-    pub mcp_servers: Vec<crate::mcp::McpServerConfig>,
+    pub mcp: Vec<crate::mcp::McpServerConfig>,
     #[serde(default)]
     pub embedding: crate::embedding::EmbeddingConfig,
     /// Thinking/reasoning level: "none", "low", "medium", "high". None = provider default.
@@ -298,7 +298,7 @@ impl Default for RuneConfig {
             compact_threshold: 0.85,
             compact_keep_last: 6,
             policy: PolicyConfig::default(),
-            mcp_servers: Vec::new(),
+            mcp: Vec::new(),
             embedding: crate::embedding::EmbeddingConfig::default(),
             thinking: None,
             system_prompt: None,
@@ -328,7 +328,7 @@ struct PartialConfig {
     compact_threshold: Option<f64>,
     compact_keep_last: Option<usize>,
     policy: Option<PolicyConfig>,
-    mcp_servers: Option<Vec<crate::mcp::McpServerConfig>>,
+    mcp: Option<Vec<crate::mcp::McpServerConfig>>,
     embedding: Option<crate::embedding::EmbeddingConfig>,
     system_prompt: Option<String>,
     thinking: Option<String>,
@@ -555,7 +555,7 @@ pub fn load() -> anyhow::Result<RuneConfig> {
             .ok()
             .and_then(|v| v.parse().ok()),
         policy: None, // Policy loaded from TOML only (too complex for single env var)
-        mcp_servers: None,
+        mcp: None,
         embedding: None,
         thinking: env::var("RUNE_THINKING").ok(),
         system_prompt: env::var("RUNE_SYSTEM_PROMPT").ok(),
@@ -796,11 +796,11 @@ pub fn load() -> anyhow::Result<RuneConfig> {
             .or(uc.and_then(|c| c.compact_keep_last))
             .unwrap_or(defaults.compact_keep_last),
         policy,
-        mcp_servers: ec
-            .and_then(|c| c.mcp_servers.clone())
-            .or_else(|| cwdc.and_then(|c| c.mcp_servers.clone()))
-            .or_else(|| lc.and_then(|c| c.mcp_servers.clone()))
-            .or_else(|| uc.and_then(|c| c.mcp_servers.clone()))
+        mcp: ec
+            .and_then(|c| c.mcp.clone())
+            .or_else(|| cwdc.and_then(|c| c.mcp.clone()))
+            .or_else(|| lc.and_then(|c| c.mcp.clone()))
+            .or_else(|| uc.and_then(|c| c.mcp.clone()))
             .unwrap_or_default(),
         embedding: ec
             .and_then(|c| c.embedding.clone())
@@ -914,7 +914,7 @@ pub fn load_without_clap() -> anyhow::Result<RuneConfig> {
             .ok()
             .and_then(|v| v.parse().ok()),
         policy: None,
-        mcp_servers: None,
+        mcp: None,
         embedding: None,
         thinking: env::var("RUNE_THINKING").ok(),
         system_prompt: env::var("RUNE_SYSTEM_PROMPT").ok(),
@@ -1061,10 +1061,10 @@ pub fn load_without_clap() -> anyhow::Result<RuneConfig> {
             .or_else(|| uc.and_then(|c| c.compact_keep_last))
             .unwrap_or(defaults.compact_keep_last),
         policy,
-        mcp_servers: cwdc
-            .and_then(|c| c.mcp_servers.clone())
-            .or_else(|| lc.and_then(|c| c.mcp_servers.clone()))
-            .or_else(|| uc.and_then(|c| c.mcp_servers.clone()))
+        mcp: cwdc
+            .and_then(|c| c.mcp.clone())
+            .or_else(|| lc.and_then(|c| c.mcp.clone()))
+            .or_else(|| uc.and_then(|c| c.mcp.clone()))
             .unwrap_or_default(),
         embedding: cwdc
             .and_then(|c| c.embedding.clone())
@@ -2061,20 +2061,20 @@ model = "gpt-4"
 skills_dir = "./skills"
 log_level = "info"
 
-[[mcp_servers]]
+[[mcp]]
 name = "my-mcp"
 command = "/usr/bin/my-mcp"
 args = ["--port", "9000"]
 required = true
 timeout_secs = 10
 
-[[mcp_servers]]
+[[mcp]]
 name = "optional-mcp"
 command = "optional-mcp-server"
 required = false
 "#;
         let cfg: PartialConfig = toml::from_str(toml_str).unwrap();
-        let servers = cfg.mcp_servers.unwrap();
+        let servers = cfg.mcp.unwrap();
         assert_eq!(servers.len(), 2);
         assert_eq!(servers[0].name, "my-mcp");
         assert_eq!(servers[0].command, "/usr/bin/my-mcp");
@@ -2187,7 +2187,7 @@ allowed_commands = ["ls"]
             r#"
 model = "gpt-4"
 
-[[mcp_servers]]
+[[mcp]]
 name = "filesystem"
 command = "npx"
 args = ["-y", "@modelcontextprotocol/server-filesystem", "/tmp"]
@@ -2196,7 +2196,7 @@ required = false
         )
         .unwrap();
         let partial = load_toml(&path).unwrap();
-        let servers = partial.mcp_servers.unwrap();
+        let servers = partial.mcp.unwrap();
         assert_eq!(servers.len(), 1);
         assert_eq!(servers[0].name, "filesystem");
         assert_eq!(servers[0].command, "npx");
@@ -2261,7 +2261,7 @@ allowed_syscalls = ["ptrace", "bpf"]
     #[test]
     fn test_rune_config_default_mcp_empty() {
         let c = RuneConfig::default();
-        assert!(c.mcp_servers.is_empty());
+        assert!(c.mcp.is_empty());
     }
 
     #[test]
@@ -2296,7 +2296,7 @@ allowed_syscalls = ["ptrace", "bpf"]
         assert!(cfg.compact_threshold.is_none());
         assert!(cfg.compact_keep_last.is_none());
         assert!(cfg.policy.is_none());
-        assert!(cfg.mcp_servers.is_none());
+        assert!(cfg.mcp.is_none());
         assert!(cfg.embedding.is_none());
         assert!(cfg.thinking.is_none());
         assert!(cfg.system_prompt.is_none());
