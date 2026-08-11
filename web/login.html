@@ -214,9 +214,17 @@
     const redirectTo = (function() {
         const params = new URLSearchParams(window.location.search);
         const next = params.get('next');
-        if (next && next.startsWith('/edit')) return next;
+        if (next && (next.startsWith('/edit') || next.startsWith('/oauth/'))) return next;
         return '/edit/';
     })();
+
+    // Update GitHub sign-in button if custom redirectTo is present
+    if (redirectTo && redirectTo !== '/edit/') {
+        const ghBtn = document.getElementById('github-signin-btn');
+        if (ghBtn) {
+            ghBtn.href = '/auth/github?next=' + encodeURIComponent(redirectTo);
+        }
+    }
 
     // Load auth configuration and display appropriate methods
     (async function loadAuthConfig() {

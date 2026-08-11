@@ -414,8 +414,16 @@ pub struct CallbackParams {
 
 use crate::serve::ServerState;
 
+#[derive(Debug, Deserialize)]
+pub struct OAuthStartParams {
+    pub next: Option<String>,
+}
+
 /// `GET /auth/github` — kick off the OAuth dance.
-pub async fn oauth_start_handler(State(state): State<ServerState>) -> Response {
+pub async fn oauth_start_handler(
+    State(state): State<ServerState>,
+    Query(params): Query<OAuthStartParams>,
+) -> Response {
     let cfg = match state.config.notes.github.as_ref() {
         Some(c) => c.clone(),
         None => {
@@ -435,14 +443,30 @@ pub async fn oauth_start_handler(State(state): State<ServerState>) -> Response {
         cfg.client_id, csrf_state
     );
 
-    (
-        StatusCode::FOUND,
-        [
-            (header::LOCATION, redirect_url),
-            (header::SET_COOKIE, state_cookie),
-        ],
-    )
-        .into_response()
+    let mut response_headers = HeaderMap::new();
+    response_headers.insert(
+        header::LOCATION,
+        redirect_url
+            .parse()
+            .unwrap_or_else(|_| axum::http::HeaderValue::from_static("/")),
+    );
+    if let Ok(val) = state_cookie.parse() {
+        response_headers.append(header::SET_COOKIE, val);
+    }
+
+    if let Some(ref next_url) = params.next {
+        if next_url.starts_with("/edit") || next_url.starts_with("/oauth/") {
+            let next_cookie = format!(
+                "rune_next={}; Path=/; HttpOnly; SameSite=Lax; Max-Age=300",
+                next_url
+            );
+            if let Ok(val) = next_cookie.parse() {
+                response_headers.append(header::SET_COOKIE, val);
+            }
+        }
+    }
+
+    (StatusCode::FOUND, response_headers).into_response()
 }
 
 /// `GET /auth/github/callback` — handle GitHub redirect.
@@ -524,10 +548,16 @@ pub async fn oauth_callback_handler(
     let (http_only, js_readable) = set_session_cookie(&session_id);
     let clear_state = clear_state_cookie();
 
+    let target_url = get_cookie(&headers, "rune_next")
+        .filter(|u| u.starts_with("/edit") || u.starts_with("/oauth/"))
+        .unwrap_or_else(|| "/edit/".to_string());
+
+    let clear_next = "rune_next=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0".to_string();
+
     let mut response_headers = HeaderMap::new();
     response_headers.insert(
         header::LOCATION,
-        "/edit/"
+        target_url
             .parse()
             .unwrap_or_else(|_| axum::http::HeaderValue::from_static("/edit/")),
     );
@@ -538,6 +568,9 @@ pub async fn oauth_callback_handler(
         response_headers.append(header::SET_COOKIE, val);
     }
     if let Ok(val) = clear_state.parse() {
+        response_headers.append(header::SET_COOKIE, val);
+    }
+    if let Ok(val) = clear_next.parse() {
         response_headers.append(header::SET_COOKIE, val);
     }
 
@@ -732,7 +765,7 @@ pub async fn local_login_handler(
 }
 
 /// Minimal URL-encode (percent-encode spaces and special chars).
-fn urlencod(s: &str) -> String {
+pub fn urlencod(s: &str) -> String {
     s.chars()
         .flat_map(|c| match c {
             'A'..='Z' | 'a'..='z' | '0'..='9' | '-' | '_' | '.' | '~' => {

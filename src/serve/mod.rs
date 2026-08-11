@@ -9,6 +9,7 @@
 pub mod api;
 pub mod db;
 pub mod oauth;
+pub mod oauth_pkce;
 mod static_files;
 pub use db::ChatDb;
 
@@ -62,6 +63,10 @@ pub struct ServerState {
     pub mcp_sessions: crate::mcp::mcp_session::McpSessionStore,
     /// Provider registry for LLM chat and usage tracking.
     pub provider_registry: Arc<tokio::sync::RwLock<crate::provider::ProviderRegistry>>,
+    /// OAuth 2.1 PKCE authorization code store.
+    pub oauth_codes: crate::serve::oauth_pkce::AuthCodeStore,
+    /// OAuth 2.1 PKCE access token store.
+    pub oauth_tokens: crate::serve::oauth_pkce::OAuthTokenStore,
 }
 
 impl ServerState {
@@ -359,6 +364,8 @@ pub async fn run(config: RuneConfig, opts: NotesOptions) {
         data_dir: data_dir(),
         mcp_sessions: crate::mcp::mcp_session::McpSessionStore::new(),
         provider_registry,
+        oauth_codes: crate::serve::oauth_pkce::AuthCodeStore::new(),
+        oauth_tokens: crate::serve::oauth_pkce::OAuthTokenStore::new(),
     };
 
     // Session sweep (every 5 minutes, removes expired sessions)
@@ -381,6 +388,20 @@ pub async fn run(config: RuneConfig, opts: NotesOptions) {
             loop {
                 interval.tick().await;
                 mcp_sessions_clone.sweep_expired().await;
+            }
+        });
+    }
+
+    // OAuth PKCE sweep (every 5 minutes)
+    {
+        let oauth_codes_clone = state.oauth_codes.clone();
+        let oauth_tokens_clone = state.oauth_tokens.clone();
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(std::time::Duration::from_secs(300));
+            loop {
+                interval.tick().await;
+                oauth_codes_clone.sweep_expired().await;
+                oauth_tokens_clone.sweep_expired().await;
             }
         });
     }
@@ -538,6 +559,38 @@ pub async fn run(config: RuneConfig, opts: NotesOptions) {
         .route("/api/dirs", get(api::dir_browse_handler))
         .layer(axum_mw::from_fn_with_state(state.clone(), auth_middleware));
 
+    async fn cors_middleware(
+        req: axum::http::Request<axum::body::Body>,
+        next: axum::middleware::Next,
+    ) -> axum::response::Response {
+        let is_options = req.method() == axum::http::Method::OPTIONS;
+        let mut response = if is_options {
+            StatusCode::NO_CONTENT.into_response()
+        } else {
+            next.run(req).await
+        };
+
+        let headers = response.headers_mut();
+        headers.insert(
+            header::ACCESS_CONTROL_ALLOW_ORIGIN,
+            header::HeaderValue::from_static("*"),
+        );
+        headers.insert(
+            header::ACCESS_CONTROL_ALLOW_METHODS,
+            header::HeaderValue::from_static("GET, POST, OPTIONS, DELETE, PUT, PATCH"),
+        );
+        headers.insert(
+            header::ACCESS_CONTROL_ALLOW_HEADERS,
+            header::HeaderValue::from_static("*"),
+        );
+        headers.insert(
+            header::ACCESS_CONTROL_EXPOSE_HEADERS,
+            header::HeaderValue::from_static("*"),
+        );
+
+        response
+    }
+
     // Static + SSE routes (SSE has its own auth logic inside the handler)
     let app = Router::new()
         .route("/", get(login_handler))
@@ -572,7 +625,19 @@ pub async fn run(config: RuneConfig, opts: NotesOptions) {
                 .get(crate::mcp::streamable_http::handle_mcp_get)
                 .delete(crate::mcp::streamable_http::handle_mcp_delete),
         )
+        .route(
+            "/.well-known/oauth-authorization-server",
+            get(oauth_pkce::oauth_metadata_handler),
+        )
+        .route(
+            "/.well-known/oauth-protected-resource",
+            get(oauth_pkce::oauth_protected_resource_handler),
+        )
+        .route("/oauth/authorize", get(oauth_pkce::oauth_authorize_handler))
+        .route("/oauth/token", post(oauth_pkce::oauth_token_handler))
+        .route("/oauth/register", post(oauth_pkce::oauth_register_handler))
         .merge(api_routes)
+        .layer(axum_mw::from_fn(cors_middleware))
         .with_state(state);
 
     let addr = SocketAddr::new(opts.bind, opts.port);

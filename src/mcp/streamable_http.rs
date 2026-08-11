@@ -56,19 +56,17 @@ pub async fn handle_mcp_post(
             // Check Authorization header for Bearer token or username:password
             let auth_header = headers.get("authorization").and_then(|v| v.to_str().ok());
             if let Some(token) = auth_header.and_then(|h| h.strip_prefix("Bearer ")) {
-                let mut role = None;
-                if token == "admin" {
-                    role = Some(crate::serve::oauth::Role::Admin);
-                } else if token == "user" {
-                    role = Some(crate::serve::oauth::Role::User);
-                } else if token == "guest" {
-                    role = Some(crate::serve::oauth::Role::Guest);
+                if let Some(tok_role) = state.oauth_tokens.get(token).await {
+                    Some(tok_role)
                 } else if let Some((u, p)) = token.split_once(':') {
                     if let Some(ref local_cfg) = state.config.notes.local.as_ref() {
-                        role = crate::serve::oauth::verify_local_credentials(u, p, local_cfg);
+                        crate::serve::oauth::verify_local_credentials(u, p, local_cfg)
+                    } else {
+                        None
                     }
+                } else {
+                    None
                 }
-                role
             } else {
                 None
             }
@@ -78,6 +76,20 @@ pub async fn handle_mcp_post(
     let role = match user_role {
         Some(r) => r,
         None => {
+            let proto = headers
+                .get("x-forwarded-proto")
+                .and_then(|v| v.to_str().ok())
+                .unwrap_or("http");
+            let host = headers
+                .get("host")
+                .and_then(|v| v.to_str().ok())
+                .unwrap_or("localhost:9527");
+            let base_url = format!("{}://{}", proto, host);
+            let www_auth = format!(
+                "Bearer realm=\"rune-notes\", resource_metadata=\"{}/.well-known/oauth-protected-resource\"",
+                base_url
+            );
+
             let resp = McpJsonRpcResponse::error(
                 None,
                 -32001,
@@ -86,7 +98,10 @@ pub async fn handle_mcp_post(
             );
             return (
                 StatusCode::UNAUTHORIZED,
-                [("content-type", "application/json")],
+                [
+                    ("content-type", "application/json"),
+                    ("www-authenticate", &www_auth),
+                ],
                 serde_json::to_string(&resp).unwrap_or_default(),
             )
                 .into_response();

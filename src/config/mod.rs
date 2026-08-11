@@ -109,6 +109,7 @@ pub struct NotesConfig {
     pub github: Option<GitHubOAuthConfig>,
     /// Local credentials configuration.
     pub local: Option<LocalConfig>,
+
     /// Enable "Lenient Legacy Client Mode" for the MCP Streamable HTTP endpoint:
     /// requests with NO MCP-Protocol-Version/Mcp-Method/Mcp-Name headers at all skip
     /// header-body consistency validation (body-only dispatch), to support MCP

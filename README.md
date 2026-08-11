@@ -194,7 +194,7 @@ max_pids = 64
 # args = ["server.js"]     # command-line arguments
 # required = false         # if true, Rune refuses to start when this server fails
 # timeout_secs = 30        # per-call timeout (default 30)
-# [mcp_servers.env]        # optional environment variables injected into the child process
+# [mcp.env]        # optional environment variables injected into the child process
 # API_KEY = "abc123"
 ```
 
