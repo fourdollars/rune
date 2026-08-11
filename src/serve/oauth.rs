@@ -21,7 +21,8 @@ use tokio::sync::RwLock;
 
 // ─── Constants ─────────────────────────────────────────────────────────────
 
-pub const SESSION_DURATION: Duration = Duration::from_secs(24 * 60 * 60); // 24 hours
+pub const SESSION_DURATION_SECS: i64 = 30 * 24 * 3600; // 30 days
+pub const SESSION_DURATION: Duration = Duration::from_secs(30 * 24 * 60 * 60); // 30 days
 const STATE_COOKIE_DURATION_SECS: u64 = 300; // 5 minutes
 
 // ─── Role ──────────────────────────────────────────────────────────────────
@@ -42,6 +43,14 @@ impl Role {
             Role::Guest => "guest",
         }
     }
+
+    pub fn from_str(s: &str) -> Self {
+        match s.to_lowercase().as_str() {
+            "admin" => Role::Admin,
+            "user" => Role::User,
+            _ => Role::Guest,
+        }
+    }
 }
 
 // ─── Session ───────────────────────────────────────────────────────────────
@@ -53,12 +62,12 @@ pub struct Session {
     pub login: String,
     pub role: Role,
     pub avatar_url: String,
-    pub expires_at: Instant,
+    pub expires_at: i64,
 }
 
 impl Session {
     pub fn is_expired(&self) -> bool {
-        Instant::now() >= self.expires_at
+        crate::serve::db::now_secs() >= self.expires_at
     }
     pub fn is_admin(&self) -> bool {
         self.role == Role::Admin
@@ -70,20 +79,54 @@ impl Session {
 
 // ─── SessionStore ──────────────────────────────────────────────────────────
 
-/// In-memory session store. Thread-safe, clone-on-share.
+/// Persistent session store with in-memory cache and SQLite backing.
 #[derive(Clone)]
 pub struct SessionStore {
     inner: Arc<RwLock<HashMap<String, Session>>>,
+    db: Option<crate::serve::db::ChatDb>,
 }
 
 impl SessionStore {
     pub fn new() -> Self {
+        Self::new_with_db(None)
+    }
+
+    pub fn new_with_db(db: Option<crate::serve::db::ChatDb>) -> Self {
+        let mut map = HashMap::new();
+        if let Some(ref db) = db {
+            if let Ok(records) = db.load_active_sessions() {
+                for (id, login, role_str, avatar_url, expires_at) in records {
+                    let role = Role::from_str(&role_str);
+                    map.insert(
+                        id.clone(),
+                        Session {
+                            id,
+                            login,
+                            role,
+                            avatar_url,
+                            expires_at,
+                        },
+                    );
+                }
+            }
+        }
         Self {
-            inner: Arc::new(RwLock::new(HashMap::new())),
+            inner: Arc::new(RwLock::new(map)),
+            db,
         }
     }
 
     pub async fn insert(&self, session: Session) {
+        if let Some(ref db) = self.db {
+            let role_str = session.role.as_str().to_string();
+            let _ = db.save_session(
+                &session.id,
+                &session.login,
+                &role_str,
+                &session.avatar_url,
+                session.expires_at,
+            );
+        }
         self.inner.write().await.insert(session.id.clone(), session);
     }
 
@@ -100,12 +143,18 @@ impl SessionStore {
     }
 
     pub async fn remove(&self, id: &str) {
+        if let Some(ref db) = self.db {
+            let _ = db.remove_session(id);
+        }
         self.inner.write().await.remove(id);
     }
 
     /// Remove all expired sessions.
     pub async fn sweep_expired(&self) {
-        let now = Instant::now();
+        let now = crate::serve::db::now_secs();
+        if let Some(ref db) = self.db {
+            let _ = db.sweep_expired_auth();
+        }
         self.inner.write().await.retain(|_, s| s.expires_at > now);
     }
 }
@@ -540,7 +589,7 @@ pub async fn oauth_callback_handler(
         login: github_user.login,
         role,
         avatar_url: github_user.avatar_url,
-        expires_at: Instant::now() + SESSION_DURATION,
+        expires_at: crate::serve::db::now_secs() + SESSION_DURATION_SECS,
     };
     state.sessions.insert(session).await;
 
@@ -738,7 +787,7 @@ pub async fn local_login_handler(
         login: req.username.clone(),
         role: role.clone(),
         avatar_url: String::new(), // No avatar for local accounts
-        expires_at: Instant::now() + SESSION_DURATION,
+        expires_at: crate::serve::db::now_secs() + SESSION_DURATION_SECS,
     };
     state.sessions.insert(session).await;
 
@@ -919,7 +968,7 @@ mod tests {
             login: "testuser".into(),
             role: Role::Admin,
             avatar_url: "https://example.com/avatar.png".into(),
-            expires_at: Instant::now() + Duration::from_secs(3600),
+            expires_at: crate::serve::db::now_secs() + 3600,
         };
         store.insert(session.clone()).await;
         let found = store.get("abc123").await;
@@ -935,7 +984,7 @@ mod tests {
             login: "olduser".into(),
             role: Role::User,
             avatar_url: "".into(),
-            expires_at: Instant::now() - Duration::from_secs(1), // already expired
+            expires_at: crate::serve::db::now_secs() - 1, // already expired
         };
         store.insert(session).await;
         assert!(store.get("expired").await.is_none());
@@ -949,7 +998,7 @@ mod tests {
             login: "user".into(),
             role: Role::Guest,
             avatar_url: "".into(),
-            expires_at: Instant::now() + Duration::from_secs(3600),
+            expires_at: crate::serve::db::now_secs() + 3600,
         };
         store.insert(session).await;
         store.remove("del").await;
@@ -964,14 +1013,14 @@ mod tests {
             login: "e".into(),
             role: Role::Guest,
             avatar_url: "".into(),
-            expires_at: Instant::now() - Duration::from_secs(1),
+            expires_at: crate::serve::db::now_secs() - 1,
         };
         let valid = Session {
             id: "v".into(),
             login: "v".into(),
             role: Role::User,
             avatar_url: "".into(),
-            expires_at: Instant::now() + Duration::from_secs(3600),
+            expires_at: crate::serve::db::now_secs() + 3600,
         };
         store.insert(expired).await;
         store.insert(valid).await;

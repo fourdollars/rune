@@ -96,6 +96,18 @@ impl ChatDb {
                 created_at  INTEGER NOT NULL,
                 created_by  TEXT
             );
+            CREATE TABLE IF NOT EXISTS user_sessions (
+                id          TEXT PRIMARY KEY,
+                login       TEXT NOT NULL,
+                role        TEXT NOT NULL,
+                avatar_url  TEXT NOT NULL,
+                expires_at  INTEGER NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS oauth_tokens (
+                token       TEXT PRIMARY KEY,
+                role        TEXT NOT NULL,
+                expires_at  INTEGER NOT NULL
+            );
         ",
         )?;
         // Add new columns to existing DBs (idempotent — errors ignored)
@@ -350,6 +362,104 @@ impl ChatDb {
         })
         .await
         .ok();
+    }
+
+    pub fn save_session(
+        &self,
+        id: &str,
+        login: &str,
+        role: &str,
+        avatar_url: &str,
+        expires_at: i64,
+    ) -> anyhow::Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "INSERT INTO user_sessions (id, login, role, avatar_url, expires_at)
+             VALUES (?1, ?2, ?3, ?4, ?5)
+             ON CONFLICT(id) DO UPDATE SET login=?2, role=?3, avatar_url=?4, expires_at=?5",
+            params![id, login, role, avatar_url, expires_at],
+        )?;
+        Ok(())
+    }
+
+    pub fn remove_session(&self, id: &str) -> anyhow::Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute("DELETE FROM user_sessions WHERE id = ?1", params![id])?;
+        Ok(())
+    }
+
+    pub fn load_active_sessions(
+        &self,
+    ) -> anyhow::Result<Vec<(String, String, String, String, i64)>> {
+        let conn = self.conn.lock().unwrap();
+        let now = now_secs();
+        let mut stmt = conn.prepare(
+            "SELECT id, login, role, avatar_url, expires_at FROM user_sessions WHERE expires_at > ?1",
+        )?;
+        let rows = stmt.query_map(params![now], |row| {
+            Ok((
+                row.get(0)?,
+                row.get(1)?,
+                row.get(2)?,
+                row.get(3)?,
+                row.get(4)?,
+            ))
+        })?;
+        let mut res = Vec::new();
+        for r in rows {
+            if let Ok(item) = r {
+                res.push(item);
+            }
+        }
+        Ok(res)
+    }
+
+    pub fn save_oauth_token(&self, token: &str, role: &str, expires_at: i64) -> anyhow::Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "INSERT INTO oauth_tokens (token, role, expires_at)
+             VALUES (?1, ?2, ?3)
+             ON CONFLICT(token) DO UPDATE SET role=?2, expires_at=?3",
+            params![token, role, expires_at],
+        )?;
+        Ok(())
+    }
+
+    pub fn remove_oauth_token(&self, token: &str) -> anyhow::Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute("DELETE FROM oauth_tokens WHERE token = ?1", params![token])?;
+        Ok(())
+    }
+
+    pub fn load_active_oauth_tokens(&self) -> anyhow::Result<Vec<(String, String, i64)>> {
+        let conn = self.conn.lock().unwrap();
+        let now = now_secs();
+        let mut stmt =
+            conn.prepare("SELECT token, role, expires_at FROM oauth_tokens WHERE expires_at > ?1")?;
+        let rows = stmt.query_map(params![now], |row| {
+            Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+        })?;
+        let mut res = Vec::new();
+        for r in rows {
+            if let Ok(item) = r {
+                res.push(item);
+            }
+        }
+        Ok(res)
+    }
+
+    pub fn sweep_expired_auth(&self) -> anyhow::Result<()> {
+        let conn = self.conn.lock().unwrap();
+        let now = now_secs();
+        let _ = conn.execute(
+            "DELETE FROM user_sessions WHERE expires_at <= ?1",
+            params![now],
+        );
+        let _ = conn.execute(
+            "DELETE FROM oauth_tokens WHERE expires_at <= ?1",
+            params![now],
+        );
+        Ok(())
     }
 
     /// Async wrapper for load_recent.
@@ -1332,4 +1442,11 @@ mod tests {
             .list_public_files("note2")
             .contains(&"shared.md".to_string()));
     }
+}
+
+pub fn now_secs() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs() as i64
 }

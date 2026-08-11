@@ -2743,17 +2743,14 @@ mod tests {
     #[tokio::test]
     async fn test_session_auth_no_session_rejects() {
         use crate::serve::oauth::{Role, Session, SessionStore};
-        use std::time::{Duration, Instant};
-
         let store = SessionStore::new();
         // No session inserted — lookup should return None
         assert!(store.get("nonexistent").await.is_none());
     }
 
     #[tokio::test]
-    async fn test_session_auth_valid_session() {
+    async fn test_session_auth_valid_session_resolves() {
         use crate::serve::oauth::{Role, Session, SessionStore};
-        use std::time::{Duration, Instant};
 
         let store = SessionStore::new();
         let session = Session {
@@ -2761,7 +2758,7 @@ mod tests {
             login: "alice".into(),
             role: Role::Admin,
             avatar_url: "".into(),
-            expires_at: Instant::now() + Duration::from_secs(3600),
+            expires_at: crate::serve::db::now_secs() + 3600,
         };
         store.insert(session).await;
         let found = store.get("test-sid").await;
@@ -2772,7 +2769,6 @@ mod tests {
     #[tokio::test]
     async fn test_session_auth_expired_session_rejects() {
         use crate::serve::oauth::{Role, Session, SessionStore};
-        use std::time::{Duration, Instant};
 
         let store = SessionStore::new();
         let session = Session {
@@ -2780,7 +2776,7 @@ mod tests {
             login: "bob".into(),
             role: Role::User,
             avatar_url: "".into(),
-            expires_at: Instant::now() - Duration::from_secs(1),
+            expires_at: crate::serve::db::now_secs() - 1,
         };
         store.insert(session).await;
         assert!(store.get("expired-sid").await.is_none());
@@ -2789,7 +2785,6 @@ mod tests {
     #[tokio::test]
     async fn test_session_auth_guest_role() {
         use crate::serve::oauth::{Role, Session, SessionStore};
-        use std::time::{Duration, Instant};
 
         let store = SessionStore::new();
         let session = Session {
@@ -2797,7 +2792,7 @@ mod tests {
             login: "guest-user".into(),
             role: Role::Guest,
             avatar_url: "".into(),
-            expires_at: Instant::now() + Duration::from_secs(3600),
+            expires_at: crate::serve::db::now_secs() + 3600,
         };
         store.insert(session).await;
         let found = store.get("guest-sid").await.unwrap();
@@ -2816,7 +2811,7 @@ mod tests {
             login: "superuser".into(),
             role: Role::Admin,
             avatar_url: "".into(),
-            expires_at: Instant::now() + Duration::from_secs(3600),
+            expires_at: crate::serve::db::now_secs() + 3600,
         };
         store.insert(session).await;
         let found = store.get("admin-sid").await.unwrap();
@@ -2835,14 +2830,14 @@ mod tests {
             login: "user1".into(),
             role: Role::User,
             avatar_url: "".into(),
-            expires_at: Instant::now() + Duration::from_secs(3600),
+            expires_at: crate::serve::db::now_secs() + 3600,
         };
         let s2 = Session {
             id: "s2".into(),
             login: "user2".into(),
             role: Role::Admin,
             avatar_url: "".into(),
-            expires_at: Instant::now() + Duration::from_secs(3600),
+            expires_at: crate::serve::db::now_secs() + 3600,
         };
         store.insert(s1).await;
         store.insert(s2).await;
@@ -4270,7 +4265,7 @@ mod isolation_tests {
             login: "test-user".to_string(),
             role: crate::serve::oauth::Role::User,
             avatar_url: "".to_string(),
-            expires_at: std::time::Instant::now() + std::time::Duration::from_secs(3600),
+            expires_at: crate::serve::db::now_secs() + 3600,
         };
         state.sessions.insert(session).await;
 
@@ -4341,7 +4336,7 @@ mod isolation_tests {
             login: "guest-user".to_string(),
             role: crate::serve::oauth::Role::Guest,
             avatar_url: "".to_string(),
-            expires_at: std::time::Instant::now() + std::time::Duration::from_secs(3600),
+            expires_at: crate::serve::db::now_secs() + 3600,
         };
         state.sessions.insert(session).await;
 
@@ -4410,7 +4405,7 @@ mod isolation_tests {
             login: "guest-user".to_string(),
             role: crate::serve::oauth::Role::Guest,
             avatar_url: "".to_string(),
-            expires_at: std::time::Instant::now() + std::time::Duration::from_secs(3600),
+            expires_at: crate::serve::db::now_secs() + 3600,
         };
         state.sessions.insert(session).await;
 
@@ -4902,7 +4897,7 @@ mod isolation_tests {
             login: "guest-user".to_string(),
             role: crate::serve::oauth::Role::Guest,
             avatar_url: "".to_string(),
-            expires_at: std::time::Instant::now() + std::time::Duration::from_secs(3600),
+            expires_at: crate::serve::db::now_secs() + 3600,
         };
         state.sessions.insert(session).await;
 
@@ -4983,7 +4978,7 @@ mod isolation_tests {
             login: "guest-user".to_string(),
             role: crate::serve::oauth::Role::Guest,
             avatar_url: "".to_string(),
-            expires_at: std::time::Instant::now() + std::time::Duration::from_secs(3600),
+            expires_at: crate::serve::db::now_secs() + 3600,
         };
         state.sessions.insert(session).await;
 

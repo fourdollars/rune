@@ -67,25 +67,59 @@ impl AuthCodeStore {
 pub struct OAuthAccessToken {
     pub token: String,
     pub role: Role,
-    pub expires_at: std::time::Instant,
+    pub expires_at: i64,
 }
 
 #[derive(Clone)]
-pub struct OAuthTokenStore(Arc<RwLock<HashMap<String, OAuthAccessToken>>>);
+pub struct OAuthTokenStore {
+    inner: Arc<RwLock<HashMap<String, OAuthAccessToken>>>,
+    db: Option<crate::serve::db::ChatDb>,
+}
 
 impl OAuthTokenStore {
     pub fn new() -> Self {
-        Self(Arc::new(RwLock::new(HashMap::new())))
+        Self::new_with_db(None)
+    }
+
+    pub fn new_with_db(db: Option<crate::serve::db::ChatDb>) -> Self {
+        let mut map = HashMap::new();
+        if let Some(ref db) = db {
+            if let Ok(records) = db.load_active_oauth_tokens() {
+                for (token, role_str, expires_at) in records {
+                    let role = Role::from_str(&role_str);
+                    map.insert(
+                        token.clone(),
+                        OAuthAccessToken {
+                            token,
+                            role,
+                            expires_at,
+                        },
+                    );
+                }
+            }
+        }
+        Self {
+            inner: Arc::new(RwLock::new(map)),
+            db,
+        }
     }
 
     pub async fn insert(&self, token: OAuthAccessToken) {
-        self.0.write().await.insert(token.token.clone(), token);
+        if let Some(ref db) = self.db {
+            let role_str = token.role.as_str().to_string();
+            let _ = db.save_oauth_token(&token.token, &role_str, token.expires_at);
+        }
+        self.inner.write().await.insert(token.token.clone(), token);
     }
 
     pub async fn get(&self, token: &str) -> Option<Role> {
-        let mut store = self.0.write().await;
+        let mut store = self.inner.write().await;
         if let Some(t) = store.get(token) {
-            if std::time::Instant::now() > t.expires_at {
+            let now = crate::serve::db::now_secs();
+            if now > t.expires_at {
+                if let Some(ref db) = self.db {
+                    let _ = db.remove_oauth_token(token);
+                }
                 store.remove(token);
                 None
             } else {
@@ -97,9 +131,17 @@ impl OAuthTokenStore {
     }
 
     pub async fn sweep_expired(&self) {
-        let mut store = self.0.write().await;
-        let now = std::time::Instant::now();
-        store.retain(|_, v| v.expires_at > now);
+        let now = crate::serve::db::now_secs();
+        if let Some(ref db) = self.db {
+            let _ = db.sweep_expired_auth();
+        }
+        self.inner.write().await.retain(|_, v| v.expires_at > now);
+    }
+}
+
+impl Default for OAuthTokenStore {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -269,10 +311,12 @@ pub async fn oauth_token_handler(
     }
 
     let token = crate::serve::oauth::generate_session_id();
+    let expires_in: u64 = 30 * 24 * 3600; // 30 days
+    let expires_at = crate::serve::db::now_secs() + expires_in as i64;
     let access_token = OAuthAccessToken {
         token: token.clone(),
         role: auth_code.role,
-        expires_at: std::time::Instant::now() + std::time::Duration::from_secs(3600),
+        expires_at,
     };
 
     state.oauth_tokens.insert(access_token).await;
@@ -280,7 +324,7 @@ pub async fn oauth_token_handler(
     Json(TokenResponse {
         access_token: token,
         token_type: "Bearer".to_string(),
-        expires_in: 3600,
+        expires_in,
     })
     .into_response()
 }
@@ -427,7 +471,7 @@ mod tests {
         let token = OAuthAccessToken {
             token: "test_token".to_string(),
             role: Role::Admin,
-            expires_at: std::time::Instant::now() + std::time::Duration::from_secs(3600),
+            expires_at: crate::serve::db::now_secs() + 3600,
         };
 
         store.insert(token).await;
@@ -438,5 +482,42 @@ mod tests {
         // Token persists
         let role_again = store.get("test_token").await;
         assert!(matches!(role_again, Some(Role::Admin)));
+    }
+
+    #[tokio::test]
+    async fn test_oauth_token_store_persistence_across_restarts() {
+        let db = crate::serve::db::ChatDb::open(std::path::Path::new(":memory:")).unwrap();
+
+        // 1. Create first store with DB, insert token & session
+        let store1 = OAuthTokenStore::new_with_db(Some(db.clone()));
+        let session_store1 = crate::serve::oauth::SessionStore::new_with_db(Some(db.clone()));
+
+        let token = OAuthAccessToken {
+            token: "restart_token_123".to_string(),
+            role: Role::Admin,
+            expires_at: crate::serve::db::now_secs() + 2592000,
+        };
+        store1.insert(token).await;
+
+        let session = crate::serve::oauth::Session {
+            id: "restart_session_456".to_string(),
+            login: "alice".to_string(),
+            role: Role::User,
+            avatar_url: "https://example.com/avatar".to_string(),
+            expires_at: crate::serve::db::now_secs() + 2592000,
+        };
+        session_store1.insert(session).await;
+
+        // 2. Simulate server restart: create new store from SAME DB connection
+        let store2 = OAuthTokenStore::new_with_db(Some(db.clone()));
+        let session_store2 = crate::serve::oauth::SessionStore::new_with_db(Some(db.clone()));
+
+        // 3. Verify token and session were restored from DB
+        let role = store2.get("restart_token_123").await;
+        assert_eq!(role, Some(Role::Admin));
+
+        let restored_session = session_store2.get("restart_session_456").await;
+        assert!(restored_session.is_some());
+        assert_eq!(restored_session.unwrap().login, "alice");
     }
 }

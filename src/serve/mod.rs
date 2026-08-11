@@ -353,17 +353,17 @@ pub async fn run(config: RuneConfig, opts: NotesOptions) {
 
     let state = ServerState {
         config: config.clone(),
-        sessions: oauth::SessionStore::new(),
+        sessions: oauth::SessionStore::new_with_db(Some(chat_db.clone())),
         files: Arc::new(RwLock::new(initial_files)),
         active_file: Arc::new(RwLock::new(String::new())),
         models: Arc::new(RwLock::new(models)),
         rooms: Arc::new(RwLock::new(HashMap::new())),
         global_default_model: Arc::new(RwLock::new(first_model)),
         admin_broadcast_tx,
-        chat_db,
+        chat_db: chat_db.clone(),
         data_dir: data_dir(),
         oauth_codes: crate::serve::oauth_pkce::AuthCodeStore::new(),
-        oauth_tokens: crate::serve::oauth_pkce::OAuthTokenStore::new(),
+        oauth_tokens: crate::serve::oauth_pkce::OAuthTokenStore::new_with_db(Some(chat_db.clone())),
         mcp_sessions: crate::mcp::mcp_session::McpSessionStore::new(),
         provider_registry,
     };
