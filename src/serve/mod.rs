@@ -362,10 +362,10 @@ pub async fn run(config: RuneConfig, opts: NotesOptions) {
         admin_broadcast_tx,
         chat_db,
         data_dir: data_dir(),
-        mcp_sessions: crate::mcp::mcp_session::McpSessionStore::new(),
-        provider_registry,
         oauth_codes: crate::serve::oauth_pkce::AuthCodeStore::new(),
         oauth_tokens: crate::serve::oauth_pkce::OAuthTokenStore::new(),
+        mcp_sessions: crate::mcp::mcp_session::McpSessionStore::new(),
+        provider_registry,
     };
 
     // Session sweep (every 5 minutes, removes expired sessions)
@@ -1455,6 +1455,8 @@ mod tests {
             admin_broadcast_tx,
             chat_db: db,
             data_dir: std::path::PathBuf::from("/tmp/rune-test"),
+            oauth_codes: crate::serve::oauth_pkce::AuthCodeStore::new(),
+            oauth_tokens: crate::serve::oauth_pkce::OAuthTokenStore::new(),
             mcp_sessions: crate::mcp::mcp_session::McpSessionStore::new(),
             provider_registry: Arc::new(tokio::sync::RwLock::new(
                 crate::provider::ProviderRegistry::new(),
@@ -1491,6 +1493,8 @@ mod tests {
             admin_broadcast_tx,
             chat_db: db,
             data_dir: std::path::PathBuf::from("/tmp/rune-test"),
+            oauth_codes: crate::serve::oauth_pkce::AuthCodeStore::new(),
+            oauth_tokens: crate::serve::oauth_pkce::OAuthTokenStore::new(),
             mcp_sessions: crate::mcp::mcp_session::McpSessionStore::new(),
             provider_registry: Arc::new(tokio::sync::RwLock::new(
                 crate::provider::ProviderRegistry::new(),
@@ -1521,6 +1525,8 @@ mod tests {
             admin_broadcast_tx,
             chat_db: db,
             data_dir: std::path::PathBuf::from("/tmp/rune-test"),
+            oauth_codes: crate::serve::oauth_pkce::AuthCodeStore::new(),
+            oauth_tokens: crate::serve::oauth_pkce::OAuthTokenStore::new(),
             mcp_sessions: crate::mcp::mcp_session::McpSessionStore::new(),
             provider_registry: Arc::new(tokio::sync::RwLock::new(
                 crate::provider::ProviderRegistry::new(),

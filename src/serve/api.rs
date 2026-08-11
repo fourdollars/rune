@@ -207,6 +207,7 @@ pub enum SseMsg {
 pub struct NoteListEntry {
     pub id: String,
     pub name: String,
+    pub title: Option<String>,
     pub files: Vec<String>,
     pub public: bool,
     /// Which files are publicly visible (only names that are public=true)
@@ -388,9 +389,20 @@ pub async fn build_note_list(state: &ServerState, is_guest: bool) -> Vec<NoteLis
         }
         files.sort();
         let public_files = state.chat_db.list_public_files(&s.id);
+        let title = {
+            let mut heading = None;
+            for f in &files {
+                heading = first_heading_from_file(&md_dir.join(f)).await;
+                if heading.is_some() {
+                    break;
+                }
+            }
+            heading
+        };
         entries.push(NoteListEntry {
             id: s.id.clone(),
             name: s.name.clone(),
+            title,
             files,
             public: s.public,
             public_files,
@@ -827,6 +839,7 @@ pub async fn file_delete_handler(
     let md_dir = state.note_markdown_dir(&note_id);
     let file_path = md_dir.join(&name);
     tokio::fs::remove_file(&file_path).await.ok();
+    state.chat_db.remove_file_visibility(&note_id, &name).ok();
 
     let room = state.get_or_create_room(&note_id).await;
     let del = SseMsg::FileDeleted {
@@ -1859,25 +1872,33 @@ pub async fn public_notes_list_handler(
         if public_files.is_empty() {
             continue;
         }
-        any = true;
         let md_dir = state.note_markdown_dir(&note.id);
-        items.push_str(&format!(
-            "<div class='note-section'><h3>&#128193; {}</h3><ul>",
-            html_escape(&note.name)
-        ));
+        let mut note_items = String::new();
         for fname in &public_files {
+            if !md_dir.join(fname).exists() {
+                state.chat_db.remove_file_visibility(&note.id, fname).ok();
+                continue;
+            }
             let slug = fname.strip_suffix(".md").unwrap_or(fname);
             let url = format!("/notes/{}/{}", url_encode(&note.id), url_encode(slug));
             let title = first_heading_from_file(&md_dir.join(fname))
                 .await
                 .unwrap_or_else(|| fname.clone());
-            items.push_str(&format!(
+            note_items.push_str(&format!(
                 "<li><a href='{}'>{}</a></li>",
                 url,
                 html_escape(&title)
             ));
         }
-        items.push_str("</ul></div>");
+        if note_items.is_empty() {
+            continue;
+        }
+        any = true;
+        items.push_str(&format!(
+            "<div class='note-section'><h3>&#128193; {}</h3><ul>{}</ul></div>",
+            html_escape(&note.name),
+            note_items
+        ));
     }
     if !any {
         items.push_str("<p class='empty'>No public notes available.</p>");
@@ -1963,6 +1984,10 @@ pub async fn public_note_index_handler(
     let md_dir = state.note_markdown_dir(&note_id);
     let mut items = String::new();
     for fname in &public_files {
+        if !md_dir.join(fname).exists() {
+            state.chat_db.remove_file_visibility(&note_id, fname).ok();
+            continue;
+        }
         let slug = fname.strip_suffix(".md").unwrap_or(fname);
         let url = format!("/notes/{}/{}", url_encode(&note_id), url_encode(slug));
         let title = first_heading_from_file(&md_dir.join(fname))
@@ -3045,6 +3070,8 @@ mod tests {
             admin_broadcast_tx,
             chat_db: crate::serve::db::ChatDb::open(std::path::Path::new(":memory:")).unwrap(),
             data_dir: std::path::PathBuf::from("/tmp/rune-test"),
+            oauth_codes: crate::serve::oauth_pkce::AuthCodeStore::new(),
+            oauth_tokens: crate::serve::oauth_pkce::OAuthTokenStore::new(),
             mcp_sessions: crate::mcp::mcp_session::McpSessionStore::new(),
             provider_registry: Arc::new(tokio::sync::RwLock::new(
                 crate::provider::ProviderRegistry::new(),
@@ -3146,6 +3173,8 @@ mod integration_tests {
             admin_broadcast_tx,
             chat_db: db,
             data_dir: tmp.path().join(".rune"),
+            oauth_codes: crate::serve::oauth_pkce::AuthCodeStore::new(),
+            oauth_tokens: crate::serve::oauth_pkce::OAuthTokenStore::new(),
             mcp_sessions: crate::mcp::mcp_session::McpSessionStore::new(),
             provider_registry: Arc::new(tokio::sync::RwLock::new(
                 crate::provider::ProviderRegistry::new(),
@@ -3724,6 +3753,8 @@ mod integration_tests {
             admin_broadcast_tx,
             chat_db: db,
             data_dir: tmp.path().join(".rune"),
+            oauth_codes: crate::serve::oauth_pkce::AuthCodeStore::new(),
+            oauth_tokens: crate::serve::oauth_pkce::OAuthTokenStore::new(),
             mcp_sessions: crate::mcp::mcp_session::McpSessionStore::new(),
             provider_registry: Arc::new(tokio::sync::RwLock::new(
                 crate::provider::ProviderRegistry::new(),
@@ -3804,6 +3835,8 @@ mod isolation_tests {
             admin_broadcast_tx,
             chat_db: db,
             data_dir: tmp.path().join(".rune"),
+            oauth_codes: crate::serve::oauth_pkce::AuthCodeStore::new(),
+            oauth_tokens: crate::serve::oauth_pkce::OAuthTokenStore::new(),
             mcp_sessions: crate::mcp::mcp_session::McpSessionStore::new(),
             provider_registry: Arc::new(tokio::sync::RwLock::new(
                 crate::provider::ProviderRegistry::new(),
@@ -3871,6 +3904,8 @@ mod isolation_tests {
             admin_broadcast_tx,
             chat_db: db,
             data_dir: tmp.path().join(".rune"),
+            oauth_codes: crate::serve::oauth_pkce::AuthCodeStore::new(),
+            oauth_tokens: crate::serve::oauth_pkce::OAuthTokenStore::new(),
             mcp_sessions: crate::mcp::mcp_session::McpSessionStore::new(),
             provider_registry: Arc::new(tokio::sync::RwLock::new(
                 crate::provider::ProviderRegistry::new(),
@@ -4158,6 +4193,8 @@ mod isolation_tests {
             admin_broadcast_tx,
             chat_db: db,
             data_dir: tmp.path().join(".rune"),
+            oauth_codes: crate::serve::oauth_pkce::AuthCodeStore::new(),
+            oauth_tokens: crate::serve::oauth_pkce::OAuthTokenStore::new(),
             mcp_sessions: crate::mcp::mcp_session::McpSessionStore::new(),
             provider_registry: Arc::new(tokio::sync::RwLock::new(
                 crate::provider::ProviderRegistry::new(),
@@ -4220,6 +4257,8 @@ mod isolation_tests {
             admin_broadcast_tx,
             chat_db: db,
             data_dir: tmp.path().join(".rune"),
+            oauth_codes: crate::serve::oauth_pkce::AuthCodeStore::new(),
+            oauth_tokens: crate::serve::oauth_pkce::OAuthTokenStore::new(),
             mcp_sessions: crate::mcp::mcp_session::McpSessionStore::new(),
             provider_registry: Arc::new(tokio::sync::RwLock::new(
                 crate::provider::ProviderRegistry::new(),
@@ -4289,6 +4328,8 @@ mod isolation_tests {
             admin_broadcast_tx,
             chat_db: db,
             data_dir: tmp.path().join(".rune"),
+            oauth_codes: crate::serve::oauth_pkce::AuthCodeStore::new(),
+            oauth_tokens: crate::serve::oauth_pkce::OAuthTokenStore::new(),
             mcp_sessions: crate::mcp::mcp_session::McpSessionStore::new(),
             provider_registry: Arc::new(tokio::sync::RwLock::new(
                 crate::provider::ProviderRegistry::new(),
@@ -4356,6 +4397,8 @@ mod isolation_tests {
             admin_broadcast_tx,
             chat_db: db,
             data_dir: tmp.path().join(".rune"),
+            oauth_codes: crate::serve::oauth_pkce::AuthCodeStore::new(),
+            oauth_tokens: crate::serve::oauth_pkce::OAuthTokenStore::new(),
             mcp_sessions: crate::mcp::mcp_session::McpSessionStore::new(),
             provider_registry: Arc::new(tokio::sync::RwLock::new(
                 crate::provider::ProviderRegistry::new(),
@@ -4418,6 +4461,15 @@ mod isolation_tests {
         let _ = db.set_note_public("main", true);
         let _ = db.set_file_public("main", "OpenAI.md", true);
         let _ = db.set_file_public("main", "private.md", false);
+        let md_dir = tmp
+            .path()
+            .join(".rune")
+            .join("notes")
+            .join("main")
+            .join("markdown");
+        std::fs::create_dir_all(&md_dir).unwrap();
+        std::fs::write(md_dir.join("OpenAI.md"), "# OpenAI").unwrap();
+        std::fs::write(md_dir.join("private.md"), "# Private").unwrap();
 
         let state = crate::serve::ServerState {
             config: crate::config::RuneConfig::default(),
@@ -4436,6 +4488,8 @@ mod isolation_tests {
             admin_broadcast_tx,
             chat_db: db,
             data_dir: tmp.path().join(".rune"),
+            oauth_codes: crate::serve::oauth_pkce::AuthCodeStore::new(),
+            oauth_tokens: crate::serve::oauth_pkce::OAuthTokenStore::new(),
             mcp_sessions: crate::mcp::mcp_session::McpSessionStore::new(),
             provider_registry: Arc::new(tokio::sync::RwLock::new(
                 crate::provider::ProviderRegistry::new(),
@@ -4464,8 +4518,8 @@ mod isolation_tests {
         let body = String::from_utf8_lossy(&resp.into_body().collect().await.unwrap().to_bytes())
             .to_string();
         assert!(
-            body.contains("OpenAI.md"),
-            "Should show public file; got: {}",
+            body.contains("/notes/main/OpenAI") && body.contains(">OpenAI<"),
+            "Should show public file link and title; got: {}",
             crate::config::safe_truncate(&body, 300)
         );
         assert!(!body.contains("private.md"), "Should NOT show private file");
@@ -4509,6 +4563,8 @@ mod isolation_tests {
             admin_broadcast_tx,
             chat_db: db,
             data_dir: tmp.path().join(".rune"),
+            oauth_codes: crate::serve::oauth_pkce::AuthCodeStore::new(),
+            oauth_tokens: crate::serve::oauth_pkce::OAuthTokenStore::new(),
             mcp_sessions: crate::mcp::mcp_session::McpSessionStore::new(),
             provider_registry: Arc::new(tokio::sync::RwLock::new(
                 crate::provider::ProviderRegistry::new(),
@@ -4546,6 +4602,14 @@ mod isolation_tests {
         let _ = db.set_file_public("pub-note", "hello.md", true);
         let _ = db.create_note("priv-note", "priv-note", None);
         // priv-note stays private
+        let md_dir = tmp
+            .path()
+            .join(".rune")
+            .join("notes")
+            .join("pub-note")
+            .join("markdown");
+        std::fs::create_dir_all(&md_dir).unwrap();
+        std::fs::write(md_dir.join("hello.md"), "# pub-note").unwrap();
 
         let state = crate::serve::ServerState {
             config: crate::config::RuneConfig::default(),
@@ -4564,6 +4628,8 @@ mod isolation_tests {
             admin_broadcast_tx,
             chat_db: db,
             data_dir: tmp.path().join(".rune"),
+            oauth_codes: crate::serve::oauth_pkce::AuthCodeStore::new(),
+            oauth_tokens: crate::serve::oauth_pkce::OAuthTokenStore::new(),
             mcp_sessions: crate::mcp::mcp_session::McpSessionStore::new(),
             provider_registry: Arc::new(tokio::sync::RwLock::new(
                 crate::provider::ProviderRegistry::new(),
@@ -4651,6 +4717,8 @@ mod isolation_tests {
             admin_broadcast_tx,
             chat_db: db,
             data_dir: tmp.path().join(".rune"),
+            oauth_codes: crate::serve::oauth_pkce::AuthCodeStore::new(),
+            oauth_tokens: crate::serve::oauth_pkce::OAuthTokenStore::new(),
             mcp_sessions: crate::mcp::mcp_session::McpSessionStore::new(),
             provider_registry: Arc::new(tokio::sync::RwLock::new(
                 crate::provider::ProviderRegistry::new(),
@@ -4714,6 +4782,8 @@ mod isolation_tests {
             admin_broadcast_tx,
             chat_db: db,
             data_dir: tmp.path().join(".rune"),
+            oauth_codes: crate::serve::oauth_pkce::AuthCodeStore::new(),
+            oauth_tokens: crate::serve::oauth_pkce::OAuthTokenStore::new(),
             mcp_sessions: crate::mcp::mcp_session::McpSessionStore::new(),
             provider_registry: Arc::new(tokio::sync::RwLock::new(
                 crate::provider::ProviderRegistry::new(),
@@ -4819,6 +4889,8 @@ mod isolation_tests {
             admin_broadcast_tx,
             chat_db: db,
             data_dir: tmp.path().join(".rune"),
+            oauth_codes: crate::serve::oauth_pkce::AuthCodeStore::new(),
+            oauth_tokens: crate::serve::oauth_pkce::OAuthTokenStore::new(),
             mcp_sessions: crate::mcp::mcp_session::McpSessionStore::new(),
             provider_registry: Arc::new(tokio::sync::RwLock::new(
                 crate::provider::ProviderRegistry::new(),
@@ -4898,6 +4970,8 @@ mod isolation_tests {
             admin_broadcast_tx,
             chat_db: db,
             data_dir: tmp.path().join(".rune"),
+            oauth_codes: crate::serve::oauth_pkce::AuthCodeStore::new(),
+            oauth_tokens: crate::serve::oauth_pkce::OAuthTokenStore::new(),
             mcp_sessions: crate::mcp::mcp_session::McpSessionStore::new(),
             provider_registry: Arc::new(tokio::sync::RwLock::new(
                 crate::provider::ProviderRegistry::new(),

@@ -620,6 +620,16 @@ impl ChatDb {
             .unwrap_or_default()
     }
 
+    /// Remove file visibility record when a file is deleted.
+    pub fn remove_file_visibility(&self, note_id: &str, filename: &str) -> anyhow::Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "DELETE FROM file_visibility WHERE note_id = ?1 AND filename = ?2",
+            params![note_id, filename],
+        )?;
+        Ok(())
+    }
+
     /// Get all files for a note with their public state.
     pub fn get_file_visibility(&self, note_id: &str) -> Vec<(String, bool)> {
         let conn = self.conn.lock().unwrap();
@@ -1247,5 +1257,79 @@ mod tests {
 
         assert_eq!(n1.model_override, Some("gpt-5".to_string()));
         assert_eq!(n2.model_override, None);
+    }
+
+    #[test]
+    fn test_set_and_list_file_public() {
+        let db = in_memory_db();
+        db.create_note("note1", "Note 1", None).unwrap();
+
+        db.set_file_public("note1", "a.md", true).unwrap();
+        db.set_file_public("note1", "b.md", false).unwrap();
+        db.set_file_public("note1", "c.md", true).unwrap();
+
+        let public = db.list_public_files("note1");
+        assert!(public.contains(&"a.md".to_string()));
+        assert!(!public.contains(&"b.md".to_string()));
+        assert!(public.contains(&"c.md".to_string()));
+    }
+
+    #[test]
+    fn test_remove_file_visibility_clears_record() {
+        let db = in_memory_db();
+        db.create_note("note1", "Note 1", None).unwrap();
+
+        db.set_file_public("note1", "doc.md", true).unwrap();
+        assert!(db
+            .list_public_files("note1")
+            .contains(&"doc.md".to_string()));
+
+        db.remove_file_visibility("note1", "doc.md").unwrap();
+        assert!(!db
+            .list_public_files("note1")
+            .contains(&"doc.md".to_string()));
+    }
+
+    #[test]
+    fn test_remove_file_visibility_nonexistent_is_ok() {
+        let db = in_memory_db();
+        db.create_note("note1", "Note 1", None).unwrap();
+
+        // Removing a record that never existed should not error
+        assert!(db.remove_file_visibility("note1", "ghost.md").is_ok());
+    }
+
+    #[test]
+    fn test_remove_file_visibility_does_not_affect_other_files() {
+        let db = in_memory_db();
+        db.create_note("note1", "Note 1", None).unwrap();
+
+        db.set_file_public("note1", "keep.md", true).unwrap();
+        db.set_file_public("note1", "remove.md", true).unwrap();
+
+        db.remove_file_visibility("note1", "remove.md").unwrap();
+
+        let public = db.list_public_files("note1");
+        assert!(public.contains(&"keep.md".to_string()));
+        assert!(!public.contains(&"remove.md".to_string()));
+    }
+
+    #[test]
+    fn test_remove_file_visibility_does_not_affect_other_notes() {
+        let db = in_memory_db();
+        db.create_note("note1", "Note 1", None).unwrap();
+        db.create_note("note2", "Note 2", None).unwrap();
+
+        db.set_file_public("note1", "shared.md", true).unwrap();
+        db.set_file_public("note2", "shared.md", true).unwrap();
+
+        db.remove_file_visibility("note1", "shared.md").unwrap();
+
+        assert!(!db
+            .list_public_files("note1")
+            .contains(&"shared.md".to_string()));
+        assert!(db
+            .list_public_files("note2")
+            .contains(&"shared.md".to_string()));
     }
 }
