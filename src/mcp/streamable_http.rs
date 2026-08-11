@@ -76,10 +76,7 @@ pub async fn handle_mcp_post(
     let role = match user_role {
         Some(r) => r,
         None => {
-            let proto = headers
-                .get("x-forwarded-proto")
-                .and_then(|v| v.to_str().ok())
-                .unwrap_or("http");
+            let proto = crate::serve::oauth::detect_proto(&headers);
             let host = headers
                 .get("host")
                 .and_then(|v| v.to_str().ok())

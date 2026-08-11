@@ -286,10 +286,7 @@ pub async fn oauth_token_handler(
 }
 
 pub async fn oauth_metadata_handler(headers: HeaderMap) -> impl IntoResponse {
-    let proto = headers
-        .get("x-forwarded-proto")
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or("http");
+    let proto = crate::serve::oauth::detect_proto(&headers);
     let host = headers
         .get("host")
         .and_then(|v| v.to_str().ok())
@@ -314,10 +311,7 @@ pub async fn oauth_metadata_handler(headers: HeaderMap) -> impl IntoResponse {
 /// `GET /.well-known/oauth-protected-resource` — RFC 9728 protected resource metadata.
 /// Tells OAuth clients which authorization server protects this resource.
 pub async fn oauth_protected_resource_handler(headers: HeaderMap) -> impl IntoResponse {
-    let proto = headers
-        .get("x-forwarded-proto")
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or("http");
+    let proto = crate::serve::oauth::detect_proto(&headers);
     let host = headers
         .get("host")
         .and_then(|v| v.to_str().ok())

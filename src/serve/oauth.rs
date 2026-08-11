@@ -776,6 +776,57 @@ pub fn urlencod(s: &str) -> String {
         .collect()
 }
 
+/// Helper to detect request protocol (https vs http) considering reverse proxies,
+/// X-Forwarded-Proto, X-Forwarded-Ssl, X-Forwarded-Port, and domain names.
+pub fn detect_proto(headers: &HeaderMap) -> &'static str {
+    if let Some(proto) = headers
+        .get("x-forwarded-proto")
+        .and_then(|v| v.to_str().ok())
+    {
+        let first = proto.split(',').next().unwrap_or("").trim().to_lowercase();
+        if first == "https" {
+            return "https";
+        }
+    }
+
+    if let Some(ssl) = headers.get("x-forwarded-ssl").and_then(|v| v.to_str().ok()) {
+        if ssl.eq_ignore_ascii_case("on") || ssl == "1" {
+            return "https";
+        }
+    }
+
+    if let Some(fe) = headers.get("front-end-https").and_then(|v| v.to_str().ok()) {
+        if fe.eq_ignore_ascii_case("on") || fe == "1" {
+            return "https";
+        }
+    }
+
+    if let Some(port) = headers
+        .get("x-forwarded-port")
+        .and_then(|v| v.to_str().ok())
+    {
+        if port == "443" {
+            return "https";
+        }
+    }
+
+    let host = headers
+        .get("host")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+    if !host.is_empty()
+        && !host.contains("localhost")
+        && !host.contains("127.0.0.1")
+        && !host.contains("0.0.0.0")
+    {
+        if !host.contains(':') || host.ends_with(":443") {
+            return "https";
+        }
+    }
+
+    "http"
+}
+
 // ─── Tests ─────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
