@@ -316,6 +316,9 @@ mod tests {
 
     #[test]
     fn test_negotiate_initialize_protocol_version_echoes_current() {
+        // Test Protocol Version Negotiation for current supported versions:
+        // - "2026-07-28": Latest MCP HTTP Request Metadata specification
+        // - "2024-11-05": Classic initial MCP release version (used by Hermes / Claude Desktop)
         assert_eq!(
             negotiate_initialize_protocol_version("2026-07-28"),
             "2026-07-28"
@@ -328,6 +331,10 @@ mod tests {
 
     #[test]
     fn test_negotiate_initialize_protocol_version_echoes_legacy() {
+        // Test Protocol Version Negotiation for legacy session versions:
+        // - "2025-03-26": Legacy Streamable HTTP protocol version
+        // - "2025-06-18": Legacy Streamable HTTP session version
+        // - "2025-11-25": Legacy Streamable HTTP session version
         assert_eq!(
             negotiate_initialize_protocol_version("2025-03-26"),
             "2025-03-26"
@@ -344,6 +351,7 @@ mod tests {
 
     #[test]
     fn test_negotiate_initialize_protocol_version_falls_back_for_unknown() {
+        // Unknown or empty protocol version requests fall back to latest ("2026-07-28")
         assert_eq!(
             negotiate_initialize_protocol_version("1999-01-01"),
             "2026-07-28"
@@ -361,6 +369,7 @@ mod tests {
 
     #[test]
     fn test_classify_header_metadata_presence_full() {
+        // Full header presence test under "2026-07-28" specification
         assert_eq!(
             classify_header_metadata_presence(
                 Some("2026-07-28"),
@@ -389,7 +398,8 @@ mod tests {
 
     #[test]
     fn test_lenient_validation_no_headers_bypasses_check() {
-        // Fully legacy/unaware client: no header metadata at all, body-only dispatch.
+        // Fully legacy/unaware client (e.g., 2024-11-05 without draft HTTP headers):
+        // no header metadata at all, body-only dispatch.
         let req = McpJsonRpcRequest {
             jsonrpc: "2.0".to_string(),
             id: Some(serde_json::json!(1)),
@@ -401,7 +411,7 @@ mod tests {
 
     #[test]
     fn test_lenient_validation_protocol_version_only_accepted() {
-        // Only MCP-Protocol-Version present (e.g. client negotiating version without draft Mcp-Method)
+        // Client sending Mcp-Protocol-Version ("2026-07-28" or "2024-11-05") without draft Mcp-Method header
         // should be accepted in lenient mode.
         let req = McpJsonRpcRequest {
             jsonrpc: "2.0".to_string(),
@@ -413,8 +423,12 @@ mod tests {
             validate_header_body_consistency_lenient(Some("2026-07-28"), None, None, &req)
                 .is_ok()
         );
+        assert!(
+            validate_header_body_consistency_lenient(Some("2024-11-05"), None, None, &req)
+                .is_ok()
+        );
 
-        // Unsupported protocol version should still be rejected even without method.
+        // Unsupported protocol version ("1999-01-01") should still be rejected.
         let (code, msg) =
             validate_header_body_consistency_lenient(Some("1999-01-01"), None, None, &req)
                 .unwrap_err();
@@ -424,6 +438,7 @@ mod tests {
 
     #[test]
     fn test_lenient_validation_full_headers_matches_strict() {
+        // Test strict validation under "2026-07-28" version
         let req = McpJsonRpcRequest {
             jsonrpc: "2.0".to_string(),
             id: Some(serde_json::json!(1)),
@@ -452,6 +467,7 @@ mod tests {
 
     #[test]
     fn test_header_body_validation_success() {
+        // Test "2026-07-28" protocol version metadata validation in request body _meta
         let req = McpJsonRpcRequest {
             jsonrpc: "2.0".to_string(),
             id: Some(serde_json::json!(1)),
@@ -494,7 +510,7 @@ mod tests {
         assert_eq!(code, -32020);
         assert!(msg.contains("Required MCP-Protocol-Version header is missing"));
 
-        // Unsupported protocol version
+        // Unsupported protocol version ("1999-01-01")
         let (code_unsupported, msg_unsupported) = validate_header_body_consistency(
             Some("1999-01-01"),
             Some("tools/call"),
@@ -505,7 +521,7 @@ mod tests {
         assert_eq!(code_unsupported, -32021);
         assert!(msg_unsupported.contains("is not supported"));
 
-        // Mismatched method
+        // Mismatched method under "2026-07-28"
         let (code_m, msg_m) = validate_header_body_consistency(
             Some("2026-07-28"),
             Some("tools/list"),
@@ -516,7 +532,7 @@ mod tests {
         assert_eq!(code_m, -32020);
         assert!(msg_m.contains("does not match body method"));
 
-        // Mismatched name
+        // Mismatched name under "2026-07-28"
         let (code_n, msg_n) = validate_header_body_consistency(
             Some("2026-07-28"),
             Some("tools/call"),
@@ -537,8 +553,8 @@ mod tests {
             params: Some(serde_json::json!({"name": "read_note_file"})),
         };
 
-        // A client that sends full headers but negotiated a legacy session protocol
-        // version should NOT be rejected as "unsupported protocol version".
+        // A client that sends full headers but negotiated a legacy session protocol version
+        // ("2025-03-26", "2025-06-18", "2025-11-25") should NOT be rejected.
         for v in LEGACY_SESSION_PROTOCOL_VERSIONS {
             assert!(validate_header_body_consistency(
                 Some(v),
