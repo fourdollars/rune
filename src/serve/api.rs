@@ -2545,6 +2545,15 @@ async fn handle_chat_message(
         _ => {}
     }
 
+    // Always reset room status to idle and broadcast to room users
+    if let Ok(mut s) = room.active_status.try_write() {
+        *s = "idle".to_string();
+    }
+    let idle_msg = SseMsg::Status {
+        state: "idle".to_string(),
+    };
+    broadcast_to_room(&room, &idle_msg);
+
     // Broadcast updated file list to the room
     broadcast_file_list(&state, &note_id).await;
 

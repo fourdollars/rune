@@ -489,6 +489,15 @@ function connect(noteId) {
         }
         console.error('SSE error:', e);
         addSystemMessage('Disconnected. Reconnecting...');
+        if (evtSource && evtSource.readyState === EventSource.CLOSED) {
+            evtSource.close();
+            evtSource = null;
+            setTimeout(() => {
+                if (!isConnected && !authFailed) {
+                    connectSSE();
+                }
+            }, 3000);
+        }
     };
 
     // Listen for all event types
@@ -761,7 +770,11 @@ function handleMessage(msg) {
             showApprovalRequest(msg.id, msg.detail);
             break;
         case 'error':
-            addSystemMessage('Error: ' + msg.message);
+            addSystemMessage('⚠️ Error: ' + (msg.message || 'Unknown error'));
+            finalizeAssistantMessage();
+            clearToolStatus();
+            setStatus('idle');
+            updateChatInputState();
             break;
     }
 }
