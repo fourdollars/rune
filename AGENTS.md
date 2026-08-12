@@ -65,6 +65,18 @@ guests = []
 admins = ["admin:admin123"]
 users = ["user:user123"]
 guests = ["guest:guest123"]
+
+# Third-party OAuth2/OIDC Login (multiple providers)
+[[notes.oauth]]
+name = "google"
+display_name = "Google"
+client_id = "your_oauth_client_id"
+client_secret = "your_oauth_client_secret"
+issuer = "https://accounts.google.com" # OIDC discovery
+groups_claim = "groups"
+admins = ["alice", "grp:platform-admins"]
+users = ["grp:employees"]
+guests = []
 ```
 
 ### Concourse Resource Type

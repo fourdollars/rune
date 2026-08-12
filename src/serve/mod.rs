@@ -67,6 +67,8 @@ pub struct ServerState {
     pub oauth_codes: crate::serve::oauth_pkce::AuthCodeStore,
     /// OAuth 2.1 PKCE access token store.
     pub oauth_tokens: crate::serve::oauth_pkce::OAuthTokenStore,
+    /// Resolved third-party OAuth/OIDC providers keyed by provider name.
+    pub oauth_providers: Arc<RwLock<HashMap<String, crate::serve::oauth::ResolvedOAuthProvider>>>,
 }
 
 impl ServerState {
@@ -350,6 +352,11 @@ pub async fn run(config: RuneConfig, opts: NotesOptions) {
     let initial_registry = crate::serve::api::build_provider_pub(&config)
         .unwrap_or_else(|_| crate::provider::ProviderRegistry::new());
     let provider_registry = Arc::new(tokio::sync::RwLock::new(initial_registry));
+    let resolved_oauth = oauth::resolve_oauth_providers(&config.notes.oauth).await;
+    let oauth_providers = resolved_oauth
+        .into_iter()
+        .map(|p| (p.name.clone(), p))
+        .collect::<HashMap<_, _>>();
 
     let state = ServerState {
         config: config.clone(),
@@ -364,6 +371,7 @@ pub async fn run(config: RuneConfig, opts: NotesOptions) {
         data_dir: data_dir(),
         oauth_codes: crate::serve::oauth_pkce::AuthCodeStore::new(),
         oauth_tokens: crate::serve::oauth_pkce::OAuthTokenStore::new_with_db(Some(chat_db.clone())),
+        oauth_providers: Arc::new(RwLock::new(oauth_providers)),
         mcp_sessions: crate::mcp::mcp_session::McpSessionStore::new(),
         provider_registry,
     };
@@ -600,6 +608,14 @@ pub async fn run(config: RuneConfig, opts: NotesOptions) {
         .route("/api/auth/config", get(oauth::auth_config_handler))
         .route("/auth/github", get(oauth::oauth_start_handler))
         .route("/auth/github/callback", get(oauth::oauth_callback_handler))
+        .route(
+            "/auth/oauth/{name}",
+            get(oauth::oauth_generic_start_handler),
+        )
+        .route(
+            "/auth/oauth/{name}/callback",
+            get(oauth::oauth_generic_callback_handler),
+        )
         .route("/auth/local", post(oauth::local_login_handler))
         .route("/auth/logout", get(oauth::logout_handler))
         .route("/auth/denied", get(oauth::denied_handler))
@@ -638,7 +654,7 @@ pub async fn run(config: RuneConfig, opts: NotesOptions) {
         .route("/oauth/register", post(oauth_pkce::oauth_register_handler))
         .merge(api_routes)
         .layer(axum_mw::from_fn(cors_middleware))
-        .with_state(state);
+        .with_state(state.clone());
 
     let addr = SocketAddr::new(opts.bind, opts.port);
     info!("Rune notes starting on http://{}", addr);
@@ -659,6 +675,13 @@ pub async fn run(config: RuneConfig, opts: NotesOptions) {
             local.admins.len(),
             local.users.len(),
             local.guests.len()
+        );
+    }
+    if !config.notes.oauth.is_empty() {
+        let provider_count = state.oauth_providers.read().await.len();
+        println!(
+            "  🔒 Third-party OAuth configured ({} providers resolved)",
+            provider_count
         );
     }
 
@@ -693,7 +716,14 @@ pub async fn run(config: RuneConfig, opts: NotesOptions) {
 /// Serve the login page (/).
 async fn login_handler() -> impl IntoResponse {
     match static_files::get("login.html") {
-        Some(content) => Html(content).into_response(),
+        Some(content) => {
+            let mut resp = Html(content).into_response();
+            resp.headers_mut().insert(
+                header::CACHE_CONTROL,
+                header::HeaderValue::from_static("no-store, max-age=0"),
+            );
+            resp
+        }
         None => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
     }
 }
@@ -1457,6 +1487,7 @@ mod tests {
             data_dir: std::path::PathBuf::from("/tmp/rune-test"),
             oauth_codes: crate::serve::oauth_pkce::AuthCodeStore::new(),
             oauth_tokens: crate::serve::oauth_pkce::OAuthTokenStore::new(),
+            oauth_providers: Arc::new(RwLock::new(HashMap::new())),
             mcp_sessions: crate::mcp::mcp_session::McpSessionStore::new(),
             provider_registry: Arc::new(tokio::sync::RwLock::new(
                 crate::provider::ProviderRegistry::new(),
@@ -1495,6 +1526,7 @@ mod tests {
             data_dir: std::path::PathBuf::from("/tmp/rune-test"),
             oauth_codes: crate::serve::oauth_pkce::AuthCodeStore::new(),
             oauth_tokens: crate::serve::oauth_pkce::OAuthTokenStore::new(),
+            oauth_providers: Arc::new(RwLock::new(HashMap::new())),
             mcp_sessions: crate::mcp::mcp_session::McpSessionStore::new(),
             provider_registry: Arc::new(tokio::sync::RwLock::new(
                 crate::provider::ProviderRegistry::new(),
@@ -1527,6 +1559,7 @@ mod tests {
             data_dir: std::path::PathBuf::from("/tmp/rune-test"),
             oauth_codes: crate::serve::oauth_pkce::AuthCodeStore::new(),
             oauth_tokens: crate::serve::oauth_pkce::OAuthTokenStore::new(),
+            oauth_providers: Arc::new(RwLock::new(HashMap::new())),
             mcp_sessions: crate::mcp::mcp_session::McpSessionStore::new(),
             provider_registry: Arc::new(tokio::sync::RwLock::new(
                 crate::provider::ProviderRegistry::new(),

@@ -465,6 +465,32 @@ guests = []
 admins = ["admin:admin123"]
 users = ["user:user123"]
 guests = ["guest:guest123"]
+
+# Third-party OAuth2/OIDC Login (multiple providers)
+[[notes.oauth]]
+name = "google"
+display_name = "Google"
+client_id = "your_oauth_client_id"
+client_secret = "your_oauth_client_secret"
+issuer = "https://accounts.google.com" # OIDC discovery
+groups_claim = "groups"
+admins = ["alice", "grp:platform-admins"]
+users = ["grp:employees"]
+guests = []
+
+# Explicit endpoint fallback when discovery is unavailable
+[[notes.oauth]]
+name = "custom"
+display_name = "Custom SSO"
+client_id = "your_client_id"
+client_secret = "your_client_secret"
+authorization_url = "https://sso.example.com/oauth/authorize"
+token_url = "https://sso.example.com/oauth/token"
+userinfo_url = "https://sso.example.com/oauth/userinfo"
+groups_claim = "roles"
+admins = ["grp:notes-admins"]
+users = ["grp:notes-users"]
+guests = []
 ```
 
 ### Role Permissions

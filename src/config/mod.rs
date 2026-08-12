@@ -109,6 +109,9 @@ pub struct NotesConfig {
     pub github: Option<GitHubOAuthConfig>,
     /// Local credentials configuration.
     pub local: Option<LocalConfig>,
+    /// Generic third-party OAuth2/OIDC providers configuration.
+    #[serde(default)]
+    pub oauth: Vec<OAuthProviderConfig>,
 
     /// Enable "Lenient Legacy Client Mode" for the MCP Streamable HTTP endpoint:
     /// requests with NO MCP-Protocol-Version/Mcp-Method/Mcp-Name headers at all skip
@@ -131,6 +134,7 @@ impl Default for NotesConfig {
             model: None,
             github: None,
             local: None,
+            oauth: Vec::new(),
             mcp_lenient_legacy_clients: true,
         }
     }
@@ -164,6 +168,52 @@ pub struct GitHubOAuthConfig {
     #[serde(default)]
     pub users: Vec<String>,
     /// GitHub logins or `"org:org/team"` refs granted guest (read-only) role.
+    #[serde(default)]
+    pub guests: Vec<String>,
+}
+
+fn default_oauth_scopes() -> Vec<String> {
+    vec!["openid".to_string(), "profile".to_string()]
+}
+
+fn default_oauth_groups_claim() -> String {
+    "groups".to_string()
+}
+
+/// Generic third-party OAuth2/OIDC configuration for Rune Notes.
+#[derive(Debug, Clone, Deserialize, Default)]
+pub struct OAuthProviderConfig {
+    /// Stable provider key used in URL path `/auth/oauth/{name}`.
+    pub name: String,
+    /// Human-readable provider name shown on login page.
+    pub display_name: Option<String>,
+    /// Optional emoji or short text prefix shown before the button label (e.g. "🐧").
+    pub icon: Option<String>,
+    /// OAuth app client id.
+    pub client_id: String,
+    /// OAuth app client secret.
+    pub client_secret: String,
+    /// OIDC issuer URL for discovery (`/.well-known/openid-configuration`).
+    pub issuer: Option<String>,
+    /// Explicit OAuth authorization endpoint (fallback when discovery is absent/fails).
+    pub authorization_url: Option<String>,
+    /// Explicit OAuth token endpoint (fallback when discovery is absent/fails).
+    pub token_url: Option<String>,
+    /// Explicit OAuth userinfo endpoint (fallback when discovery is absent/fails).
+    pub userinfo_url: Option<String>,
+    /// OAuth scopes sent to the provider authorize endpoint.
+    #[serde(default = "default_oauth_scopes")]
+    pub scopes: Vec<String>,
+    /// Userinfo claim that contains group names (string or array).
+    #[serde(default = "default_oauth_groups_claim")]
+    pub groups_claim: String,
+    /// Role mapping entries: plain values match user identity, `grp:<name>` matches group value.
+    #[serde(default)]
+    pub admins: Vec<String>,
+    /// Role mapping entries: plain values match user identity, `grp:<name>` matches group value.
+    #[serde(default)]
+    pub users: Vec<String>,
+    /// Role mapping entries: plain values match user identity, `grp:<name>` matches group value.
     #[serde(default)]
     pub guests: Vec<String>,
 }
@@ -2378,6 +2428,57 @@ guests = ["guest:guest123"]
         assert_eq!(local.admins, vec!["admin:admin123"]);
         assert_eq!(local.users, vec!["user:user123"]);
         assert_eq!(local.guests, vec!["guest:guest123"]);
+    }
+
+    #[test]
+    fn test_oauth_provider_config_parses() {
+        let toml_str = r#"
+[[notes.oauth]]
+name = "google"
+display_name = "Google"
+client_id = "cid"
+client_secret = "secret"
+issuer = "https://accounts.google.com"
+groups_claim = "groups"
+admins = ["alice", "grp:platform-admins"]
+users = ["grp:employees"]
+guests = []
+"#;
+        let cfg: crate::config::PartialConfig = toml::from_str(toml_str).unwrap();
+        let notes = cfg.notes.expect("notes must be present");
+        assert_eq!(notes.oauth.len(), 1);
+        let provider = &notes.oauth[0];
+        assert_eq!(provider.name, "google");
+        assert_eq!(provider.display_name.as_deref(), Some("Google"));
+        assert_eq!(provider.client_id, "cid");
+        assert_eq!(provider.client_secret, "secret");
+        assert_eq!(
+            provider.issuer.as_deref(),
+            Some("https://accounts.google.com")
+        );
+        assert_eq!(provider.groups_claim, "groups");
+        assert_eq!(provider.admins, vec!["alice", "grp:platform-admins"]);
+        assert_eq!(provider.users, vec!["grp:employees"]);
+        assert!(provider.guests.is_empty());
+    }
+
+    #[test]
+    fn test_oauth_provider_config_defaults() {
+        let toml_str = r#"
+[[notes.oauth]]
+name = "custom"
+client_id = "cid"
+client_secret = "secret"
+authorization_url = "https://example.com/oauth/authorize"
+token_url = "https://example.com/oauth/token"
+userinfo_url = "https://example.com/oauth/userinfo"
+"#;
+        let cfg: crate::config::PartialConfig = toml::from_str(toml_str).unwrap();
+        let notes = cfg.notes.expect("notes must be present");
+        assert_eq!(notes.oauth.len(), 1);
+        let provider = &notes.oauth[0];
+        assert_eq!(provider.scopes, vec!["openid", "profile"]);
+        assert_eq!(provider.groups_claim, "groups");
     }
 
     #[test]

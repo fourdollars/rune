@@ -156,6 +156,7 @@
             </svg>
             Sign in with GitHub
         </a>
+        <div id="oauth-provider-buttons"></div>
         
         <div id="login-divider" class="divider-or">or</div>
         
@@ -227,6 +228,31 @@
     }
 
     // Load auth configuration and display appropriate methods
+    function renderOAuthProviders(providers) {
+        const host = document.getElementById('oauth-provider-buttons');
+        if (!host) return;
+        host.innerHTML = '';
+        for (const provider of providers || []) {
+            const a = document.createElement('a');
+            a.className = 'github-btn';
+            a.style.display = 'flex';
+            const qp = (redirectTo && redirectTo !== '/edit/')
+                ? ('?next=' + encodeURIComponent(redirectTo))
+                : '';
+            a.href = '/auth/oauth/' + encodeURIComponent(provider.name) + qp;
+            if (provider.icon) {
+                const span = document.createElement('span');
+                span.textContent = provider.icon;
+                span.style.cssText = 'margin-right:8px;font-style:normal;';
+                a.appendChild(span);
+                a.appendChild(document.createTextNode('Sign in with ' + (provider.display_name || provider.name)));
+            } else {
+                a.textContent = 'Sign in with ' + (provider.display_name || provider.name);
+            }
+            host.appendChild(a);
+        }
+    }
+
     (async function loadAuthConfig() {
         try {
             const resp = await fetch('/api/auth/config');
@@ -235,9 +261,13 @@
                 if (data.ok) {
                     const showGithub = !!data.github;
                     const showLocal = !!data.local;
+                    const oauthProviders = Array.isArray(data.oauth) ? data.oauth : [];
                     document.getElementById('github-signin-btn').style.display = showGithub ? 'flex' : 'none';
                     document.getElementById('local-login-form').style.display = showLocal ? 'flex' : 'none';
-                    if (showGithub && showLocal) {
+                    renderOAuthProviders(oauthProviders);
+                    const methodsVisible =
+                        Number(showGithub) + Number(showLocal) + Number(oauthProviders.length > 0);
+                    if (methodsVisible >= 2) {
                         document.getElementById('login-divider').style.display = 'flex';
                     } else {
                         document.getElementById('login-divider').style.display = 'none';

@@ -7,13 +7,13 @@
 //!   3. `GET /auth/logout` → clear session + cookies, redirect to /
 //!   4. `GET /auth/denied` → 403 "not authorized" page
 
-use crate::config::GitHubOAuthConfig;
+use crate::config::{GitHubOAuthConfig, OAuthProviderConfig};
 use axum::{
-    extract::{Query, State},
+    extract::{Path, Query, State},
     http::{header, HeaderMap, StatusCode},
     response::{Html, IntoResponse, Redirect, Response},
 };
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -288,11 +288,195 @@ pub async fn exchange_code(
         })
 }
 
+pub async fn exchange_code_generic(
+    client: &reqwest::Client,
+    token_url: &str,
+    client_id: &str,
+    client_secret: &str,
+    code: &str,
+    redirect_uri: &str,
+    code_verifier: &str,
+) -> Result<String, String> {
+    let body_str = format!(
+        "grant_type=authorization_code&client_id={}&client_secret={}&code={}&redirect_uri={}&code_verifier={}",
+        urlencod(client_id),
+        urlencod(client_secret),
+        urlencod(code),
+        urlencod(redirect_uri),
+        urlencod(code_verifier)
+    );
+    let resp = client
+        .post(token_url)
+        .header("Accept", "application/json")
+        .header("Content-Type", "application/x-www-form-urlencoded")
+        .body(body_str)
+        .send()
+        .await
+        .map_err(|e| format!("network error: {e}"))?;
+
+    let body: serde_json::Value = resp
+        .json()
+        .await
+        .map_err(|e| format!("json parse error: {e}"))?;
+
+    body["access_token"]
+        .as_str()
+        .map(|s| s.to_string())
+        .ok_or_else(|| {
+            body["error_description"]
+                .as_str()
+                .or_else(|| body["error"].as_str())
+                .unwrap_or("unknown error")
+                .to_string()
+        })
+}
+
+pub async fn fetch_userinfo_generic(
+    client: &reqwest::Client,
+    userinfo_url: &str,
+    access_token: &str,
+) -> Result<serde_json::Value, String> {
+    let resp = client
+        .get(userinfo_url)
+        .header("Authorization", format!("Bearer {}", access_token))
+        .header("Accept", "application/json")
+        .send()
+        .await
+        .map_err(|e| format!("network error: {e}"))?;
+
+    resp.json::<serde_json::Value>()
+        .await
+        .map_err(|e| format!("json parse error: {e}"))
+}
+
 /// GitHub user info.
 #[derive(Debug, Deserialize)]
 pub struct GitHubUser {
     pub login: String,
     pub avatar_url: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct OidcDiscovery {
+    authorization_endpoint: String,
+    token_endpoint: String,
+    userinfo_endpoint: String,
+}
+
+/// Resolved third-party OAuth provider endpoints and role mapping.
+#[derive(Debug, Clone)]
+pub struct ResolvedOAuthProvider {
+    pub name: String,
+    pub display_name: String,
+    pub icon: Option<String>,
+    pub client_id: String,
+    pub client_secret: String,
+    pub authorization_url: String,
+    pub token_url: String,
+    pub userinfo_url: String,
+    pub scopes: Vec<String>,
+    pub groups_claim: String,
+    pub admins: Vec<String>,
+    pub users: Vec<String>,
+    pub guests: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct OAuthProviderPublic {
+    pub name: String,
+    pub display_name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub icon: Option<String>,
+}
+
+async fn discover_oidc_endpoints(
+    client: &reqwest::Client,
+    issuer: &str,
+) -> Option<(String, String, String)> {
+    let issuer = issuer.trim().trim_end_matches('/');
+    if issuer.is_empty() {
+        return None;
+    }
+    let url = format!("{issuer}/.well-known/openid-configuration");
+    let resp = client.get(url).send().await.ok()?;
+    if !resp.status().is_success() {
+        return None;
+    }
+    let body = resp.json::<OidcDiscovery>().await.ok()?;
+    Some((
+        body.authorization_endpoint,
+        body.token_endpoint,
+        body.userinfo_endpoint,
+    ))
+}
+
+fn display_name_or_name(cfg: &OAuthProviderConfig) -> String {
+    cfg.display_name
+        .as_ref()
+        .filter(|s| !s.trim().is_empty())
+        .cloned()
+        .unwrap_or_else(|| cfg.name.clone())
+}
+
+fn resolved_provider_from_config(
+    cfg: &OAuthProviderConfig,
+    discovered: Option<(String, String, String)>,
+) -> Option<ResolvedOAuthProvider> {
+    let name = cfg.name.trim();
+    if name.is_empty() {
+        return None;
+    }
+
+    let (authorization_url, token_url, userinfo_url) = match discovered {
+        Some(urls) => urls,
+        None => (
+            cfg.authorization_url.clone()?,
+            cfg.token_url.clone()?,
+            cfg.userinfo_url.clone()?,
+        ),
+    };
+
+    if cfg.client_id.trim().is_empty() || cfg.client_secret.trim().is_empty() {
+        return None;
+    }
+
+    Some(ResolvedOAuthProvider {
+        name: name.to_string(),
+        display_name: display_name_or_name(cfg),
+        icon: cfg.icon.clone(),
+        client_id: cfg.client_id.clone(),
+        client_secret: cfg.client_secret.clone(),
+        authorization_url,
+        token_url,
+        userinfo_url,
+        scopes: cfg.scopes.clone(),
+        groups_claim: cfg.groups_claim.clone(),
+        admins: cfg.admins.clone(),
+        users: cfg.users.clone(),
+        guests: cfg.guests.clone(),
+    })
+}
+
+pub async fn resolve_oauth_providers(
+    configs: &[OAuthProviderConfig],
+) -> Vec<ResolvedOAuthProvider> {
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(10))
+        .build()
+        .unwrap_or_default();
+
+    let mut providers = Vec::new();
+    for cfg in configs {
+        let discovered = match cfg.issuer.as_deref() {
+            Some(issuer) => discover_oidc_endpoints(&client, issuer).await,
+            None => None,
+        };
+
+        if let Some(provider) = resolved_provider_from_config(cfg, discovered) {
+            providers.push(provider);
+        }
+    }
+    providers
 }
 
 /// Fetch authenticated GitHub user profile.
@@ -404,6 +588,52 @@ pub async fn resolve_role_full(
     None
 }
 
+fn role_entries_match_identity_or_groups(entry: &str, identity: &str, groups: &[String]) -> bool {
+    if let Some(group) = entry.strip_prefix("grp:") {
+        let g = group.trim();
+        !g.is_empty() && groups.iter().any(|x| x.eq_ignore_ascii_case(g))
+    } else {
+        entry.eq_ignore_ascii_case(identity)
+    }
+}
+
+pub fn parse_groups_claim(userinfo: &serde_json::Value, claim: &str) -> Vec<String> {
+    let Some(raw) = userinfo.get(claim) else {
+        return Vec::new();
+    };
+    match raw {
+        serde_json::Value::String(s) => vec![s.clone()],
+        serde_json::Value::Array(arr) => arr
+            .iter()
+            .filter_map(|v| v.as_str().map(ToString::to_string))
+            .collect(),
+        _ => Vec::new(),
+    }
+}
+
+pub fn resolve_generic_role(
+    identity: &str,
+    groups: &[String],
+    provider: &ResolvedOAuthProvider,
+) -> Option<Role> {
+    for entry in &provider.admins {
+        if role_entries_match_identity_or_groups(entry, identity, groups) {
+            return Some(Role::Admin);
+        }
+    }
+    for entry in &provider.users {
+        if role_entries_match_identity_or_groups(entry, identity, groups) {
+            return Some(Role::User);
+        }
+    }
+    for entry in &provider.guests {
+        if role_entries_match_identity_or_groups(entry, identity, groups) {
+            return Some(Role::Guest);
+        }
+    }
+    None
+}
+
 // ─── Cookie helpers ────────────────────────────────────────────────────────
 
 /// Read a named cookie value from request headers.
@@ -448,6 +678,24 @@ pub fn clear_state_cookie() -> String {
     "rune_oauth_state=; Path=/auth; HttpOnly; SameSite=Lax; Max-Age=0".to_string()
 }
 
+pub fn set_oauth_pkce_cookie(verifier: &str) -> String {
+    format!("rune_oauth_pkce={verifier}; Path=/auth; HttpOnly; SameSite=Lax; Max-Age={STATE_COOKIE_DURATION_SECS}")
+}
+
+pub fn clear_oauth_pkce_cookie() -> String {
+    "rune_oauth_pkce=; Path=/auth; HttpOnly; SameSite=Lax; Max-Age=0".to_string()
+}
+
+pub fn set_oauth_provider_cookie(name: &str) -> String {
+    format!(
+        "rune_oauth_provider={name}; Path=/auth; HttpOnly; SameSite=Lax; Max-Age={STATE_COOKIE_DURATION_SECS}"
+    )
+}
+
+pub fn clear_oauth_provider_cookie() -> String {
+    "rune_oauth_provider=; Path=/auth; HttpOnly; SameSite=Lax; Max-Age=0".to_string()
+}
+
 // ─── OAuth handler state ───────────────────────────────────────────────────
 
 /// Callback query params sent by GitHub.
@@ -466,6 +714,46 @@ use crate::serve::ServerState;
 #[derive(Debug, Deserialize)]
 pub struct OAuthStartParams {
     pub next: Option<String>,
+}
+
+fn pkce_code_challenge_s256(verifier: &str) -> String {
+    use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
+    use sha2::{Digest, Sha256};
+    let mut hasher = Sha256::new();
+    hasher.update(verifier.as_bytes());
+    let hash = hasher.finalize();
+    URL_SAFE_NO_PAD.encode(hash)
+}
+
+fn oauth_callback_base_url(headers: &HeaderMap) -> String {
+    let proto = detect_proto(headers);
+    let host = headers
+        .get("host")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("localhost:9527");
+    format!("{proto}://{host}")
+}
+
+fn identity_from_userinfo(userinfo: &serde_json::Value) -> Option<String> {
+    userinfo
+        .get("sub")
+        .and_then(|v| v.as_str())
+        .or_else(|| userinfo.get("username").and_then(|v| v.as_str()))
+        .or_else(|| userinfo.get("user_id").and_then(|v| v.as_str()))
+        .or_else(|| userinfo.get("preferred_username").and_then(|v| v.as_str()))
+        .or_else(|| userinfo.get("login").and_then(|v| v.as_str()))
+        .or_else(|| userinfo.get("email").and_then(|v| v.as_str()))
+        .filter(|s| !s.trim().is_empty())
+        .map(ToString::to_string)
+}
+
+fn avatar_from_userinfo(userinfo: &serde_json::Value) -> String {
+    userinfo
+        .get("picture")
+        .and_then(|v| v.as_str())
+        .or_else(|| userinfo.get("avatar_url").and_then(|v| v.as_str()))
+        .unwrap_or("")
+        .to_string()
 }
 
 /// `GET /auth/github` — kick off the OAuth dance.
@@ -586,12 +874,18 @@ pub async fn oauth_callback_handler(
     let session_id = generate_session_id();
     let session = Session {
         id: session_id.clone(),
-        login: github_user.login,
-        role,
+        login: github_user.login.clone(),
+        role: role.clone(),
         avatar_url: github_user.avatar_url,
         expires_at: crate::serve::db::now_secs() + SESSION_DURATION_SECS,
     };
     state.sessions.insert(session).await;
+
+    eprintln!(
+        "[auth] login: {} role={} method=github",
+        github_user.login,
+        role.as_str()
+    );
 
     // Set cookies and redirect
     let (http_only, js_readable) = set_session_cookie(&session_id);
@@ -626,9 +920,231 @@ pub async fn oauth_callback_handler(
     (StatusCode::FOUND, response_headers).into_response()
 }
 
+/// `GET /auth/oauth/{name}` — start third-party OAuth2/OIDC flow.
+pub async fn oauth_generic_start_handler(
+    Path(name): Path<String>,
+    State(state): State<ServerState>,
+    Query(params): Query<OAuthStartParams>,
+    headers: HeaderMap,
+) -> Response {
+    let provider = {
+        let providers = state.oauth_providers.read().await;
+        providers.get(&name).cloned()
+    };
+    let Some(provider) = provider else {
+        return (
+            StatusCode::NOT_FOUND,
+            Html("<h1>OAuth provider not found</h1>"),
+        )
+            .into_response();
+    };
+
+    let csrf_state = generate_session_id();
+    let code_verifier = format!("{}{}", generate_session_id(), generate_session_id());
+    let code_challenge = pkce_code_challenge_s256(&code_verifier);
+
+    let state_cookie = set_state_cookie(&csrf_state);
+    let pkce_cookie = set_oauth_pkce_cookie(&code_verifier);
+    let provider_cookie = set_oauth_provider_cookie(&provider.name);
+
+    let callback = format!(
+        "{}/auth/oauth/{}/callback",
+        oauth_callback_base_url(&headers),
+        provider.name
+    );
+    let scope = if provider.scopes.is_empty() {
+        "openid profile".to_string()
+    } else {
+        provider.scopes.join(" ")
+    };
+
+    let redirect_url = format!(
+        "{}?response_type=code&client_id={}&redirect_uri={}&scope={}&state={}&code_challenge={}&code_challenge_method=S256",
+        provider.authorization_url,
+        urlencod(&provider.client_id),
+        urlencod(&callback),
+        urlencod(&scope),
+        urlencod(&csrf_state),
+        urlencod(&code_challenge),
+    );
+
+    let mut response_headers = HeaderMap::new();
+    response_headers.insert(
+        header::LOCATION,
+        redirect_url
+            .parse()
+            .unwrap_or_else(|_| axum::http::HeaderValue::from_static("/")),
+    );
+    for cookie in [&state_cookie, &pkce_cookie, &provider_cookie] {
+        if let Ok(val) = cookie.parse() {
+            response_headers.append(header::SET_COOKIE, val);
+        }
+    }
+
+    if let Some(ref next_url) = params.next {
+        if next_url.starts_with("/edit") || next_url.starts_with("/oauth/") {
+            let next_cookie = format!(
+                "rune_next={}; Path=/; HttpOnly; SameSite=Lax; Max-Age=300",
+                next_url
+            );
+            if let Ok(val) = next_cookie.parse() {
+                response_headers.append(header::SET_COOKIE, val);
+            }
+        }
+    }
+
+    (StatusCode::FOUND, response_headers).into_response()
+}
+
+/// `GET /auth/oauth/{name}/callback` — finish third-party OAuth2/OIDC flow.
+pub async fn oauth_generic_callback_handler(
+    Path(name): Path<String>,
+    State(state): State<ServerState>,
+    Query(params): Query<CallbackParams>,
+    headers: HeaderMap,
+) -> Response {
+    if let Some(err) = params.error {
+        let desc = params
+            .error_description
+            .unwrap_or_else(|| "OAuth error".to_string());
+        let url = format!("/auth/denied?error={}&desc={}", err, urlencod(&desc));
+        return Redirect::to(&url).into_response();
+    }
+
+    let Some(provider) = ({
+        let providers = state.oauth_providers.read().await;
+        providers.get(&name).cloned()
+    }) else {
+        return Redirect::to("/auth/denied?error=provider_not_found").into_response();
+    };
+
+    let code = match params.code {
+        Some(c) => c,
+        None => return Redirect::to("/auth/denied?error=missing_code").into_response(),
+    };
+
+    let expected_state = get_cookie(&headers, "rune_oauth_state");
+    let provided_state = params.state.as_deref().unwrap_or("");
+    if expected_state.as_deref() != Some(provided_state) || provided_state.is_empty() {
+        return Redirect::to("/auth/denied?error=csrf_mismatch").into_response();
+    }
+
+    let provider_cookie = get_cookie(&headers, "rune_oauth_provider");
+    if provider_cookie.as_deref() != Some(provider.name.as_str()) {
+        return Redirect::to("/auth/denied?error=provider_mismatch").into_response();
+    }
+
+    let code_verifier = match get_cookie(&headers, "rune_oauth_pkce") {
+        Some(v) if !v.is_empty() => v,
+        _ => return Redirect::to("/auth/denied?error=missing_pkce").into_response(),
+    };
+
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(15))
+        .build()
+        .unwrap_or_default();
+
+    let callback = format!(
+        "{}/auth/oauth/{}/callback",
+        oauth_callback_base_url(&headers),
+        provider.name
+    );
+    let access_token = match exchange_code_generic(
+        &client,
+        &provider.token_url,
+        &provider.client_id,
+        &provider.client_secret,
+        &code,
+        &callback,
+        &code_verifier,
+    )
+    .await
+    {
+        Ok(t) => t,
+        Err(e) => {
+            let url = format!("/auth/denied?error=token_exchange&desc={}", urlencod(&e));
+            return Redirect::to(&url).into_response();
+        }
+    };
+
+    let userinfo =
+        match fetch_userinfo_generic(&client, &provider.userinfo_url, &access_token).await {
+            Ok(v) => v,
+            Err(e) => {
+                let url = format!("/auth/denied?error=user_fetch&desc={}", urlencod(&e));
+                return Redirect::to(&url).into_response();
+            }
+        };
+
+    let identity = match identity_from_userinfo(&userinfo) {
+        Some(v) => v,
+        None => return Redirect::to("/auth/denied?error=missing_identity").into_response(),
+    };
+    let groups = parse_groups_claim(&userinfo, &provider.groups_claim);
+    let role = match resolve_generic_role(&identity, &groups, &provider) {
+        Some(r) => r,
+        None => return Redirect::to("/auth/denied?error=not_authorized").into_response(),
+    };
+
+    let session_id = generate_session_id();
+    let session = Session {
+        id: session_id.clone(),
+        login: identity,
+        role,
+        avatar_url: avatar_from_userinfo(&userinfo),
+        expires_at: crate::serve::db::now_secs() + SESSION_DURATION_SECS,
+    };
+    eprintln!(
+        "[auth] login: {} role={} method=oauth provider={}",
+        session.login,
+        session.role.as_str(),
+        provider.name
+    );
+    state.sessions.insert(session).await;
+
+    let (http_only, js_readable) = set_session_cookie(&session_id);
+    let clear_state = clear_state_cookie();
+    let clear_pkce = clear_oauth_pkce_cookie();
+    let clear_provider = clear_oauth_provider_cookie();
+
+    let target_url = get_cookie(&headers, "rune_next")
+        .filter(|u| u.starts_with("/edit") || u.starts_with("/oauth/"))
+        .unwrap_or_else(|| "/edit/".to_string());
+    let clear_next = "rune_next=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0".to_string();
+
+    let mut response_headers = HeaderMap::new();
+    response_headers.insert(
+        header::LOCATION,
+        target_url
+            .parse()
+            .unwrap_or_else(|_| axum::http::HeaderValue::from_static("/edit/")),
+    );
+    for cookie in [
+        &http_only,
+        &js_readable,
+        &clear_state,
+        &clear_pkce,
+        &clear_provider,
+        &clear_next,
+    ] {
+        if let Ok(val) = cookie.parse() {
+            response_headers.append(header::SET_COOKIE, val);
+        }
+    }
+
+    (StatusCode::FOUND, response_headers).into_response()
+}
+
 /// `GET /auth/logout` — clear session and cookies, redirect to home.
 pub async fn logout_handler(State(state): State<ServerState>, headers: HeaderMap) -> Response {
     if let Some(sid) = get_cookie(&headers, "rune_sid") {
+        if let Some(session) = state.sessions.get(&sid).await {
+            eprintln!(
+                "[auth] logout: {} role={}",
+                session.login,
+                session.role.as_str()
+            );
+        }
         state.sessions.remove(&sid).await;
     }
     let (http_only, js_readable) = clear_session_cookies();
@@ -732,10 +1248,24 @@ pub fn verify_local_credentials(
 pub async fn auth_config_handler(State(state): State<ServerState>) -> Response {
     let github_enabled = state.config.notes.github.is_some();
     let local_enabled = state.config.notes.local.is_some();
+    let oauth = {
+        let providers = state.oauth_providers.read().await;
+        let mut list = providers
+            .values()
+            .map(|p| OAuthProviderPublic {
+                name: p.name.clone(),
+                display_name: p.display_name.clone(),
+                icon: p.icon.clone(),
+            })
+            .collect::<Vec<_>>();
+        list.sort_by(|a, b| a.name.cmp(&b.name));
+        list
+    };
     axum::Json(serde_json::json!({
         "ok": true,
         "github": github_enabled,
-        "local": local_enabled
+        "local": local_enabled,
+        "oauth": oauth
     }))
     .into_response()
 }
@@ -790,6 +1320,12 @@ pub async fn local_login_handler(
         expires_at: crate::serve::db::now_secs() + SESSION_DURATION_SECS,
     };
     state.sessions.insert(session).await;
+
+    eprintln!(
+        "[auth] login: {} role={} method=local",
+        req.username,
+        role.as_str()
+    );
 
     // Set cookies
     let (http_only, js_readable) = set_session_cookie(&session_id);
@@ -881,12 +1417,33 @@ pub fn detect_proto(headers: &HeaderMap) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::GitHubOAuthConfig;
+    use crate::config::{GitHubOAuthConfig, OAuthProviderConfig};
 
     fn make_cfg(admins: &[&str], users: &[&str], guests: &[&str]) -> GitHubOAuthConfig {
         GitHubOAuthConfig {
             client_id: "test_id".into(),
             client_secret: "test_secret".into(),
+            admins: admins.iter().map(|s| s.to_string()).collect(),
+            users: users.iter().map(|s| s.to_string()).collect(),
+            guests: guests.iter().map(|s| s.to_string()).collect(),
+        }
+    }
+
+    fn make_generic_provider(
+        admins: &[&str],
+        users: &[&str],
+        guests: &[&str],
+    ) -> ResolvedOAuthProvider {
+        ResolvedOAuthProvider {
+            name: "example".to_string(),
+            display_name: "Example".to_string(),
+            client_id: "cid".to_string(),
+            client_secret: "secret".to_string(),
+            authorization_url: "https://example.com/oauth/authorize".to_string(),
+            token_url: "https://example.com/oauth/token".to_string(),
+            userinfo_url: "https://example.com/oauth/userinfo".to_string(),
+            scopes: vec!["openid".to_string(), "profile".to_string()],
+            groups_claim: "groups".to_string(),
             admins: admins.iter().map(|s| s.to_string()).collect(),
             users: users.iter().map(|s| s.to_string()).collect(),
             guests: guests.iter().map(|s| s.to_string()).collect(),
@@ -1093,6 +1650,86 @@ mod tests {
         assert_eq!(
             verify_local_credentials("unknown", "user123", &local_cfg),
             None
+        );
+    }
+
+    #[test]
+    fn test_parse_groups_claim_array_and_string() {
+        let userinfo_array = serde_json::json!({"groups": ["a", "b"]});
+        assert_eq!(
+            parse_groups_claim(&userinfo_array, "groups"),
+            vec!["a", "b"]
+        );
+
+        let userinfo_string = serde_json::json!({"groups": "admins"});
+        assert_eq!(
+            parse_groups_claim(&userinfo_string, "groups"),
+            vec!["admins"]
+        );
+
+        let userinfo_missing = serde_json::json!({"roles": ["x"]});
+        assert!(parse_groups_claim(&userinfo_missing, "groups").is_empty());
+    }
+
+    #[test]
+    fn test_resolve_generic_role_direct_identity_match() {
+        let provider = make_generic_provider(&["alice"], &[], &[]);
+        assert_eq!(
+            resolve_generic_role("alice", &Vec::<String>::new(), &provider),
+            Some(Role::Admin)
+        );
+    }
+
+    #[test]
+    fn test_resolve_generic_role_group_match() {
+        let provider = make_generic_provider(&["grp:platform-admins"], &[], &[]);
+        let groups = vec!["platform-admins".to_string()];
+        assert_eq!(
+            resolve_generic_role("sub-123", &groups, &provider),
+            Some(Role::Admin)
+        );
+    }
+
+    #[test]
+    fn test_resolve_generic_role_precedence_admin_over_user() {
+        let provider = make_generic_provider(&["grp:staff"], &["grp:staff"], &[]);
+        let groups = vec!["staff".to_string()];
+        assert_eq!(
+            resolve_generic_role("sub-123", &groups, &provider),
+            Some(Role::Admin)
+        );
+    }
+
+    #[test]
+    fn test_resolve_generic_role_ignores_empty_grp_entry() {
+        let provider = make_generic_provider(&["grp:"], &[], &[]);
+        let groups = vec!["anything".to_string()];
+        assert_eq!(resolve_generic_role("sub-123", &groups, &provider), None);
+    }
+
+    #[tokio::test]
+    async fn test_resolve_oauth_providers_with_explicit_endpoints() {
+        let cfg = OAuthProviderConfig {
+            name: "custom".to_string(),
+            display_name: Some("Custom".to_string()),
+            client_id: "cid".to_string(),
+            client_secret: "secret".to_string(),
+            issuer: None,
+            authorization_url: Some("https://example.com/oauth/authorize".to_string()),
+            token_url: Some("https://example.com/oauth/token".to_string()),
+            userinfo_url: Some("https://example.com/oauth/userinfo".to_string()),
+            scopes: vec!["openid".to_string(), "profile".to_string()],
+            groups_claim: "groups".to_string(),
+            admins: vec![],
+            users: vec![],
+            guests: vec![],
+        };
+        let providers = resolve_oauth_providers(&[cfg]).await;
+        assert_eq!(providers.len(), 1);
+        assert_eq!(providers[0].name, "custom");
+        assert_eq!(
+            providers[0].authorization_url,
+            "https://example.com/oauth/authorize"
         );
     }
 }

@@ -3283,6 +3283,7 @@ mod tests {
             data_dir: std::path::PathBuf::from("/tmp/rune-test"),
             oauth_codes: crate::serve::oauth_pkce::AuthCodeStore::new(),
             oauth_tokens: crate::serve::oauth_pkce::OAuthTokenStore::new(),
+            oauth_providers: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
             mcp_sessions: crate::mcp::mcp_session::McpSessionStore::new(),
             provider_registry: Arc::new(tokio::sync::RwLock::new(
                 crate::provider::ProviderRegistry::new(),
@@ -3386,6 +3387,7 @@ mod integration_tests {
             data_dir: tmp.path().join(".rune"),
             oauth_codes: crate::serve::oauth_pkce::AuthCodeStore::new(),
             oauth_tokens: crate::serve::oauth_pkce::OAuthTokenStore::new(),
+            oauth_providers: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
             mcp_sessions: crate::mcp::mcp_session::McpSessionStore::new(),
             provider_registry: Arc::new(tokio::sync::RwLock::new(
                 crate::provider::ProviderRegistry::new(),
@@ -3966,6 +3968,7 @@ mod integration_tests {
             data_dir: tmp.path().join(".rune"),
             oauth_codes: crate::serve::oauth_pkce::AuthCodeStore::new(),
             oauth_tokens: crate::serve::oauth_pkce::OAuthTokenStore::new(),
+            oauth_providers: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
             mcp_sessions: crate::mcp::mcp_session::McpSessionStore::new(),
             provider_registry: Arc::new(tokio::sync::RwLock::new(
                 crate::provider::ProviderRegistry::new(),
@@ -4048,6 +4051,7 @@ mod isolation_tests {
             data_dir: tmp.path().join(".rune"),
             oauth_codes: crate::serve::oauth_pkce::AuthCodeStore::new(),
             oauth_tokens: crate::serve::oauth_pkce::OAuthTokenStore::new(),
+            oauth_providers: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
             mcp_sessions: crate::mcp::mcp_session::McpSessionStore::new(),
             provider_registry: Arc::new(tokio::sync::RwLock::new(
                 crate::provider::ProviderRegistry::new(),
@@ -4117,6 +4121,7 @@ mod isolation_tests {
             data_dir: tmp.path().join(".rune"),
             oauth_codes: crate::serve::oauth_pkce::AuthCodeStore::new(),
             oauth_tokens: crate::serve::oauth_pkce::OAuthTokenStore::new(),
+            oauth_providers: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
             mcp_sessions: crate::mcp::mcp_session::McpSessionStore::new(),
             provider_registry: Arc::new(tokio::sync::RwLock::new(
                 crate::provider::ProviderRegistry::new(),
@@ -4406,6 +4411,7 @@ mod isolation_tests {
             data_dir: tmp.path().join(".rune"),
             oauth_codes: crate::serve::oauth_pkce::AuthCodeStore::new(),
             oauth_tokens: crate::serve::oauth_pkce::OAuthTokenStore::new(),
+            oauth_providers: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
             mcp_sessions: crate::mcp::mcp_session::McpSessionStore::new(),
             provider_registry: Arc::new(tokio::sync::RwLock::new(
                 crate::provider::ProviderRegistry::new(),
@@ -4470,6 +4476,7 @@ mod isolation_tests {
             data_dir: tmp.path().join(".rune"),
             oauth_codes: crate::serve::oauth_pkce::AuthCodeStore::new(),
             oauth_tokens: crate::serve::oauth_pkce::OAuthTokenStore::new(),
+            oauth_providers: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
             mcp_sessions: crate::mcp::mcp_session::McpSessionStore::new(),
             provider_registry: Arc::new(tokio::sync::RwLock::new(
                 crate::provider::ProviderRegistry::new(),
@@ -4541,6 +4548,7 @@ mod isolation_tests {
             data_dir: tmp.path().join(".rune"),
             oauth_codes: crate::serve::oauth_pkce::AuthCodeStore::new(),
             oauth_tokens: crate::serve::oauth_pkce::OAuthTokenStore::new(),
+            oauth_providers: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
             mcp_sessions: crate::mcp::mcp_session::McpSessionStore::new(),
             provider_registry: Arc::new(tokio::sync::RwLock::new(
                 crate::provider::ProviderRegistry::new(),
@@ -4610,6 +4618,7 @@ mod isolation_tests {
             data_dir: tmp.path().join(".rune"),
             oauth_codes: crate::serve::oauth_pkce::AuthCodeStore::new(),
             oauth_tokens: crate::serve::oauth_pkce::OAuthTokenStore::new(),
+            oauth_providers: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
             mcp_sessions: crate::mcp::mcp_session::McpSessionStore::new(),
             provider_registry: Arc::new(tokio::sync::RwLock::new(
                 crate::provider::ProviderRegistry::new(),
@@ -4701,6 +4710,7 @@ mod isolation_tests {
             data_dir: tmp.path().join(".rune"),
             oauth_codes: crate::serve::oauth_pkce::AuthCodeStore::new(),
             oauth_tokens: crate::serve::oauth_pkce::OAuthTokenStore::new(),
+            oauth_providers: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
             mcp_sessions: crate::mcp::mcp_session::McpSessionStore::new(),
             provider_registry: Arc::new(tokio::sync::RwLock::new(
                 crate::provider::ProviderRegistry::new(),
@@ -4776,6 +4786,7 @@ mod isolation_tests {
             data_dir: tmp.path().join(".rune"),
             oauth_codes: crate::serve::oauth_pkce::AuthCodeStore::new(),
             oauth_tokens: crate::serve::oauth_pkce::OAuthTokenStore::new(),
+            oauth_providers: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
             mcp_sessions: crate::mcp::mcp_session::McpSessionStore::new(),
             provider_registry: Arc::new(tokio::sync::RwLock::new(
                 crate::provider::ProviderRegistry::new(),
@@ -4841,6 +4852,7 @@ mod isolation_tests {
             data_dir: tmp.path().join(".rune"),
             oauth_codes: crate::serve::oauth_pkce::AuthCodeStore::new(),
             oauth_tokens: crate::serve::oauth_pkce::OAuthTokenStore::new(),
+            oauth_providers: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
             mcp_sessions: crate::mcp::mcp_session::McpSessionStore::new(),
             provider_registry: Arc::new(tokio::sync::RwLock::new(
                 crate::provider::ProviderRegistry::new(),
@@ -4930,6 +4942,7 @@ mod isolation_tests {
             data_dir: tmp.path().join(".rune"),
             oauth_codes: crate::serve::oauth_pkce::AuthCodeStore::new(),
             oauth_tokens: crate::serve::oauth_pkce::OAuthTokenStore::new(),
+            oauth_providers: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
             mcp_sessions: crate::mcp::mcp_session::McpSessionStore::new(),
             provider_registry: Arc::new(tokio::sync::RwLock::new(
                 crate::provider::ProviderRegistry::new(),
@@ -4995,6 +5008,7 @@ mod isolation_tests {
             data_dir: tmp.path().join(".rune"),
             oauth_codes: crate::serve::oauth_pkce::AuthCodeStore::new(),
             oauth_tokens: crate::serve::oauth_pkce::OAuthTokenStore::new(),
+            oauth_providers: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
             mcp_sessions: crate::mcp::mcp_session::McpSessionStore::new(),
             provider_registry: Arc::new(tokio::sync::RwLock::new(
                 crate::provider::ProviderRegistry::new(),
@@ -5062,6 +5076,7 @@ mod isolation_tests {
             data_dir: tmp.path().join(".rune"),
             oauth_codes: crate::serve::oauth_pkce::AuthCodeStore::new(),
             oauth_tokens: crate::serve::oauth_pkce::OAuthTokenStore::new(),
+            oauth_providers: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
             mcp_sessions: crate::mcp::mcp_session::McpSessionStore::new(),
             provider_registry: Arc::new(tokio::sync::RwLock::new(
                 crate::provider::ProviderRegistry::new(),
@@ -5169,6 +5184,7 @@ mod isolation_tests {
             data_dir: tmp.path().join(".rune"),
             oauth_codes: crate::serve::oauth_pkce::AuthCodeStore::new(),
             oauth_tokens: crate::serve::oauth_pkce::OAuthTokenStore::new(),
+            oauth_providers: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
             mcp_sessions: crate::mcp::mcp_session::McpSessionStore::new(),
             provider_registry: Arc::new(tokio::sync::RwLock::new(
                 crate::provider::ProviderRegistry::new(),
@@ -5250,6 +5266,7 @@ mod isolation_tests {
             data_dir: tmp.path().join(".rune"),
             oauth_codes: crate::serve::oauth_pkce::AuthCodeStore::new(),
             oauth_tokens: crate::serve::oauth_pkce::OAuthTokenStore::new(),
+            oauth_providers: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
             mcp_sessions: crate::mcp::mcp_session::McpSessionStore::new(),
             provider_registry: Arc::new(tokio::sync::RwLock::new(
                 crate::provider::ProviderRegistry::new(),
