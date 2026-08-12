@@ -6,6 +6,7 @@ RUN rustup target add x86_64-unknown-linux-musl
 RUN apk add --no-cache build-base musl-dev
 
 COPY Cargo.toml Cargo.lock ./
+COPY build.rs ./
 COPY src ./src
 COPY web ./web
 RUN cargo build --release --locked --features notes --target x86_64-unknown-linux-musl

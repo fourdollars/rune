@@ -3,6 +3,7 @@ FROM rust:bookworm AS builder
 WORKDIR /app
 
 COPY Cargo.toml Cargo.lock ./
+COPY build.rs ./
 COPY src ./src
 COPY web ./web
 RUN cargo build --release --locked --features notes
