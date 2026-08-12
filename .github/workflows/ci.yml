@@ -67,15 +67,31 @@ jobs:
           retention-days: 30
 
       - name: Build release
-        run: cargo build --release
+        run: |
+          cargo build --release
+          cp target/release/rune target/release/rune-base
 
       - name: E2E tests
         run: ./tests/e2e.sh
+
+      - name: Build release (notes feature)
+        run: |
+          cargo build --release --features notes
+          cp target/release/rune target/release/rune-notes
 
       - name: Binary size
         run: |
           echo '## 📦 Binary Sizes' >> $GITHUB_STEP_SUMMARY
           echo '```' >> $GITHUB_STEP_SUMMARY
-          ls -lh target/release/rune >> $GITHUB_STEP_SUMMARY
+          ls -lh target/release/rune-base target/release/rune-notes >> $GITHUB_STEP_SUMMARY
           echo '```' >> $GITHUB_STEP_SUMMARY
-          ls -lh target/release/rune
+          ls -lh target/release/rune-base target/release/rune-notes
+
+      - name: Upload binaries
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-binaries
+          path: |
+            target/release/rune-base
+            target/release/rune-notes
+          retention-days: 30
