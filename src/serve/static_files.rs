@@ -1,60 +1,73 @@
 //! Embedded static files for the WebUI.
+//!
+//! All assets are compressed with zstd (level 19) at compile time by build.rs
+//! and stored as raw bytes in the binary. On first access (LazyLock init),
+//! they are decompressed entirely into memory — no files are written to disk.
 
 use std::collections::HashMap;
 use std::sync::LazyLock;
 
-static ASSETS: LazyLock<HashMap<&'static str, &'static str>> = LazyLock::new(|| {
-    let mut m = HashMap::new();
-    m.insert("index.html", include_str!("../../web/index.html"));
-    m.insert("login.html", include_str!("../../web/login.html"));
-    m.insert("favicon.svg", include_str!("../../web/favicon.svg"));
-    m.insert("app.js", include_str!("../../web/app.js"));
-    m.insert("style.css", include_str!("../../web/style.css"));
-    m.insert("marked.min.js", include_str!("../../web/marked.min.js"));
+/// Expands to the zstd-compressed bytes of a web asset embedded in the binary.
+macro_rules! zst_asset {
+    ($name:literal) => {
+        include_bytes!(concat!(env!("OUT_DIR"), "/web-zst/", $name, ".zst"))
+    };
+}
+
+fn decompress(data: &'static [u8]) -> Vec<u8> {
+    zstd::decode_all(data).expect("embedded asset decompression failed")
+}
+
+static ASSETS: LazyLock<HashMap<&'static str, Vec<u8>>> = LazyLock::new(|| {
+    let mut m: HashMap<&'static str, Vec<u8>> = HashMap::new();
+    m.insert("index.html", decompress(zst_asset!("index.html")));
+    m.insert("login.html", decompress(zst_asset!("login.html")));
+    m.insert("favicon.svg", decompress(zst_asset!("favicon.svg")));
+    m.insert("app.js", decompress(zst_asset!("app.js")));
+    m.insert("style.css", decompress(zst_asset!("style.css")));
+    m.insert("marked.min.js", decompress(zst_asset!("marked.min.js")));
     m.insert(
         "highlight.min.js",
-        include_str!("../../web/highlight.min.js"),
+        decompress(zst_asset!("highlight.min.js")),
     );
     m.insert(
         "highlight-dark.min.css",
-        include_str!("../../web/highlight-dark.min.css"),
+        decompress(zst_asset!("highlight-dark.min.css")),
     );
     m.insert(
         "highlight-light.min.css",
-        include_str!("../../web/highlight-light.min.css"),
+        decompress(zst_asset!("highlight-light.min.css")),
     );
-    m.insert("katex.min.css", include_str!("../../web/katex.min.css"));
-    m.insert("katex.min.js", include_str!("../../web/katex.min.js"));
+    m.insert("katex.min.css", decompress(zst_asset!("katex.min.css")));
+    m.insert("katex.min.js", decompress(zst_asset!("katex.min.js")));
     m.insert(
         "katex-auto-render.min.js",
-        include_str!("../../web/katex-auto-render.min.js"),
+        decompress(zst_asset!("katex-auto-render.min.js")),
     );
-    m.insert("codemirror.css", include_str!("../../web/codemirror.css"));
-    m.insert("codemirror.js", include_str!("../../web/codemirror.min.js"));
+    m.insert("codemirror.css", decompress(zst_asset!("codemirror.css")));
+    m.insert("codemirror.js", decompress(zst_asset!("codemirror.min.js")));
     m.insert(
         "codemirror-modes.js",
-        include_str!("../../web/codemirror-modes.min.js"),
+        decompress(zst_asset!("codemirror-modes.min.js")),
     );
     m.insert(
         "codemirror-markdown.js",
-        include_str!("../../web/codemirror-markdown.min.js"),
+        decompress(zst_asset!("codemirror-markdown.min.js")),
     );
+    m.insert("mermaid.min.js", decompress(zst_asset!("mermaid.min.js")));
     m
 });
 
-/// Large binary assets served as bytes (e.g. mermaid.min.js ~3MB).
-static BINARY_ASSETS: LazyLock<HashMap<&'static str, &'static [u8]>> = LazyLock::new(|| {
-    let mut m: HashMap<&'static str, &'static [u8]> = HashMap::new();
-    m.insert("mermaid.min.js", include_bytes!("../../web/mermaid.min.js"));
-    m
-});
-
+/// Returns the decompressed text content of a static web asset.
 pub fn get(path: &str) -> Option<String> {
-    ASSETS.get(path).map(|s| s.to_string())
+    ASSETS
+        .get(path)
+        .map(|b| String::from_utf8_lossy(b).into_owned())
 }
 
-pub fn get_bytes(path: &str) -> Option<&'static [u8]> {
-    BINARY_ASSETS.get(path).copied()
+/// Returns the decompressed bytes of a static web asset.
+pub fn get_bytes(path: &str) -> Option<Vec<u8>> {
+    ASSETS.get(path).cloned()
 }
 
 #[cfg(test)]
