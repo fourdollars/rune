@@ -2466,6 +2466,62 @@ impl ProviderRegistry {
         }
     }
 
+    pub fn build_from_config(config: &crate::config::RuneConfig) -> Result<Self> {
+        let mut registry = Self::new();
+        let key = match config.api_key.clone() {
+            Some(k) if !k.trim().is_empty() => k,
+            _ => return Err(anyhow!("No API key configured")),
+        };
+
+        let provider_name = config.provider.as_deref().unwrap_or_else(|| {
+            if key.starts_with("ghu_")
+                || key.starts_with("ghp_")
+                || config
+                    .base_url
+                    .as_deref()
+                    .map(|u| u.contains("githubcopilot"))
+                    .unwrap_or(false)
+            {
+                "github-copilot"
+            } else if key.starts_with("AIza")
+                || config
+                    .base_url
+                    .as_deref()
+                    .map(|u| u.contains("generativelanguage.googleapis.com"))
+                    .unwrap_or(false)
+            {
+                "gemini"
+            } else if key.starts_with("sk-or-") {
+                "openrouter"
+            } else {
+                "openai"
+            }
+        });
+
+        match provider_name {
+            "github-copilot" | "copilot" => {
+                registry.register(Box::new(CopilotProvider::new(key)));
+            }
+            "gemini" | "google" => {
+                registry.register(Box::new(GeminiProvider::new(
+                    key,
+                    Some(config.model.clone()),
+                    config.base_url.clone(),
+                )));
+            }
+            other => {
+                registry.register(Box::new(OpenAiProvider::new(
+                    other.to_string(),
+                    key,
+                    config.base_url.clone(),
+                    config.openrouter_zdr,
+                )));
+            }
+        }
+
+        Ok(registry)
+    }
+
     pub fn register(&mut self, provider: Box<dyn Provider>) {
         self.providers.push(provider);
     }

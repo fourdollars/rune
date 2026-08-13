@@ -24,7 +24,7 @@ A high-performance, zero-trust AI agent built in Rust. Single binary, dual mode:
 - **Concourse CI** — Same binary acts as a resource type (`check`, `in`, `out`) via symlink
 - **Trace Recording** — JSON trace files with sensitive info redaction
 - **JSON Output** — `--json` flag for machine-readable output
-- **Custom System Prompt** — Override the default system prompt via `--system-prompt`, env var, or config. AGENTS.md context is always appended.
+- **Vim / Neovim Integration** — Native FIM ghost text completion and interactive commands (`:RuneAsk`, `:RuneEdit`, `:RuneStatus`, `:RuneLog`) built into the binary via `--features vim`
 - **Non-Interactive Pipe Mode** — piped stdin runs once and exits; no interactive prompt loop
 
 ## Quick Start
@@ -96,6 +96,48 @@ docker run --rm -it \
 
 
 Available tags: `latest` (Debian-based, built from main branch), `<sha>` (specific commit).
+
+## Vim / Neovim Integration
+
+Rune includes a native, zero-dependency Vim/Neovim plugin built directly into the binary.
+
+### Installation
+
+```bash
+# Build Rune with Vim support
+cargo build --release --features vim
+
+# Install the embedded plugin into ~/.vim/plugin/rune.vim and ~/.config/nvim/plugin/rune.vim
+rune vim install
+```
+
+### Features & Commands
+
+| Command | Description |
+|---------|-------------|
+| `:RuneAsk <question>` | Ask AI questions about current file or selection (opens side Markdown window `__Rune_Chat__`) |
+| `:RuneExplain` | Explain current code in detail |
+| `:RuneEdit <prompt>` | Refactor or modify current file based on instructions |
+| `:RuneFix` | Automatically analyze and fix bugs/issues in current file |
+| `:RuneStatus` | Show provider, model, in-flight requests, and rate limit budget |
+| `:RuneLog` | Open side debug window (`__Rune_Log__`) displaying live JSON-RPC traffic and stderr |
+| `:RuneToggle(!)` | Toggle inline autocompletion on/off (`!` for global, without `!` for buffer) |
+
+### Keybindings
+
+- `<Tab>`: Accept full completion suggestion
+- `<C-g>w`: Accept next word of suggestion
+- `<C-g>l`: Accept next line of suggestion
+- `<C-g>]` / `<C-g>[`: Cycle completion candidates
+- `<C-g>d`: Dismiss current ghost text suggestion
+
+### Statusline Customization
+
+Add `%{rune#statusline()}` and `%{rune#model()}` to your `~/.vimrc`:
+
+```vim
+set statusline=%f\ %m%r%=%{rune#statusline()}\ [%{rune#model()}]
+```
 
 ## CLI Usage
 

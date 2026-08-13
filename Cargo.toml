@@ -39,6 +39,7 @@ zstd = "0.13"
 [features]
 default = []
 notes = ["dep:axum", "dep:rusqlite", "dep:zstd"]
+vim = []
 
 [profile.release]
 opt-level = "z"       # Optimize for size

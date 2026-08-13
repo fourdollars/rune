@@ -20,6 +20,8 @@ mod setup;
 mod skills;
 mod tools;
 mod trace;
+#[cfg(feature = "vim")]
+mod vim;
 
 use tracing_subscriber::EnvFilter;
 
@@ -42,6 +44,22 @@ fn main() {
                 sandbox::net_guard::run();
                 unreachable!();
             }
+            "vim" => {
+                #[cfg(feature = "vim")]
+                {
+                    if let Err(e) = vim::handle_vim_cli(&args) {
+                        eprintln!("vim error: {}", e);
+                    }
+                    return;
+                }
+                #[cfg(not(feature = "vim"))]
+                {
+                    eprintln!(
+                        "Error: rune was built without '--features vim'. Rebuild with '--features vim'."
+                    );
+                    std::process::exit(1);
+                }
+            }
             _ => {}
         }
     }
@@ -57,6 +75,7 @@ fn main() {
 async fn async_main() {
     // Check for subcommands BEFORE clap parses args
     let args: Vec<String> = env::args().collect();
+
     if args.len() > 1 && args[1] == "init" {
         // Extract --config / -c from remaining args for init
         let config_override = args
