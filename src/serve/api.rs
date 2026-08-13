@@ -2732,18 +2732,69 @@ async fn handle_chat_message(
                 .await;
         }
         StopReason::Error(e) => {
+            let err_msg = format!("⚠️ Agent error: {}", e);
+            state
+                .chat_db
+                .insert_with_meta_async(
+                    note_id.clone(),
+                    "assistant".to_string(),
+                    "ᚱᚢᚾᛖ".to_string(),
+                    err_msg,
+                    Some(meta_model.clone()),
+                    Some(agent.tokens_in() as i32),
+                    Some(agent.tokens_out() as i32),
+                    Some(agent.step_count() as i32),
+                    Some(agent.tool_call_count() as i32),
+                    meta_thinking.clone(),
+                    Some(agent.total_context_tokens() as i32),
+                )
+                .await;
             let err = SseMsg::Error {
                 message: format!("Agent error: {}", e),
             };
             broadcast_to_room(&room, &err);
         }
         StopReason::MaxSteps => {
+            let err_msg = "⚠️ Agent reached max steps".to_string();
+            state
+                .chat_db
+                .insert_with_meta_async(
+                    note_id.clone(),
+                    "assistant".to_string(),
+                    "ᚱᚢᚾᛖ".to_string(),
+                    err_msg,
+                    Some(meta_model.clone()),
+                    Some(agent.tokens_in() as i32),
+                    Some(agent.tokens_out() as i32),
+                    Some(agent.step_count() as i32),
+                    Some(agent.tool_call_count() as i32),
+                    meta_thinking.clone(),
+                    Some(agent.total_context_tokens() as i32),
+                )
+                .await;
             let err = SseMsg::Error {
                 message: "Agent reached max steps".to_string(),
             };
             broadcast_to_room(&room, &err);
         }
         StopReason::TokenBudgetExhausted => {
+            let err_msg = "⚠️ Token budget exhausted".to_string();
+            state
+                .chat_db
+                .insert_with_meta_async(
+                    note_id.clone(),
+                    "assistant".to_string(),
+                    "ᚱᚢᚾᛖ".to_string(),
+                    err_msg,
+                    Some(meta_model.clone()),
+                    Some(agent.tokens_in() as i32),
+                    Some(agent.tokens_out() as i32),
+                    Some(agent.step_count() as i32),
+                    Some(agent.tool_call_count() as i32),
+                    meta_thinking.clone(),
+                    Some(agent.total_context_tokens() as i32),
+                )
+                .await;
             let err = SseMsg::Error {
                 message: "Token budget exhausted".to_string(),
             };

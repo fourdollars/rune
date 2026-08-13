@@ -149,7 +149,12 @@ pub fn build_anthropic_payload(req: &LlmRequest, stream: bool) -> Result<Value> 
 
     let messages = collapse_messages(messages);
 
-    let max_tokens = req.max_tokens.unwrap_or(8192);
+    let mut max_tokens = req.max_tokens.unwrap_or(8192);
+    if req.thinking.is_some() && max_tokens <= 8192 {
+        // Thinking models consume output tokens for reasoning; allocate more max_tokens
+        // to prevent tool call JSON arguments from being truncated mid-stream.
+        max_tokens = 16384;
+    }
 
     let mut payload = json!({
         "model": req.model,
@@ -356,6 +361,13 @@ pub async fn stream_anthropic_messages(
                                     let _ = tx.send(text.to_string()).await;
                                 }
                             }
+                            Some("thinking_delta") => {
+                                if let Some(thinking) =
+                                    delta.get("thinking").and_then(|t| t.as_str())
+                                {
+                                    let _ = tx.send(thinking.to_string()).await;
+                                }
+                            }
                             Some("input_json_delta") => {
                                 if let Some(partial) =
                                     delta.get("partial_json").and_then(|t| t.as_str())
@@ -376,7 +388,7 @@ pub async fn stream_anthropic_messages(
                         }
                     }
                 }
-                "message_stop" => {}
+                "message_stop" | "content_block_stop" | "ping" => {}
                 _ => {
                     debug!("Unknown SSE event: {}", event_type);
                 }
@@ -384,8 +396,17 @@ pub async fn stream_anthropic_messages(
         }
     }
 
-    // Finalize tool calls
+    // Finalize tool calls (filtering out truncated/malformed JSON arguments)
     for (_idx, (id, name, args)) in tool_call_map {
+        if !args.is_empty() {
+            if let Err(e) = serde_json::from_str::<serde_json::Value>(&args) {
+                warn!(
+                    "dropping Anthropic tool_call with invalid JSON arguments: tool={}, error={}, args={}",
+                    name, e, crate::config::safe_truncate(&args, 200)
+                );
+                continue;
+            }
+        }
         tool_calls.push(LlmToolCall {
             id,
             call_type: "function".to_string(),
