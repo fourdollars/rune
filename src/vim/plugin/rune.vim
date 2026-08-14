@@ -287,7 +287,9 @@ endfunction
 
 function! s:ClearGhostText() abort
   let s:active_ghost_text = ''
-  let s:active_candidates = []
+  if !get(s:, 'in_completefunc', 0)
+    let s:active_candidates = []
+  endif
   if has('nvim')
     let ns = nvim_create_namespace('rune_ghost')
     call nvim_buf_clear_namespace(0, ns, 0, -1)
@@ -331,9 +333,12 @@ function! rune#AcceptLine() abort
 endfunction
 
 let s:active_candidates = []
+let s:pending_completion = 0
+let s:in_completefunc = 0
 
 function! rune#Complete(findstart, base) abort
   if a:findstart
+    let s:in_completefunc = 1
     let line = getline('.')
     let start = col('.') - 1
     while start > 0 && line[start - 1] =~# '\k'
@@ -341,16 +346,63 @@ function! rune#Complete(findstart, base) abort
     endwhile
     return start
   else
+    let s:in_completefunc = 0
     let l:results = []
     let l:prefix = a:base
+
+    " If we don't have candidates yet, trigger an immediate completion request and wait briefly
+    if empty(s:active_candidates) && empty(s:active_ghost_text)
+      let l:line = line('.')
+      let l:col = col('.')
+      let l:lines = getline(1, '$')
+      let l:cur_line = getline('.')
+
+      let l:p = join(l:lines[0 : l:line - 2], "\n")
+      if !empty(l:p)
+        let l:p .= "\n"
+      endif
+      let l:p .= l:cur_line[0 : l:col - 2]
+
+      let l:s = l:cur_line[l:col - 1 :]
+      if l:line < len(l:lines)
+        let l:s .= "\n" . join(l:lines[l:line :], "\n")
+      endif
+
+      let l:buf = bufnr('%')
+      let s:buf_versions[l:buf] = get(s:buf_versions, l:buf, 0) + 1
+      let s:pending_completion = s:buf_versions[l:buf]
+
+      call s:SendRpc('rune/completion', {
+            \ 'buffer_id': l:buf,
+            \ 'version': s:buf_versions[l:buf],
+            \ 'filepath': expand('%:p'),
+            \ 'language': &filetype,
+            \ 'prefix': l:p,
+            \ 'suffix': l:s,
+            \ 'line': l:line - 1,
+            \ 'character': l:col - 1,
+            \ })
+
+      " Wait up to 1500ms for response to arrive via stdio
+      let l:waited = 0
+      while empty(s:active_candidates) && empty(s:active_ghost_text) && l:waited < 1500
+        sleep 20m
+        let l:waited += 20
+      endwhile
+    endif
+
     if !empty(s:active_candidates)
       for cand in s:active_candidates
         let l:clean = cand.text
-        " Strip leading redundant base if present
-        if !empty(l:prefix) && l:clean =~# '^' . escape(l:prefix, '\')
-          let l:word = l:clean
+        " Vim completefunc expects 'word' to start with 'base' to avoid Pattern not found
+        if !empty(l:prefix)
+          if l:clean =~# '^' . escape(l:prefix, '\')
+            let l:word = l:clean
+          else
+            let l:word = l:prefix . l:clean
+          endif
         else
-          let l:word = l:prefix . l:clean
+          let l:word = l:clean
         endif
         call add(l:results, {
               \ 'word': l:word,
@@ -360,9 +412,19 @@ function! rune#Complete(findstart, base) abort
               \ })
       endfor
     elseif !empty(s:active_ghost_text)
+      let l:clean = s:active_ghost_text
+      if !empty(l:prefix)
+        if l:clean =~# '^' . escape(l:prefix, '\')
+          let l:word = l:clean
+        else
+          let l:word = l:prefix . l:clean
+        endif
+      else
+        let l:word = l:clean
+      endif
       call add(l:results, {
-            \ 'word': l:prefix . s:active_ghost_text,
-            \ 'abbr': l:prefix . s:active_ghost_text,
+            \ 'word': l:word,
+            \ 'abbr': l:word,
             \ 'menu': '[ᚱᚢᚾᛖ ai]',
             \ 'dup': 1,
             \ })
