@@ -201,7 +201,10 @@ function! s:ProcessJsonMessage(raw_msg) abort
       endif
       redrawstatus
       if has_key(res, 'candidates') && !empty(res.candidates)
-        call s:RenderGhostText(res.candidates[0].text)
+        let cur_buf = bufnr('%')
+        if !has_key(res, 'buffer_id') || !has_key(res, 'version') || (res.buffer_id == cur_buf && res.version == get(s:buf_versions, cur_buf, 0))
+          call s:RenderGhostText(res.candidates[0].text)
+        endif
       elseif has_key(res, 'text')
         call s:DisplayChatResult(res.text)
       elseif has_key(res, 'edits')
@@ -348,11 +351,22 @@ function! s:OnTextChanged() abort
   if !empty(l:prefix)
     let l:prefix .= "\n"
   endif
-  let l:prefix .= l:cur_line[0 : l:col - 2]
+  let l:cur_prefix = l:cur_line[0 : l:col - 2]
+  let l:prefix .= l:cur_prefix
 
   let l:suffix = l:cur_line[l:col - 1 :]
   if l:line < len(l:lines)
     let l:suffix .= "\n" . join(l:lines[l:line :], "\n")
+  endif
+
+  " Only trigger completion on non-alphanumeric characters (e.g. !, ., space, :, (, etc.) unless trigger_on_word is enabled
+  let l:trigger_pattern = get(g:, 'rune_trigger_pattern', '[^a-zA-Z0-9_]')
+  if !empty(l:trigger_pattern) && !empty(l:cur_prefix)
+    let l:last_char = l:cur_prefix[-1:]
+    if l:last_char !~# l:trigger_pattern
+      call s:ClearGhostText()
+      return
+    endif
   endif
 
   let l:buf = bufnr('%')

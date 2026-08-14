@@ -61,9 +61,19 @@ fn strip_prefix_echo(text: &str, prefix: &str) -> String {
     }
 
     if let Some(last_line) = prefix.lines().last() {
-        let last_line_trimmed = last_line.trim();
+        let last_line_trimmed = last_line.trim_start();
         if !last_line_trimmed.is_empty() && text_trimmed.starts_with(last_line_trimmed) {
             return text_trimmed[last_line_trimmed.len()..].to_string();
+        }
+    }
+
+    // Strip any longest overlap between prefix tail and text head (e.g. prefix ends with "join!", text starts with "join!(a, b);")
+    let max_check = text_trimmed.len().min(prefix_trimmed.len());
+    for len in (1..=max_check).rev() {
+        let prefix_tail = &prefix_trimmed[prefix_trimmed.len() - len..];
+        let text_head = &text_trimmed[..len];
+        if prefix_tail == text_head {
+            return text_trimmed[len..].to_string();
         }
     }
 
@@ -141,5 +151,13 @@ mod tests {
         let raw = "   \n  ";
         let out = postprocess_completion(raw, "", "", None);
         assert_eq!(out, None);
+    }
+
+    #[test]
+    fn test_prefix_echo_token_overlap() {
+        let raw = "join!(a, b);";
+        let prefix = "let res = tokio::join!";
+        let out = postprocess_completion(raw, prefix, "", None);
+        assert_eq!(out, Some("(a, b);".to_string()));
     }
 }
