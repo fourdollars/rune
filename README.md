@@ -130,6 +130,7 @@ rune vim install
 - `<C-g>l`: Accept next line of suggestion
 - `<C-g>]` / `<C-g>[`: Cycle completion candidates
 - `<C-g>d`: Dismiss current ghost text suggestion
+- `<C-x><C-u>`: Trigger Vim native user/keyword completion popup menu (`completefunc=rune#Complete`)
 
 ### Statusline Customization
 

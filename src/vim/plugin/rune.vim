@@ -203,6 +203,7 @@ function! s:ProcessJsonMessage(raw_msg) abort
       if has_key(res, 'candidates') && !empty(res.candidates)
         let cur_buf = bufnr('%')
         if !has_key(res, 'buffer_id') || !has_key(res, 'version') || (res.buffer_id == cur_buf && res.version == get(s:buf_versions, cur_buf, 0))
+          let s:active_candidates = res.candidates
           call s:RenderGhostText(res.candidates[0].text)
         endif
       elseif has_key(res, 'text')
@@ -286,6 +287,7 @@ endfunction
 
 function! s:ClearGhostText() abort
   let s:active_ghost_text = ''
+  let s:active_candidates = []
   if has('nvim')
     let ns = nvim_create_namespace('rune_ghost')
     call nvim_buf_clear_namespace(0, ns, 0, -1)
@@ -328,9 +330,45 @@ function! rune#AcceptLine() abort
   return ''
 endfunction
 
-function! rune#Dismiss() abort
-  call s:ClearGhostText()
-  return ''
+let s:active_candidates = []
+
+function! rune#Complete(findstart, base) abort
+  if a:findstart
+    let line = getline('.')
+    let start = col('.') - 1
+    while start > 0 && line[start - 1] =~# '\k'
+      let start -= 1
+    endwhile
+    return start
+  else
+    let l:results = []
+    let l:prefix = a:base
+    if !empty(s:active_candidates)
+      for cand in s:active_candidates
+        let l:clean = cand.text
+        " Strip leading redundant base if present
+        if !empty(l:prefix) && l:clean =~# '^' . escape(l:prefix, '\')
+          let l:word = l:clean
+        else
+          let l:word = l:prefix . l:clean
+        endif
+        call add(l:results, {
+              \ 'word': l:word,
+              \ 'abbr': l:word,
+              \ 'menu': '[ᚱᚢᚾᛖ ' . get(cand, 'source', 'ai') . ']',
+              \ 'dup': 1,
+              \ })
+      endfor
+    elseif !empty(s:active_ghost_text)
+      call add(l:results, {
+            \ 'word': l:prefix . s:active_ghost_text,
+            \ 'abbr': l:prefix . s:active_ghost_text,
+            \ 'menu': '[ᚱᚢᚾᛖ ai]',
+            \ 'dup': 1,
+            \ })
+    endif
+    return l:results
+  endif
 endfunction
 
 function! s:OnTextChanged() abort
@@ -554,4 +592,11 @@ if get(g:, 'rune_no_map_tab', 0) == 0
   inoremap <expr> <C-g>w rune#AcceptWord()
   inoremap <expr> <C-g>l rune#AcceptLine()
   inoremap <expr> <C-g>d rune#Dismiss()
+endif
+
+if get(g:, 'rune_set_completefunc', 1)
+  augroup RuneCompleteFunc
+    autocmd!
+    autocmd FileType * if empty(&completefunc) | setlocal completefunc=rune#Complete | endif
+  augroup END
 endif
