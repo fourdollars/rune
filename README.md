@@ -122,6 +122,8 @@ rune vim install
 | `:RuneStatus` | Show provider, model, in-flight requests, and rate limit budget |
 | `:RuneLog` | Open side debug window (`__Rune_Log__`) displaying live JSON-RPC traffic and stderr |
 | `:RuneToggle(!)` | Toggle inline autocompletion on/off (`!` for global, without `!` for buffer) |
+| `:RuneEnable(!)` | Enable inline autocompletion (`!` for global, without `!` for buffer) |
+| `:RuneDisable(!)` | Disable inline autocompletion (`!` for global, without `!` for buffer) |
 
 ### Keybindings
 

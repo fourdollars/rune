@@ -606,6 +606,27 @@ function! s:RuneToggle(bang) abort
   endif
 endfunction
 
+function! s:RuneEnable(bang) abort
+  if a:bang ==# '!'
+    let g:rune_enabled = 1
+    echom "Rune global status: Enabled"
+  else
+    let b:rune_enabled = 1
+    echom "Rune buffer status: Enabled"
+  endif
+endfunction
+
+function! s:RuneDisable(bang) abort
+  if a:bang ==# '!'
+    let g:rune_enabled = 0
+    echom "Rune global status: Disabled"
+  else
+    let b:rune_enabled = 0
+    echom "Rune buffer status: Disabled"
+  endif
+  call s:ClearGhostText()
+endfunction
+
 function! s:RuneStatus() abort
   call s:SendRpc('rune/status', {})
 endfunction
@@ -646,6 +667,8 @@ command! -range=% -nargs=* RuneFix call s:RuneFix(<line1>, <line2>, <q-args>)
 command! -nargs=? -complete=customlist,rune#CompleteModels RuneModel call s:RuneModel(<q-args>)
 command! -nargs=? -complete=customlist,rune#CompleteThinking RuneThink call s:RuneThink(<q-args>)
 command! -nargs=0 -bang RuneToggle call s:RuneToggle("<bang>")
+command! -nargs=0 -bang RuneEnable call s:RuneEnable("<bang>")
+command! -nargs=0 -bang RuneDisable call s:RuneDisable("<bang>")
 command! -nargs=0 RuneStatus call s:RuneStatus()
 command! -nargs=0 RuneLog call s:RuneLog()
 
