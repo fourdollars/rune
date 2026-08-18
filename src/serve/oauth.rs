@@ -1437,6 +1437,7 @@ mod tests {
         ResolvedOAuthProvider {
             name: "example".to_string(),
             display_name: "Example".to_string(),
+            icon: None,
             client_id: "cid".to_string(),
             client_secret: "secret".to_string(),
             authorization_url: "https://example.com/oauth/authorize".to_string(),
@@ -1712,6 +1713,7 @@ mod tests {
         let cfg = OAuthProviderConfig {
             name: "custom".to_string(),
             display_name: Some("Custom".to_string()),
+            icon: None,
             client_id: "cid".to_string(),
             client_secret: "secret".to_string(),
             issuer: None,

@@ -1019,7 +1019,7 @@ pub async fn session_handler(
 /// Merge contents of `src` note directory into `dst`.
 /// - archives/*.jsonl  → moved as-is (no filename collision expected, named by timestamp)
 /// - markdown/*        → moved; on name collision, src file renamed to <stem>.from-<src_note>.md
-async fn merge_note_dirs(src: &std::path::Path, dst: &std::path::Path) {
+pub(crate) async fn merge_note_dirs(src: &std::path::Path, dst: &std::path::Path) {
     let src_note = src
         .file_name()
         .unwrap_or_default()
@@ -2380,7 +2380,7 @@ fn url_encode(s: &str) -> String {
     encoded
 }
 
-async fn broadcast_file_list(state: &ServerState, note_id: &str) {
+pub(crate) async fn broadcast_file_list(state: &ServerState, note_id: &str) {
     let md_dir = state.note_markdown_dir(note_id);
     let mut file_names = Vec::new();
     if let Ok(mut rd) = tokio::fs::read_dir(&md_dir).await {
@@ -2424,7 +2424,7 @@ pub async fn usage_handler(State(state): State<ServerState>) -> impl IntoRespons
     Json(stats)
 }
 
-async fn broadcast_note_list(state: &ServerState) {
+pub(crate) async fn broadcast_note_list(state: &ServerState) {
     let notes = build_note_list(state, false).await;
     let msg = SseMsg::NoteList {
         notes,
