@@ -12,6 +12,7 @@ const mobileStatusInit = document.getElementById('mobile-status');
 if (mobileStatusInit) mobileStatusInit.className = 'status disconnected';
 globalThis.btnEdit = document.getElementById('btn-edit');
 globalThis.btnPreview = document.getElementById('btn-preview');
+globalThis.btnChat = document.getElementById('btn-chat');
 
 // --- Editor highlight: markdown + fenced code block sub-language ---
 globalThis.highlightMarkdownEditor = function highlightMarkdownEditor(text) {

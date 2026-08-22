@@ -88,6 +88,13 @@ globalThis.switchFile = async function switchFile(name) {
     currentFilename = data.current_file || name;
     specContent = data.file_content || '';
     setEditorValue(specContent);
+    // An open file must always have a surface to show it on, otherwise the
+    // collapsed center leaves the chat as the only visible panel.
+    if (!showEdit && !showPreview) {
+        showPreview = true;
+        paneFocus = 'preview';
+        applyPanelLayout();
+    }
     if (showPreview) renderPreview();
     updateDocTitle(currentFilename);
     try { localStorage.setItem('rune_file', currentFilename); } catch {}

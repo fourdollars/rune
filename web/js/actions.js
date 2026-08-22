@@ -19,6 +19,7 @@ const actions = {
     'toggle-edit': () => toggleEdit(),
     'toggle-sync-scroll': () => toggleSyncScroll(),
     'toggle-preview': () => togglePreview(),
+    'toggle-chat': () => toggleChatPanel(),
     format: element => insertFormat(element.dataset.format),
     'show-model-dialog': () => showModelDialog(),
     'switch-thinking': element => switchThinking(element.value),

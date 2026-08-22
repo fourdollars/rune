@@ -32,55 +32,60 @@ globalThis.updateEditorVisibility = function updateEditorVisibility(fileCount) {
     applyPanelLayout();
 };
 
+// showEdit/showPreview are the user's intent and survive every breakpoint;
+// the tablet tier renders only one document pane, so what is on screen is
+// derived here rather than by mutating the intent on resize or rotation.
+globalThis.documentPanesExclusive = function documentPanesExclusive() {
+    return isTabletViewport();
+};
+
+globalThis.resolveDocumentPanes = function resolveDocumentPanes() {
+    if (documentPanesExclusive() && showEdit && showPreview) {
+        return paneFocus === 'preview'
+            ? { edit: false, preview: true }
+            : { edit: true, preview: false };
+    }
+    return { edit: showEdit, preview: showPreview };
+};
+
 globalThis.applyPanelLayout = function applyPanelLayout() {
     const center     = document.getElementById('panel-center');
     const centerBody = document.getElementById('center-body');
+    const view       = resolveDocumentPanes();
 
     // Editor visibility
-    editorContainer.classList.toggle('hidden', !showEdit);
-    setToggleState(btnEdit, showEdit);
+    const editorWasHidden = editorContainer.classList.contains('hidden');
+    editorContainer.classList.toggle('hidden', !view.edit);
+    setToggleState(btnEdit, view.edit);
 
     // Preview visibility
-    previewContainer.classList.toggle('hidden', !showPreview);
-    setToggleState(btnPreview, showPreview);
-    if (showPreview) renderPreview();
+    previewContainer.classList.toggle('hidden', !view.preview);
+    setToggleState(btnPreview, view.preview);
+    if (view.preview) renderPreview();
 
     // Split layout: side-by-side when both on
-    if (showEdit && showPreview) {
-        centerBody.classList.add('split-view');
-        editorContainer.style.width  = '';
-        previewContainer.style.width = '';
-    } else {
-        centerBody.classList.remove('split-view');
-        editorContainer.style.width  = '';
-        previewContainer.style.width = '';
-    }
-    // Consumed only below 1280px, where one pane must win over the other.
-    centerBody.classList.toggle('prefer-preview', paneFocus === 'preview');
+    centerBody.classList.toggle('split-view', view.edit && view.preview);
+    editorContainer.style.width  = '';
+    previewContainer.style.width = '';
 
     // Show split-title-bar whenever any panel is visible (editor or preview)
     const splitTitle = document.getElementById('split-title-bar');
     if (splitTitle) {
-        splitTitle.style.display = (showEdit || showPreview) ? 'flex' : 'none';
+        splitTitle.style.display = (view.edit || view.preview) ? 'flex' : 'none';
     }
 
     // Both off → hide center so chat expands to fill
-    if (!showEdit && !showPreview) {
-        center.classList.add('hidden');
-    } else {
-        center.classList.remove('hidden');
-    }
+    const centerHidden = !view.edit && !view.preview;
+    center.classList.toggle('hidden', centerHidden);
+    document.body.classList.toggle('center-hidden', centerHidden);
 
     // When center is hidden, force chat panel open
     const panelRight = document.getElementById('panel-right');
-    if (!showEdit && !showPreview) {
+    if (centerHidden) {
         if (panelRight && panelRight.classList.contains('collapsed')) {
             panelRight.classList.remove('collapsed');
             updateToggleIcon(panelRight, 'right');
-            try {
-                const saved = localStorage.getItem('rune_panel_right');
-                panelRight.style.width = saved ? saved + 'px' : '';
-            } catch {}
+            applyPanelSize(panelRight, 'right');
         }
         // Hide the right panel resize handle arrow (no collapse allowed)
         const rh = document.getElementById('resize-right');
@@ -92,6 +97,7 @@ globalThis.applyPanelLayout = function applyPanelLayout() {
         const icon = rh && rh.querySelector('.toggle-icon');
         if (icon) icon.style.display = '';
     }
+    setToggleState(btnChat, panelRight && !panelRight.classList.contains('collapsed'));
 
     // Persist (only after initial state has been restored from localStorage)
     if (_editorStateRestored) {
@@ -102,23 +108,40 @@ globalThis.applyPanelLayout = function applyPanelLayout() {
     }
     // Update split-title bar and current filename
     updateDocTitle(currentFilename);
+    // CodeMirror cannot lay out inside a display:none container, so any value
+    // set while the editor was hidden is still on screen as the previous file.
+    if (view.edit && editorWasHidden && editorInstance) editorInstance.refresh();
     syncPaneSwitcher();
     layoutEditorToolbar();
 };
 
+// In the exclusive tier the two buttons are a radio pair: picking a pane only
+// moves the focus, so the other pane's intent survives for the wider tiers.
+function selectDocumentPane(pane) {
+    if (pane === 'edit') showEdit = true; else showPreview = true;
+    paneFocus = pane;
+    applyPanelLayout();
+}
+
 globalThis.toggleEdit = function toggleEdit() {
+    if (documentPanesExclusive()) { selectDocumentPane('edit'); return; }
     showEdit = !showEdit;
     if (showEdit) paneFocus = 'edit';
     applyPanelLayout();
 };
 
 globalThis.togglePreview = function togglePreview() {
+    if (documentPanesExclusive()) { selectDocumentPane('preview'); return; }
     showPreview = !showPreview;
     if (showPreview) paneFocus = 'preview';
     applyPanelLayout();
 }
 
 globalThis.swapEditorPreview = function swapEditorPreview() {
+    if (documentPanesExclusive()) {
+        selectDocumentPane(resolveDocumentPanes().preview ? 'edit' : 'preview');
+        return;
+    }
     const toPreview = showEdit && !showPreview;
     showEdit = !toPreview;
     showPreview = toPreview;

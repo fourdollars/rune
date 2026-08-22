@@ -110,6 +110,8 @@ globalThis.handleMessage = function handleMessage(msg) {
                 if (newNoteBtn) newNoteBtn.style.display = 'none';
                 const editBtn = document.getElementById('btn-edit');
                 if (editBtn) editBtn.style.display = 'none';
+                document.querySelectorAll('#compact-menu [data-action="toggle-edit"]')
+                    .forEach(item => { item.style.display = 'none'; });
             }
             break;
         case 'model_list':

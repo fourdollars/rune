@@ -6,7 +6,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="color-scheme" content="light dark">
     <title>ᚱᚢᚾᛖ</title>
-    <link rel="stylesheet" href="/assets/style.css?v=6a3d9e1">
+    <link rel="stylesheet" href="/assets/style.css?v=c92a5f4">
     <link rel="stylesheet" href="/assets/codemirror.css">
     <script src="/assets/codemirror.js"></script>
     <script src="/assets/codemirror-modes.js"></script>
@@ -141,6 +141,8 @@
                     title="More actions" aria-label="More actions" aria-expanded="false" aria-controls="compact-menu"></button>
         </header>
         <div id="compact-menu" class="compact-menu hidden" role="menu" aria-label="More actions">
+            <button type="button" role="menuitem" class="pane-toggle-item" data-action="toggle-edit" data-icon="pencil">Toggle editor</button>
+            <button type="button" role="menuitem" class="pane-toggle-item" data-action="toggle-preview" data-icon="eye">Toggle preview</button>
             <button type="button" role="menuitem" data-action="show-search-dialog" data-icon="search">Search chat</button>
             <button type="button" role="menuitem" data-action="show-archive-dialog" data-icon="archive">Archive chat</button>
             <button type="button" role="menuitem" data-action="show-model-dialog" data-icon="chip">Switch model</button>
@@ -173,8 +175,9 @@
                             title="Show notes" aria-label="Show notes" aria-expanded="false" aria-controls="panel-left"></button>
                     <div id="split-title"></div>
                     <div class="split-title-controls">
-                        <button id="btn-edit" class="split-title-btn active" data-action="toggle-edit" data-icon="pencil" title="Toggle editor" aria-label="Toggle editor" aria-pressed="true"></button>
+                        <button id="btn-edit" class="split-title-btn" data-action="toggle-edit" data-icon="pencil" title="Toggle editor" aria-label="Toggle editor" aria-pressed="true"></button>
                         <button id="btn-preview" class="split-title-btn" data-action="toggle-preview" data-icon="eye" title="Toggle preview" aria-label="Toggle preview" aria-pressed="false"></button>
+                        <button id="btn-chat" class="split-title-btn split-title-chat" data-action="toggle-chat" data-icon="bot" title="Toggle chat" aria-label="Toggle chat" aria-pressed="true"></button>
                         <button id="btn-sync-scroll" class="split-title-btn active" data-action="toggle-sync-scroll" data-icon="sync-scroll" title="Toggle sync scroll" aria-label="Toggle synced scrolling" aria-pressed="true"></button>
                     </div>
                 </div>
@@ -307,6 +310,6 @@
     <script src="/assets/katex-auto-render.min.js"></script>
     <script src="/assets/marked.min.js"></script>
     <script src="/assets/highlight.min.js"></script>
-    <script type="module" src="/assets/js/main.js?v=6a3d9e1"></script>
+    <script type="module" src="/assets/js/main.js?v=c92a5f4"></script>
 </body>
 </html>

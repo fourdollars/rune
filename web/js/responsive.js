@@ -2,6 +2,10 @@ import './state.js';
 
 const compactQuery = window.matchMedia('(max-width: 768px)');
 const drawerQuery = window.matchMedia('(max-width: 1279px)');
+const tabletQuery = window.matchMedia('(min-width: 769px) and (max-width: 1279px)');
+// Portrait tablets stack the chat under the document, so the chat panel is
+// sized and dragged along Y there and along X everywhere else.
+const stackedQuery = window.matchMedia('(min-width: 769px) and (max-width: 1279px) and (max-aspect-ratio: 1/1)');
 // Width kept clear on the right of the toolbar for the absolutely positioned
 // overflow trigger, which is not a flow child and so cannot be measured.
 const OVERFLOW_TRIGGER_RESERVE = 46;
@@ -18,6 +22,14 @@ globalThis.isCompactViewport = function isCompactViewport() {
 
 globalThis.isDrawerViewport = function isDrawerViewport() {
     return drawerQuery.matches;
+};
+
+globalThis.isTabletViewport = function isTabletViewport() {
+    return tabletQuery.matches;
+};
+
+globalThis.chatAxis = function chatAxis() {
+    return stackedQuery.matches ? 'y' : 'x';
 };
 
 function syncDrawerTriggers(open) {
@@ -119,7 +131,9 @@ globalThis.layoutEditorToolbar = function layoutEditorToolbar() {
 
 function closeTransientOverlays(target) {
     if (!(target instanceof Element)) return;
-    if (!target.closest('#compact-menu, [data-action="toggle-compact-menu"]')) closeCompactMenu();
+    const holdsCompactMenu = target.closest('[data-action="toggle-compact-menu"]')
+        || (target.closest('#compact-menu') && !target.closest('[role="menuitem"]'));
+    if (!holdsCompactMenu) closeCompactMenu();
     if (!target.closest('#editor-toolbar-menu, [data-action="toggle-toolbar-overflow"]')) closeToolbarOverflow();
 }
 
@@ -127,14 +141,17 @@ function onBreakpointChange() {
     closeTreeDrawer();
     closeCompactMenu();
     closeToolbarOverflow();
-    syncPaneSwitcher();
-    layoutEditorToolbar();
+    syncPanelAxes();
+    applyPanelLayout();
+    if (editorInstance) editorInstance.refresh();
 }
 
 export function initResponsive() {
     document.addEventListener('click', event => closeTransientOverlays(event.target));
     compactQuery.addEventListener('change', onBreakpointChange);
     drawerQuery.addEventListener('change', onBreakpointChange);
+    tabletQuery.addEventListener('change', onBreakpointChange);
+    stackedQuery.addEventListener('change', onBreakpointChange);
 
     const container = el('editor-container');
     if (container && typeof ResizeObserver === 'function') {

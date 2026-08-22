@@ -1,5 +1,42 @@
 import './state.js';
 // --- Panel Toggle ---
+
+// The chat dock runs down the right edge on wide screens and across the bottom
+// on portrait tablets. Sizes are stored per axis so rotating a device never
+// feeds a saved width back in as a height.
+function axisOf(side) {
+    return side === 'right' ? chatAxis() : 'x';
+}
+
+function sizeKey(side) {
+    return 'rune_panel_' + side + (axisOf(side) === 'y' ? '_h' : '');
+}
+
+function sizeProp(side) {
+    return axisOf(side) === 'y' ? 'height' : 'width';
+}
+
+function measure(panel, side) {
+    return axisOf(side) === 'y' ? panel.offsetHeight : panel.offsetWidth;
+}
+
+function clearPanelSize(panel) {
+    panel.style.width = '';
+    panel.style.height = '';
+}
+
+globalThis.applyPanelSize = function applyPanelSize(panel, side) {
+    clearPanelSize(panel);
+    if (panel.classList.contains('collapsed')) return;
+    let saved = null;
+    try { saved = localStorage.getItem(sizeKey(side)); } catch {}
+    if (saved) panel.style[sizeProp(side)] = saved + 'px';
+};
+
+globalThis.savePanelSize = function savePanelSize(panel, side, value) {
+    try { localStorage.setItem(sizeKey(side), value ?? measure(panel, side)); } catch {}
+};
+
 globalThis.togglePanel = function togglePanel(side) {
     const panel = document.getElementById('panel-' + side);
     // When center is hidden (both Edit+Preview off), chat panel cannot collapse
@@ -8,24 +45,18 @@ globalThis.togglePanel = function togglePanel(side) {
         if (center && center.classList.contains('hidden')) return;
     }
     const wasCollapsed = panel.classList.contains('collapsed');
+    if (!wasCollapsed) savePanelSize(panel, side);
     panel.classList.toggle('collapsed');
     updateToggleIcon(panel, side);
+    applyPanelSize(panel, side);
 
-    if (wasCollapsed) {
-        // Expanding: restore saved width (or default 280)
-        try {
-            const saved = localStorage.getItem('rune_panel_' + side);
-            panel.style.width = (saved ? saved + 'px' : '280px');
-        } catch {
-            panel.style.width = '280px';
-        }
-    } else {
-        // Collapsing: save current width, then clear inline so CSS !important takes over
-        try { localStorage.setItem('rune_panel_' + side, panel.offsetWidth); } catch {}
-        panel.style.width = '';
-    }
     // Persist collapsed state
     try { localStorage.setItem('rune_panel_' + side + '_collapsed', panel.classList.contains('collapsed') ? '1' : '0'); } catch {}
+    if (side === 'right') setToggleState(btnChat, !panel.classList.contains('collapsed'));
+};
+
+globalThis.toggleChatPanel = function toggleChatPanel() {
+    togglePanel('right');
 };
 
 globalThis.updateToggleIcon = function updateToggleIcon(panel, side) {
@@ -34,8 +65,9 @@ globalThis.updateToggleIcon = function updateToggleIcon(panel, side) {
     const collapsed = panel.classList.contains('collapsed');
     if (handle) handle.setAttribute('aria-expanded', String(!collapsed));
     if (!icon) return;
-    if (side === 'left')  icon.textContent = collapsed ? '›' : '‹';
-    else                  icon.textContent = collapsed ? '‹' : '›';
+    if (axisOf(side) === 'y') icon.textContent = collapsed ? '⌃' : '⌄';
+    else if (side === 'left')  icon.textContent = collapsed ? '›' : '‹';
+    else                       icon.textContent = collapsed ? '‹' : '›';
 }
 
 // --- Utilities ---
@@ -95,13 +127,22 @@ globalThis.initPanelResize = function initPanelResize() {
         } else if (wasCollapsed === '0' && panel.classList.contains('collapsed')) {
             panel.classList.remove('collapsed');
         }
-        // Restore width
-        const saved = localStorage.getItem('rune_panel_' + side);
-        if (saved && !panel.classList.contains('collapsed')) panel.style.width = saved + 'px';
+        applyPanelSize(panel, side);
         updateToggleIcon(panel, side);
     });
     setupResizeHandle('resize-left',  'panel-left',  'left');
     setupResizeHandle('resize-right', 'panel-right', 'right');
+};
+
+// Re-seats the chat dock after a rotation: the inline size belongs to the axis
+// it was measured on, so it is dropped and the new axis' own value applied.
+globalThis.syncPanelAxes = function syncPanelAxes() {
+    ['left', 'right'].forEach(side => {
+        const panel = document.getElementById('panel-' + side);
+        if (!panel) return;
+        applyPanelSize(panel, side);
+        updateToggleIcon(panel, side);
+    });
 };
 
 globalThis.setupResizeHandle = function setupResizeHandle(handleId, panelId, side) {
@@ -109,7 +150,7 @@ globalThis.setupResizeHandle = function setupResizeHandle(handleId, panelId, sid
     const panel  = document.getElementById(panelId);
     if (!handle || !panel) return;
 
-    let startX, startW, moved = false;
+    let start, startSize, axis, target, moved = false;
 
     handle.addEventListener('keydown', event => {
         if (event.key !== 'Enter' && event.key !== ' ') return;
@@ -119,31 +160,39 @@ globalThis.setupResizeHandle = function setupResizeHandle(handleId, panelId, sid
 
     handle.addEventListener('mousedown', e => {
         e.preventDefault();
-        startX = e.clientX;
-        startW = panel.offsetWidth;
+        axis = axisOf(side);
+        start = axis === 'y' ? e.clientY : e.clientX;
+        startSize = measure(panel, side);
+        target = startSize;
         moved  = false;
         handle.classList.add('dragging');
+        // The panel animates its size, so it must not lag the pointer mid-drag.
+        panel.classList.add('resizing');
         document.body.style.userSelect = 'none';
 
-        // Only set col-resize cursor when not collapsed
+        // Only set the resize cursor when not collapsed
         if (!panel.classList.contains('collapsed')) {
-            document.body.style.cursor = 'col-resize';
+            document.body.style.cursor = axis === 'y' ? 'row-resize' : 'col-resize';
         }
 
         function onMove(e) {
             if (panel.classList.contains('collapsed')) return;
-            const dist = Math.abs(e.clientX - startX);
+            const position = axis === 'y' ? e.clientY : e.clientX;
+            const dist = Math.abs(position - start);
             if (dist < 4) return; // dead zone — too small to be a drag
             moved = true;
-            const delta = side === 'left' ? e.clientX - startX : startX - e.clientX;
-            const minW = parseInt(getComputedStyle(panel).minWidth) || 160;
-            const maxW = parseInt(getComputedStyle(panel).maxWidth) || 600;
-            const newW = Math.max(minW, Math.min(maxW, startW + delta));
-            panel.style.width = newW + 'px';
+            // Left panel grows toward the pointer; the chat dock grows away from it.
+            const delta = side === 'left' ? position - start : start - position;
+            const style = getComputedStyle(panel);
+            const min = parseInt(axis === 'y' ? style.minHeight : style.minWidth) || 160;
+            const max = parseInt(axis === 'y' ? style.maxHeight : style.maxWidth) || 600;
+            target = Math.max(min, Math.min(max, startSize + delta));
+            panel.style[sizeProp(side)] = target + 'px';
         }
 
         function onUp() {
             handle.classList.remove('dragging');
+            panel.classList.remove('resizing');
             document.body.style.cursor = '';
             document.body.style.userSelect = '';
             document.removeEventListener('mousemove', onMove);
@@ -153,9 +202,8 @@ globalThis.setupResizeHandle = function setupResizeHandle(handleId, panelId, sid
                 // Pure click → toggle collapse
                 togglePanel(side);
             } else {
-                // Drag ended → persist width
-                try { localStorage.setItem('rune_panel_' + side, panel.offsetWidth); } catch {}
-                
+                // The drag target, not a measurement: a size mid-animation is short.
+                savePanelSize(panel, side, target);
             }
         }
 

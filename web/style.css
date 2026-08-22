@@ -18,6 +18,7 @@
     --chat-input-height: 80px;
     --drawer-width: min(310px, 84vw);
     --chat-width-medium: clamp(240px, 30vw, 320px);
+    --chat-height-stacked: clamp(200px, 34vh, 420px);
     --compact-bar-h: 48px;
     --compact-switch-h: 52px;
     --scrim: rgba(0, 0, 0, 0.55);
@@ -111,6 +112,10 @@ body {
     flex: 1 1 auto !important;
     max-width: none !important;
     width: auto !important;
+}
+
+.panel.resizing {
+    transition: none;
 }
 
 .panel.collapsed {
@@ -222,6 +227,9 @@ body {
     display: flex;
     flex-direction: column;
     min-width: 0;
+    /* Without this the column-stacked tier sizes the centre to the document's
+       full height and pushes the chat dock past the bottom of the viewport. */
+    min-height: 0;
 }
 
 
@@ -1007,22 +1015,6 @@ pre.hljs-pre:hover .copy-btn {
 
 /* --- Edit/Preview toggle layout --- */
 
-/* Split view: editor + preview side by side */
-#panel-center.split-view #editor-container,
-#panel-center.split-view #preview-container {
-    display: flex;
-    flex-direction: column;
-    overflow: hidden;
-}
-
-/* Make center main a flex row when split */
-#panel-center.split-view {
-    flex-direction: row !important;
-}
-#panel-center.split-view #editor-container {
-    border-right: 1px solid var(--border);
-}
-
 /* When both panels off: shrink center to nothing */
 /* Both Edit+Preview off: shrink center to zero; chat fills remaining space */
 #panel-center.hidden {
@@ -1102,6 +1094,10 @@ pre.hljs-pre:hover .copy-btn {
 }
 
 .split-title-nav {
+    display: none;
+}
+
+.split-title-chat {
     display: none;
 }
 
@@ -2043,12 +2039,9 @@ body.tree-open #app-scrim {
         width: var(--drawer-width) !important;
     }
 
-    /* Editor OR preview — never side by side below the wide tier. */
-    #center-body.split-view #split-body { flex-direction: row; }
-    #center-body.split-view #preview-container { display: none; }
-    #center-body.split-view #editor-container { border-right: 0; }
-    #center-body.split-view.prefer-preview #preview-container { display: flex; }
-    #center-body.split-view.prefer-preview #editor-container { display: none; }
+    /* Editor and preview are mutually exclusive below the wide tier; which one
+       renders is decided in applyPanelLayout(), so no CSS override is needed. */
+    [data-action="toggle-sync-scroll"] { display: none; }
 
     .split-title-nav { display: flex; }
 }
@@ -2066,6 +2059,58 @@ body.tree-open #app-scrim {
     #panel-center.hidden ~ #panel-right.panel {
         max-width: none;
     }
+
+    /* Rescue chrome: both panes off collapses the center to zero width, taking
+       #split-title-bar — this tier's only drawer trigger and pane toggles — with
+       it. Reveal the app-level compact bar exactly then (<=768px always has it). */
+    body.center-hidden #app { padding-top: var(--compact-bar-h); }
+    body.center-hidden #compact-bar { display: flex; }
+    body.center-hidden #compact-menu:not(.hidden) { display: flex; }
+
+    .split-title-chat { display: flex; }
+}
+
+/* ─── Tier: medium, portrait — chat docks under the document instead of
+       beside it. Aspect ratio rather than width, so a 1024x1366 iPad Pro is
+       correctly treated as a tall device and not as a wide one. ─── */
+@media (min-width: 769px) and (max-width: 1279px) and (max-aspect-ratio: 1/1) {
+    #app { flex-direction: column; }
+
+    #panel-right.panel {
+        width: auto !important;
+        min-width: 0 !important;
+        max-width: none !important;
+        height: var(--chat-height-stacked);
+        min-height: 140px;
+        max-height: 70vh;
+        border-left: 0;
+        border-top: 1px solid var(--border);
+        flex-direction: column;
+        transition: height 0.2s ease;
+    }
+    #panel-right.panel.collapsed {
+        width: auto !important;
+        height: 20px !important;
+        min-height: 20px !important;
+        max-height: 20px;
+    }
+    #panel-center.hidden {
+        width: auto !important;
+        height: 0 !important;
+        min-height: 0 !important;
+    }
+    #panel-center.hidden ~ #panel-right.panel {
+        height: auto !important;
+        max-height: none !important;
+    }
+
+    #panel-right .resize-handle {
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 12px;
+        cursor: row-resize;
+    }
 }
 
 /* ─── Tier: compact (<=768px) ─── */
@@ -2077,6 +2122,8 @@ body.tree-open #app-scrim {
     #compact-bar,
     #pane-switcher { display: flex; }
     #compact-menu:not(.hidden) { display: flex; }
+    /* The pane switcher owns the editor/preview choice in this tier. */
+    .compact-menu .pane-toggle-item { display: none; }
 
     #panel-center,
     #panel-right.panel {
