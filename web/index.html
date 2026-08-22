@@ -6,7 +6,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="color-scheme" content="light dark">
     <title>ᚱᚢᚾᛖ</title>
-    <link rel="stylesheet" href="/assets/style.css?v=0a2d549">
+    <link rel="stylesheet" href="/assets/style.css?v=6a3d9e1">
     <link rel="stylesheet" href="/assets/codemirror.css">
     <script src="/assets/codemirror.js"></script>
     <script src="/assets/codemirror-modes.js"></script>
@@ -19,93 +19,91 @@
 
     <!-- Archive confirm dialog -->
     <div id="archive-modal" class="modal-overlay hidden">
-        <div class="modal">
-            <h2>📦 Archive Chat</h2>
+        <div class="modal" role="dialog" aria-modal="true" aria-labelledby="archive-modal-title">
+            <h2 id="archive-modal-title">Archive Chat</h2>
             <p>Archive the current conversation. The chat window will be cleared.<br>Archived messages remain searchable.</p>
             <div class="modal-actions">
-                <button class="btn-secondary" onclick="hideArchiveDialog()">Cancel</button>
-                <button class="btn-primary" onclick="confirmArchive()">Archive</button>
+                <button class="btn-secondary" data-action="hide-archive-dialog">Cancel</button>
+                <button class="btn-primary" data-action="confirm-archive">Archive</button>
             </div>
         </div>
     </div>
 
     <!-- Search dialog -->
     <div id="search-modal" class="modal-overlay hidden">
-        <div class="modal modal-wide">
-            <h2>🔍 Search Chat History</h2>
+        <div class="modal modal-wide" role="dialog" aria-modal="true" aria-labelledby="search-modal-title">
+            <h2 id="search-modal-title">Search Chat History</h2>
             <div class="search-input-row">
-                <input type="text" id="search-input" placeholder="Search keyword…" onkeydown="if(event.key==='Enter')doSearch()">
-                <button class="btn-primary" onclick="doSearch()">Search</button>
+                <input type="text" id="search-input" placeholder="Search keyword…" data-action="search-input" aria-label="Search keyword">
+                <button class="btn-primary" data-action="search">Search</button>
             </div>
             <div id="search-results" class="search-results"></div>
             <div class="modal-actions">
-                <button class="btn-secondary" onclick="hideSearchDialog()">Close</button>
+                <button class="btn-secondary" data-action="hide-search-dialog">Close</button>
             </div>
         </div>
     </div>
 
     <!-- Logout confirm dialog -->
     <div id="logout-modal" class="modal-overlay hidden">
-        <div class="modal">
-            <h2>Logout</h2>
+        <div class="modal" role="dialog" aria-modal="true" aria-labelledby="logout-modal-title">
+            <h2 id="logout-modal-title">Logout</h2>
             <p>Are you sure you want to log out?<br>Your saved nickname and token will be cleared.</p>
             <div class="modal-actions">
-                <button class="btn-secondary" onclick="hideLogoutDialog()">Cancel</button>
-                <button class="btn-primary" onclick="confirmLogout()">Logout</button>
+                <button class="btn-secondary" data-action="hide-logout-dialog">Cancel</button>
+                <button class="btn-primary" data-action="confirm-logout">Logout</button>
             </div>
         </div>
     </div>
 
     <!-- New Note dialog -->
     <div id="new-note-modal" class="modal-overlay hidden">
-        <div class="modal">
-            <h2>New Note</h2>
+        <div class="modal" role="dialog" aria-modal="true" aria-labelledby="new-note-modal-title">
+            <h2 id="new-note-modal-title">New Note</h2>
             <div class="form-group">
-                <label>Note Name</label>
+                <label for="new-note-name">Note Name</label>
                 <input type="text" id="new-note-name" placeholder="My Project" maxlength="50" />
             </div>
-            <div class="form-group">
-                <div class="path-input-row">
-                </div>
-            </div>
             <div class="modal-actions">
-                <button class="btn-secondary" onclick="hideNewNoteDialog()">Cancel</button>
-                <button class="btn-primary" onclick="createNote()">Create</button>
+                <button class="btn-secondary" data-action="hide-new-note-dialog">Cancel</button>
+                <button class="btn-primary" data-action="create-note">Create</button>
             </div>
         </div>
     </div>
 
     <!-- Directory Browser dialog -->
     <div id="dir-browser-modal" class="modal-overlay hidden">
-        <div class="modal modal-wide">
-            <h2>📁 Select Folder</h2>
+        <div class="modal modal-wide" role="dialog" aria-modal="true" aria-labelledby="dir-browser-title">
+            <h2 id="dir-browser-title">Select Folder</h2>
             <div class="dir-browser-path-row">
-                <input type="text" id="dir-browser-path" placeholder="/" onkeydown="if(event.key==='Enter')navigateDir(this.value)" />
-                <button class="btn-secondary" onclick="navigateDir(document.getElementById('dir-browser-path').value)">Go</button>
+                <input type="text" id="dir-browser-path" placeholder="/" data-action="dir-path" aria-label="Folder path" />
+                <button class="btn-secondary" data-action="navigate-dir">Go</button>
             </div>
             <div id="dir-browser-list" class="dir-browser-list"></div>
             <div class="modal-actions">
-                <button class="btn-secondary" onclick="hideDirBrowser()">Cancel</button>
-                <button class="btn-primary" onclick="selectDir()">Select</button>
+                <button class="btn-secondary" data-action="hide-dir-browser">Cancel</button>
+                <button class="btn-primary" data-action="select-dir">Select</button>
             </div>
         </div>
     </div>
 
     <!-- Note Settings dialog -->
     <div id="note-settings-modal" class="modal-overlay hidden">
-        <div class="modal">
+        <div class="modal" role="dialog" aria-modal="true" aria-labelledby="note-settings-title">
             <h2 id="note-settings-title">Note Settings</h2>
             <div class="form-group">
-                <label>Name</label>
+                <label for="note-settings-name">Name</label>
                 <input type="text" id="note-settings-name" maxlength="50" />
             </div>
             <div class="form-group emoji-picker-group">
-                <label>Icon (Emoji)</label>
+                <label id="emoji-picker-label">Icon (Emoji)</label>
                 <div class="emoji-picker-wrapper">
-                    <button type="button" id="emoji-picker-trigger" class="emoji-picker-trigger">📂</button>
-                    <div id="emoji-picker-popover" class="emoji-picker-popover hidden">
-                        <input type="text" id="emoji-search-input" class="emoji-search-input" placeholder="Search emoji..." autocomplete="off" />
-                        <div class="emoji-tabs" id="emoji-picker-tabs"></div>
+                    <span id="emoji-picker-trigger" class="emoji-picker-trigger" role="button" tabindex="0"
+                          data-action="toggle-emoji-picker" data-icon="folder" aria-haspopup="dialog"
+                          aria-expanded="false" aria-label="Choose note icon"></span>
+                    <div id="emoji-picker-popover" class="emoji-picker-popover hidden" role="dialog" aria-modal="false" aria-labelledby="emoji-picker-label">
+                        <input type="text" id="emoji-search-input" class="emoji-search-input" placeholder="Search emoji..." autocomplete="off" aria-label="Search emoji" />
+                        <div class="emoji-tabs" id="emoji-picker-tabs" role="tablist" aria-label="Emoji categories"></div>
                         <div class="emoji-scroll-area" id="emoji-picker-scroll-area">
                             <button type="button" class="emoji-clear-btn" id="emoji-clear-btn">Reset to Default</button>
                             <div id="emoji-categories-container"></div>
@@ -113,148 +111,118 @@
                     </div>
                 </div>
             </div>
-            <div class="form-group">
-                <div class="path-input-row">
-                </div>
-            </div>
             <div class="modal-actions">
-                <button class="btn-danger" id="btn-delete-note" onclick="deleteCurrentNote()">Delete</button>
+                <button class="btn-danger" id="btn-delete-note" data-action="delete-note">Delete</button>
                 <span style="flex:1"></span>
-                <button class="btn-secondary" onclick="hideNoteSettings()">Cancel</button>
-                <button class="btn-primary" onclick="saveNoteSettings()">Save</button>
+                <button class="btn-secondary" data-action="hide-note-settings">Cancel</button>
+                <button class="btn-primary" data-action="save-note-settings">Save</button>
             </div>
         </div>
     </div>
 
     <div id="model-modal" class="modal-overlay hidden">
-        <div class="modal">
+        <div class="modal" role="dialog" aria-modal="true" aria-labelledby="model-modal-title">
             <h2 id="model-modal-title">Switch Model</h2>
-            <input type="text" id="model-search-input" class="model-search-input" placeholder="Search models..." autocomplete="off">
+            <input type="text" id="model-search-input" class="model-search-input" placeholder="Search models..." autocomplete="off" aria-label="Search models">
             <div id="model-list" class="model-list"></div>
             <div class="modal-actions">
-                <button class="btn-secondary" onclick="hideModelDialog()">Cancel</button>
+                <button class="btn-secondary" data-action="hide-model-dialog">Cancel</button>
             </div>
         </div>
     </div>
 
-    <!-- Mobile Header (hidden on desktop) -->
-    <div id="mobile-header">
-        <button id="mobile-drawer-btn" onclick="openNotesDrawer()">☰</button>
-        <a href="/edit/" target="_blank" rel="noopener" id="mobile-rune-title" class="title-link"><span class="rune-char">ᚱ</span><span class="rune-char">ᚢ</span><span class="rune-char">ᚾ</span><span class="rune-char">ᛖ</span></a>
-        <span id="mobile-filename"></span>
-        <button id="mobile-logout-btn" class="mobile-header-action" onclick="showLogoutDialog()" title="Logout">⏏</button>
-    </div>
-
-    <!-- Mobile Notes Drawer (hidden by default) -->
-    <div id="mobile-drawer" class="mobile-drawer hidden">
-        <div class="mobile-drawer-header">
-            <span class="mobile-drawer-title">Notes</span>
-            <button onclick="closeNotesDrawer()">✕</button>
+    <div id="app" data-pane="editor">
+        <!-- Compact chrome: CSS-gated to <=768px, never a parallel mobile DOM. -->
+        <header id="compact-bar">
+            <button id="btn-compact-nav" class="compact-bar-btn" data-action="toggle-tree-drawer" data-icon="menu"
+                    title="Show notes" aria-label="Show notes" aria-expanded="false" aria-controls="panel-left"></button>
+            <div id="compact-title"></div>
+            <button id="btn-compact-more" class="compact-bar-btn" data-action="toggle-compact-menu" data-icon="more"
+                    title="More actions" aria-label="More actions" aria-expanded="false" aria-controls="compact-menu"></button>
+        </header>
+        <div id="compact-menu" class="compact-menu hidden" role="menu" aria-label="More actions">
+            <button type="button" role="menuitem" data-action="show-search-dialog" data-icon="search">Search chat</button>
+            <button type="button" role="menuitem" data-action="show-archive-dialog" data-icon="archive">Archive chat</button>
+            <button type="button" role="menuitem" data-action="show-model-dialog" data-icon="chip">Switch model</button>
+            <button type="button" role="menuitem" data-action="toggle-sync-scroll" data-icon="sync-scroll">Sync scroll</button>
+            <button type="button" role="menuitem" data-action="show-new-note-dialog" data-icon="plus">New note</button>
+            <button type="button" role="menuitem" data-action="show-logout-dialog" data-icon="logout">Log out</button>
         </div>
-        <div class="mobile-drawer-body" id="mobile-drawer-body"></div>
-        <div class="mobile-drawer-actions" id="mobile-drawer-actions" style="display:none">
-            <button onclick="showNewNoteDialog(); closeNotesDrawer();">+ New Note</button>
-        </div>
-    </div>
+        <div id="app-scrim" data-action="close-tree-drawer" aria-hidden="true"></div>
 
-    <div id="app">
         <!-- Left Panel: Notes -->
-        <aside id="panel-left" class="panel panel-left collapsed">
-            <div class="resize-handle" id="resize-left">
-                <span class="toggle-icon">›</span>
+        <aside id="panel-left" class="panel panel-left">
+            <div class="resize-handle" id="resize-left" role="button" tabindex="0" aria-label="Collapse or expand the notes panel" aria-expanded="true">
+                <span class="toggle-icon" aria-hidden="true">›</span>
             </div>
             <div class="panel-content">
-                <input type="text" id="file-search-input" class="file-search-input" placeholder="Search markdown files..." autocomplete="off">
+                <input type="text" id="file-search-input" class="file-search-input" placeholder="Search markdown files..." autocomplete="off" aria-label="Search markdown files">
                 <div class="note-tree" id="note-tree"></div>
                 <div class="explorer-actions">
-                    <button id="btn-new-note" class="explorer-action-btn" onclick="showNewNoteDialog()" title="New note">+</button>
-                    <button id="btn-logout" class="explorer-action-btn" onclick="showLogoutDialog()" title="Logout">⏏</button>
+                     <button id="btn-new-note" class="explorer-action-btn" data-action="show-new-note-dialog" data-icon="plus" title="New note" aria-label="New note"></button>
+                     <button id="btn-logout" class="explorer-action-btn" data-action="show-logout-dialog" data-icon="logout" title="Logout" aria-label="Log out"></button>
                 </div>
             </div>
         </aside>
 
         <!-- Center: Spec Editor -->
         <main id="panel-center">
-
             <div id="center-body">
                 <div id="split-title-bar">
-                    <button id="btn-edit" class="split-title-btn active" onclick="toggleEdit()" title="Toggle editor">✏️</button>
-                    <button id="btn-sync-scroll" class="split-title-btn active" onclick="toggleSyncScroll()" title="Toggle sync scroll">🔗</button>
+                    <button id="btn-tree" class="split-title-btn split-title-nav" data-action="toggle-tree-drawer" data-icon="menu"
+                            title="Show notes" aria-label="Show notes" aria-expanded="false" aria-controls="panel-left"></button>
                     <div id="split-title"></div>
-                    <button id="btn-preview" class="split-title-btn" onclick="togglePreview()" title="Toggle preview">👁</button>
+                    <div class="split-title-controls">
+                        <button id="btn-edit" class="split-title-btn active" data-action="toggle-edit" data-icon="pencil" title="Toggle editor" aria-label="Toggle editor" aria-pressed="true"></button>
+                        <button id="btn-preview" class="split-title-btn" data-action="toggle-preview" data-icon="eye" title="Toggle preview" aria-label="Toggle preview" aria-pressed="false"></button>
+                        <button id="btn-sync-scroll" class="split-title-btn active" data-action="toggle-sync-scroll" data-icon="sync-scroll" title="Toggle sync scroll" aria-label="Toggle synced scrolling" aria-pressed="true"></button>
+                    </div>
                 </div>
                 <div id="split-body">
-                <div class="mobile-section" id="mobile-section-preview">
-                    <div class="mobile-section-header" onclick="toggleMobileSection('preview')">
-                        <span class="mobile-section-chevron">▼</span> Preview
+                    <div id="preview-container" class="hidden">
+                        <div id="preview"></div>
                     </div>
-                    <div class="mobile-section-body">
-                        <div id="preview-container" class="hidden">
-                            <div id="preview"></div>
+                    <div id="editor-container">
+                        <div id="editor-toolbar" class="editor-toolbar" role="toolbar" aria-label="Markdown formatting">
+                            <button type="button" data-action="format" data-format="bold" title="Bold (Ctrl+B)"><b class="tb-glyph">B</b><span class="tb-label">Bold</span></button>
+                            <button type="button" data-action="format" data-format="italic" title="Italic (Ctrl+I)"><i class="tb-glyph">I</i><span class="tb-label">Italic</span></button>
+                            <button type="button" data-action="format" data-format="header" title="Header cycler (Ctrl+H)"><span class="tb-glyph">H</span><span class="tb-label">Heading</span></button>
+                            <span class="toolbar-separator" aria-hidden="true">|</span>
+                            <button type="button" data-action="format" data-format="link" data-icon="link" title="Insert link (Ctrl+K)" aria-label="Link"><span class="tb-label">Link</span></button>
+                            <button type="button" data-action="format" data-format="image" data-icon="image" title="Insert image" aria-label="Image"><span class="tb-label">Image</span></button>
+                            <button type="button" data-action="format" data-format="code" data-icon="code" title="Code block" aria-label="Code block"><span class="tb-label">Code block</span></button>
+                            <span class="toolbar-separator" aria-hidden="true">|</span>
+                            <button type="button" data-action="format" data-format="ul" data-icon="list" title="Bulleted list" aria-label="Bulleted list"><span class="tb-label">Bulleted list</span></button>
+                            <button type="button" data-action="format" data-format="ol" data-icon="list-ordered" title="Numbered list" aria-label="Numbered list"><span class="tb-label">Numbered list</span></button>
+                            <button type="button" data-action="format" data-format="task" data-icon="list-check" title="Task list" aria-label="Task list"><span class="tb-label">Task list</span></button>
+                            <button type="button" data-action="format" data-format="table" data-icon="table" title="Insert table" aria-label="Table"><span class="tb-label">Table</span></button>
                         </div>
+                        <button type="button" id="editor-toolbar-overflow" class="toolbar-overflow-btn hidden" data-icon="more"
+                                data-action="toggle-toolbar-overflow" title="More formatting actions" aria-label="More formatting actions" aria-expanded="false"></button>
+                        <div id="editor-toolbar-menu" class="toolbar-overflow-menu hidden" role="menu" aria-label="More formatting actions"></div>
+                        <div id="editor-wrapper"></div>
                     </div>
-                </div>
-                <div class="mobile-section" id="mobile-section-editor">
-                    <div class="mobile-section-header" onclick="toggleMobileSection('editor')">
-                        <span class="mobile-section-chevron">▼</span> Editor
-                    </div>
-                    <div class="mobile-section-body">
-                        <div id="editor-container">
-                            <div id="editor-toolbar" class="editor-toolbar">
-                                <button type="button" onclick="insertFormat('bold')" title="Bold (Ctrl+B)"><b>B</b></button>
-                                <button type="button" onclick="insertFormat('italic')" title="Italic (Ctrl+I)"><i>I</i></button>
-                                <button type="button" onclick="insertFormat('header')" title="Header cycler (Ctrl+H)">H</button>
-                                <span class="toolbar-separator">|</span>
-                                <button type="button" onclick="insertFormat('link')" title="Insert Link (Ctrl+K)">🔗</button>
-                                <button type="button" onclick="insertFormat('image')" title="Insert Image">🖼️</button>
-                                <button type="button" onclick="insertFormat('code')" title="Code Block">```</button>
-                                <span class="toolbar-separator">|</span>
-                                <button type="button" onclick="insertFormat('ul')" title="Unordered List">• List</button>
-                                <button type="button" onclick="insertFormat('ol')" title="Ordered List">1. List</button>
-                                <button type="button" onclick="insertFormat('task')" title="Task List">☑ Task</button>
-                                <button type="button" onclick="insertFormat('table')" title="Insert Table">📊 Table</button>
-                            </div>
-                            <div id="editor-wrapper"></div>
-                        </div>
-                    </div>
-                </div>
-                <div class="mobile-section" id="mobile-section-chat">
-                    <div class="mobile-section-header mobile-chat-banner">
-                        <span class="mobile-chat-banner-left" onclick="toggleMobileSection('chat')"><span class="mobile-section-chevron">▼</span> Chat <span id="mobile-status" class="status idle">🟢</span></span>
-                        <span class="mobile-chat-banner-center" onclick="event.stopPropagation(); showModelDialog()">
-                            <span id="mobile-model-name" class="mobile-model-name"></span>
-                        </span>
-                        <span class="mobile-thinking-wrapper" onclick="event.stopPropagation()">
-                            <select id="mobile-thinking-select" class="thinking-select mobile-thinking-select" onchange="switchThinking(this.value)" title="Thinking level" style="display:none"></select>
-                        </span>
-                        <span class="mobile-chat-banner-right">
-                            <button class="mobile-chat-action" onclick="event.stopPropagation(); showSearchDialog()" title="Search">🔍</button>
-                            <button class="mobile-chat-action" onclick="event.stopPropagation(); showArchiveDialog()" title="Archive">📦</button>
-                        </span>
-                    </div>
-                    <div class="mobile-section-body"></div>
-                </div>
                 </div>
             </div>
         </main>
 
         <!-- Right Panel: Chat -->
         <aside id="panel-right" class="panel panel-right">
-            <div class="resize-handle" id="resize-right">
-                <span class="toggle-icon">‹</span>
+            <div class="resize-handle" id="resize-right" role="button" tabindex="0" aria-label="Collapse or expand the chat panel" aria-expanded="true">
+                <span class="toggle-icon" aria-hidden="true">‹</span>
             </div>
             <div class="panel-content">
                 <div class="chat-header">
-                    <h3><a href="/notes/" target="_blank" rel="noopener" class="title-link" id="rune-title"><span class="rune-char">ᚱ</span><span class="rune-char">ᚢ</span><span class="rune-char">ᚾ</span><span class="rune-char">ᛖ</span></a><span id="status-indicator" class="status idle">● idle</span></h3>
+                    <h3><a href="/notes/" target="_blank" rel="noopener" class="title-link" id="rune-title"><span class="rune-char">ᚱ</span><span class="rune-char">ᚢ</span><span class="rune-char">ᚾ</span><span class="rune-char">ᛖ</span></a><span id="status-indicator" class="status disconnected" role="status" title="disconnected" aria-label="Connection status" data-icon="dot"></span></h3>
                     <div id="model-indicator" class="model-indicator" style="display:none">
-                        <span id="model-name" class="model-name" onclick="showModelDialog()" title="Switch model"></span>
-                        <select id="thinking-select" class="thinking-select" onchange="switchThinking(this.value)" title="Thinking level" style="display:none">
-                            <option value="off">💭 off</option>
+                         <span id="model-name" class="model-name" data-action="show-model-dialog" role="button" tabindex="0" title="Switch model"></span>
+                         <select id="thinking-select" class="thinking-select" data-action="switch-thinking" title="Thinking level" aria-label="Thinking level" style="display:none">
+                            <option value="off">off</option>
                         </select>
                     </div>
                     <div class="chat-header-actions">
-                        <button id="btn-search" class="chat-action-btn" onclick="showSearchDialog()" title="Search chat history">🔍</button>
-                        <button id="btn-archive" class="chat-action-btn" onclick="showArchiveDialog()" title="Archive chat">📦</button>
+                         <button id="btn-search" class="chat-action-btn" data-action="show-search-dialog" data-icon="search" title="Search chat history" aria-label="Search chat history"></button>
+                         <button id="btn-archive" class="chat-action-btn" data-action="show-archive-dialog" data-icon="archive" title="Archive chat" aria-label="Archive chat"></button>
                     </div>
 
                 </div>
@@ -263,16 +231,40 @@
 
                 </div>
                 <div class="chat-input-area">
-                    <textarea id="chat-input" placeholder="Message ᚱᚢᚾᛖ..." rows="2"></textarea>
+                    <textarea id="chat-input" placeholder="Message ᚱᚢᚾᛖ..." rows="2" aria-label="Message"></textarea>
                     <div id="context-overlay" class="context-overlay hidden">
                         <span id="context-pct">0%</span>
                         <span class="context-sep">·</span>
                         <span id="context-counts">0 / 0</span>
                     </div>
-                    <button id="chat-send" onclick="sendMessage()">⏎</button>
+                     <button id="chat-send" data-action="send-message" data-icon="send" title="Send message (Ctrl+Enter)" aria-label="Send message"></button>
                 </div>
             </div>
         </aside>
+
+        <nav id="pane-switcher" aria-label="Pane switcher">
+            <button type="button" id="pane-btn-editor" data-action="show-pane" data-pane="editor" aria-pressed="true">Editor</button>
+            <button type="button" id="pane-btn-preview" data-action="show-pane" data-pane="preview" aria-pressed="false">Preview</button>
+            <button type="button" id="pane-btn-chat" data-action="show-pane" data-pane="chat" aria-pressed="false">Chat</button>
+        </nav>
+    </div>
+
+    <!-- Per-row action menu for the note tree (hosted outside the tree so a row
+         stays at one visible action control). -->
+    <div id="row-menu" class="row-menu hidden" role="menu" aria-label="Row actions"></div>
+
+    <!-- Command palette -->
+    <div id="command-palette" class="palette-overlay hidden">
+        <div class="palette" role="dialog" aria-modal="true" aria-label="Command palette">
+            <div class="palette-search">
+                <span class="palette-search-icon" data-icon="command" aria-hidden="true"></span>
+                <input type="text" id="command-palette-input" class="palette-input" placeholder="Type a command…"
+                       autocomplete="off" role="combobox" aria-expanded="true" aria-controls="command-palette-list"
+                       aria-label="Search commands">
+            </div>
+            <div id="command-palette-list" class="palette-list" role="listbox" aria-label="Commands"></div>
+            <div id="command-palette-empty" class="palette-empty hidden">No matching command</div>
+        </div>
     </div>
 
     <script src="/assets-bin/mermaid.min.js" defer></script>
@@ -289,18 +281,18 @@
       window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', function(e) {
         if (window.mermaid) {
           mermaid.initialize({ startOnLoad: false, theme: e.matches ? 'dark' : 'default' });
-          if (typeof renderPreview === 'function') renderPreview();
+          document.dispatchEvent(new CustomEvent('rune:render-preview'));
         }
       });
     </script>
     
     <!-- Generic prompt/confirm dialog -->
     <div id="generic-dialog-modal" class="modal-overlay hidden">
-        <div class="modal">
+        <div class="modal" role="dialog" aria-modal="true" aria-labelledby="generic-dialog-title">
             <h2 id="generic-dialog-title">Confirm</h2>
             <p id="generic-dialog-message" style="margin: 0.5rem 0 1rem; color: var(--text-secondary);"></p>
             <div id="generic-dialog-input-group" class="form-group" style="display:none">
-                <input type="text" id="generic-dialog-input" maxlength="100" />
+                <input type="text" id="generic-dialog-input" maxlength="100" aria-labelledby="generic-dialog-title" />
             </div>
             <div class="modal-actions">
                 <button class="btn-secondary" id="generic-dialog-cancel">Cancel</button>
@@ -315,6 +307,6 @@
     <script src="/assets/katex-auto-render.min.js"></script>
     <script src="/assets/marked.min.js"></script>
     <script src="/assets/highlight.min.js"></script>
-    <script src="/assets/app.js?v=ffef35a"></script>
+    <script type="module" src="/assets/js/main.js?v=6a3d9e1"></script>
 </body>
 </html>

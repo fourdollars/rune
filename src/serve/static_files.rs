@@ -23,7 +23,83 @@ static ASSETS: LazyLock<HashMap<&'static str, Vec<u8>>> = LazyLock::new(|| {
     m.insert("index.html", decompress(zst_asset!("index.html")));
     m.insert("login.html", decompress(zst_asset!("login.html")));
     m.insert("favicon.svg", decompress(zst_asset!("favicon.svg")));
-    m.insert("app.js", decompress(zst_asset!("app.js")));
+    for path in [
+        "js/actions.js",
+        "js/api.js",
+        "js/bootstrap.js",
+        "js/chat-history.js",
+        "js/chat-stream.js",
+        "js/chat.js",
+        "js/dom.js",
+        "js/editor-modes.js",
+        "js/editor.js",
+        "js/emoji-data.js",
+        "js/emoji.js",
+        "js/files.js",
+        "js/format.js",
+        "js/icons.js",
+        "js/keyboard.js",
+        "js/layout.js",
+        "js/main.js",
+        "js/markdown.js",
+        "js/models.js",
+        "js/notes.js",
+        "js/palette.js",
+        "js/panels.js",
+        "js/preview.js",
+        "js/responsive.js",
+        "js/row-menu.js",
+        "js/router.js",
+        "js/scroll-sync.js",
+        "js/search.js",
+        "js/settings.js",
+        "js/sse-events.js",
+        "js/sse.js",
+        "js/state.js",
+        "js/status.js",
+        "js/tree-actions.js",
+        "js/tree.js",
+    ] {
+        let compressed: &'static [u8] = match path {
+            "js/actions.js" => zst_asset!("js/actions.js"),
+            "js/api.js" => zst_asset!("js/api.js"),
+            "js/bootstrap.js" => zst_asset!("js/bootstrap.js"),
+            "js/chat-history.js" => zst_asset!("js/chat-history.js"),
+            "js/chat-stream.js" => zst_asset!("js/chat-stream.js"),
+            "js/chat.js" => zst_asset!("js/chat.js"),
+            "js/dom.js" => zst_asset!("js/dom.js"),
+            "js/editor-modes.js" => zst_asset!("js/editor-modes.js"),
+            "js/editor.js" => zst_asset!("js/editor.js"),
+            "js/emoji-data.js" => zst_asset!("js/emoji-data.js"),
+            "js/emoji.js" => zst_asset!("js/emoji.js"),
+            "js/files.js" => zst_asset!("js/files.js"),
+            "js/format.js" => zst_asset!("js/format.js"),
+            "js/icons.js" => zst_asset!("js/icons.js"),
+            "js/keyboard.js" => zst_asset!("js/keyboard.js"),
+            "js/layout.js" => zst_asset!("js/layout.js"),
+            "js/main.js" => zst_asset!("js/main.js"),
+            "js/markdown.js" => zst_asset!("js/markdown.js"),
+            "js/models.js" => zst_asset!("js/models.js"),
+            "js/notes.js" => zst_asset!("js/notes.js"),
+            "js/palette.js" => zst_asset!("js/palette.js"),
+            "js/panels.js" => zst_asset!("js/panels.js"),
+            "js/preview.js" => zst_asset!("js/preview.js"),
+            "js/responsive.js" => zst_asset!("js/responsive.js"),
+            "js/row-menu.js" => zst_asset!("js/row-menu.js"),
+            "js/router.js" => zst_asset!("js/router.js"),
+            "js/scroll-sync.js" => zst_asset!("js/scroll-sync.js"),
+            "js/search.js" => zst_asset!("js/search.js"),
+            "js/settings.js" => zst_asset!("js/settings.js"),
+            "js/sse-events.js" => zst_asset!("js/sse-events.js"),
+            "js/sse.js" => zst_asset!("js/sse.js"),
+            "js/state.js" => zst_asset!("js/state.js"),
+            "js/status.js" => zst_asset!("js/status.js"),
+            "js/tree.js" => zst_asset!("js/tree.js"),
+            "js/tree-actions.js" => zst_asset!("js/tree-actions.js"),
+            _ => unreachable!(),
+        };
+        m.insert(path, decompress(compressed));
+    }
     m.insert("style.css", decompress(zst_asset!("style.css")));
     m.insert("marked.min.js", decompress(zst_asset!("marked.min.js")));
     m.insert(
@@ -77,7 +153,7 @@ mod tests {
     #[test]
     fn test_static_assets_present() {
         assert!(get("index.html").is_some(), "index.html missing");
-        assert!(get("app.js").is_some(), "app.js missing");
+        assert!(get("js/main.js").is_some(), "js/main.js missing");
         assert!(get("style.css").is_some(), "style.css missing");
         assert!(get("favicon.svg").is_some(), "favicon.svg missing");
         assert!(get("katex.min.css").is_some(), "katex.min.css missing");
@@ -86,6 +162,26 @@ mod tests {
             get("katex-auto-render.min.js").is_some(),
             "katex-auto-render.min.js missing"
         );
+    }
+
+    #[test]
+    fn test_index_loads_module_entry_without_inline_handlers() {
+        let html = get("index.html").unwrap();
+        assert!(html.contains(r#"type="module" src="/assets/js/main.js"#));
+        assert!(!html.contains("onclick="));
+        assert!(!html.contains("mobile-header"));
+        assert!(!html.contains("mobile-drawer"));
+        assert!(!html.contains("mobile-section"));
+    }
+
+    #[test]
+    fn test_state_and_delegated_actions_modules_present() {
+        let state = get("js/state.js").unwrap();
+        let actions = get("js/actions.js").unwrap();
+        assert!(state.contains("export const store"));
+        assert!(state.contains("subscribe"));
+        assert!(actions.contains("document.addEventListener('click'"));
+        assert!(!actions.contains("rune_mobile_"));
     }
 
     #[test]
@@ -114,7 +210,8 @@ mod tests {
 
     #[test]
     fn test_app_js_has_mode_aliases_and_themes() {
-        let js = get("app.js").expect("app.js missing");
+        let js = get("js/editor-modes.js").expect("editor modes module missing")
+            + &get("js/editor.js").expect("editor module missing");
         assert!(
             js.contains("registerCodeMirrorModes"),
             "app.js must define registerCodeMirrorModes"
@@ -169,7 +266,7 @@ mod tests {
 
     #[test]
     fn test_app_js_has_mermaid_retry() {
-        let js = get("app.js").unwrap();
+        let js = get("js/preview.js").unwrap();
         assert!(
             js.contains("mermaid-block"),
             "app.js missing mermaid-block class"
@@ -182,7 +279,7 @@ mod tests {
 
     #[test]
     fn test_app_js_has_svg_postprocess() {
-        let js = get("app.js").unwrap();
+        let js = get("js/markdown.js").unwrap();
         assert!(
             js.contains("postprocess"),
             "app.js missing SVG postprocess hook"
@@ -195,7 +292,7 @@ mod tests {
 
     #[test]
     fn test_app_js_has_mermaid_block_renderer() {
-        let js = get("app.js").unwrap();
+        let js = get("js/markdown.js").unwrap();
         assert!(js.contains("mermaid"), "app.js missing mermaid references");
         assert!(
             js.contains("data-src"),
@@ -221,7 +318,7 @@ mod tests {
 
     #[test]
     fn test_app_js_has_toggle_functions() {
-        let js = get("app.js").unwrap();
+        let js = get("js/layout.js").unwrap() + &get("js/scroll-sync.js").unwrap();
         assert!(js.contains("toggleEdit"), "app.js missing toggleEdit()");
         assert!(
             js.contains("togglePreview"),
@@ -256,7 +353,7 @@ mod tests {
 
     #[test]
     fn test_app_js_has_split_view() {
-        let js = get("app.js").unwrap();
+        let js = get("js/layout.js").unwrap();
         assert!(
             js.contains("split-view"),
             "app.js missing split-view class toggle"
@@ -271,16 +368,16 @@ mod tests {
     fn test_index_html_has_toggle_buttons() {
         let html = get("index.html").unwrap();
         assert!(
-            html.contains("toggleEdit()"),
-            "index.html missing toggleEdit()"
+            html.contains("data-action=\"toggle-edit\""),
+            "index.html missing delegated edit toggle"
         );
         assert!(
-            html.contains("togglePreview()"),
-            "index.html missing togglePreview()"
+            html.contains("data-action=\"toggle-preview\""),
+            "index.html missing delegated preview toggle"
         );
         assert!(
-            html.contains("toggleSyncScroll()"),
-            "index.html missing toggleSyncScroll()"
+            html.contains("data-action=\"toggle-sync-scroll\""),
+            "index.html missing delegated sync-scroll toggle"
         );
         assert!(
             html.contains("center-body"),
@@ -303,7 +400,7 @@ mod tests {
 
     #[test]
     fn test_app_js_has_status_emoji() {
-        let js = get("app.js").unwrap();
+        let js = get("js/status.js").unwrap();
         assert!(
             js.contains("STATUS_EMOJI"),
             "app.js missing STATUS_EMOJI map"
@@ -317,7 +414,7 @@ mod tests {
 
     #[test]
     fn test_app_js_has_file_functions() {
-        let js = get("app.js").unwrap();
+        let js = get("js/files.js").unwrap() + &get("js/state.js").unwrap();
         assert!(js.contains("createFile"), "app.js missing createFile");
         assert!(
             js.contains("deleteCurrentFile"),
@@ -337,7 +434,7 @@ mod tests {
 
     #[test]
     fn test_app_js_has_file_list_handler() {
-        let js = get("app.js").unwrap();
+        let js = get("js/sse-events.js").unwrap();
         assert!(js.contains("file_list"), "app.js missing file_list handler");
         assert!(
             js.contains("file_content"),
@@ -347,7 +444,7 @@ mod tests {
 
     #[test]
     fn test_app_js_has_archive_search_functions() {
-        let js = get("app.js").unwrap();
+        let js = get("js/search.js").unwrap() + &get("js/sse-events.js").unwrap();
         assert!(
             js.contains("showArchiveDialog"),
             "missing showArchiveDialog"
@@ -380,7 +477,7 @@ mod tests {
 
     #[test]
     fn test_app_js_has_logout_functions() {
-        let js = get("app.js").unwrap();
+        let js = get("js/search.js").unwrap();
         assert!(
             js.contains("showLogoutDialog"),
             "app.js missing showLogoutDialog"
@@ -405,8 +502,8 @@ mod tests {
         );
         assert!(html.contains("btn-logout"), "index.html missing btn-logout");
         assert!(
-            html.contains("confirmLogout"),
-            "index.html missing confirmLogout call"
+            html.contains("data-action=\"confirm-logout\""),
+            "index.html missing delegated confirm logout action"
         );
         assert!(
             html.contains("modal-actions"),
@@ -416,7 +513,7 @@ mod tests {
 
     #[test]
     fn test_app_js_has_url_routing() {
-        let js = get("app.js").unwrap();
+        let js = get("js/router.js").unwrap() + &get("js/state.js").unwrap();
         assert!(js.contains("parseNotesUrl"), "app.js missing parseNotesUrl");
         assert!(
             js.contains("updateBrowserUrl"),
@@ -440,7 +537,7 @@ mod tests {
 
     #[test]
     fn test_app_js_routing_in_switch_functions() {
-        let js = get("app.js").unwrap();
+        let js = get("js/notes.js").unwrap() + &get("js/files.js").unwrap();
         // switchNote and switchFile must call updateBrowserUrl
         // Check they each contain updateBrowserUrl (not just that it's defined)
         let switch_note_pos = js
@@ -495,7 +592,7 @@ mod tests {
 
     #[test]
     fn test_app_js_logout_redirects_to_root() {
-        let js = get("app.js").unwrap();
+        let js = get("js/search.js").unwrap();
         // confirmLogout must redirect to '/' (login page)
         assert!(
             js.contains("window.location.href = '/auth/logout';"),
@@ -590,7 +687,7 @@ mod tests {
 
     #[test]
     fn test_app_js_has_formatting_and_keyboard_shortcuts() {
-        let js = get("app.js").unwrap();
+        let js = get("js/editor.js").unwrap() + &get("js/format.js").unwrap();
         assert!(
             js.contains("insertFormat"),
             "app.js must contain insertFormat function"

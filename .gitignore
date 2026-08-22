@@ -1,6 +1,7 @@
 /target
 skills/
 .rune/
+.omo/
 *.swp
 *.swo
 *~

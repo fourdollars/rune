@@ -739,7 +739,7 @@ async fn index_handler() -> impl IntoResponse {
 /// Static asset handler.
 fn mime_for(path: &str) -> &'static str {
     if path.ends_with(".js") {
-        "application/javascript"
+        "text/javascript"
     } else if path.ends_with(".css") {
         "text/css"
     } else if path.ends_with(".html") {
@@ -784,7 +784,7 @@ async fn static_handler(
     axum::extract::Path(path): axum::extract::Path<String>,
 ) -> impl IntoResponse {
     let mime = if path.ends_with(".js") {
-        "application/javascript"
+        "text/javascript"
     } else if path.ends_with(".css") {
         "text/css"
     } else if path.ends_with(".svg") {
@@ -905,8 +905,8 @@ mod tests {
 
     #[test]
     fn test_mime_for_js() {
-        assert_eq!(mime_for("bundle.js"), "application/javascript");
-        assert_eq!(mime_for("path/to/app.js"), "application/javascript");
+        assert_eq!(mime_for("bundle.js"), "text/javascript");
+        assert_eq!(mime_for("path/to/main.js"), "text/javascript");
     }
 
     #[test]
@@ -1184,7 +1184,7 @@ mod tests {
 
         let app = Router::new().route("/assets/{*path}", get(static_handler));
         let req = Request::builder()
-            .uri("/assets/app.js")
+            .uri("/assets/js/main.js")
             .body(axum::body::Body::empty())
             .unwrap();
         let resp = app.oneshot(req).await.unwrap();
@@ -1199,7 +1199,7 @@ mod tests {
                 .get(axum::http::header::CONTENT_TYPE)
                 .and_then(|v| v.to_str().ok())
                 .unwrap_or("");
-            assert_eq!(ct, "application/javascript");
+            assert_eq!(ct, "text/javascript");
         }
     }
 
@@ -1369,10 +1369,7 @@ mod tests {
 
     #[test]
     fn test_mime_for_path_with_directory() {
-        assert_eq!(
-            mime_for("assets/deep/path/bundle.js"),
-            "application/javascript"
-        );
+        assert_eq!(mime_for("assets/deep/path/bundle.js"), "text/javascript");
         assert_eq!(mime_for("assets/theme/dark.css"), "text/css");
     }
 

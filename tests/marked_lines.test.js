@@ -25,7 +25,7 @@ context.hljs = {
     highlightAuto: (text) => ({ value: `auto:${text}` })
 };
 
-// 3. Replicate marked.js configuration from web/app.js
+// 3. Replicate marked.js configuration from web/js/markdown.js
 const getLineAttr = (token) => {
     return (token && typeof token.startLine === 'number') ? ` data-line="${token.startLine}"` : '';
 };
@@ -73,7 +73,7 @@ renderer.code = function(token) {
 
 marked.use({ renderer, breaks: true, gfm: true });
 
-// 4. Replicate assignLines logic from web/app.js
+// 4. Replicate assignLines logic from web/js/preview.js
 const assignLines = (tokens, startLine = 0) => {
     let currentLine = startLine;
     for (const token of tokens) {

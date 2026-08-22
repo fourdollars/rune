@@ -123,22 +123,22 @@ async function withPage(browser, fn) {
     else ko('GET /notes/Rune/routing.md returns 200', `got ${resp.status()}`);
   });
 
-  // ── Test 10: app.js routing functions present ────────────────────
+  // ── Test 10: routing module functions present ────────────────────
   await withPage(browser, async (page) => {
-    const resp = await page.goto(BASE + '/assets/app.js');
-    if (resp.status() === 200) ok('GET /assets/app.js returns 200');
-    else ko('GET /assets/app.js returns 200', `got ${resp.status()}`);
+    const resp = await page.goto(BASE + '/assets/js/router.js');
+    if (resp.status() === 200) ok('GET /assets/js/router.js returns 200');
+    else ko('GET /assets/js/router.js returns 200', `got ${resp.status()}`);
     const body = await resp.text();
-    if (body.includes('parseNotesUrl')) ok('app.js has parseNotesUrl');
-    else ko('app.js has parseNotesUrl', 'not found');
-    if (body.includes('updateBrowserUrl')) ok('app.js has updateBrowserUrl');
-    else ko('app.js has updateBrowserUrl', 'not found');
-    if (body.includes('_pendingNoteId')) ok('app.js has _pendingNoteId');
-    else ko('app.js has _pendingNoteId', 'not found');
-    if (body.includes('popstate')) ok('app.js has popstate listener');
-    else ko('app.js has popstate listener', 'not found');
-    if (body.includes('history.replaceState')) ok('app.js has history.replaceState (.md strip)');
-    else ko('app.js has history.replaceState (.md strip)', 'not found');
+    if (body.includes('parseNotesUrl')) ok('router.js has parseNotesUrl');
+    else ko('router.js has parseNotesUrl', 'not found');
+    if (body.includes('updateBrowserUrl')) ok('router.js has updateBrowserUrl');
+    else ko('router.js has updateBrowserUrl', 'not found');
+    if (body.includes('pendingNoteId')) ok('router.js has pendingNoteId');
+    else ko('router.js has pendingNoteId', 'not found');
+    if (body.includes('popstate')) ok('router.js has popstate listener');
+    else ko('router.js has popstate listener', 'not found');
+    if (body.includes('history.replaceState')) ok('router.js has history.replaceState (.md strip)');
+    else ko('router.js has history.replaceState (.md strip)', 'not found');
   });
 
   // ── Test 11: SPA URL — login then URL preserved ──────────────────
@@ -158,9 +158,9 @@ async function withPage(browser, fn) {
     else ok(`URL after login: ${url}`); // informational, not a hard fail
   });
 
-  // ── Test 12: app.js public links use /notes/, not /edit/ ───────
+  // ── Test 12: files module public links use /notes/, not /edit/ ───────
   await withPage(browser, async (page) => {
-    const resp = await page.goto(BASE + '/assets/app.js');
+    const resp = await page.goto(BASE + '/assets/js/files.js');
     const body = await resp.text();
     // noteLink and fileLink in updateDocTitle must use /notes/
     const noteLink = body.match(/function noteLink[\s\S]*?(?=function fileLink)/);
