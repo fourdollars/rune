@@ -20,6 +20,7 @@ const initial = {
     isGuest: false,
     availableModels: [],
     currentThinking: 'off',
+    currentStatus: 'disconnected',
     notes: [],
     currentNoteId: '',
     dirBrowserTargetInput: null,

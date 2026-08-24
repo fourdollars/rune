@@ -19,6 +19,9 @@ globalThis.handleMessage = function handleMessage(msg) {
             addChatMessage(msg.nickname, msg.content);
             break;
         case 'chat_token':
+            if (currentStatus !== 'typing') {
+                setStatus('typing');
+            }
             appendToLastAssistant(msg.content);
             break;
         case 'chat_meta':
@@ -27,6 +30,7 @@ globalThis.handleMessage = function handleMessage(msg) {
         case 'chat_done':
             finalizeAssistantMessage();
             removeAllApprovalButtons();
+            setStatus('idle');
             break;
         case 'status':
             setStatus(msg.state);

@@ -10,6 +10,10 @@ globalThis.STATUS_EMOJI = {
     disconnected: 'dot',
 };
 
+const MIN_TOOL_DISPLAY_MS = 600;
+let toolStartTime = 0;
+let clearToolTimer = null;
+
 function paint(state, name, label) {
     ['status-indicator', 'mobile-status'].forEach(id => {
         const node = document.getElementById(id);
@@ -22,14 +26,43 @@ function paint(state, name, label) {
 }
 
 globalThis.setStatus = function setStatus(state) {
+    if (state && typeof state === 'string' && state.startsWith('tool:')) {
+        setToolStatus(state.slice(5));
+        return;
+    }
+    if (clearToolTimer) {
+        clearTimeout(clearToolTimer);
+        clearToolTimer = null;
+    }
+    currentStatus = state;
     paint(state, STATUS_EMOJI[state] || 'dot', state);
 };
 
 globalThis.setToolStatus = function setToolStatus(toolName) {
+    if (clearToolTimer) {
+        clearTimeout(clearToolTimer);
+        clearToolTimer = null;
+    }
+    currentStatus = 'tool';
+    toolStartTime = Date.now();
     paint('tool', STATUS_EMOJI.tool, `tool: ${toolName}`);
 };
 
 globalThis.clearToolStatus = function clearToolStatus() {
-    // Revert to thinking (tool ended, waiting for next LLM response)
-    setStatus('thinking');
+    if (currentStatus !== 'tool') {
+        setStatus('thinking');
+        return;
+    }
+    const elapsed = Date.now() - toolStartTime;
+    if (elapsed < MIN_TOOL_DISPLAY_MS) {
+        if (clearToolTimer) clearTimeout(clearToolTimer);
+        clearToolTimer = setTimeout(() => {
+            clearToolTimer = null;
+            if (currentStatus === 'tool') {
+                setStatus('thinking');
+            }
+        }, MIN_TOOL_DISPLAY_MS - elapsed);
+    } else {
+        setStatus('thinking');
+    }
 };
