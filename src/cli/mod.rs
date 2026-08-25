@@ -1860,7 +1860,15 @@ pub async fn run() {
                 }
             }
             "/version" => {
-                println!("{} v{}", "Rune".cyan().bold(), VERSION);
+                const GIT_HASH: &str = env!("GIT_HASH");
+                const BUILD_DATE: &str = env!("BUILD_DATE");
+                println!(
+                    "{} {} ({} {})",
+                    "rune".cyan().bold(),
+                    VERSION,
+                    GIT_HASH,
+                    BUILD_DATE
+                );
                 println!("  {} {}", "edition:".dimmed(), "2021");
                 println!("  {} {}", "model:".dimmed(), cfg.model.green());
             }

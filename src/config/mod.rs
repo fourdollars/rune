@@ -412,7 +412,14 @@ struct PartialConfig {
 #[derive(Debug, clap::Parser)]
 #[command(
     name = "rune",
-    version,
+    version = concat!(
+        env!("CARGO_PKG_VERSION"),
+        " (",
+        env!("GIT_HASH"),
+        " ",
+        env!("BUILD_DATE"),
+        ")"
+    ),
     about = "ᚱ Rune — High-performance zero-trust AI Agent",
     long_about = "ᚱ Rune — High-performance zero-trust AI Agent\n\
 \n\
