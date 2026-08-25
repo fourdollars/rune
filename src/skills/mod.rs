@@ -30,6 +30,25 @@ pub struct SkillLoader {
 impl SkillLoader {
     /// 建立 loader，指定搜尋路徑順序
     pub fn new(search_paths: Vec<PathBuf>) -> Self {
+        let search_paths = search_paths
+            .into_iter()
+            .map(|p| {
+                let s = p.to_string_lossy();
+                if s.starts_with("~/") || s == "~" {
+                    if let Ok(home) = env::var("HOME") {
+                        if s == "~" {
+                            PathBuf::from(home)
+                        } else {
+                            PathBuf::from(home).join(s.strip_prefix("~/").unwrap())
+                        }
+                    } else {
+                        p
+                    }
+                } else {
+                    p
+                }
+            })
+            .collect();
         Self { search_paths }
     }
 
@@ -761,5 +780,26 @@ mod tests {
             std::env::remove_var("HOME");
         }
         let _ = fs::remove_dir_all(&temp_home);
+    }
+
+    #[test]
+    fn test_skill_loader_tilde_expansion() {
+        let orig_home = std::env::var("HOME").ok();
+        std::env::set_var("HOME", "/tmp/mock_home");
+
+        let loader = SkillLoader::new(vec![PathBuf::from("~/skills"), PathBuf::from("~")]);
+        assert_eq!(
+            loader.search_paths,
+            vec![
+                PathBuf::from("/tmp/mock_home/skills"),
+                PathBuf::from("/tmp/mock_home")
+            ]
+        );
+
+        if let Some(h) = orig_home {
+            std::env::set_var("HOME", h);
+        } else {
+            std::env::remove_var("HOME");
+        }
     }
 }

@@ -928,7 +928,12 @@ pub fn load() -> anyhow::Result<RuneConfig> {
         cli_prompt: cli.prompt.clone(),
     };
 
-    // Post-processing: expand ~ in all path-like config fields
+    post_process_config(&mut cfg);
+
+    Ok(cfg)
+}
+
+pub(crate) fn post_process_config(cfg: &mut RuneConfig) {
     cfg.skills_dir = expand_tilde(&cfg.skills_dir);
     if let Some(ref mut t) = cfg.trace {
         *t = expand_tilde(t);
@@ -938,8 +943,6 @@ pub fn load() -> anyhow::Result<RuneConfig> {
     expand_tilde_vec(&mut cfg.policy.allowed_files_ro);
     expand_tilde_vec(&mut cfg.policy.allowed_files_rw);
     expand_tilde_vec(&mut cfg.policy.denied_paths);
-
-    Ok(cfg)
 }
 
 /// Persist a new domain to the user's ~/.rune/rune.toml allowed_domains list.
@@ -1034,7 +1037,7 @@ pub fn load_without_clap() -> anyhow::Result<RuneConfig> {
         .or_else(|| uc.and_then(|c| c.policy.clone()))
         .unwrap_or_default();
 
-    let cfg = RuneConfig {
+    let mut cfg = RuneConfig {
         model: pick(
             &[
                 &env_partial.model,
@@ -1173,6 +1176,8 @@ pub fn load_without_clap() -> anyhow::Result<RuneConfig> {
             .unwrap_or_default(),
         cli_prompt: None,
     };
+
+    post_process_config(&mut cfg);
 
     Ok(cfg)
 }
@@ -1337,7 +1342,7 @@ mod config_tests {
         let c = RuneConfig::default();
         assert_eq!(c.model, "");
         assert!(c.api_key.is_none());
-        assert_eq!(c.skills_dir, "./skills");
+        assert_eq!(c.skills_dir, "~/skills");
         assert_eq!(c.log_level, "error");
         assert_eq!(c.max_steps, Some(50));
         assert_eq!(c.token_budget, None); // Default: no cost guard limit
@@ -2573,6 +2578,18 @@ userinfo_url = "https://example.com/oauth/userinfo"
         use clap::Parser;
         let args = CliArgs::try_parse_from(["rune", "-M"]).unwrap();
         assert!(args.mount_pwd);
+    }
+
+    #[test]
+    fn test_load_without_clap_expands_tilde() {
+        let cfg = load_without_clap().unwrap();
+        if let Ok(home) = std::env::var("HOME") {
+            assert!(
+                cfg.skills_dir.starts_with(&home) || !cfg.skills_dir.starts_with("~"),
+                "skills_dir should have tilde expanded, got {}",
+                cfg.skills_dir
+            );
+        }
     }
 }
 
