@@ -344,7 +344,7 @@ impl Default for RuneConfig {
             model: String::new(),
             api_key: None,
             provider: None,
-            skills_dir: "./skills".to_string(),
+            skills_dir: "~/skills".to_string(),
             log_level: "error".to_string(),
             max_steps: Some(50),
             // No hard token-budget cap by default; context_window + compaction drive

@@ -1302,7 +1302,7 @@ pub async fn run_setup(config_path_override: Option<String>) {
 
     // 5. Skills directory
     println!("{}", "5. Skills directory:".bold());
-    let skills_default = existing.skills_dir.as_deref().unwrap_or("./skills");
+    let skills_default = existing.skills_dir.as_deref().unwrap_or("~/skills");
     let skills_input = prompt(&format!("  Path [{}]: ", skills_default)).unwrap_or_default();
     let skills_dir = if skills_input.trim().is_empty() {
         skills_default.to_string()
