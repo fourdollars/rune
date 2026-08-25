@@ -427,17 +427,43 @@ pub async fn events_handler(
     Query(params): Query<EventsQuery>,
     headers: axum::http::HeaderMap,
 ) -> impl IntoResponse {
-    // Resolve session from HttpOnly cookie
+    // Resolve session from HttpOnly cookie first (browser WebUI).
     let sid = crate::serve::oauth::get_cookie(&headers, "rune_sid");
     let session = match sid {
         Some(ref id) => state.sessions.get(id).await,
         None => None,
     };
 
-    // Auth check — must have a valid session
-    let session = match session {
-        Some(s) => s,
-        None => {
+    // Fall back to `Authorization: Bearer <access_token>` (OAuth 2.1 PKCE
+    // clients such as the browser extension). Native EventSource cannot set
+    // custom headers, but our extension's SSE client uses fetch() + manual
+    // stream parsing instead, so it CAN send this header.
+    let bearer_role = if session.is_none() {
+        let token = headers
+            .get(axum::http::header::AUTHORIZATION)
+            .and_then(|v| v.to_str().ok())
+            .and_then(|v| v.strip_prefix("Bearer "))
+            .map(str::trim)
+            .filter(|t| !t.is_empty());
+        match token {
+            Some(t) => state.oauth_tokens.get(t).await,
+            None => None,
+        }
+    } else {
+        None
+    };
+
+    // Auth check — must have a valid session OR a valid bearer token
+    let (is_admin, is_guest, login) = match (&session, &bearer_role) {
+        (Some(s), _) => (s.is_admin(), s.is_guest(), s.login.clone()),
+        (None, Some(role)) => (
+            *role == crate::serve::oauth::Role::Admin,
+            *role == crate::serve::oauth::Role::Guest,
+            // Bearer tokens are not tied to a GitHub login string; fall back
+            // to a generic label (nickname param below can still override).
+            "oauth-client".to_string(),
+        ),
+        (None, None) => {
             let err_stream = futures::stream::once(async {
                 Ok::<_, Infallible>(
                     Event::default()
@@ -450,10 +476,6 @@ pub async fn events_handler(
                 .into_response();
         }
     };
-
-    let is_admin = session.is_admin();
-    let is_guest = session.is_guest();
-    let login = session.login.clone();
     // Nickname: prefer explicit param, fall back to GitHub login
     let nickname = params.nickname.unwrap_or_else(|| login.clone());
 

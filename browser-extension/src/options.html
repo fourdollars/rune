@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Rune Notes Settings</title>
+  <style>
+    body { font-family: system-ui, sans-serif; max-width: 480px; margin: 2rem auto; padding: 0 1rem; }
+    label { display: block; margin-top: 1rem; font-weight: 600; }
+    input[type="url"] { width: 100%; padding: 0.5rem; margin-top: 0.25rem; box-sizing: border-box; }
+    button { margin-top: 1rem; padding: 0.5rem 1rem; }
+    #status { margin-top: 1rem; font-size: 0.9rem; }
+  </style>
+</head>
+<body>
+  <h1>Rune Notes Settings</h1>
+  <p>Enter the URL of your own Rune Notes server (no default value; other features stay disabled until this is set).</p>
+
+  <label for="serverUrl">Rune Notes Server URL</label>
+  <input type="url" id="serverUrl" placeholder="https://rune.example.com" />
+
+  <button id="save">Save &amp; Log In</button>
+  <button id="logout" disabled hidden>Log Out</button>
+
+  <div id="status"></div>
+
+  <script type="module" src="options.js"></script>
+</body>
+</html>

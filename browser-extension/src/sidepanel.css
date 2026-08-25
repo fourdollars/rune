@@ -1,0 +1,225 @@
+/* sidepanel.css — mirrors the chat panel styling from Rune Notes' own
+   WebUI (web/style.css), so the extension's chat feels consistent with the
+   main app rather than looking like a bolted-on afterthought. Palette is
+   Catppuccin Mocha (dark) with an automatic light variant, same as the
+   WebUI. Only the subset of rules actually used by the chat UI was ported
+   over — the WebUI's full stylesheet also covers the note editor/preview
+   panes, which don't apply here. */
+
+:root {
+    color-scheme: light dark;
+    --bg-primary: #1e1e2e;
+    --bg-secondary: #181825;
+    --bg-surface: #11111b;
+    --bg-hover: #2a2a2a;
+    --text-primary: #cdd6f4;
+    --text-secondary: #a6adc8;
+    --text-muted: #6c7086;
+    --accent: #89b4fa;
+    --accent-dim: #313244;
+    --border: #313244;
+    --success: #a6e3a1;
+    --warning: #f9e2af;
+    --error: #f38ba8;
+    --font-mono: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', monospace;
+    --font-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+}
+
+@media (prefers-color-scheme: light) {
+    :root {
+        --bg-primary: #f6f8fa;
+        --bg-secondary: #ffffff;
+        --bg-surface: #eaeef2;
+        --bg-hover: #dde1e5;
+        --text-primary: #24292e;
+        --text-secondary: #57606a;
+        --text-muted: #8c959f;
+        --accent: #0969da;
+        --accent-dim: #ddf4ff;
+        --border: #d0d7de;
+        --success: #1a7f37;
+        --warning: #9a6700;
+        --error: #cf222e;
+    }
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+html, body {
+    height: 100%;
+}
+
+body {
+    background: var(--bg-primary);
+    color: var(--text-primary);
+    font-family: var(--font-sans);
+    display: flex;
+    flex-direction: column;
+}
+
+.chat-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 10px 12px;
+    border-bottom: 1px solid var(--border);
+}
+
+.chat-header h3 {
+    font-size: 13px;
+    font-weight: 600;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    letter-spacing: 0.02em;
+}
+
+.rune-char { color: var(--accent); }
+
+.status {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--text-muted);
+    display: inline-block;
+}
+.status.connected { background: var(--success); }
+.status.disconnected { background: var(--error); }
+.status.thinking { animation: pulse 0.8s infinite; }
+
+@keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.4; }
+}
+
+#disabled-notice {
+    padding: 1rem;
+    color: var(--error);
+    font-size: 13px;
+}
+
+.chat-body {
+    flex: 1;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+}
+
+.chat-messages {
+    flex: 1;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    padding: 12px;
+}
+
+.chat-msg {
+    font-size: 13px;
+    line-height: 1.5;
+    padding: 8px 12px;
+    border-radius: 8px;
+    max-width: 92%;
+    word-break: break-word;
+    white-space: pre-wrap;
+}
+
+.chat-msg.user {
+    background: var(--accent-dim);
+    border: 1px solid var(--border);
+    align-self: flex-end;
+}
+
+.chat-msg.assistant {
+    background: var(--bg-surface);
+    border: 1px solid var(--border);
+    align-self: flex-start;
+}
+
+.chat-msg.system {
+    background: none;
+    border: none;
+    align-self: center;
+    color: var(--text-muted);
+    font-style: italic;
+    font-size: 12px;
+    padding: 2px 8px;
+}
+
+.chat-msg .sender {
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--text-muted);
+    margin-bottom: 4px;
+    display: flex;
+    justify-content: space-between;
+    gap: 8px;
+}
+
+.chat-msg .body code {
+    background: var(--bg-primary);
+    padding: 1px 4px;
+    border-radius: 3px;
+    font-family: var(--font-mono);
+    font-size: 0.85em;
+}
+
+.chat-msg .body pre {
+    background: var(--bg-primary);
+    padding: 8px 12px;
+    border-radius: 4px;
+    overflow-x: auto;
+    margin: 0.5em 0;
+    font-size: 0.85em;
+}
+
+.chat-msg .body pre code { background: none; padding: 0; }
+
+.chat-msg .body a { color: var(--accent); }
+
+.chat-input-area {
+    display: flex;
+    gap: 8px;
+    padding: 8px 12px;
+    border-top: 1px solid var(--border);
+}
+
+#input {
+    flex: 1;
+    background: var(--bg-surface);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--text-primary);
+    font-family: var(--font-sans);
+    font-size: 13px;
+    padding: 8px 12px;
+    outline: none;
+    transition: border-color 0.15s;
+}
+
+#input:focus { border-color: var(--accent); }
+
+#input:disabled {
+    opacity: 0.5;
+}
+
+button[type="submit"] {
+    background: var(--accent);
+    border: none;
+    color: var(--bg-primary);
+    width: 40px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 14px;
+    font-weight: bold;
+    transition: opacity 0.15s;
+}
+
+button[type="submit"]:hover { opacity: 0.85; }
+button[type="submit"]:active { transform: scale(0.95); }
+button[type="submit"]:disabled { opacity: 0.4; cursor: not-allowed; }
+
+::-webkit-scrollbar { width: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: var(--text-muted); }

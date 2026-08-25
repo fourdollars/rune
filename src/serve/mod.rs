@@ -460,32 +460,54 @@ pub async fn run(config: RuneConfig, opts: NotesOptions) {
         });
     }
 
-    // Auth middleware — session cookie based
+    // Auth middleware — accepts either a `rune_sid` session cookie (browser
+    // WebUI) or an `Authorization: Bearer <access_token>` header (OAuth 2.1
+    // PKCE clients such as the browser extension / CLI tools). Cookie is
+    // tried first since it's the common case; Bearer is the fallback.
     async fn auth_middleware(
         axum::extract::State(state): axum::extract::State<ServerState>,
         ConnectInfo(_addr): ConnectInfo<SocketAddr>,
         req: axum::http::Request<axum::body::Body>,
         next: axum::middleware::Next,
     ) -> axum::response::Response {
-        // Read session cookie
+        // 1. Try session cookie first.
         let sid = crate::serve::oauth::get_cookie(req.headers(), "rune_sid");
-        let session = match sid {
+        let cookie_session = match sid {
             Some(ref id) => state.sessions.get(id).await,
             None => None,
         };
 
-        let session = match session {
-            Some(s) => s,
-            None => {
+        // 2. Fall back to `Authorization: Bearer <token>` against the OAuth
+        //    access token store (issued via /oauth/token, PKCE-verified).
+        let bearer_token = if cookie_session.is_none() {
+            req.headers()
+                .get(axum::http::header::AUTHORIZATION)
+                .and_then(|v| v.to_str().ok())
+                .and_then(|v| v.strip_prefix("Bearer "))
+                .map(str::trim)
+                .filter(|t| !t.is_empty())
+                .map(str::to_string)
+        } else {
+            None
+        };
+        let bearer_role = match bearer_token {
+            Some(token) => state.oauth_tokens.get(&token).await,
+            None => None,
+        };
+
+        let (is_admin, is_guest) = match (&cookie_session, &bearer_role) {
+            (Some(s), _) => (s.is_admin(), s.is_guest()),
+            (None, Some(role)) => (
+                *role == crate::serve::oauth::Role::Admin,
+                *role == crate::serve::oauth::Role::Guest,
+            ),
+            (None, None) => {
                 let body = axum::Json(
                     serde_json::json!({"ok": false, "error": "Authentication required"}),
                 );
                 return (StatusCode::UNAUTHORIZED, body).into_response();
             }
         };
-
-        let is_admin = session.is_admin();
-        let is_guest = session.is_guest();
 
         // Guest: block all mutations (only allow GET and session selection)
         if is_guest && req.method() != axum::http::Method::GET {
@@ -652,6 +674,7 @@ pub async fn run(config: RuneConfig, opts: NotesOptions) {
         .route("/oauth/authorize", get(oauth_pkce::oauth_authorize_handler))
         .route("/oauth/token", post(oauth_pkce::oauth_token_handler))
         .route("/oauth/register", post(oauth_pkce::oauth_register_handler))
+        .route("/oauth/revoke", post(oauth_pkce::oauth_revoke_handler))
         .merge(api_routes)
         .layer(axum_mw::from_fn(cors_middleware))
         .with_state(state.clone());

@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Rune Notes Chat</title>
+  <link rel="stylesheet" href="sidepanel.css" />
+</head>
+<body>
+  <div class="chat-header">
+    <h3>
+      <span class="rune-char">ᚱ</span><span class="rune-char">ᚢ</span><span class="rune-char">ᚾ</span><span class="rune-char">ᛖ</span>
+    </h3>
+    <span id="status-indicator" class="status disconnected" title="disconnected" aria-label="Connection status"></span>
+  </div>
+
+  <div id="disabled-notice" hidden>Rune Notes Server URL is not set yet. Please configure it on the settings page first.</div>
+
+  <div class="chat-body">
+    <div id="messages" class="chat-messages"></div>
+  </div>
+
+  <form id="composer" class="chat-input-area">
+    <input id="input" type="text" placeholder="Type a message…" autocomplete="off" />
+    <button type="submit" title="Send message" aria-label="Send message">↑</button>
+  </form>
+
+  <script type="module" src="sidepanel.js"></script>
+</body>
+</html>

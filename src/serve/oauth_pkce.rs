@@ -12,6 +12,7 @@ use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
+use tracing::info;
 
 /// Verification of PKCE challenge
 pub fn verify_pkce(code_verifier: &str, code_challenge: &str) -> bool {
@@ -128,6 +129,16 @@ impl OAuthTokenStore {
         } else {
             None
         }
+    }
+
+    /// Revoke (delete) an access token immediately, e.g. on user-initiated
+    /// logout from an OAuth client such as the browser extension. Returns
+    /// true if a token was actually present and removed.
+    pub async fn remove(&self, token: &str) -> bool {
+        if let Some(ref db) = self.db {
+            let _ = db.remove_oauth_token(token);
+        }
+        self.inner.write().await.remove(token).is_some()
     }
 
     pub async fn sweep_expired(&self) {
@@ -328,6 +339,29 @@ pub async fn oauth_token_handler(
     })
     .into_response()
 }
+
+#[derive(Deserialize)]
+pub struct RevokeRequest {
+    pub token: String,
+}
+
+/// `POST /oauth/revoke` — RFC 7009 style token revocation. Always returns
+/// 200 regardless of whether the token existed (per spec, to avoid leaking
+/// whether a given token string is/was valid). Used by OAuth clients such as
+/// the browser extension to implement an explicit "Logout" action, since
+/// otherwise a leaked/forgotten access_token would remain valid for its full
+/// (currently 30-day) lifetime with no way to invalidate it server-side.
+pub async fn oauth_revoke_handler(
+    State(state): State<ServerState>,
+    Form(req): Form<RevokeRequest>,
+) -> impl IntoResponse {
+    let removed = state.oauth_tokens.remove(&req.token).await;
+    if removed {
+        info!("[oauth] token revoked");
+    }
+    StatusCode::OK
+}
+
 
 pub async fn oauth_metadata_handler(headers: HeaderMap) -> impl IntoResponse {
     let proto = crate::serve::oauth::detect_proto(&headers);
