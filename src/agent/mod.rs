@@ -1917,7 +1917,7 @@ impl Agent {
 
             // Check if it's a command block we can interactively resolve
             if let Some(command) = Self::extract_blocked_command(&output.content) {
-                if self.interactive && Self::has_tty() {
+                if self.interactive && Self::has_tty() && self.config.policy.mode == "confirm" {
                     eprint!(
                         "\n  {} Add '{}' to allowed_commands? [Y/n] ",
                         "🔓".yellow(),
@@ -1974,7 +1974,7 @@ impl Agent {
 
             // Check if it's a network error we can resolve by adding a domain
             if let Some(domain) = Self::extract_network_blocked_domain(&output.content) {
-                if self.interactive && Self::has_tty() {
+                if self.interactive && Self::has_tty() && self.config.policy.mode == "confirm" {
                     eprint!(
                         "\n  {} Network blocked for '{}'. Add to allowed_domains? [Y/n] ",
                         "🔓".yellow(),
@@ -5176,6 +5176,171 @@ read(3, "root:x:0:0:...", 4096) = 1234"#;
     }
 
     #[tokio::test]
+    async fn test_allowlist_mode_never_triggers_approval_callback_for_blocked_command() {
+        // Regression test: allowlist mode must NOT invoke approval_callback for blocked commands,
+        // even when a callback is set. Before the fix, the interactive confirm branch was entered
+        // whenever `interactive && has_tty()`, regardless of policy mode.
+        use std::sync::{Arc, Mutex};
+
+        let mut config = crate::config::RuneConfig {
+            model: "policy-block-mock".to_string(),
+            ..Default::default()
+        };
+        config.policy.mode = "allowlist".to_string();
+        config.policy.allowed_commands = vec!["echo".to_string()];
+
+        let mut registry = crate::provider::ProviderRegistry::new();
+        registry.register(Box::new(PolicyBlockProvider {
+            call_count: std::sync::Mutex::new(0),
+        }));
+        let mut agent = Agent::new(config, registry, true, None);
+
+        // Set an approval_callback — it must NEVER be called in allowlist mode.
+        let callback_invocations: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+        let invocations_clone = Arc::clone(&callback_invocations);
+        agent.approval_callback = Some(Arc::new(move |id: String, _detail: String| {
+            invocations_clone.lock().unwrap().push(id);
+            Box::pin(async move { true })
+        }));
+
+        let result = agent.run("run cargo").await;
+
+        // Should still soft-fail (FinalAnswer), not hard-stop
+        match &result {
+            StopReason::FinalAnswer(_) => {}
+            StopReason::Error(e) => panic!(
+                "allowlist mode should soft-fail even with approval_callback. Got Error: {}",
+                e
+            ),
+            other => panic!("Unexpected StopReason: {:?}", other),
+        }
+
+        // The callback must not have been invoked
+        let calls = callback_invocations.lock().unwrap();
+        assert!(
+            calls.is_empty(),
+            "allowlist mode must not invoke approval_callback for blocked commands. Got: {:?}",
+            *calls
+        );
+
+        // Command must NOT be auto-added
+        assert!(
+            !agent
+                .config
+                .policy
+                .allowed_commands
+                .contains(&"cargo".to_string()),
+            "Blocked command must not be auto-added in allowlist mode"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_allowlist_mode_never_triggers_approval_callback_for_blocked_domain() {
+        // Regression test: allowlist mode must NOT invoke approval_callback for blocked domains,
+        // even when a callback is set.
+        use std::sync::{Arc, Mutex};
+
+        struct DomainBlockProvider2 {
+            call_count: std::sync::Mutex<u32>,
+        }
+        impl crate::provider::Provider for DomainBlockProvider2 {
+            fn name(&self) -> &str {
+                "domain-block-mock2"
+            }
+            fn chat(
+                &self,
+                _request: crate::provider::LlmRequest,
+            ) -> std::pin::Pin<
+                Box<
+                    dyn std::future::Future<Output = anyhow::Result<crate::provider::LlmResponse>>
+                        + Send
+                        + '_,
+                >,
+            > {
+                Box::pin(async move {
+                    let mut count = self.call_count.lock().unwrap();
+                    *count += 1;
+                    if *count == 1 {
+                        Ok(crate::provider::LlmResponse {
+                            content: None,
+                            tool_calls: vec![crate::provider::LlmToolCall {
+                                id: "call_1".to_string(),
+                                call_type: "function".to_string(),
+                                function: crate::provider::LlmFunction {
+                                    name: "fetch_url".to_string(),
+                                    arguments: r#"{"url":"https://evil2.example.com/api"}"#
+                                        .to_string(),
+                                },
+                            }],
+                            usage: crate::provider::TokenUsage::default(),
+                            model: "mock".to_string(),
+                        })
+                    } else {
+                        Ok(crate::provider::LlmResponse {
+                            content: Some(
+                                "Domain not allowed, I cannot fetch that URL.".to_string(),
+                            ),
+                            tool_calls: vec![],
+                            usage: crate::provider::TokenUsage::default(),
+                            model: "mock".to_string(),
+                        })
+                    }
+                })
+            }
+        }
+
+        let mut config = crate::config::RuneConfig {
+            model: "domain-block-mock2".to_string(),
+            ..Default::default()
+        };
+        config.policy.mode = "allowlist".to_string();
+        config.policy.allowed_domains = vec!["safe.example.com".to_string()];
+
+        let mut registry = crate::provider::ProviderRegistry::new();
+        registry.register(Box::new(DomainBlockProvider2 {
+            call_count: std::sync::Mutex::new(0),
+        }));
+        let mut agent = Agent::new(config, registry, true, None);
+
+        // Set an approval_callback — it must NEVER be called in allowlist mode.
+        let callback_invocations: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+        let invocations_clone = Arc::clone(&callback_invocations);
+        agent.approval_callback = Some(Arc::new(move |id: String, _detail: String| {
+            invocations_clone.lock().unwrap().push(id);
+            Box::pin(async move { true })
+        }));
+
+        let result = agent.run("fetch evil site").await;
+
+        match &result {
+            StopReason::FinalAnswer(_) => {}
+            StopReason::Error(e) => panic!(
+                "allowlist mode should soft-fail domain blocks even with callback. Got Error: {}",
+                e
+            ),
+            other => panic!("Unexpected StopReason: {:?}", other),
+        }
+
+        // The callback must not have been invoked
+        let calls = callback_invocations.lock().unwrap();
+        assert!(
+            calls.is_empty(),
+            "allowlist mode must not invoke approval_callback for blocked domains. Got: {:?}",
+            *calls
+        );
+
+        // Domain must NOT be auto-added
+        assert!(
+            !agent
+                .config
+                .policy
+                .allowed_domains
+                .contains(&"evil2.example.com".to_string()),
+            "Blocked domain must not be auto-added in allowlist mode"
+        );
+    }
+
+    #[tokio::test]
     async fn test_confirm_mode_uses_approval_callback_for_blocked_command() {
         use std::sync::{Arc, Mutex};
 
@@ -5399,6 +5564,183 @@ read(3, "root:x:0:0:...", 4096) = 1234"#;
             }
             other => panic!("Unexpected StopReason: {:?}", other),
         }
+    }
+
+    #[tokio::test]
+    async fn test_unrestricted_mode_executes_command_not_in_allowlist() {
+        // unrestricted mode must execute commands even when NOT in allowed_commands.
+        // The policy check is bypassed entirely — no block, no prompt.
+        use std::sync::Mutex;
+
+        // Provider that tries `cargo test` (not in allowed_commands), then gives final answer.
+        struct UnrestrictedProvider {
+            call_count: Mutex<u32>,
+        }
+        impl crate::provider::Provider for UnrestrictedProvider {
+            fn name(&self) -> &str {
+                "unrestricted-cmd-mock"
+            }
+            fn chat(
+                &self,
+                _request: crate::provider::LlmRequest,
+            ) -> std::pin::Pin<
+                Box<
+                    dyn std::future::Future<Output = anyhow::Result<crate::provider::LlmResponse>>
+                        + Send
+                        + '_,
+                >,
+            > {
+                Box::pin(async move {
+                    let mut count = self.call_count.lock().unwrap();
+                    *count += 1;
+                    if *count == 1 {
+                        Ok(crate::provider::LlmResponse {
+                            content: None,
+                            tool_calls: vec![crate::provider::LlmToolCall {
+                                id: "call_1".to_string(),
+                                call_type: "function".to_string(),
+                                function: crate::provider::LlmFunction {
+                                    name: "execute_cmd".to_string(),
+                                    // `echo` is a safe command that actually runs in the sandbox
+                                    arguments: r#"{"cmd":"echo unrestricted"}"#.to_string(),
+                                },
+                            }],
+                            usage: crate::provider::TokenUsage::default(),
+                            model: "mock".to_string(),
+                        })
+                    } else {
+                        Ok(crate::provider::LlmResponse {
+                            content: Some("Done.".to_string()),
+                            tool_calls: vec![],
+                            usage: crate::provider::TokenUsage::default(),
+                            model: "mock".to_string(),
+                        })
+                    }
+                })
+            }
+        }
+
+        let mut config = crate::config::RuneConfig {
+            model: "unrestricted-cmd-mock".to_string(),
+            ..Default::default()
+        };
+        config.policy.mode = "unrestricted".to_string();
+        // allowed_commands is intentionally empty — unrestricted must bypass this
+        config.policy.allowed_commands = vec![];
+
+        let mut registry = crate::provider::ProviderRegistry::new();
+        registry.register(Box::new(UnrestrictedProvider {
+            call_count: Mutex::new(0),
+        }));
+        let mut agent = Agent::new(config, registry, false, None);
+
+        let result = agent.run("run echo").await;
+
+        // Must succeed (FinalAnswer), not be blocked
+        match &result {
+            StopReason::FinalAnswer(_) => {}
+            StopReason::Error(e) => panic!(
+                "unrestricted mode should execute commands not in allowlist. Got Error: {}",
+                e
+            ),
+            other => panic!("Unexpected StopReason: {:?}", other),
+        }
+
+        // Command must NOT have been blocked (i.e. it actually executed and got a tool result)
+        // The LLM received a tool result that led to FinalAnswer — proof the command ran.
+        assert!(
+            agent
+                .executed_commands
+                .contains(&"echo unrestricted".to_string()),
+            "Command should have been recorded as executed in unrestricted mode. Got: {:?}",
+            agent.executed_commands
+        );
+    }
+
+    #[tokio::test]
+    async fn test_unrestricted_mode_executes_command_already_in_allowlist() {
+        // unrestricted mode must also execute commands that happen to be in allowed_commands —
+        // the allowlist should not interfere.
+        use std::sync::Mutex;
+
+        struct UnrestrictedAllowedProvider {
+            call_count: Mutex<u32>,
+        }
+        impl crate::provider::Provider for UnrestrictedAllowedProvider {
+            fn name(&self) -> &str {
+                "unrestricted-allowed-mock"
+            }
+            fn chat(
+                &self,
+                _request: crate::provider::LlmRequest,
+            ) -> std::pin::Pin<
+                Box<
+                    dyn std::future::Future<Output = anyhow::Result<crate::provider::LlmResponse>>
+                        + Send
+                        + '_,
+                >,
+            > {
+                Box::pin(async move {
+                    let mut count = self.call_count.lock().unwrap();
+                    *count += 1;
+                    if *count == 1 {
+                        Ok(crate::provider::LlmResponse {
+                            content: None,
+                            tool_calls: vec![crate::provider::LlmToolCall {
+                                id: "call_1".to_string(),
+                                call_type: "function".to_string(),
+                                function: crate::provider::LlmFunction {
+                                    name: "execute_cmd".to_string(),
+                                    arguments: r#"{"cmd":"echo allowed"}"#.to_string(),
+                                },
+                            }],
+                            usage: crate::provider::TokenUsage::default(),
+                            model: "mock".to_string(),
+                        })
+                    } else {
+                        Ok(crate::provider::LlmResponse {
+                            content: Some("Done.".to_string()),
+                            tool_calls: vec![],
+                            usage: crate::provider::TokenUsage::default(),
+                            model: "mock".to_string(),
+                        })
+                    }
+                })
+            }
+        }
+
+        let mut config = crate::config::RuneConfig {
+            model: "unrestricted-allowed-mock".to_string(),
+            ..Default::default()
+        };
+        config.policy.mode = "unrestricted".to_string();
+        // `echo` is explicitly in allowed_commands — should still execute fine
+        config.policy.allowed_commands = vec!["echo".to_string()];
+
+        let mut registry = crate::provider::ProviderRegistry::new();
+        registry.register(Box::new(UnrestrictedAllowedProvider {
+            call_count: Mutex::new(0),
+        }));
+        let mut agent = Agent::new(config, registry, false, None);
+
+        let result = agent.run("run echo").await;
+
+        match &result {
+            StopReason::FinalAnswer(_) => {}
+            StopReason::Error(e) => panic!(
+                "unrestricted mode should execute commands in allowlist too. Got Error: {}",
+                e
+            ),
+            other => panic!("Unexpected StopReason: {:?}", other),
+        }
+
+        assert!(
+            agent
+                .executed_commands
+                .contains(&"echo allowed".to_string()),
+            "Command should have been recorded as executed in unrestricted mode. Got: {:?}",
+            agent.executed_commands
+        );
     }
 
     #[tokio::test]
