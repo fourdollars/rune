@@ -2,6 +2,10 @@
 // build.js — assemble dist/chrome/ and dist/firefox/ from the shared src/,
 // vendor/, icons/ plus the browser-specific manifest.
 //
+// Also concatenates vendor/marked.min.js + vendor/highlight.min.js into
+// dist/<target>/src/vendor-bundle.js so sidepanel.html can load them as a
+// single same-directory <script> without any path-resolution ambiguity.
+//
 // Usage:
 //   node build.js chrome
 //   node build.js firefox
@@ -15,6 +19,13 @@ const TARGETS = {
   chrome: 'manifest.chrome.json',
   firefox: 'manifest.firefox.json',
 };
+
+// Vendor libs bundled into vendor-bundle.js (loaded as a plain <script> in sidepanel.html)
+const VENDOR_BUNDLE = [
+  'vendor/marked.min.js',
+  'vendor/highlight.min.js',
+  'vendor/katex.min.js',
+];
 
 function copyRecursive(src, dest) {
   const stat = fs.statSync(src);
@@ -45,6 +56,13 @@ function buildTarget(name) {
     copyRecursive(path.join(ROOT, 'icons'), path.join(outDir, 'icons'));
   }
   fs.copyFileSync(path.join(ROOT, manifestFile), path.join(outDir, 'manifest.json'));
+
+  // Write vendor libs as a single external file in src/ so sidepanel.html can
+  // load it with <script src="vendor-bundle.js"> (same directory, no path
+  // ambiguity). Chrome MV3 CSP allows script-src 'self' for external files
+  // but blocks inline <script> blocks entirely.
+  const vendorJs = VENDOR_BUNDLE.map(rel => fs.readFileSync(path.join(ROOT, rel), 'utf8')).join('\n');
+  fs.writeFileSync(path.join(outDir, 'src', 'vendor-bundle.js'), vendorJs, 'utf8');
 
   console.log(`[build] ${name} -> ${path.relative(ROOT, outDir)}/`);
 }

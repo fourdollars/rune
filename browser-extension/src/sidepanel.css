@@ -121,7 +121,6 @@ body {
     border-radius: 8px;
     max-width: 92%;
     word-break: break-word;
-    white-space: pre-wrap;
 }
 
 .chat-msg.user {
@@ -144,6 +143,7 @@ body {
     font-style: italic;
     font-size: 12px;
     padding: 2px 8px;
+    white-space: pre-wrap;
 }
 
 .chat-msg .sender {
@@ -154,6 +154,17 @@ body {
     display: flex;
     justify-content: space-between;
     gap: 8px;
+}
+
+/* Chat markdown rendering */
+.chat-msg .body p {
+    margin: 0.3em 0;
+}
+.chat-msg .body p:first-child {
+    margin-top: 0;
+}
+.chat-msg .body p:last-child {
+    margin-bottom: 0;
 }
 
 .chat-msg .body code {
@@ -175,7 +186,114 @@ body {
 
 .chat-msg .body pre code { background: none; padding: 0; }
 
-.chat-msg .body a { color: var(--accent); }
+.chat-msg .body ul, .chat-msg .body ol {
+    padding-left: 1.4em;
+    margin: 0.3em 0;
+}
+
+.chat-msg .body li {
+    margin: 0.15em 0;
+}
+
+.chat-msg .body blockquote {
+    border-left: 2px solid var(--accent-dim);
+    padding-left: 8px;
+    color: var(--text-secondary);
+    margin: 0.4em 0;
+}
+
+.chat-msg .body a {
+    color: var(--accent);
+    word-break: break-all;
+}
+
+.chat-msg .body h1,
+.chat-msg .body h2,
+.chat-msg .body h3,
+.chat-msg .body h4,
+.chat-msg .body h5,
+.chat-msg .body h6 {
+    margin: 0.5em 0 0.25em;
+    font-weight: 600;
+    line-height: 1.3;
+}
+.chat-msg .body h1:first-child,
+.chat-msg .body h2:first-child,
+.chat-msg .body h3:first-child,
+.chat-msg .body h4:first-child,
+.chat-msg .body h5:first-child,
+.chat-msg .body h6:first-child {
+    margin-top: 0;
+}
+
+.chat-msg .body h1 { font-size: 1.25em; }
+.chat-msg .body h2 { font-size: 1.15em; }
+.chat-msg .body h3 { font-size: 1.05em; }
+.chat-msg .body h4 { font-size: 1em; }
+.chat-msg .body h5 { font-size: 0.9em; }
+.chat-msg .body h6 { font-size: 0.85em; }
+
+.chat-msg .body hr {
+    border: none;
+    border-top: 1px solid var(--border);
+    margin: 0.6em 0;
+}
+
+.chat-msg .body table {
+    border-collapse: collapse;
+    margin: 0.5em 0;
+    font-size: 0.9em;
+    width: 100%;
+    overflow-x: auto;
+    display: block;
+}
+
+/* KaTeX math formulas */
+.math-block {
+    margin: 8px 0;
+    overflow-x: auto;
+    text-align: center;
+}
+.math-inline {
+    display: inline;
+}
+.math-error {
+    color: var(--error, #cb2431);
+    font-style: italic;
+}
+
+.chat-msg .body th, .chat-msg .body td {
+    border: 1px solid var(--border);
+    padding: 4px 8px;
+}
+
+.chat-msg .body th {
+    background: var(--bg-surface);
+}
+
+/* Chat bubble code blocks with syntax highlighting */
+.chat-msg .body pre.hljs-pre {
+    background: #0d1117;
+    border-radius: 4px;
+    margin: 0.5em 0;
+    overflow: hidden;
+}
+.chat-msg .body pre.hljs-pre code.hljs {
+    display: block;
+    padding: 10px 14px;
+    font-size: 12px;
+    overflow-x: auto;
+    background: transparent;
+}
+@media (prefers-color-scheme: light) {
+    .chat-msg .body pre.hljs-pre {
+        background: #e8ecf0;
+        border: 1px solid #d0d7de;
+    }
+    .chat-msg .body pre.hljs-pre code.hljs {
+        background: transparent;
+    }
+}
 
 .chat-input-area {
     display: flex;

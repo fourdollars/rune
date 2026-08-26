@@ -31,7 +31,100 @@ function detectDefaultNoteId() {
 }
 const DEFAULT_NOTE_ID = detectDefaultNoteId();
 
+// --- Configure marked (loaded by vendor-bundle.js before this module runs) ---
+function escapeHtml(str) {
+  return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+if (typeof marked !== 'undefined') {
+  const renderer = new marked.Renderer();
+
+  renderer.code = function(token) {
+    const { text, lang } = token;
+    const raw = text.replace(/"/g, '&quot;');
+    if (typeof hljs !== 'undefined') {
+      const language = lang && hljs.getLanguage(lang) ? lang : null;
+      const highlighted = language
+        ? hljs.highlight(text, { language }).value
+        : hljs.highlightAuto(text).value;
+      const langClass = language ? ` class="language-${language}"` : '';
+      return `<pre class="hljs-pre" data-raw="${raw}"><code class="hljs${langClass}">${highlighted}</code></pre>`;
+    }
+    const safe = escapeHtml(text);
+    return `<pre class="hljs-pre" data-raw="${raw}"><code>${safe}</code></pre>`;
+  };
+
+  const hooks = {
+    postprocess(html) {
+      return html.replace(/<p>(\s*<svg[\s\S]*?<\/svg>\s*)<\/p>/gi, '$1');
+    }
+  };
+
+  // --- Math extensions: intercept $$ and $ before marked mangles the content ---
+  // Block math: $$...$$ (registered before inline to take priority)
+  const blockMathExtension = {
+    name: 'blockMath',
+    level: 'block',
+    start(src) { return src.indexOf('$$'); },
+    tokenizer(src) {
+      const match = src.match(/^\$\$([\s\S]+?)\$\$/);
+      if (match) return { type: 'blockMath', raw: match[0], text: match[1].trim() };
+    },
+    renderer(token) {
+      if (typeof katex !== 'undefined') {
+        try {
+          return '<div class="math-block">' + katex.renderToString(token.text, { displayMode: true, throwOnError: false }) + '</div>';
+        } catch (e) {
+          return '<div class="math-block math-error">' + escapeHtml(token.text) + '</div>';
+        }
+      }
+      return '<div class="math-block">$$' + escapeHtml(token.text) + '$$</div>';
+    }
+  };
+
+  // Inline math: $...$
+  const inlineMathExtension = {
+    name: 'inlineMath',
+    level: 'inline',
+    start(src) { return src.indexOf('$'); },
+    tokenizer(src) {
+      // Avoid matching $$ (already handled by block extension)
+      const match = src.match(/^\$(?!\$)((?:[^$\\]|\\[\s\S])+?)\$/);
+      if (match) return { type: 'inlineMath', raw: match[0], text: match[1] };
+    },
+    renderer(token) {
+      if (typeof katex !== 'undefined') {
+        try {
+          return '<span class="math-inline">' + katex.renderToString(token.text, { displayMode: false, throwOnError: false }) + '</span>';
+        } catch (e) {
+          return '<span class="math-inline math-error">$' + escapeHtml(token.text) + '$</span>';
+        }
+      }
+      return '<span class="math-inline">$' + escapeHtml(token.text) + '$</span>';
+    }
+  };
+
+  marked.use({ renderer, hooks, breaks: true, gfm: true, extensions: [blockMathExtension, inlineMathExtension] });
+}
+
+// --- Markdown rendering helper ---
+function markdownFragment(source) {
+  if (typeof marked === 'undefined') return document.createTextNode(source);
+  try {
+    const html = marked.parse(source);
+    const parser = new DOMParser();
+    const doc = parser.parseFromString(html, 'text/html');
+    const frag = document.createDocumentFragment();
+    while (doc.body.firstChild) frag.appendChild(doc.body.firstChild);
+    return frag;
+  } catch (e) {
+    console.error('[rune] markdownFragment error:', e);
+    return document.createTextNode(source);
+  }
+}
+
 let currentAssistantEl = null;
+let currentAssistantText = '';
 let sseAbortController = null;
 
 function fmtTime() {
@@ -42,7 +135,7 @@ function fmtTime() {
 }
 
 /** Renders a chat bubble using the same DOM shape as the WebUI's addChatMessage(). */
-function appendMessage(role, text, { senderLabel } = {}) {
+function appendMessage(role, text = '', { senderLabel } = {}) {
   const div = document.createElement('div');
   div.className = `chat-msg ${role}`;
 
@@ -50,7 +143,7 @@ function appendMessage(role, text, { senderLabel } = {}) {
     const sender = document.createElement('div');
     sender.className = 'sender';
     const nameSpan = document.createElement('span');
-    nameSpan.textContent = senderLabel ?? (role === 'user' ? 'You' : 'Rune Notes');
+    nameSpan.textContent = senderLabel ?? (role === 'user' ? 'You' : 'ᚱ');
     const timeSpan = document.createElement('span');
     timeSpan.className = 'msg-time';
     timeSpan.textContent = fmtTime();
@@ -61,7 +154,15 @@ function appendMessage(role, text, { senderLabel } = {}) {
 
   const body = document.createElement('div');
   body.className = 'body';
-  body.textContent = text;
+  if (role === 'system') {
+    body.textContent = text;
+  } else if (text) {
+    if (typeof marked !== 'undefined') {
+      body.replaceChildren(markdownFragment(text));
+    } else {
+      body.textContent = text;
+    }
+  }
   div.appendChild(body);
 
   $messages.appendChild(div);
@@ -165,12 +266,22 @@ function handleSseEvent(rec) {
     case 'chat_token':
       if (!currentAssistantEl) {
         currentAssistantEl = appendMessage('assistant', '');
+        currentAssistantText = '';
       }
-      currentAssistantEl.textContent += payload.content ?? '';
+      currentAssistantText += payload.content ?? '';
+      if (typeof marked !== 'undefined') {
+        currentAssistantEl.replaceChildren(markdownFragment(currentAssistantText));
+      } else {
+        currentAssistantEl.textContent = currentAssistantText;
+      }
       $messages.scrollTop = $messages.scrollHeight;
       break;
     case 'chat_done':
+      if (currentAssistantEl && typeof marked !== 'undefined') {
+        currentAssistantEl.replaceChildren(markdownFragment(currentAssistantText));
+      }
       currentAssistantEl = null;
+      currentAssistantText = '';
       break;
     case 'chat_message':
       // Another participant's message (multi-user room); skip our own echo.
@@ -181,6 +292,7 @@ function handleSseEvent(rec) {
     case 'error':
       appendSystem(`❌ Error: ${payload.message ?? 'unknown error'}`);
       currentAssistantEl = null;
+      currentAssistantText = '';
       break;
     case 'auth_error':
       appendSystem(`❌ Authentication failed: ${payload.message ?? 'unauthorized'}`);

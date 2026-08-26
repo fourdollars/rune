@@ -362,7 +362,6 @@ pub async fn oauth_revoke_handler(
     StatusCode::OK
 }
 
-
 pub async fn oauth_metadata_handler(headers: HeaderMap) -> impl IntoResponse {
     let proto = crate::serve::oauth::detect_proto(&headers);
     let host = headers
