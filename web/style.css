@@ -1001,7 +1001,9 @@ pre.hljs-pre:hover .copy-btn {
    We need #preview in the selector to reach specificity (1,1,2)=112 and beat
    "#preview p" at (1,0,1)=101; without it our rule loses silently. */
 #preview .mermaid-block foreignObject p,
-#preview .mermaid foreignObject p {
+#preview .mermaid foreignObject p,
+.chat-msg .mermaid-block foreignObject p,
+.chat-msg .mermaid foreignObject p {
     margin: 1em 0;
 }
 

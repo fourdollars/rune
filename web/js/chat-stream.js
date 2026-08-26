@@ -37,6 +37,7 @@ globalThis.finalizeAssistantMessage = function finalizeAssistantMessage() {
     if (currentAssistantEl && typeof marked !== 'undefined') {
         currentAssistantEl.replaceChildren(markdownFragment(currentAssistantText));
         renderChatMath(currentAssistantEl);
+        if (typeof renderMermaidBlocks === 'function') renderMermaidBlocks(currentAssistantEl);
     }
     currentAssistantEl = null;
     currentAssistantText = '';

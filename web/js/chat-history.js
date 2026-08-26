@@ -49,6 +49,7 @@ globalThis.replayHistory = function replayHistory(messages) {
             if (typeof marked !== 'undefined') {
                 body.replaceChildren(markdownFragment(m.content));
                 renderChatMath(body);
+                if (typeof renderMermaidBlocks === 'function') renderMermaidBlocks(body);
             } else {
                 body.textContent = m.content;
             }

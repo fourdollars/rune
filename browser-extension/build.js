@@ -25,6 +25,7 @@ const VENDOR_BUNDLE = [
   'vendor/marked.min.js',
   'vendor/highlight.min.js',
   'vendor/katex.min.js',
+  'vendor/mermaid.min.js',
 ];
 
 function copyRecursive(src, dest) {

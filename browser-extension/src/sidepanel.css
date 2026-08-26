@@ -262,6 +262,27 @@ body {
     font-style: italic;
 }
 
+/* Mermaid diagrams */
+.mermaid-block {
+    margin: 12px 0;
+    padding: 10px;
+    background: var(--bg-primary);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    overflow-x: auto;
+    text-align: center;
+}
+.mermaid-block svg {
+    max-width: 100%;
+    height: auto;
+}
+.mermaid-block foreignObject {
+    overflow: visible;
+}
+.chat-msg .mermaid-block foreignObject p {
+    margin: 1em 0;
+}
+
 .chat-msg .body th, .chat-msg .body td {
     border: 1px solid var(--border);
     padding: 4px 8px;

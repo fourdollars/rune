@@ -36,11 +36,31 @@ function escapeHtml(str) {
   return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
+if (typeof mermaid !== 'undefined') {
+  try {
+    mermaid.initialize({
+      startOnLoad: false,
+      theme: window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'default',
+    });
+  } catch (e) {
+    console.error('[rune] mermaid.initialize failed:', e);
+  }
+  window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', (e) => {
+    try {
+      mermaid.initialize({ startOnLoad: false, theme: e.matches ? 'dark' : 'default' });
+    } catch {}
+  });
+}
+
 if (typeof marked !== 'undefined') {
   const renderer = new marked.Renderer();
 
   renderer.code = function(token) {
     const { text, lang } = token;
+    if (lang && lang.toLowerCase() === 'mermaid') {
+      const id = 'mermaid-' + Math.random().toString(36).slice(2);
+      return `<div class="mermaid-block" id="${id}" data-src="${text.replace(/"/g, '&quot;')}"></div>`;
+    }
     const raw = text.replace(/"/g, '&quot;');
     if (typeof hljs !== 'undefined') {
       const language = lang && hljs.getLanguage(lang) ? lang : null;
@@ -123,6 +143,33 @@ function markdownFragment(source) {
   }
 }
 
+function renderMermaidBlocks(container) {
+  if (!container || typeof mermaid === 'undefined') return;
+  container.querySelectorAll('.mermaid-block').forEach(el => {
+    const src = el.dataset.src ? el.dataset.src.replace(/&quot;/g, '"') : '';
+    if (!src) return;
+    const doRender = (retries) => {
+      if (window.mermaid && typeof window.mermaid.render === 'function') {
+        const uid = 'mermaid-' + Date.now() + '-' + Math.random().toString(36).slice(2);
+        el.id = uid;
+        window.mermaid.render(uid + '-svg', src)
+          .then(({ svg }) => { el.innerHTML = svg; })
+          .catch(err => {
+            const error = document.createElement('pre');
+            error.style.color = 'var(--error, #cb2431)';
+            error.textContent = 'Mermaid error: ' + err.message;
+            el.replaceChildren(error);
+          });
+      } else if (retries > 0) {
+        setTimeout(() => doRender(retries - 1), 200);
+      } else {
+        el.innerHTML = '<pre style="color:var(--text-muted)">Mermaid not loaded</pre>';
+      }
+    };
+    doRender(20);
+  });
+}
+
 let currentAssistantEl = null;
 let currentAssistantText = '';
 let sseAbortController = null;
@@ -159,6 +206,7 @@ function appendMessage(role, text = '', { senderLabel } = {}) {
   } else if (text) {
     if (typeof marked !== 'undefined') {
       body.replaceChildren(markdownFragment(text));
+      renderMermaidBlocks(body);
     } else {
       body.textContent = text;
     }
@@ -279,6 +327,7 @@ function handleSseEvent(rec) {
     case 'chat_done':
       if (currentAssistantEl && typeof marked !== 'undefined') {
         currentAssistantEl.replaceChildren(markdownFragment(currentAssistantText));
+        renderMermaidBlocks(currentAssistantEl);
       }
       currentAssistantEl = null;
       currentAssistantText = '';

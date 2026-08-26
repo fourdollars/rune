@@ -74,7 +74,13 @@ globalThis.addChatMessage = function addChatMessage(nickname, content) {
 
     const body = document.createElement('div');
     body.className = 'body';
-    body.textContent = content;
+    if (typeof marked !== 'undefined') {
+        body.replaceChildren(markdownFragment(content));
+        if (typeof renderChatMath === 'function') renderChatMath(body);
+        if (typeof renderMermaidBlocks === 'function') renderMermaidBlocks(body);
+    } else {
+        body.textContent = content;
+    }
 
     div.appendChild(sender);
     div.appendChild(body);
