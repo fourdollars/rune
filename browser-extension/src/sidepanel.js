@@ -15,6 +15,8 @@ const $form = document.getElementById('composer');
 const $input = document.getElementById('input');
 const $notice = document.getElementById('disabled-notice');
 const $statusIndicator = document.getElementById('status-indicator');
+const $currentNoteName = document.getElementById('current-note-name');
+const $noteSelect = document.getElementById('note-select');
 
 // Each browser gets its own isolated chat "room" (Rune note_id), so
 // concurrent Chrome/Firefox sessions logged into the same server don't see
@@ -173,6 +175,10 @@ function renderMermaidBlocks(container) {
 let currentAssistantEl = null;
 let currentAssistantText = '';
 let sseAbortController = null;
+// The note the SSE stream is currently subscribed to.
+let activeNoteId = DEFAULT_NOTE_ID;
+// Whether we've already replayed history for the current activeNoteId session.
+let historyLoaded = false;
 
 function fmtTime() {
   const d = new Date();
@@ -222,11 +228,108 @@ function appendSystem(text) {
   appendMessage('system', text);
 }
 
+/** Update the displayed note name in the header badge. */
+function setActiveNote(noteId, noteName) {
+  activeNoteId = noteId;
+  const label = noteName || noteId;
+  $currentNoteName.textContent = label;
+  $currentNoteName.title = label;
+  // Sync the select element to the active note
+  if ($noteSelect.value !== noteId) $noteSelect.value = noteId;
+}
+
+/** Populate the note selector dropdown from a note_list payload. */
+function populateNoteList(notes, activeId) {
+  $noteSelect.innerHTML = '';
+  for (const note of notes) {
+    const opt = document.createElement('option');
+    opt.value = note.id;
+    opt.textContent = note.name || note.id;
+    $noteSelect.appendChild(opt);
+  }
+  const active = notes.find((n) => n.id === activeId) ?? notes[0];
+  if (active) {
+    $noteSelect.value = active.id;
+    setActiveNote(active.id, active.name || active.id);
+  }
+}
+
+/**
+ * Replay chat history messages. Called once on SSE connect when a `history`
+ * event arrives. Mirrors the web app's replayHistory() in chat-history.js.
+ */
+function replayHistory(messages) {
+  if (!messages?.length) return;
+  $messages.innerHTML = '';
+  for (const msg of messages) {
+    const role = msg.role === 'assistant' ? 'assistant' : msg.role === 'user' ? 'user' : 'system';
+    const label = msg.nickname || (role === 'assistant' ? 'ᚱ' : 'You');
+    if (role === 'system') {
+      appendSystem(msg.content || '');
+      continue;
+    }
+    // Build bubble manually to set a historical timestamp
+    const div = document.createElement('div');
+    div.className = `chat-msg ${role}`;
+    const sender = document.createElement('div');
+    sender.className = 'sender';
+    const nameSpan = document.createElement('span');
+    nameSpan.textContent = label;
+    const timeSpan = document.createElement('span');
+    timeSpan.className = 'msg-time';
+    if (msg.created_at) {
+      const d = new Date(msg.created_at * 1000);
+      timeSpan.textContent = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+    } else {
+      timeSpan.textContent = fmtTime();
+    }
+    sender.appendChild(nameSpan);
+    sender.appendChild(timeSpan);
+    div.appendChild(sender);
+    const body = document.createElement('div');
+    body.className = 'body';
+    if (typeof marked !== 'undefined') {
+      body.replaceChildren(markdownFragment(msg.content || ''));
+      renderMermaidBlocks(body);
+    } else {
+      body.textContent = msg.content || '';
+    }
+    div.appendChild(body);
+    $messages.appendChild(div);
+  }
+  $messages.scrollTop = $messages.scrollHeight;
+}
+
 function setConnected(connected) {
   $statusIndicator.classList.toggle('connected', connected);
   $statusIndicator.classList.toggle('disconnected', !connected);
   $statusIndicator.title = connected ? 'connected' : 'disconnected';
 }
+
+/**
+ * Load chat history for the active note via PUT /api/session (background relay).
+ * The SSE stream does not send a `history` event on initial connect — only when
+ * switching notes server-side. So we call /api/session directly at startup and
+ * after note switches to get prior messages.
+ */
+async function loadNoteHistory(noteId) {
+  if (historyLoaded) return;
+  try {
+    const resp = await browser.runtime.sendMessage({
+      type: 'rune:loadSession',
+      noteId,
+    });
+    if (resp?.ok && resp.data?.history?.length) {
+      historyLoaded = true;
+      replayHistory(resp.data.history);
+    } else {
+      historyLoaded = true; // no history — mark loaded so we don't retry
+    }
+  } catch (e) {
+    console.warn('[rune] loadNoteHistory failed:', e);
+  }
+}
+
 
 async function checkConfigured() {
   const { serverUrl } = await getSyncSettings();
@@ -284,6 +387,9 @@ async function subscribeEvents({ serverUrl, accessToken, noteId, signal, onEvent
     throw new Error(`SSE connection failed (HTTP ${resp.status})`);
   }
   setConnected(true);
+  // Load prior conversation history for this note via /api/session (the SSE
+  // stream only sends `history` on note-switch broadcasts, not on connect).
+  loadNoteHistory(noteId);
   const reader = resp.body.getReader();
   const decoder = new TextDecoder();
   let buffer = '';
@@ -346,25 +452,49 @@ function handleSseEvent(rec) {
     case 'auth_error':
       appendSystem(`❌ Authentication failed: ${payload.message ?? 'unauthorized'}`);
       break;
-    default:
-      // history / users_update / file_list / etc. — ignore for v1 chat UI.
+    case 'note_list':
+      // Populate the note switcher dropdown and update the header badge.
+      if (Array.isArray(payload.notes)) {
+        populateNoteList(payload.notes, payload.active);
+      }
       break;
+    case 'note_switched':
+      // Server confirmed a note switch — reconnect SSE to the new note.
+      if (payload.note_id && payload.note_id !== activeNoteId) {
+        setActiveNote(payload.note_id, $noteSelect.options[$noteSelect.selectedIndex]?.text ?? payload.note_id);
+        switchToNote(payload.note_id);
+      }
+      break;
+    case 'history':
+      // Replay prior conversation — only once per connection to avoid
+      // duplicating messages on reconnect after the initial load.
+      if (!historyLoaded && Array.isArray(payload.messages)) {
+        historyLoaded = true;
+        replayHistory(payload.messages);
+      }
+      break;
+    default:
+      // users_update / file_list / model_list / etc. — ignore for chat UI.
+      break;
+
   }
 }
 
-async function startSseSubscription() {
+async function startSseSubscription(noteId) {
   const { serverUrl } = await getSyncSettings();
   const { accessToken } = await getLocalAuth();
   if (!serverUrl) return;
 
   sseAbortController?.abort();
   sseAbortController = new AbortController();
+  historyLoaded = false; // Reset so history is replayed for this connection
+  activeNoteId = noteId ?? activeNoteId;
 
   try {
     await subscribeEvents({
       serverUrl,
       accessToken,
-      noteId: DEFAULT_NOTE_ID,
+      noteId: activeNoteId,
       signal: sseAbortController.signal,
       onEvent: handleSseEvent,
     });
@@ -374,6 +504,19 @@ async function startSseSubscription() {
     appendSystem(`❌ SSE connection dropped: ${String(e?.message ?? e)}`);
   }
 }
+
+/**
+ * Switch to a different note: clear the chat, abort the current SSE stream,
+ * and open a new one for the target note.
+ */
+function switchToNote(noteId) {
+  if (!noteId || noteId === activeNoteId) return;
+  $messages.innerHTML = '';
+  currentAssistantEl = null;
+  currentAssistantText = '';
+  startSseSubscription(noteId);
+}
+
 
 $form.addEventListener('submit', async (e) => {
   e.preventDefault();
@@ -407,7 +550,7 @@ $form.addEventListener('submit', async (e) => {
 
   const resp = await browser.runtime.sendMessage({
     type: 'rune:sendChat',
-    noteId: DEFAULT_NOTE_ID,
+    noteId: activeNoteId,
     content: outgoing,
   });
   if (!resp?.ok) {
@@ -415,6 +558,14 @@ $form.addEventListener('submit', async (e) => {
   }
 });
 
+// Note switcher: when the user changes the dropdown, switch SSE to that note.
+$noteSelect.addEventListener('change', () => {
+  const selectedId = $noteSelect.value;
+  if (selectedId && selectedId !== activeNoteId) {
+    switchToNote(selectedId);
+  }
+});
+
 checkConfigured().then((configured) => {
-  if (configured) startSseSubscription();
+  if (configured) startSseSubscription(DEFAULT_NOTE_ID);
 });

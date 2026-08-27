@@ -92,6 +92,47 @@ body {
     50% { opacity: 0.4; }
 }
 
+/* Header right side: note switcher + status dot */
+.header-right {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+/* Note switcher: badge shows the active note name; the <select> overlays it */
+.note-switcher {
+    position: relative;
+    display: flex;
+    align-items: center;
+}
+
+.note-name-badge {
+    font-size: 11px;
+    color: var(--text-secondary);
+    background: var(--bg-surface);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 1px 6px;
+    max-width: 120px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    cursor: pointer;
+    user-select: none;
+}
+
+/* The <select> sits on top of the badge — zero opacity so the badge text shows
+   through, but the select intercepts clicks to open the native dropdown. */
+#note-select {
+    position: absolute;
+    inset: 0;
+    opacity: 0;
+    cursor: pointer;
+    width: 100%;
+    height: 100%;
+    font-size: 11px;
+}
+
 #disabled-notice {
     padding: 1rem;
     color: var(--error);

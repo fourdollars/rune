@@ -15,7 +15,13 @@
     <h3>
       <span class="rune-char">ᚱ</span><span class="rune-char">ᚢ</span><span class="rune-char">ᚾ</span><span class="rune-char">ᛖ</span>
     </h3>
-    <span id="status-indicator" class="status disconnected" title="disconnected" aria-label="Connection status"></span>
+    <div class="header-right">
+      <div class="note-switcher" id="note-switcher" title="Switch note" aria-label="Current note">
+        <span id="current-note-name" class="note-name-badge">—</span>
+        <select id="note-select" aria-label="Select note"></select>
+      </div>
+      <span id="status-indicator" class="status disconnected" title="disconnected" aria-label="Connection status"></span>
+    </div>
   </div>
 
   <div id="disabled-notice" hidden>Rune Notes Server URL is not set yet. Please configure it on the settings page first.</div>

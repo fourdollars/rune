@@ -238,6 +238,28 @@ browser.runtime.onMessage.addListener((message, sender, sendResponse) => {
         }
         break;
       }
+      case 'rune:loadSession': {
+        // PUT /api/session — returns { ok, history, files, current_model, … }
+        // Used by the side panel to load chat history when first connecting
+        // to a note (the SSE stream does not send a history event on initial
+        // connect; only note-switch broadcasts do).
+        try {
+          const resp = await apiFetch('/api/session', {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ note: message.noteId }),
+          });
+          if (!resp.ok) {
+            sendResponse({ ok: false, error: `HTTP ${resp.status}` });
+            break;
+          }
+          const body = await resp.json().catch(() => ({}));
+          sendResponse({ ok: true, data: body });
+        } catch (e) {
+          sendResponse({ ok: false, error: String(e?.message ?? e) });
+        }
+        break;
+      }
       default:
         sendResponse({ ok: false, error: `unknown message type: ${message?.type}` });
     }
