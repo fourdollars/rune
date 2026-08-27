@@ -222,7 +222,7 @@ pub async fn handle_mcp_post(
                 None => json_response(resp),
             }
         }
-        "notifications/initialized" => (StatusCode::ACCEPTED).into_response(),
+        m if m.starts_with("notifications/") => (StatusCode::ACCEPTED).into_response(),
         "ping" => {
             let resp = McpJsonRpcResponse::success(req.id, json!({}));
             json_response(resp)
