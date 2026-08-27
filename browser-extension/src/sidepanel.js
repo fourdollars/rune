@@ -17,6 +17,17 @@ const $notice = document.getElementById('disabled-notice');
 const $statusIndicator = document.getElementById('status-indicator');
 const $currentNoteName = document.getElementById('current-note-name');
 const $noteSelect = document.getElementById('note-select');
+const $modelIndicator = document.getElementById('model-indicator');
+const $modelName = document.getElementById('model-name');
+const $thinkingSelect = document.getElementById('thinking-select');
+const $btnArchive = document.getElementById('btn-archive');
+const $modelModal = document.getElementById('model-modal');
+const $modelSearchInput = document.getElementById('model-search-input');
+const $modelList = document.getElementById('model-list');
+const $modelModalCancel = document.getElementById('model-modal-cancel');
+const $archiveModal = document.getElementById('archive-modal');
+const $archiveModalCancel = document.getElementById('archive-modal-cancel');
+const $archiveModalConfirm = document.getElementById('archive-modal-confirm');
 
 // Each browser gets its own isolated chat "room" (Rune note_id), so
 // concurrent Chrome/Firefox sessions logged into the same server don't see
@@ -172,23 +183,147 @@ function renderMermaidBlocks(container) {
   });
 }
 
+let currentAssistantDiv = null;
 let currentAssistantEl = null;
 let currentAssistantText = '';
 let sseAbortController = null;
+let availableModels = [];
+let activeModel = '';
+let currentThinking = 'off';
 // The note the SSE stream is currently subscribed to.
 let activeNoteId = DEFAULT_NOTE_ID;
 // Whether we've already replayed history for the current activeNoteId session.
 let historyLoaded = false;
 
-function fmtTime() {
-  const d = new Date();
+function updateModelIndicator() {
+  if (!$modelIndicator || !$modelName) return;
+  if (!activeModel) {
+    $modelIndicator.style.display = 'none';
+    return;
+  }
+  $modelName.textContent = activeModel;
+  $modelName.title = `Switch model (current: ${activeModel})`;
+  $modelIndicator.style.display = 'flex';
+}
+
+function updateThinkingSelect() {
+  if (!$thinkingSelect) return;
+  if (!activeModel) {
+    $thinkingSelect.style.display = 'none';
+    return;
+  }
+  const currentModelObj = availableModels.find((m) => (m.id || m) === activeModel);
+  const efforts = currentModelObj?.reasoning_efforts || [];
+  if (efforts.length === 0) {
+    $thinkingSelect.style.display = 'none';
+    return;
+  }
+  const isGemini3 = activeModel.startsWith('gemini-3.');
+  $thinkingSelect.innerHTML = '';
+  if (!efforts.includes('none') && !isGemini3) {
+    const offOpt = document.createElement('option');
+    offOpt.value = 'off';
+    offOpt.textContent = 'off';
+    $thinkingSelect.appendChild(offOpt);
+  }
+  efforts.forEach((level) => {
+    const opt = document.createElement('option');
+    opt.value = level;
+    opt.textContent = level;
+    $thinkingSelect.appendChild(opt);
+  });
+  let val = currentThinking || 'off';
+  if (isGemini3 && (val === 'off' || val === 'none')) {
+    val = efforts[0] || 'medium';
+  }
+  $thinkingSelect.value = val;
+  $thinkingSelect.style.display = '';
+}
+
+function formatContextWindow(tokens) {
+  if (tokens >= 1000000) return (tokens / 1000000).toFixed(0) + 'M';
+  if (tokens >= 1000) return (tokens / 1000).toFixed(0) + 'K';
+  return String(tokens);
+}
+
+function renderModelList(filter = '') {
+  if (!$modelList) return;
+  $modelList.innerHTML = '';
+  const lowerFilter = filter.toLowerCase();
+  const filtered = availableModels.filter((m) => {
+    const id = m.id || m;
+    return !lowerFilter || id.toLowerCase().includes(lowerFilter);
+  });
+  if (filtered.length === 0) {
+    const empty = document.createElement('div');
+    empty.style.color = 'var(--text-muted)';
+    empty.style.fontSize = '12px';
+    empty.style.padding = '8px';
+    empty.textContent = 'No matching models';
+    $modelList.appendChild(empty);
+    return;
+  }
+  filtered.forEach((m) => {
+    const modelId = m.id || m;
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'model-option' + (modelId === activeModel ? ' active' : '');
+    const nameSpan = document.createElement('span');
+    nameSpan.className = 'model-option-name';
+    nameSpan.textContent = modelId;
+    btn.appendChild(nameSpan);
+
+    const badgeContainer = document.createElement('span');
+    badgeContainer.className = 'model-badges';
+    if (m.context_window) {
+      const ctxBadge = document.createElement('span');
+      ctxBadge.className = 'model-ctx-badge';
+      ctxBadge.textContent = formatContextWindow(m.context_window);
+      badgeContainer.appendChild(ctxBadge);
+    }
+    btn.appendChild(badgeContainer);
+
+    btn.addEventListener('click', async () => {
+      activeModel = modelId;
+      updateModelIndicator();
+      updateThinkingSelect();
+      hideModelDialog();
+      await browser.runtime.sendMessage({
+        type: 'rune:patchNote',
+        noteId: activeNoteId,
+        patch: { model: modelId },
+      });
+    });
+    $modelList.appendChild(btn);
+  });
+}
+
+function showModelDialog() {
+  if (!$modelModal) return;
+  if (availableModels.length === 0) return;
+  if ($modelSearchInput) $modelSearchInput.value = '';
+  renderModelList('');
+  $modelModal.classList.remove('hidden');
+  if ($modelSearchInput) {
+    setTimeout(() => $modelSearchInput.focus(), 50);
+  }
+}
+
+function hideModelDialog() {
+  if ($modelModal) $modelModal.classList.add('hidden');
+}
+
+function fmtTime(unixSec) {
+  const d = unixSec ? new Date(unixSec * 1000) : new Date();
+  const mm = String(d.getMonth() + 1).padStart(2, '0');
+  const dd = String(d.getDate()).padStart(2, '0');
   const hh = String(d.getHours()).padStart(2, '0');
   const min = String(d.getMinutes()).padStart(2, '0');
-  return `${hh}:${min}`;
+  return `${mm}-${dd} ${hh}:${min}`;
 }
 
 /** Renders a chat bubble using the same DOM shape as the WebUI's addChatMessage(). */
-function appendMessage(role, text = '', { senderLabel } = {}) {
+function appendMessage(role, text = '', { senderLabel, model, thinking, steps, tokensIn, tokensOut, toolCalls, createdAt } = {}) {
   const div = document.createElement('div');
   div.className = `chat-msg ${role}`;
 
@@ -197,10 +332,18 @@ function appendMessage(role, text = '', { senderLabel } = {}) {
     sender.className = 'sender';
     const nameSpan = document.createElement('span');
     nameSpan.textContent = senderLabel ?? (role === 'user' ? 'You' : 'ᚱ');
+    sender.appendChild(nameSpan);
+
+    if (role === 'assistant' && model) {
+      const meta = document.createElement('span');
+      meta.className = 'msg-meta';
+      meta.textContent = (thinking && thinking !== 'off') ? `${model} ${thinking}` : model;
+      sender.appendChild(meta);
+    }
+
     const timeSpan = document.createElement('span');
     timeSpan.className = 'msg-time';
-    timeSpan.textContent = fmtTime();
-    sender.appendChild(nameSpan);
+    timeSpan.textContent = fmtTime(createdAt || null);
     sender.appendChild(timeSpan);
     div.appendChild(sender);
   }
@@ -217,15 +360,79 @@ function appendMessage(role, text = '', { senderLabel } = {}) {
       body.textContent = text;
     }
   }
+
+  // Run stats at message tail for assistant
+  const totalTok = (tokensIn || 0) + (tokensOut || 0);
+  if (role === 'assistant' && (steps || totalTok || toolCalls)) {
+    const stats = document.createElement('div');
+    stats.className = 'run-stats';
+    stats.textContent = `${steps || 0} steps · ${totalTok} tokens · ${toolCalls || 0} tool calls`;
+    body.appendChild(stats);
+  }
+
   div.appendChild(body);
 
   $messages.appendChild(div);
   $messages.scrollTop = $messages.scrollHeight;
-  return body; // callers append/stream into the .body element
+  return { div, body };
 }
 
 function appendSystem(text) {
   appendMessage('system', text);
+}
+
+function attachMetaToLastAssistant(model, tokIn, tokOut, ctxTokens, ctxWindow, steps, toolCalls, thinking) {
+  const target = currentAssistantDiv || $messages.querySelector('.chat-msg.assistant:last-child');
+  if (!target) return;
+  const sender = target.querySelector('.sender');
+  if (!sender) return;
+
+  const oldMeta = sender.querySelector('.msg-meta');
+  if (oldMeta) oldMeta.remove();
+
+  if (model) {
+    const meta = document.createElement('span');
+    meta.className = 'msg-meta';
+    meta.textContent = (thinking && thinking !== 'off') ? `${model} ${thinking}` : model;
+    const timeEl = sender.querySelector('.msg-time');
+    if (timeEl) sender.insertBefore(meta, timeEl);
+    else sender.appendChild(meta);
+  }
+
+  const totalTok = (tokIn || 0) + (tokOut || 0);
+  if (steps || totalTok || toolCalls) {
+    const body = target.querySelector('.body');
+    if (body) {
+      const oldStats = body.querySelector('.run-stats');
+      if (oldStats) oldStats.remove();
+      const stats = document.createElement('div');
+      stats.className = 'run-stats';
+      stats.textContent = `${steps || 0} steps · ${totalTok} tokens · ${toolCalls || 0} tool calls`;
+      body.appendChild(stats);
+      $messages.scrollTop = $messages.scrollHeight;
+    }
+  }
+
+  if (ctxWindow && ctxWindow > 0) {
+    updateContextOverlay(ctxTokens || 0, ctxWindow);
+  }
+}
+
+let lastContextTokens = null;
+
+function updateContextOverlay(ctxTokens, ctxWindow) {
+  lastContextTokens = ctxTokens;
+  const overlay = document.getElementById('context-overlay');
+  const pctEl = document.getElementById('context-pct');
+  const cntEl = document.getElementById('context-counts');
+  if (!overlay || !pctEl || !cntEl) return;
+  const pct = Math.round((ctxTokens / ctxWindow) * 100);
+  pctEl.textContent = pct + '% context used';
+  const fmt = (n) => (n >= 1000 ? (n / 1000).toFixed(1) + 'k' : String(n));
+  cntEl.textContent = fmt(ctxTokens) + ' / ' + fmt(ctxWindow);
+  overlay.classList.remove('hidden', 'warn', 'danger');
+  if (pct >= 80) overlay.classList.add('danger');
+  else if (pct >= 60) overlay.classList.add('warn');
 }
 
 /** Update the displayed note name in the header badge. */
@@ -236,6 +443,7 @@ function setActiveNote(noteId, noteName) {
   $currentNoteName.title = label;
   // Sync the select element to the active note
   if ($noteSelect.value !== noteId) $noteSelect.value = noteId;
+  browser.storage.local.set({ lastSelectedNote: noteId }).catch(() => {});
 }
 
 /** Populate the note selector dropdown from a note_list payload. */
@@ -247,19 +455,69 @@ function populateNoteList(notes, activeId) {
     opt.textContent = note.name || note.id;
     $noteSelect.appendChild(opt);
   }
-  const active = notes.find((n) => n.id === activeId) ?? notes[0];
+  const targetId = activeNoteId || activeId;
+  const active = notes.find((n) => n.id === targetId) ?? notes.find((n) => n.id === activeId) ?? notes[0];
   if (active) {
     $noteSelect.value = active.id;
     setActiveNote(active.id, active.name || active.id);
   }
 }
 
+let currentLoadedHistoryRaw = null;
+
+async function saveHistoryCache(noteId, messages) {
+  if (!noteId || !Array.isArray(messages)) return;
+  try {
+    await browser.storage.local.set({ [`rune_cached_history_${noteId}`]: messages });
+  } catch {}
+}
+
+async function restoreCachedState(noteId) {
+  try {
+    const keys = [
+      `rune_cached_history_${noteId}`,
+      'rune_cached_models',
+      'rune_cached_notes',
+      `rune_model_${noteId}`,
+      `rune_thinking_${noteId}`,
+    ];
+    const cached = await browser.storage.local.get(keys);
+    if (Array.isArray(cached.rune_cached_models) && cached.rune_cached_models.length) {
+      availableModels = cached.rune_cached_models;
+    }
+    if (cached[`rune_model_${noteId}`]) {
+      activeModel = cached[`rune_model_${noteId}`];
+    }
+    if (cached[`rune_thinking_${noteId}`]) {
+      currentThinking = cached[`rune_thinking_${noteId}`];
+    }
+    if (Array.isArray(cached.rune_cached_notes) && cached.rune_cached_notes.length) {
+      populateNoteList(cached.rune_cached_notes, noteId);
+    }
+    updateModelIndicator();
+    updateThinkingSelect();
+
+    const history = cached[`rune_cached_history_${noteId}`];
+    if (Array.isArray(history) && history.length) {
+      currentLoadedHistoryRaw = JSON.stringify(history);
+      replayHistory(history, false);
+    }
+  } catch (e) {
+    console.warn('[rune] restoreCachedState failed:', e);
+  }
+}
+
 /**
- * Replay chat history messages. Called once on SSE connect when a `history`
- * event arrives. Mirrors the web app's replayHistory() in chat-history.js.
+ * Replay chat history messages. Called on SSE connect when a `history`
+ * event arrives or after local cache restoration.
  */
-function replayHistory(messages) {
+function replayHistory(messages, saveToCache = true) {
   if (!messages?.length) return;
+  const raw = JSON.stringify(messages);
+  if (raw === currentLoadedHistoryRaw && $messages.children.length > 0) {
+    return; // Already rendered identical history — skip re-rendering
+  }
+  currentLoadedHistoryRaw = raw;
   $messages.innerHTML = '';
   for (const msg of messages) {
     const role = msg.role === 'assistant' ? 'assistant' : msg.role === 'user' ? 'user' : 'system';
@@ -268,42 +526,97 @@ function replayHistory(messages) {
       appendSystem(msg.content || '');
       continue;
     }
-    // Build bubble manually to set a historical timestamp
-    const div = document.createElement('div');
-    div.className = `chat-msg ${role}`;
-    const sender = document.createElement('div');
-    sender.className = 'sender';
-    const nameSpan = document.createElement('span');
-    nameSpan.textContent = label;
-    const timeSpan = document.createElement('span');
-    timeSpan.className = 'msg-time';
-    if (msg.created_at) {
-      const d = new Date(msg.created_at * 1000);
-      timeSpan.textContent = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
-    } else {
-      timeSpan.textContent = fmtTime();
-    }
-    sender.appendChild(nameSpan);
-    sender.appendChild(timeSpan);
-    div.appendChild(sender);
-    const body = document.createElement('div');
-    body.className = 'body';
-    if (typeof marked !== 'undefined') {
-      body.replaceChildren(markdownFragment(msg.content || ''));
-      renderMermaidBlocks(body);
-    } else {
-      body.textContent = msg.content || '';
-    }
-    div.appendChild(body);
-    $messages.appendChild(div);
+    appendMessage(role, msg.content || '', {
+      senderLabel: label,
+      model: msg.model,
+      thinking: msg.thinking,
+      steps: msg.steps,
+      tokensIn: msg.tokens_in,
+      tokensOut: msg.tokens_out,
+      toolCalls: msg.tool_calls,
+      createdAt: msg.created_at,
+    });
   }
   $messages.scrollTop = $messages.scrollHeight;
+
+  // Restore context overlay from last assistant message with context_tokens
+  const lastWithCtx = [...messages].reverse().find(
+    (m) => m.role === 'assistant' && m.context_tokens != null && m.model
+  );
+  if (lastWithCtx) {
+    const modelEntry = availableModels.find((m) => m.id === lastWithCtx.model);
+    const ctxWindow = modelEntry?.context_window || lastWithCtx.context_window;
+    if (ctxWindow) {
+      updateContextOverlay(lastWithCtx.context_tokens, ctxWindow);
+    }
+  }
+
+  if (saveToCache && activeNoteId) {
+    saveHistoryCache(activeNoteId, messages);
+  }
 }
 
-function setConnected(connected) {
-  $statusIndicator.classList.toggle('connected', connected);
-  $statusIndicator.classList.toggle('disconnected', !connected);
-  $statusIndicator.title = connected ? 'connected' : 'disconnected';
+const STATUS_ICONS = {
+  idle: '<svg viewBox="0 0 24 24" fill="currentColor" width="10" height="10" class="rune-icon"><circle cx="12" cy="12" r="5.2"/></svg>',
+  typing: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="11" height="11" class="rune-icon"><path d="M12 20h8.5"/><path d="M16.4 3.6a2.1 2.1 0 0 1 3 3L7.6 18.4 3.3 19.7l1.3-4.3Z"/></svg>',
+  thinking: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="11" height="11" class="rune-icon"><path d="M17.5 3.2a3 3 0 0 0-3 3v11.6a3 3 0 1 0 3-3H6.5a3 3 0 1 0 3 3V6.2a3 3 0 1 0-3 3h11a3 3 0 0 0 0-6Z"/></svg>',
+  tool: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="11" height="11" class="rune-icon"><path d="M12 15.4a3.4 3.4 0 1 0 0-6.8 3.4 3.4 0 0 0 0 6.8Z"/><path d="M19.3 14.6a1.5 1.5 0 0 0 .3 1.7l.1.1a1.9 1.9 0 1 1-2.7 2.7l-.1-.1a1.5 1.5 0 0 0-2.5 1.1v.2a1.9 1.9 0 1 1-3.8 0v-.1a1.5 1.5 0 0 0-2.5-1.1l-.1.1a1.9 1.9 0 1 1-2.7-2.7l.1-.1a1.5 1.5 0 0 0-1.1-2.5h-.2a1.9 1.9 0 1 1 0-3.8h.1a1.5 1.5 0 0 0 1.1-2.5l-.1-.1a1.9 1.9 0 1 1 2.7-2.7l.1.1a1.5 1.5 0 0 0 2.5-1.1v-.2a1.9 1.9 0 1 1 3.8 0v.1a1.5 1.5 0 0 0 2.5 1.1l.1-.1a1.9 1.9 0 1 1 2.7 2.7l-.1.1a1.5 1.5 0 0 0 1.1 2.5h.2a1.9 1.9 0 1 1 0 3.8h-.1a1.5 1.5 0 0 0-1.4.9Z"/></svg>',
+  disconnected: '<svg viewBox="0 0 24 24" fill="currentColor" width="10" height="10" class="rune-icon"><circle cx="12" cy="12" r="5.2"/></svg>',
+};
+
+let currentStatus = 'disconnected';
+const MIN_TOOL_DISPLAY_MS = 600;
+let toolStartTime = 0;
+let clearToolTimer = null;
+
+function paintStatus(state, label) {
+  if (!$statusIndicator) return;
+  $statusIndicator.className = `status ${state}`;
+  $statusIndicator.title = label || state;
+  $statusIndicator.setAttribute('aria-label', `Status: ${label || state}`);
+  $statusIndicator.innerHTML = STATUS_ICONS[state] || STATUS_ICONS.idle;
+}
+
+function setStatus(state) {
+  if (state && typeof state === 'string' && state.startsWith('tool:')) {
+    setToolStatus(state.slice(5));
+    return;
+  }
+  if (clearToolTimer) {
+    clearTimeout(clearToolTimer);
+    clearToolTimer = null;
+  }
+  currentStatus = state;
+  paintStatus(state, state);
+}
+
+function setToolStatus(toolName) {
+  if (clearToolTimer) {
+    clearTimeout(clearToolTimer);
+    clearToolTimer = null;
+  }
+  currentStatus = 'tool';
+  toolStartTime = Date.now();
+  paintStatus('tool', `tool: ${toolName}`);
+}
+
+function clearToolStatus() {
+  if (currentStatus !== 'tool') {
+    setStatus('thinking');
+    return;
+  }
+  const elapsed = Date.now() - toolStartTime;
+  if (elapsed < MIN_TOOL_DISPLAY_MS) {
+    if (clearToolTimer) clearTimeout(clearToolTimer);
+    clearToolTimer = setTimeout(() => {
+      clearToolTimer = null;
+      if (currentStatus === 'tool') {
+        setStatus('thinking');
+      }
+    }, MIN_TOOL_DISPLAY_MS - elapsed);
+  } else {
+    setStatus('thinking');
+  }
 }
 
 /**
@@ -319,17 +632,24 @@ async function loadNoteHistory(noteId) {
       type: 'rune:loadSession',
       noteId,
     });
-    if (resp?.ok && resp.data?.history?.length) {
-      historyLoaded = true;
-      replayHistory(resp.data.history);
-    } else {
-      historyLoaded = true; // no history — mark loaded so we don't retry
+    if (resp?.ok && resp.data) {
+      if (resp.data.current_model) {
+        activeModel = resp.data.current_model;
+        updateModelIndicator();
+        updateThinkingSelect();
+        browser.storage.local.set({ [`rune_model_${noteId}`]: activeModel }).catch(() => {});
+      }
+      if (resp.data.history?.length) {
+        historyLoaded = true;
+        replayHistory(resp.data.history);
+      } else {
+        historyLoaded = true; // no history — mark loaded so we don't retry
+      }
     }
   } catch (e) {
     console.warn('[rune] loadNoteHistory failed:', e);
   }
 }
-
 
 async function checkConfigured() {
   const { serverUrl } = await getSyncSettings();
@@ -342,13 +662,53 @@ async function checkConfigured() {
 
 async function getActiveTabPageContext() {
   const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
-  if (!tab) return null;
-  try {
-    return await browser.tabs.sendMessage(tab.id, { type: 'rune:getPageContext' });
-  } catch (e) {
-    // content script may not be injected on this page (e.g. chrome:// pages)
+  if (!tab || !tab.id || !tab.url) return null;
+
+  // Skip browser internal / restricted pages where extensions cannot inspect content
+  if (
+    tab.url.startsWith('chrome://') ||
+    tab.url.startsWith('chrome-extension://') ||
+    tab.url.startsWith('about:') ||
+    tab.url.startsWith('edge://') ||
+    tab.url.startsWith('view-source:')
+  ) {
     return null;
   }
+
+  // 1. Try sendMessage to already-injected content script
+  try {
+    const res = await browser.tabs.sendMessage(tab.id, { type: 'rune:getPageContext' });
+    if (res && (res.title || res.content)) return res;
+  } catch (_) {
+    // Content script not loaded / not responding (e.g. tab opened before extension load)
+  }
+
+  // 2. Fallback: dynamically execute extractor via scripting API
+  if (browser.scripting?.executeScript) {
+    try {
+      const results = await browser.scripting.executeScript({
+        target: { tabId: tab.id },
+        func: () => {
+          const sel = window.getSelection();
+          const selection = sel ? sel.toString().trim() : '';
+          const bodyText = document.body ? document.body.innerText.slice(0, 20000) : '';
+          return {
+            url: location.href,
+            title: document.title,
+            selection,
+            content: selection || bodyText,
+          };
+        },
+      });
+      if (results && results[0] && results[0].result) {
+        return results[0].result;
+      }
+    } catch (e) {
+      console.warn('[rune-chat] getActiveTabPageContext fallback failed:', e);
+    }
+  }
+
+  return null;
 }
 
 /**
@@ -386,7 +746,7 @@ async function subscribeEvents({ serverUrl, accessToken, noteId, signal, onEvent
   if (!resp.ok || !resp.body) {
     throw new Error(`SSE connection failed (HTTP ${resp.status})`);
   }
-  setConnected(true);
+  setStatus('idle');
   // Load prior conversation history for this note via /api/session (the SSE
   // stream only sends `history` on note-switch broadcasts, not on connect).
   loadNoteHistory(noteId);
@@ -410,7 +770,7 @@ async function subscribeEvents({ serverUrl, accessToken, noteId, signal, onEvent
 }
 
 function handleSseEvent(rec) {
-  let payload;
+  let payload = {};
   try {
     payload = JSON.parse(rec.data);
   } catch (e) {
@@ -418,8 +778,13 @@ function handleSseEvent(rec) {
   }
   switch (rec.event) {
     case 'chat_token':
+      if (currentStatus !== 'typing') {
+        setStatus('typing');
+      }
       if (!currentAssistantEl) {
-        currentAssistantEl = appendMessage('assistant', '');
+        const { div, body } = appendMessage('assistant', '');
+        currentAssistantDiv = div;
+        currentAssistantEl = body;
         currentAssistantText = '';
       }
       currentAssistantText += payload.content ?? '';
@@ -430,6 +795,18 @@ function handleSseEvent(rec) {
       }
       $messages.scrollTop = $messages.scrollHeight;
       break;
+    case 'chat_meta':
+      attachMetaToLastAssistant(
+        payload.model,
+        payload.tokens_in,
+        payload.tokens_out,
+        payload.context_tokens,
+        payload.context_window,
+        payload.steps,
+        payload.tool_calls,
+        payload.thinking
+      );
+      break;
     case 'chat_done':
       if (currentAssistantEl && typeof marked !== 'undefined') {
         currentAssistantEl.replaceChildren(markdownFragment(currentAssistantText));
@@ -437,24 +814,91 @@ function handleSseEvent(rec) {
       }
       currentAssistantEl = null;
       currentAssistantText = '';
+      currentAssistantDiv = null;
+      setStatus('idle');
       break;
     case 'chat_message':
       // Another participant's message (multi-user room); skip our own echo.
       break;
     case 'status':
-      if (payload.state === 'thinking') appendSystem('(AI is thinking…)');
+      setStatus(payload.state);
+      break;
+    case 'tool_status':
+      if (payload.state === 'start') {
+        setToolStatus(payload.tool);
+      } else {
+        clearToolStatus();
+      }
       break;
     case 'error':
       appendSystem(`❌ Error: ${payload.message ?? 'unknown error'}`);
       currentAssistantEl = null;
       currentAssistantText = '';
+      currentAssistantDiv = null;
+      clearToolStatus();
+      setStatus('idle');
       break;
     case 'auth_error':
       appendSystem(`❌ Authentication failed: ${payload.message ?? 'unauthorized'}`);
+      setStatus('disconnected');
+      break;
+    case 'model_list':
+      if (Array.isArray(payload.models)) {
+        availableModels = payload.models;
+        browser.storage.local.set({ rune_cached_models: availableModels }).catch(() => {});
+      }
+      if (payload.active) {
+        activeModel = payload.active;
+        browser.storage.local.set({ [`rune_model_${activeNoteId}`]: activeModel }).catch(() => {});
+      }
+      if (payload.thinking) {
+        currentThinking = payload.thinking;
+        browser.storage.local.set({ [`rune_thinking_${activeNoteId}`]: currentThinking }).catch(() => {});
+      }
+      updateModelIndicator();
+      updateThinkingSelect();
+      break;
+    case 'model_changed':
+      if (payload.model) {
+        activeModel = payload.model;
+        browser.storage.local.set({ [`rune_model_${activeNoteId}`]: activeModel }).catch(() => {});
+      }
+      if (payload.thinking) {
+        currentThinking = payload.thinking;
+        browser.storage.local.set({ [`rune_thinking_${activeNoteId}`]: currentThinking }).catch(() => {});
+      }
+      updateModelIndicator();
+      updateThinkingSelect();
+      appendSystem(`Model switched to: ${activeModel} ${currentThinking}`);
+      if (lastContextTokens !== null) {
+        const newModel = availableModels.find((m) => (m.id || m) === activeModel);
+        if (newModel && newModel.context_window) {
+          updateContextOverlay(lastContextTokens, newModel.context_window);
+        }
+      }
+      break;
+    case 'thinking_changed':
+      if (payload.thinking) {
+        currentThinking = payload.thinking;
+        browser.storage.local.set({ [`rune_thinking_${activeNoteId}`]: currentThinking }).catch(() => {});
+      }
+      updateThinkingSelect();
+      appendSystem(`Model switched to: ${activeModel} ${currentThinking}`);
+      break;
+    case 'archive_done':
+      $messages.innerHTML = '';
+      currentLoadedHistoryRaw = null;
+      browser.storage.local.remove(`rune_cached_history_${activeNoteId}`).catch(() => {});
+      appendSystem('Chat archived.');
+      {
+        const overlay = document.getElementById('context-overlay');
+        if (overlay) overlay.classList.add('hidden');
+      }
       break;
     case 'note_list':
       // Populate the note switcher dropdown and update the header badge.
       if (Array.isArray(payload.notes)) {
+        browser.storage.local.set({ rune_cached_notes: payload.notes }).catch(() => {});
         populateNoteList(payload.notes, payload.active);
       }
       break;
@@ -474,7 +918,7 @@ function handleSseEvent(rec) {
       }
       break;
     default:
-      // users_update / file_list / model_list / etc. — ignore for chat UI.
+      // users_update / file_list / etc. — ignore for chat UI.
       break;
 
   }
@@ -489,6 +933,7 @@ async function startSseSubscription(noteId) {
   sseAbortController = new AbortController();
   historyLoaded = false; // Reset so history is replayed for this connection
   activeNoteId = noteId ?? activeNoteId;
+  browser.storage.local.set({ lastSelectedNote: activeNoteId }).catch(() => {});
 
   try {
     await subscribeEvents({
@@ -499,7 +944,7 @@ async function startSseSubscription(noteId) {
       onEvent: handleSseEvent,
     });
   } catch (e) {
-    setConnected(false);
+    setStatus('disconnected');
     if (e?.name === 'AbortError') return;
     appendSystem(`❌ SSE connection dropped: ${String(e?.message ?? e)}`);
   }
@@ -514,9 +959,15 @@ function switchToNote(noteId) {
   $messages.innerHTML = '';
   currentAssistantEl = null;
   currentAssistantText = '';
+  currentAssistantDiv = null;
+  currentLoadedHistoryRaw = null;
+  historyLoaded = false;
+  const overlay = document.getElementById('context-overlay');
+  if (overlay) overlay.classList.add('hidden');
+  browser.storage.local.set({ lastSelectedNote: noteId }).catch(() => {});
+  restoreCachedState(noteId);
   startSseSubscription(noteId);
 }
-
 
 $form.addEventListener('submit', async (e) => {
   e.preventDefault();
@@ -566,6 +1017,54 @@ $noteSelect.addEventListener('change', () => {
   }
 });
 
-checkConfigured().then((configured) => {
-  if (configured) startSseSubscription(DEFAULT_NOTE_ID);
+// Model indicator & thinking listeners
+$modelName?.addEventListener('click', showModelDialog);
+$modelSearchInput?.addEventListener('input', (e) => {
+  renderModelList(e.target.value.trim());
+});
+$thinkingSelect?.addEventListener('change', async (e) => {
+  currentThinking = e.target.value;
+  await browser.runtime.sendMessage({
+    type: 'rune:patchNote',
+    noteId: activeNoteId,
+    patch: { thinking: currentThinking },
+  });
+});
+$modelModalCancel?.addEventListener('click', hideModelDialog);
+
+// Archive dialog listeners
+$btnArchive?.addEventListener('click', () => {
+  $archiveModal?.classList.remove('hidden');
+});
+$archiveModalCancel?.addEventListener('click', () => {
+  $archiveModal?.classList.add('hidden');
+});
+$archiveModalConfirm?.addEventListener('click', async () => {
+  $archiveModal?.classList.add('hidden');
+  const resp = await browser.runtime.sendMessage({
+    type: 'rune:archiveChat',
+    noteId: activeNoteId,
+  });
+  if (resp?.ok) {
+    $messages.innerHTML = '';
+    currentLoadedHistoryRaw = null;
+    browser.storage.local.remove(`rune_cached_history_${activeNoteId}`).catch(() => {});
+    appendSystem('Chat archived.');
+    const overlay = document.getElementById('context-overlay');
+    if (overlay) overlay.classList.add('hidden');
+  } else {
+    appendSystem(`❌ Failed to archive: ${resp?.error ?? 'unknown error'}`);
+  }
+});
+
+setStatus('disconnected');
+
+checkConfigured().then(async (configured) => {
+  if (configured) {
+    const { lastSelectedNote } = await browser.storage.local.get('lastSelectedNote');
+    const initialNoteId = lastSelectedNote || DEFAULT_NOTE_ID;
+    activeNoteId = initialNoteId;
+    await restoreCachedState(initialNoteId);
+    startSseSubscription(initialNoteId);
+  }
 });

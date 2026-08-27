@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <title>Rune Notes Chat</title>
+  <title>Rune Chat</title>
   <link rel="stylesheet" href="sidepanel.css" />
   <link rel="stylesheet" href="../vendor/highlight-dark.min.css"  media="(prefers-color-scheme: dark)" />
   <link rel="stylesheet" href="../vendor/highlight-light.min.css" media="(prefers-color-scheme: light)" />
@@ -13,18 +13,59 @@
 <body>
   <div class="chat-header">
     <h3>
-      <span class="rune-char">ᚱ</span><span class="rune-char">ᚢ</span><span class="rune-char">ᚾ</span><span class="rune-char">ᛖ</span>
+      <span class="rune-title-rainbow" id="rune-title">
+        <span class="rune-char">ᚱ</span><span class="rune-char">ᚢ</span><span class="rune-char">ᚾ</span><span class="rune-char">ᛖ</span>
+      </span>
+      <span id="status-indicator" class="status disconnected" title="disconnected" aria-label="Connection status"></span>
     </h3>
+    <div id="model-indicator" class="model-indicator" style="display:none">
+      <span id="model-name" class="model-name" role="button" tabindex="0" title="Switch model"></span>
+      <select id="thinking-select" class="thinking-select" title="Thinking level" aria-label="Thinking level" style="display:none">
+        <option value="off">off</option>
+      </select>
+    </div>
     <div class="header-right">
       <div class="note-switcher" id="note-switcher" title="Switch note" aria-label="Current note">
         <span id="current-note-name" class="note-name-badge">—</span>
         <select id="note-select" aria-label="Select note"></select>
       </div>
-      <span id="status-indicator" class="status disconnected" title="disconnected" aria-label="Connection status"></span>
+      <button id="btn-archive" class="chat-action-btn" title="Archive chat" aria-label="Archive chat">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" width="14" height="14">
+          <path d="M2.5 4.5h19v4h-19z"></path>
+          <path d="M4.5 8.5V19a1.5 1.5 0 0 0 1.5 1.5h12a1.5 1.5 0 0 0 1.5-1.5V8.5"></path>
+          <path d="M10 12.5h4"></path>
+        </svg>
+      </button>
     </div>
   </div>
 
-  <div id="disabled-notice" hidden>Rune Notes Server URL is not set yet. Please configure it on the settings page first.</div>
+  <!-- Model switcher modal -->
+  <div id="model-modal" class="modal-overlay hidden">
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="model-modal-title">
+      <h2 id="model-modal-title">Switch Model</h2>
+      <input type="text" id="model-search-input" class="model-search-input" placeholder="Search models..." autocomplete="off" aria-label="Search models" />
+      <div id="model-list" class="model-list"></div>
+      <div class="modal-actions">
+        <button type="button" class="btn-secondary" id="model-modal-cancel">Cancel</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Archive confirm dialog -->
+  <div id="archive-modal" class="modal-overlay hidden">
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="archive-modal-title">
+      <h2 id="archive-modal-title">Archive Chat</h2>
+      <p style="margin: 0.5rem 0 1rem; color: var(--text-secondary); font-size: 12px; line-height: 1.4;">
+        Archive the current conversation. The chat window will be cleared.<br />Archived messages remain searchable on the server.
+      </p>
+      <div class="modal-actions">
+        <button type="button" class="btn-secondary" id="archive-modal-cancel">Cancel</button>
+        <button type="button" class="btn-primary" id="archive-modal-confirm">Archive</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="disabled-notice" hidden>Rune Server URL is not set yet. Please configure it on the settings page first.</div>
 
   <div class="chat-body">
     <div id="messages" class="chat-messages"></div>
@@ -32,7 +73,17 @@
 
   <form id="composer" class="chat-input-area">
     <input id="input" type="text" placeholder="Type a message…" autocomplete="off" />
-    <button type="submit" title="Send message" aria-label="Send message">↑</button>
+    <div id="context-overlay" class="context-overlay hidden">
+      <span id="context-pct">0%</span>
+      <span class="context-sep">·</span>
+      <span id="context-counts">0 / 0</span>
+    </div>
+    <button type="submit" id="chat-send" title="Send message" aria-label="Send message">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M21 3 10.5 13.5"></path>
+        <path d="M21 3 14.4 21.2 10.5 13.5 2.8 9.6Z"></path>
+      </svg>
+    </button>
   </form>
 
   <script type="module" src="sidepanel.js"></script>

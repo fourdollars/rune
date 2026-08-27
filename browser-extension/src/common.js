@@ -80,7 +80,7 @@ export async function isLoggedIn() {
 export async function apiFetch(path, options = {}) {
   const { serverUrl } = await getSyncSettings();
   if (!serverUrl) {
-    throw new Error('Rune Notes Server URL is not set yet');
+    throw new Error('Rune Server URL is not set yet');
   }
   const { accessToken } = await getLocalAuth();
   const headers = new Headers(options.headers || {});

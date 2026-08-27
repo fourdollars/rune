@@ -1,6 +1,6 @@
-# Rune Notes Browser Extension
+# Rune Chat Browser Extension
 
-Chat with your own self-hosted Rune Notes server about the page you're
+Chat with your own self-hosted Rune server about the page you're
 currently browsing — right from a Chrome or Firefox side panel.
 
 ## Directory layout

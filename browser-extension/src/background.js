@@ -75,7 +75,7 @@ async function ensureDefaultNoteExists() {
 browser.runtime.onInstalled.addListener(() => {
   browser.contextMenus.create({
     id: CONTEXT_MENU_ID,
-    title: 'Send to Rune Notes Chat',
+    title: 'Send to Rune Chat',
     contexts: ['selection', 'page'],
   });
 });
@@ -86,12 +86,12 @@ browser.contextMenus.onClicked.addListener(async (info, tab) => {
   // opens via the toolbar-icon click behavior below) and forward
   // info.selectionText / a content-script extraction request into the chat
   // composer.
-  console.log('[rune-notes] context menu clicked', info, tab);
+  console.log('[rune-chat] context menu clicked', info, tab);
 });
 
 /**
  * Full OAuth 2.1 Authorization Code + PKCE flow against the user's own
- * Rune Notes server:
+ * Rune server:
  *   1. Dynamic Client Registration (POST /oauth/register) -> client_id.
  *      Re-registers every login for simplicity (the server is a stateless
  *      "open client" model, so this is cheap and avoids stale-client-id
@@ -109,7 +109,7 @@ browser.contextMenus.onClicked.addListener(async (info, tab) => {
 async function startLogin() {
   const { serverUrl } = await getSyncSettings();
   if (!serverUrl) {
-    throw new Error('Rune Notes Server URL is not set yet — please configure and authorize it on the settings page first');
+    throw new Error('Rune Server URL is not set yet — please configure and authorize it on the settings page first');
   }
 
   const redirectUri = browser.identity.getRedirectURL();
@@ -248,6 +248,42 @@ browser.runtime.onMessage.addListener((message, sender, sendResponse) => {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ note: message.noteId }),
+          });
+          if (!resp.ok) {
+            sendResponse({ ok: false, error: `HTTP ${resp.status}` });
+            break;
+          }
+          const body = await resp.json().catch(() => ({}));
+          sendResponse({ ok: true, data: body });
+        } catch (e) {
+          sendResponse({ ok: false, error: String(e?.message ?? e) });
+        }
+        break;
+      }
+      case 'rune:patchNote': {
+        try {
+          const resp = await apiFetch(`/api/notes/${encodeURIComponent(message.noteId)}`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(message.patch),
+          });
+          if (!resp.ok) {
+            sendResponse({ ok: false, error: `HTTP ${resp.status}` });
+            break;
+          }
+          const body = await resp.json().catch(() => ({}));
+          sendResponse({ ok: true, data: body });
+        } catch (e) {
+          sendResponse({ ok: false, error: String(e?.message ?? e) });
+        }
+        break;
+      }
+      case 'rune:archiveChat': {
+        try {
+          const resp = await apiFetch('/api/chat/archive', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ note_id: message.noteId }),
           });
           if (!resp.ok) {
             sendResponse({ ok: false, error: `HTTP ${resp.status}` });

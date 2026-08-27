@@ -39,7 +39,7 @@ export async function registerClient(serverUrl, redirectUri) {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      client_name: 'Rune Notes Browser Extension',
+      client_name: 'Rune Chat Browser Extension',
       redirect_uris: [redirectUri],
       grant_types: ['authorization_code'],
       response_types: ['code'],

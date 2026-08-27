@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
-  "name": "Rune Notes",
+  "name": "Rune Chat",
   "version": "0.1.0",
-  "description": "Chat with your own Rune Notes server about the page you're browsing.",
+  "description": "Chat with your own Rune server about the page you're browsing.",
   "icons": {
     "16": "icons/icon16.png",
     "48": "icons/icon48.png",
@@ -10,7 +10,7 @@
   },
   "browser_specific_settings": {
     "gecko": {
-      "id": "rune-notes-chat@fourdollars.github.io",
+      "id": "rune-chat@fourdollars.github.io",
       "strict_min_version": "115.0"
     }
   },
@@ -18,9 +18,10 @@
     "storage",
     "activeTab",
     "contextMenus",
-    "identity"
+    "identity",
+    "scripting"
   ],
-  "optional_host_permissions": [
+  "host_permissions": [
     "https://*/*",
     "http://*/*"
   ],
@@ -29,11 +30,11 @@
     "type": "module"
   },
   "action": {
-    "default_title": "Rune Notes"
+    "default_title": "Rune Chat"
   },
   "sidebar_action": {
     "default_panel": "src/sidepanel.html",
-    "default_title": "Rune Notes"
+    "default_title": "Rune Chat"
   },
   "options_ui": {
     "page": "src/options.html",
