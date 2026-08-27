@@ -2989,7 +2989,11 @@ You have three dedicated notebook tools: `list_markdown`, `read_markdown`, and `
 
 ## Style
 
-Be concise, accurate, and collaborative. When you change a file, briefly describe what you changed and why."#.to_string()
+Be concise, accurate, and collaborative. When you change a file, briefly describe what you changed and why.
+
+## SVG
+
+When embedding SVG inline in markdown, write the entire `<svg>...</svg>` on a **single line with no whitespace or newlines** between tags. Inline SVG with line breaks or indentation will not render correctly."#.to_string()
 }
 
 // ─── Tests ─────────────────────────────────────────────────────────────────
