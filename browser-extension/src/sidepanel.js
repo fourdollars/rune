@@ -11,6 +11,7 @@
 import { getSyncSettings, getLocalAuth } from './common.js';
 
 const $messages = document.getElementById('messages');
+const $runeTitle = document.getElementById('rune-title');
 const $form = document.getElementById('composer');
 const $input = document.getElementById('input');
 const $notice = document.getElementById('disabled-notice');
@@ -1014,6 +1015,45 @@ $noteSelect.addEventListener('change', () => {
   const selectedId = $noteSelect.value;
   if (selectedId && selectedId !== activeNoteId) {
     switchToNote(selectedId);
+  }
+});
+
+// Title click listener: switch to existing Rune server tab or open a new one (or options page if not configured yet)
+$runeTitle?.addEventListener('click', async (e) => {
+  e.preventDefault();
+  const { serverUrl } = await getSyncSettings();
+  if (!serverUrl) {
+    if (browser.runtime.openOptionsPage) {
+      browser.runtime.openOptionsPage();
+    }
+    return;
+  }
+
+  try {
+    const normalizedUrl = serverUrl.replace(/\/+$/, '');
+    const tabs = await browser.tabs.query({});
+    const matchingTabs = tabs.filter((t) => {
+      if (!t.url) return false;
+      const tUrl = t.url.replace(/\/+$/, '');
+      return tUrl === normalizedUrl || tUrl.startsWith(normalizedUrl + '/') || tUrl.startsWith(normalizedUrl + '?');
+    });
+
+    if (matchingTabs.length > 0) {
+      const currentWindow = await browser.windows?.getCurrent?.().catch(() => null);
+      const targetTab = (currentWindow && matchingTabs.find((t) => t.windowId === currentWindow.id)) || matchingTabs[0];
+      if (targetTab?.id !== undefined) {
+        await browser.tabs.update(targetTab.id, { active: true });
+        if (targetTab.windowId !== undefined && browser.windows?.update) {
+          await browser.windows.update(targetTab.windowId, { focused: true });
+        }
+        return;
+      }
+    }
+
+    await browser.tabs.create({ url: serverUrl });
+  } catch (err) {
+    console.error('[rune] failed to switch/open tab:', err);
+    browser.tabs.create({ url: serverUrl }).catch(() => {});
   }
 });
 
