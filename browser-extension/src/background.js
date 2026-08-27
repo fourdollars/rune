@@ -178,6 +178,24 @@ async function doLogout() {
       console.warn('[rune-notes] /oauth/revoke failed (continuing local logout):', e);
     }
   }
+
+  // Also hit /auth/logout via launchWebAuthFlow to clear the server-side Web
+  // session cookie (rune_sid), synchronizing the logout between extension
+  // and Rune Server so that the next login prompt properly asks for credentials.
+  const { serverUrl } = await getSyncSettings();
+  if (serverUrl && browser?.identity?.launchWebAuthFlow && browser?.identity?.getRedirectURL) {
+    try {
+      const redirectUri = browser.identity.getRedirectURL();
+      const logoutUrl = `${serverUrl}/auth/logout?redirect_uri=${encodeURIComponent(redirectUri)}`;
+      await browser.identity.launchWebAuthFlow({
+        url: logoutUrl,
+        interactive: false,
+      });
+    } catch (e) {
+      console.warn('[rune-notes] /auth/logout webAuthFlow failed (continuing local logout):', e);
+    }
+  }
+
   await clearLocalAuth();
 }
 

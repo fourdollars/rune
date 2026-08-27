@@ -1135,8 +1135,19 @@ pub async fn oauth_generic_callback_handler(
     (StatusCode::FOUND, response_headers).into_response()
 }
 
-/// `GET /auth/logout` — clear session and cookies, redirect to home.
-pub async fn logout_handler(State(state): State<ServerState>, headers: HeaderMap) -> Response {
+#[derive(Debug, Deserialize, Default)]
+pub struct LogoutParams {
+    pub redirect_uri: Option<String>,
+    pub post_logout_redirect_uri: Option<String>,
+    pub next: Option<String>,
+}
+
+/// `GET /auth/logout` — clear session and cookies, redirect to home or specified redirect_uri.
+pub async fn logout_handler(
+    State(state): State<ServerState>,
+    headers: HeaderMap,
+    Query(params): Query<LogoutParams>,
+) -> Response {
     if let Some(sid) = get_cookie(&headers, "rune_sid") {
         if let Some(session) = state.sessions.get(&sid).await {
             eprintln!(
@@ -1149,11 +1160,19 @@ pub async fn logout_handler(State(state): State<ServerState>, headers: HeaderMap
     }
     let (http_only, js_readable) = clear_session_cookies();
     let mut response_headers = HeaderMap::new();
-    response_headers.insert(
-        header::LOCATION,
-        "/".parse()
-            .unwrap_or_else(|_| axum::http::HeaderValue::from_static("/")),
-    );
+
+    let target = params
+        .redirect_uri
+        .as_deref()
+        .or(params.post_logout_redirect_uri.as_deref())
+        .or(params.next.as_deref())
+        .unwrap_or("/");
+
+    let location_val = target
+        .parse()
+        .unwrap_or_else(|_| axum::http::HeaderValue::from_static("/"));
+
+    response_headers.insert(header::LOCATION, location_val);
     if let Ok(val) = http_only.parse() {
         response_headers.append(header::SET_COOKIE, val);
     }
@@ -1733,5 +1752,164 @@ mod tests {
             providers[0].authorization_url,
             "https://example.com/oauth/authorize"
         );
+    }
+
+    #[tokio::test]
+    async fn test_logout_handler_default_redirect() {
+        let (admin_broadcast_tx, _) = tokio::sync::broadcast::channel(16);
+        let state = ServerState {
+            config: crate::config::RuneConfig::default(),
+            sessions: SessionStore::new(),
+            files: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
+            active_file: Arc::new(tokio::sync::RwLock::new(String::new())),
+            models: Arc::new(tokio::sync::RwLock::new(vec![])),
+            rooms: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
+            global_default_model: Arc::new(tokio::sync::RwLock::new(String::new())),
+            admin_broadcast_tx,
+            chat_db: crate::serve::db::ChatDb::open(std::path::Path::new(":memory:")).unwrap(),
+            data_dir: std::path::PathBuf::from("/tmp/rune-test"),
+            oauth_codes: crate::serve::oauth_pkce::AuthCodeStore::new(),
+            oauth_tokens: crate::serve::oauth_pkce::OAuthTokenStore::new(),
+            oauth_providers: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
+            mcp_sessions: crate::mcp::mcp_session::McpSessionStore::new(),
+            provider_registry: Arc::new(tokio::sync::RwLock::new(
+                crate::provider::ProviderRegistry::new(),
+            )),
+        };
+
+        let response = logout_handler(
+            State(state),
+            HeaderMap::new(),
+            Query(LogoutParams::default()),
+        )
+        .await;
+
+        assert_eq!(response.status(), StatusCode::FOUND);
+        assert_eq!(
+            response
+                .headers()
+                .get(header::LOCATION)
+                .unwrap()
+                .to_str()
+                .unwrap(),
+            "/"
+        );
+        let cookies: Vec<_> = response
+            .headers()
+            .get_all(header::SET_COOKIE)
+            .iter()
+            .collect();
+        assert_eq!(cookies.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn test_logout_handler_custom_redirect_uri() {
+        let (admin_broadcast_tx, _) = tokio::sync::broadcast::channel(16);
+        let state = ServerState {
+            config: crate::config::RuneConfig::default(),
+            sessions: SessionStore::new(),
+            files: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
+            active_file: Arc::new(tokio::sync::RwLock::new(String::new())),
+            models: Arc::new(tokio::sync::RwLock::new(vec![])),
+            rooms: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
+            global_default_model: Arc::new(tokio::sync::RwLock::new(String::new())),
+            admin_broadcast_tx,
+            chat_db: crate::serve::db::ChatDb::open(std::path::Path::new(":memory:")).unwrap(),
+            data_dir: std::path::PathBuf::from("/tmp/rune-test"),
+            oauth_codes: crate::serve::oauth_pkce::AuthCodeStore::new(),
+            oauth_tokens: crate::serve::oauth_pkce::OAuthTokenStore::new(),
+            oauth_providers: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
+            mcp_sessions: crate::mcp::mcp_session::McpSessionStore::new(),
+            provider_registry: Arc::new(tokio::sync::RwLock::new(
+                crate::provider::ProviderRegistry::new(),
+            )),
+        };
+
+        let target = "https://extension-id.chromiumapp.org/callback";
+        let response = logout_handler(
+            State(state.clone()),
+            HeaderMap::new(),
+            Query(LogoutParams {
+                redirect_uri: Some(target.to_string()),
+                ..Default::default()
+            }),
+        )
+        .await;
+
+        assert_eq!(response.status(), StatusCode::FOUND);
+        assert_eq!(
+            response
+                .headers()
+                .get(header::LOCATION)
+                .unwrap()
+                .to_str()
+                .unwrap(),
+            target
+        );
+
+        let response_post_logout = logout_handler(
+            State(state),
+            HeaderMap::new(),
+            Query(LogoutParams {
+                post_logout_redirect_uri: Some(target.to_string()),
+                ..Default::default()
+            }),
+        )
+        .await;
+
+        assert_eq!(response_post_logout.status(), StatusCode::FOUND);
+        assert_eq!(
+            response_post_logout
+                .headers()
+                .get(header::LOCATION)
+                .unwrap()
+                .to_str()
+                .unwrap(),
+            target
+        );
+    }
+
+    #[tokio::test]
+    async fn test_logout_handler_removes_session() {
+        let (admin_broadcast_tx, _) = tokio::sync::broadcast::channel(16);
+        let sessions = SessionStore::new();
+        let sid = "test-session-id".to_string();
+        sessions
+            .insert(Session {
+                id: sid.clone(),
+                login: "alice".into(),
+                role: Role::User,
+                avatar_url: "".into(),
+                expires_at: crate::serve::db::now_secs() + 3600,
+            })
+            .await;
+
+        let state = ServerState {
+            config: crate::config::RuneConfig::default(),
+            sessions: sessions.clone(),
+            files: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
+            active_file: Arc::new(tokio::sync::RwLock::new(String::new())),
+            models: Arc::new(tokio::sync::RwLock::new(vec![])),
+            rooms: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
+            global_default_model: Arc::new(tokio::sync::RwLock::new(String::new())),
+            admin_broadcast_tx,
+            chat_db: crate::serve::db::ChatDb::open(std::path::Path::new(":memory:")).unwrap(),
+            data_dir: std::path::PathBuf::from("/tmp/rune-test"),
+            oauth_codes: crate::serve::oauth_pkce::AuthCodeStore::new(),
+            oauth_tokens: crate::serve::oauth_pkce::OAuthTokenStore::new(),
+            oauth_providers: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
+            mcp_sessions: crate::mcp::mcp_session::McpSessionStore::new(),
+            provider_registry: Arc::new(tokio::sync::RwLock::new(
+                crate::provider::ProviderRegistry::new(),
+            )),
+        };
+
+        let mut headers = HeaderMap::new();
+        headers.insert(header::COOKIE, format!("rune_sid={}", sid).parse().unwrap());
+
+        let response = logout_handler(State(state), headers, Query(LogoutParams::default())).await;
+
+        assert_eq!(response.status(), StatusCode::FOUND);
+        assert!(sessions.get(&sid).await.is_none());
     }
 }
