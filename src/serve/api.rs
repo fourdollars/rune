@@ -1962,8 +1962,13 @@ pub async fn public_notes_list_handler(
             continue;
         }
         any = true;
+        let icon_html = match note.icon.as_deref() {
+            Some(ic) if !ic.trim().is_empty() => html_escape(ic.trim()),
+            _ => "&#128193;".to_string(),
+        };
         items.push_str(&format!(
-            "<div class='note-section'><h3>&#128193; {}</h3><ul>{}</ul></div>",
+            "<div class='note-section'><h3>{} {}</h3><ul>{}</ul></div>",
+            icon_html,
             html_escape(&note.name),
             note_items
         ));
@@ -2294,6 +2299,11 @@ pub async fn public_note_index_handler(
         items = format!("<ul>{}</ul>", items);
     }
 
+    let icon_html = match note.icon.as_deref() {
+        Some(ic) if !ic.trim().is_empty() => html_escape(ic.trim()),
+        _ => "&#128193;".to_string(),
+    };
+
     let html = format!(
         r#"<!DOCTYPE html>
 <html lang="en">
@@ -2336,12 +2346,13 @@ pub async fn public_note_index_handler(
 <body>
 <div class="container">
   <a href="/notes/" class="back">← All Notes</a>
-  <h1>&#128193; {name}</h1>
+  <h1>{icon} {name}</h1>
   {items}
   <footer>Wrought by <a href="https://fourdollars.github.io/rune/">ᚱᚢᚾᛖ</a></footer>
 </div>
 </body>
 </html>"#,
+        icon = icon_html,
         name = html_escape(&note.name),
         items = items
     );
@@ -2363,13 +2374,29 @@ pub async fn public_preview_handler(
         }
     };
 
+    let note = state
+        .chat_db
+        .list_notes()
+        .unwrap_or_default()
+        .into_iter()
+        .find(|n| n.id == note_id);
+    let note_icon = note
+        .as_ref()
+        .and_then(|n| n.icon.as_deref())
+        .filter(|ic| !ic.trim().is_empty());
+    let note_name = note.as_ref().map(|n| n.name.as_str()).unwrap_or(&note_id);
+    let note_label = match note_icon {
+        Some(icon) => format!("{} {}", icon, note_name),
+        None => note_name.to_string(),
+    };
+
     let file_label = filename.strip_suffix(".md").unwrap_or(&filename);
-    let title = format!("{} / {}", note_id, file_label);
+    let title = format!("{} / {}", note_name, file_label);
     let page = PUBLIC_PREVIEW_HTML
         .replace("{{TITLE}}", &html_escape(&title))
         .replace("{{NOTE}}", &url_encode(&note_id))
         .replace("{{FILE}}", &url_encode(&filename))
-        .replace("{{NOTE_LABEL}}", &html_escape(&note_id))
+        .replace("{{NOTE_LABEL}}", &html_escape(&note_label))
         .replace("{{FILE_LABEL}}", &html_escape(file_label));
     (StatusCode::OK, axum::response::Html(page)).into_response()
 }
@@ -4998,6 +5025,110 @@ mod isolation_tests {
         assert!(!body.contains("priv-note"), "Should NOT list private note");
         // Links must use /notes/ prefix
         assert!(body.contains("/notes/"), "Links must use /notes/ prefix");
+    }
+
+    #[tokio::test]
+    async fn test_public_notes_and_index_renders_custom_icon() {
+        use axum::body::Body;
+        use axum::{routing::get, Router};
+        use http_body_util::BodyExt;
+        use tower::ServiceExt;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let (admin_broadcast_tx, _) = broadcast::channel(256);
+        let db = crate::serve::db::ChatDb::open(&tmp.path().join("t.db")).unwrap();
+        let _ = db.create_note("Linux Kernel", "Linux Kernel", Some("🐧"));
+        let _ = db.set_note_public("Linux Kernel", true);
+        let _ = db.set_file_public("Linux Kernel", "README.md", true);
+
+        let md_dir = tmp
+            .path()
+            .join(".rune")
+            .join("notes")
+            .join("Linux Kernel")
+            .join("markdown");
+        std::fs::create_dir_all(&md_dir).unwrap();
+        std::fs::write(md_dir.join("README.md"), "# Linux Kernel Overview").unwrap();
+
+        let state = crate::serve::ServerState {
+            config: crate::config::RuneConfig::default(),
+            sessions: crate::serve::oauth::SessionStore::new(),
+            files: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
+            active_file: Arc::new(tokio::sync::RwLock::new(String::new())),
+            models: Arc::new(tokio::sync::RwLock::new(vec![])),
+            rooms: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
+            global_default_model: Arc::new(tokio::sync::RwLock::new("m1".into())),
+            admin_broadcast_tx,
+            chat_db: db,
+            data_dir: tmp.path().join(".rune"),
+            oauth_codes: crate::serve::oauth_pkce::AuthCodeStore::new(),
+            oauth_tokens: crate::serve::oauth_pkce::OAuthTokenStore::new(),
+            oauth_providers: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
+            mcp_sessions: crate::mcp::mcp_session::McpSessionStore::new(),
+            provider_registry: Arc::new(tokio::sync::RwLock::new(
+                crate::provider::ProviderRegistry::new(),
+            )),
+        };
+
+        let app = Router::new()
+            .route("/notes/", get(crate::serve::api::public_notes_list_handler))
+            .route(
+                "/notes/{note}/",
+                get(crate::serve::api::public_note_index_handler),
+            )
+            .route(
+                "/notes/{note}/{file}",
+                get(crate::serve::api::public_preview_handler),
+            )
+            .with_state(state);
+
+        // 1. Check /notes/ list renders penguin icon
+        let req = axum::http::Request::builder()
+            .method("GET")
+            .uri("/notes/")
+            .body(Body::empty())
+            .unwrap();
+        let resp = app.clone().oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), axum::http::StatusCode::OK);
+        let body = String::from_utf8_lossy(&resp.into_body().collect().await.unwrap().to_bytes())
+            .to_string();
+        assert!(
+            body.contains("<h3>🐧 Linux Kernel</h3>"),
+            "Expected '<h3>🐧 Linux Kernel</h3>' in /notes/ body: {}",
+            body
+        );
+
+        // 2. Check /notes/Linux%20Kernel/ index renders penguin icon in h1
+        let req = axum::http::Request::builder()
+            .method("GET")
+            .uri("/notes/Linux%20Kernel/")
+            .body(Body::empty())
+            .unwrap();
+        let resp = app.clone().oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), axum::http::StatusCode::OK);
+        let body = String::from_utf8_lossy(&resp.into_body().collect().await.unwrap().to_bytes())
+            .to_string();
+        assert!(
+            body.contains("<h1>🐧 Linux Kernel</h1>"),
+            "Expected '<h1>🐧 Linux Kernel</h1>' in /notes/Linux%20Kernel/ body: {}",
+            body
+        );
+
+        // 3. Check /notes/Linux%20Kernel/README preview renders penguin icon in breadcrumbs
+        let req = axum::http::Request::builder()
+            .method("GET")
+            .uri("/notes/Linux%20Kernel/README")
+            .body(Body::empty())
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), axum::http::StatusCode::OK);
+        let body = String::from_utf8_lossy(&resp.into_body().collect().await.unwrap().to_bytes())
+            .to_string();
+        assert!(
+            body.contains("🐧 Linux Kernel</a> / README"),
+            "Expected breadcrumb with '🐧 Linux Kernel' in preview: {}",
+            body
+        );
     }
 
     #[test]
