@@ -580,6 +580,7 @@ pre.hljs-pre:hover .copy-btn {
     position: relative;
     flex-shrink: 0;
     background: var(--bg-primary);
+    align-items: flex-end;
 }
 
 #input {
@@ -590,7 +591,12 @@ pre.hljs-pre:hover .copy-btn {
     color: var(--text-primary);
     font-family: var(--font-sans);
     font-size: 13px;
+    line-height: 1.5;
     padding: 8px 12px;
+    height: 56px;
+    min-height: 56px;
+    max-height: min(320px, 50vh);
+    resize: vertical;
     outline: none;
     transition: border-color 0.15s;
 }
@@ -657,6 +663,7 @@ button[type="submit"] {
     justify-content: center;
     transition: opacity 0.15s, transform 0.1s;
     flex-shrink: 0;
+    align-self: flex-end;
 }
 
 #chat-send:hover,

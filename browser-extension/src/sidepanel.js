@@ -1035,6 +1035,13 @@ function switchToNote(noteId) {
   startSseSubscription(noteId);
 }
 
+$input.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && !e.shiftKey) {
+    e.preventDefault();
+    $form.dispatchEvent(new Event('submit', { cancelable: true }));
+  }
+});
+
 $form.addEventListener('submit', async (e) => {
   e.preventDefault();
   const text = $input.value.trim();

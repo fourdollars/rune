@@ -506,6 +506,7 @@ body {
     padding-top: 8px;
     border-top: 1px solid var(--border);
     position: relative;
+    align-items: flex-end;
 }
 
 #chat-input {
@@ -516,8 +517,12 @@ body {
     color: var(--text-primary);
     font-family: var(--font-sans);
     font-size: 13px;
+    line-height: 1.5;
     padding: 8px 12px;
-    resize: none;
+    height: 56px;
+    min-height: 56px;
+    max-height: min(320px, 50vh);
+    resize: vertical;
     outline: none;
     transition: border-color 0.15s;
 }
@@ -531,11 +536,14 @@ body {
     border: none;
     color: var(--bg-primary);
     width: 36px;
+    height: 36px;
     border-radius: 6px;
     cursor: pointer;
     font-size: 16px;
     font-weight: bold;
     transition: opacity 0.15s;
+    flex-shrink: 0;
+    align-self: flex-end;
 }
 
 #chat-send:hover { opacity: 0.8; }
