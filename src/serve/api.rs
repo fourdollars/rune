@@ -2047,8 +2047,6 @@ fn percent_decode_lossy(s: &str) -> String {
             } else {
                 bytes.push(b'%');
             }
-        } else if b == b'+' {
-            bytes.push(b' ');
         } else {
             bytes.push(b);
         }
@@ -5483,5 +5481,17 @@ mod isolation_tests {
             Some("Loop Engineering — Rune".to_string()),
             "title should be extracted from the first h1 heading"
         );
+    }
+
+    #[test]
+    fn test_percent_decode_lossy_preserves_plus_and_decodes_hex() {
+        assert_eq!(super::percent_decode_lossy("C++"), "C++");
+        assert_eq!(super::percent_decode_lossy("C%2B%2B"), "C++");
+        assert_eq!(
+            super::percent_decode_lossy("Linux%20Kernel"),
+            "Linux Kernel"
+        );
+        assert_eq!(super::percent_decode_lossy("foo%2Fbar"), "foo/bar");
+        assert_eq!(super::percent_decode_lossy("a+b%20c"), "a+b c");
     }
 }
