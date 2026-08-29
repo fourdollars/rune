@@ -574,6 +574,9 @@ body {
     opacity: 0;
     transition: opacity 0.2s;
     z-index: 2;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
 }
 
 pre:hover .copy-btn,
@@ -820,6 +823,7 @@ pre.hljs-pre:hover .copy-btn {
     padding: 0;
     margin: 1em 0;
     overflow: hidden;
+    position: relative;
 }
 #preview pre.hljs-pre code.hljs {
     display: block;
@@ -837,6 +841,7 @@ pre.hljs-pre:hover .copy-btn {
     border-radius: 4px;
     margin: 0.5em 0;
     overflow: hidden;
+    position: relative;
 }
 .chat-msg .body pre.hljs-pre code.hljs {
     display: block;

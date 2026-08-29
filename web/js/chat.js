@@ -78,6 +78,7 @@ globalThis.addChatMessage = function addChatMessage(nickname, content) {
         body.replaceChildren(markdownFragment(content));
         if (typeof renderChatMath === 'function') renderChatMath(body);
         if (typeof renderMermaidBlocks === 'function') renderMermaidBlocks(body);
+        if (typeof attachCodeCopyButtons === 'function') attachCodeCopyButtons(body);
     } else {
         body.textContent = content;
     }

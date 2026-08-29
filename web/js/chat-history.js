@@ -50,6 +50,7 @@ globalThis.replayHistory = function replayHistory(messages) {
                 body.replaceChildren(markdownFragment(m.content));
                 renderChatMath(body);
                 if (typeof renderMermaidBlocks === 'function') renderMermaidBlocks(body);
+                if (typeof attachCodeCopyButtons === 'function') attachCodeCopyButtons(body);
             } else {
                 body.textContent = m.content;
             }

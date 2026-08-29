@@ -504,6 +504,7 @@ body {
     border-radius: 4px;
     margin: 0.5em 0;
     overflow: hidden;
+    position: relative;
 }
 .chat-msg .body pre.hljs-pre code.hljs {
     display: block;
@@ -520,6 +521,42 @@ body {
     .chat-msg .body pre.hljs-pre code.hljs {
         background: transparent;
     }
+}
+
+/* Code block copy button */
+.copy-btn {
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    background: var(--bg-surface);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    color: var(--text-muted);
+    cursor: pointer;
+    font-size: 12px;
+    padding: 2px 6px;
+    opacity: 0;
+    transition: opacity 0.2s;
+    z-index: 2;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+}
+
+pre:hover .copy-btn,
+pre.hljs-pre:hover .copy-btn {
+    opacity: 1;
+}
+
+.copy-btn:hover {
+    color: var(--accent);
+    border-color: var(--accent);
+    opacity: 1 !important;
+}
+
+.copy-btn svg {
+    width: 13px;
+    height: 13px;
 }
 
 .chat-input-area {

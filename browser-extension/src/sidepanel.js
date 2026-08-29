@@ -184,6 +184,69 @@ function renderMermaidBlocks(container) {
   });
 }
 
+const COPY_ICON_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" width="13" height="13"><path d="M9.4 8.6h9a1.3 1.3 0 0 1 1.3 1.3v9a1.3 1.3 0 0 1-1.3 1.3h-9a1.3 1.3 0 0 1-1.3-1.3v-9A1.3 1.3 0 0 1 9.4 8.6Z"></path><path d="M5.2 15.4h-.6a1.3 1.3 0 0 1-1.3-1.3v-9a1.3 1.3 0 0 1 1.3-1.3h9a1.3 1.3 0 0 1 1.3 1.3v.6"></path></svg>';
+const CHECK_ICON_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" width="13" height="13"><path d="m4.8 12.6 4.6 4.6L19.2 7.4"></path></svg>';
+
+function decodeHtml(html) {
+  const txt = document.createElement('textarea');
+  txt.innerHTML = html;
+  return txt.value;
+}
+
+function copyCodeBlock(button) {
+  const pre = button.closest('pre');
+  if (!pre) return;
+  const raw = pre.dataset.raw !== undefined ? decodeHtml(pre.dataset.raw) : (pre.querySelector('code')?.textContent ?? '');
+  const done = () => {
+    button.innerHTML = CHECK_ICON_SVG;
+    button.style.opacity = '1';
+    setTimeout(() => {
+      button.innerHTML = COPY_ICON_SVG;
+      button.style.opacity = '';
+    }, 1500);
+  };
+  if (navigator.clipboard && window.isSecureContext) {
+    navigator.clipboard.writeText(raw).then(done).catch(() => {
+      const ta = document.createElement('textarea');
+      ta.value = raw;
+      ta.style.position = 'fixed';
+      ta.style.opacity = '0';
+      document.body.appendChild(ta);
+      ta.select();
+      try { document.execCommand('copy'); done(); } catch (e) {}
+      ta.remove();
+    });
+  } else {
+    const ta = document.createElement('textarea');
+    ta.value = raw;
+    ta.style.position = 'fixed';
+    ta.style.opacity = '0';
+    document.body.appendChild(ta);
+    ta.select();
+    try { document.execCommand('copy'); done(); } catch (e) {}
+    ta.remove();
+  }
+}
+
+function attachCodeCopyButtons(container) {
+  if (!container) return;
+  container.querySelectorAll('pre.hljs-pre, pre').forEach((pre) => {
+    if (pre.querySelector('.copy-btn')) return;
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'copy-btn';
+    btn.innerHTML = COPY_ICON_SVG;
+    btn.title = 'Copy code';
+    btn.setAttribute('aria-label', 'Copy code');
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      copyCodeBlock(btn);
+    });
+    pre.style.position = 'relative';
+    pre.appendChild(btn);
+  });
+}
+
 let currentAssistantDiv = null;
 let currentAssistantEl = null;
 let currentAssistantText = '';
@@ -357,6 +420,7 @@ function appendMessage(role, text = '', { senderLabel, model, thinking, steps, t
     if (typeof marked !== 'undefined') {
       body.replaceChildren(markdownFragment(text));
       renderMermaidBlocks(body);
+      attachCodeCopyButtons(body);
     } else {
       body.textContent = text;
     }
@@ -812,6 +876,7 @@ function handleSseEvent(rec) {
       if (currentAssistantEl && typeof marked !== 'undefined') {
         currentAssistantEl.replaceChildren(markdownFragment(currentAssistantText));
         renderMermaidBlocks(currentAssistantEl);
+        attachCodeCopyButtons(currentAssistantEl);
       }
       currentAssistantEl = null;
       currentAssistantText = '';

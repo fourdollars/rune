@@ -42,21 +42,27 @@ globalThis.renderPreview = function renderPreview() {
         // Render mermaid blocks (with ready-wait for slow 3MB load)
         renderMermaidBlocks(preview);
 
-        preview.querySelectorAll('pre.hljs-pre').forEach(pre => {
-            const btn = document.createElement('button');
-            btn.type = 'button';
-            btn.className = 'copy-btn';
-            btn.appendChild(runeIcon('copy'));
-            btn.title = 'Copy code';
-            btn.setAttribute('aria-label', 'Copy code');
-            btn.dataset.action = 'copy-code';
-            pre.style.position = 'relative';
-            pre.appendChild(btn);
-        });
+        attachCodeCopyButtons(preview);
     } else {
         preview.textContent = specContent;
     }
 }
+
+globalThis.attachCodeCopyButtons = function attachCodeCopyButtons(container) {
+    if (!container) return;
+    container.querySelectorAll('pre.hljs-pre, pre').forEach(pre => {
+        if (pre.querySelector('.copy-btn')) return;
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'copy-btn';
+        btn.appendChild(runeIcon('copy'));
+        btn.title = 'Copy code';
+        btn.setAttribute('aria-label', 'Copy code');
+        btn.dataset.action = 'copy-code';
+        pre.style.position = 'relative';
+        pre.appendChild(btn);
+    });
+};
 
 globalThis.markdownFragment = function markdownFragment(source) {
     const template = document.createElement('template');

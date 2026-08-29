@@ -1823,21 +1823,67 @@ const PUBLIC_PREVIEW_HTML: &str = r#"<!DOCTYPE html>
     const md = await resp.text();
     const renderer = new marked.Renderer();
     renderer.code = function({text, lang}) {
+      const raw = text.replace(/"/g,'&quot;');
       if (lang && lang.toLowerCase() === 'mermaid') {
         const id = 'mermaid-' + Math.random().toString(36).slice(2);
-        return '<div class="mermaid" id="' + id + '" data-src="' + text.replace(/"/g,'&quot;') + '"></div>';
+        return '<div class="mermaid" id="' + id + '" data-src="' + raw + '"></div>';
       }
       if (typeof hljs !== 'undefined') {
         const language = lang && hljs.getLanguage(lang) ? lang : null;
         const highlighted = language ? hljs.highlight(text, {language}).value : hljs.highlightAuto(text).value;
-        return '<pre class="hljs-pre"><code class="hljs">' + highlighted + '</code></pre>';
+        const langClass = language ? ' class="language-' + language + '"' : '';
+        return '<pre class="hljs-pre" data-raw="' + raw + '"><code class="hljs' + langClass + '">' + highlighted + '</code></pre>';
       }
-      return '<pre><code>' + text.replace(/</g,'&lt;') + '</code></pre>';
+      return '<pre class="hljs-pre" data-raw="' + raw + '"><code>' + text.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;') + '</code></pre>';
     };
     marked.use({ renderer });
     const html = marked.parse(md);
     const content = document.getElementById('preview');
     content.innerHTML = html;
+    function copyCodeBlock(btn) {
+      const pre = btn.closest('pre');
+      if (!pre) return;
+      const ta = document.createElement('textarea');
+      ta.innerHTML = pre.dataset.raw !== undefined ? pre.dataset.raw : (pre.querySelector('code')?.textContent ?? '');
+      const raw = ta.value;
+      const copyIcon = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" width="13" height="13"><path d="M9.4 8.6h9a1.3 1.3 0 0 1 1.3 1.3v9a1.3 1.3 0 0 1-1.3-1.3h-9a1.3 1.3 0 0 1-1.3-1.3v-9A1.3 1.3 0 0 1 9.4 8.6Z"></path><path d="M5.2 15.4h-.6a1.3 1.3 0 0 1-1.3-1.3v-9a1.3 1.3 0 0 1 1.3-1.3h9a1.3 1.3 0 0 1 1.3 1.3v.6"></path></svg>';
+      const checkIcon = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" width="13" height="13"><path d="m4.8 12.6 4.6 4.6L19.2 7.4"></path></svg>';
+      const done = () => {
+        btn.innerHTML = checkIcon;
+        btn.style.opacity = '1';
+        setTimeout(() => { btn.innerHTML = copyIcon; btn.style.opacity = ''; }, 1500);
+      };
+      if (navigator.clipboard && window.isSecureContext) {
+        navigator.clipboard.writeText(raw).then(done).catch(() => {
+          ta.value = raw;
+          ta.style.position = 'fixed';
+          ta.style.opacity = '0';
+          document.body.appendChild(ta);
+          ta.select();
+          try { document.execCommand('copy'); done(); } catch(e) {}
+          ta.remove();
+        });
+      } else {
+        ta.value = raw;
+        ta.style.position = 'fixed';
+        ta.style.opacity = '0';
+        document.body.appendChild(ta);
+        ta.select();
+        try { document.execCommand('copy'); done(); } catch(e) {}
+        ta.remove();
+      }
+    }
+    content.querySelectorAll('pre.hljs-pre, pre').forEach(pre => {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'copy-btn';
+      btn.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" width="13" height="13"><path d="M9.4 8.6h9a1.3 1.3 0 0 1 1.3 1.3v9a1.3 1.3 0 0 1-1.3-1.3h-9a1.3 1.3 0 0 1-1.3-1.3v-9A1.3 1.3 0 0 1 9.4 8.6Z"></path><path d="M5.2 15.4h-.6a1.3 1.3 0 0 1-1.3-1.3v-9a1.3 1.3 0 0 1 1.3-1.3h9a1.3 1.3 0 0 1 1.3 1.3v.6"></path></svg>';
+      btn.title = 'Copy code';
+      btn.setAttribute('aria-label', 'Copy code');
+      btn.addEventListener('click', () => copyCodeBlock(btn));
+      pre.style.position = 'relative';
+      pre.appendChild(btn);
+    });
     if (typeof renderMathInElement !== 'undefined') {
       renderMathInElement(content, {
         delimiters: [

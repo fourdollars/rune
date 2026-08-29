@@ -38,6 +38,7 @@ globalThis.finalizeAssistantMessage = function finalizeAssistantMessage() {
         currentAssistantEl.replaceChildren(markdownFragment(currentAssistantText));
         renderChatMath(currentAssistantEl);
         if (typeof renderMermaidBlocks === 'function') renderMermaidBlocks(currentAssistantEl);
+        if (typeof attachCodeCopyButtons === 'function') attachCodeCopyButtons(currentAssistantEl);
     }
     currentAssistantEl = null;
     currentAssistantText = '';
