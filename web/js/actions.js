@@ -54,7 +54,7 @@ const actions = {
 export function initActions() {
     document.addEventListener('click', event => {
         const target = event.target.closest('[data-action]');
-        if (!target) return;
+        if (!target || target.tagName === 'SELECT') return;
         const handler = actions[target.dataset.action];
         if (!handler) return;
         event.preventDefault();
