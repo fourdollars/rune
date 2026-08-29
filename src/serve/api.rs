@@ -1922,7 +1922,7 @@ const PUBLIC_PREVIEW_HTML: &str = r#"<!DOCTYPE html>
   }
 })();
 </script>
-<footer>Wrought by <a href="https://fourdollars.github.io/rune/">ᚱᚢᚾᛖ</a></footer>
+<footer><a href="/">Sign In</a> · Wrought by <a href="https://fourdollars.github.io/rune/">ᚱᚢᚾᛖ</a></footer>
 </body>
 </html>"#;
 
@@ -2022,7 +2022,7 @@ pub async fn public_notes_list_handler(
 <div class="container">
   <h1>Public Notes</h1>
   {}
-  <footer>Wrought by <a href="https://fourdollars.github.io/rune/">ᚱᚢᚾᛖ</a></footer>
+  <footer><a href="/">Sign In</a> · Wrought by <a href="https://fourdollars.github.io/rune/">ᚱᚢᚾᛖ</a></footer>
 </div>
 </body>
 </html>"#,
@@ -2348,7 +2348,7 @@ pub async fn public_note_index_handler(
   <a href="/notes/" class="back">← All Notes</a>
   <h1>{icon} {name}</h1>
   {items}
-  <footer>Wrought by <a href="https://fourdollars.github.io/rune/">ᚱᚢᚾᛖ</a></footer>
+  <footer><a href="/">Sign In</a> · Wrought by <a href="https://fourdollars.github.io/rune/">ᚱᚢᚾᛖ</a></footer>
 </div>
 </body>
 </html>"#,
@@ -5097,6 +5097,11 @@ mod isolation_tests {
             "Expected '<h3>🐧 Linux Kernel</h3>' in /notes/ body: {}",
             body
         );
+        assert!(
+            body.contains(r#"<a href="/">Sign In</a>"#),
+            "Expected Sign In link in /notes/ footer: {}",
+            body
+        );
 
         // 2. Check /notes/Linux%20Kernel/ index renders penguin icon in h1
         let req = axum::http::Request::builder()
@@ -5113,6 +5118,11 @@ mod isolation_tests {
             "Expected '<h1>🐧 Linux Kernel</h1>' in /notes/Linux%20Kernel/ body: {}",
             body
         );
+        assert!(
+            body.contains(r#"<a href="/">Sign In</a>"#),
+            "Expected Sign In link in /notes/Linux%20Kernel/ footer: {}",
+            body
+        );
 
         // 3. Check /notes/Linux%20Kernel/README preview renders penguin icon in breadcrumbs
         let req = axum::http::Request::builder()
@@ -5127,6 +5137,11 @@ mod isolation_tests {
         assert!(
             body.contains("🐧 Linux Kernel</a> / README"),
             "Expected breadcrumb with '🐧 Linux Kernel' in preview: {}",
+            body
+        );
+        assert!(
+            body.contains(r#"<a href="/">Sign In</a>"#),
+            "Expected Sign In link in preview footer: {}",
             body
         );
     }
