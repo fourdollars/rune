@@ -1169,6 +1169,57 @@ $archiveModalConfirm?.addEventListener('click', async () => {
   }
 });
 
+function initChatInputResize(resizerEl, inputEl, storageKey = 'rune_chat_input_height') {
+  if (!resizerEl || !inputEl) return;
+
+  browser.storage.local.get(storageKey).then((data) => {
+    const saved = data[storageKey];
+    if (saved) {
+      const h = parseInt(saved, 10);
+      if (h >= 56 && h <= window.innerHeight * 0.6) {
+        inputEl.style.height = h + 'px';
+      }
+    }
+  }).catch(() => {});
+
+  resizerEl.addEventListener('pointerdown', (e) => {
+    e.preventDefault();
+    try { resizerEl.setPointerCapture(e.pointerId); } catch (_) {}
+    resizerEl.classList.add('dragging');
+    document.body.style.userSelect = 'none';
+    document.body.style.cursor = 'row-resize';
+
+    const startY = e.clientY;
+    const startH = inputEl.offsetHeight;
+    const minH = 56;
+    let currentH = startH;
+
+    function onPointerMove(ev) {
+      const maxH = Math.min(400, Math.floor(window.innerHeight * 0.6));
+      const delta = startY - ev.clientY;
+      currentH = Math.max(minH, Math.min(maxH, startH + delta));
+      inputEl.style.height = currentH + 'px';
+    }
+
+    function onPointerUp(ev) {
+      try { resizerEl.releasePointerCapture(ev.pointerId); } catch (_) {}
+      resizerEl.classList.remove('dragging');
+      document.body.style.userSelect = '';
+      document.body.style.cursor = '';
+      resizerEl.removeEventListener('pointermove', onPointerMove);
+      resizerEl.removeEventListener('pointerup', onPointerUp);
+      resizerEl.removeEventListener('pointercancel', onPointerUp);
+      browser.storage.local.set({ [storageKey]: currentH }).catch(() => {});
+    }
+
+    resizerEl.addEventListener('pointermove', onPointerMove);
+    resizerEl.addEventListener('pointerup', onPointerUp);
+    resizerEl.addEventListener('pointercancel', onPointerUp);
+  });
+}
+
+initChatInputResize(document.getElementById('chat-input-resizer'), $input);
+
 setStatus('disconnected');
 
 checkConfigured().then(async (configured) => {

@@ -583,6 +583,24 @@ pre.hljs-pre:hover .copy-btn {
     align-items: flex-end;
 }
 
+.chat-input-resizer {
+    position: absolute;
+    top: -4px;
+    left: 0;
+    right: 0;
+    height: 8px;
+    cursor: row-resize;
+    z-index: 10;
+    user-select: none;
+}
+
+.chat-input-resizer:hover,
+.chat-input-resizer.dragging {
+    background: var(--accent);
+    opacity: 0.35;
+    border-radius: 2px;
+}
+
 #input {
     flex: 1;
     background: var(--bg-surface);
@@ -595,8 +613,8 @@ pre.hljs-pre:hover .copy-btn {
     padding: 8px 12px;
     height: 56px;
     min-height: 56px;
-    max-height: min(320px, 50vh);
-    resize: vertical;
+    max-height: min(400px, 60vh);
+    resize: none;
     outline: none;
     transition: border-color 0.15s;
 }
