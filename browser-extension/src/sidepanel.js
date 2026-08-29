@@ -1036,7 +1036,7 @@ function switchToNote(noteId) {
 }
 
 $input.addEventListener('keydown', (e) => {
-  if (e.key === 'Enter' && !e.shiftKey) {
+  if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
     e.preventDefault();
     $form.dispatchEvent(new Event('submit', { cancelable: true }));
   }

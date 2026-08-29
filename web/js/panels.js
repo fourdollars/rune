@@ -95,7 +95,7 @@ globalThis.fallbackCopy = function fallbackCopy(text, onSuccess) {
 
 // --- Keyboard shortcuts ---
 chatInput.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
+    if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
         e.preventDefault();
         sendMessage();
     }
@@ -109,7 +109,7 @@ document.addEventListener('keydown', (e) => {
 });
 
 document.addEventListener('keydown', (e) => {
-    if (e.ctrlKey && e.key === 'Enter') {
+    if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
         e.preventDefault();
         chatInput.focus();
         sendMessage();
