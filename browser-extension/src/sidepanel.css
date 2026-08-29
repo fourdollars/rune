@@ -602,6 +602,7 @@ pre.hljs-pre:hover .copy-btn {
 }
 
 #input {
+    width: 100%;
     flex: 1;
     background: var(--bg-surface);
     border: 1px solid var(--border);
@@ -610,7 +611,7 @@ pre.hljs-pre:hover .copy-btn {
     font-family: var(--font-sans);
     font-size: 13px;
     line-height: 1.5;
-    padding: 8px 12px;
+    padding: 8px 38px 8px 12px;
     height: 56px;
     min-height: 56px;
     max-height: min(400px, 60vh);
@@ -625,16 +626,52 @@ pre.hljs-pre:hover .copy-btn {
     opacity: 0.5;
 }
 
+#chat-send,
+button[type="submit"] {
+    position: absolute;
+    bottom: 14px;
+    right: 18px;
+    background: var(--accent);
+    border: none;
+    color: var(--bg-primary);
+    width: 28px;
+    height: 28px;
+    border-radius: 5px;
+    cursor: pointer;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    z-index: 5;
+    transition: opacity 0.15s, transform 0.1s;
+}
+
+#input:not(:placeholder-shown) ~ #chat-send,
+#input:not(:placeholder-shown) ~ button[type="submit"] {
+    display: flex;
+}
+
+#chat-send:hover,
+button[type="submit"]:hover { opacity: 0.85; }
+#chat-send:active,
+button[type="submit"]:active { transform: scale(0.95); }
+
+button[type="submit"] svg,
+#chat-send svg {
+    width: 14px;
+    height: 14px;
+    display: block;
+}
+
 .context-overlay {
     position: absolute;
     bottom: 14px;
-    right: 56px;
-    z-index: 5;
+    right: 18px;
+    z-index: 4;
     display: flex;
     align-items: center;
     gap: 5px;
     padding: 2px 6px;
-    border-radius: 8px;
+    border-radius: 4px;
     background: transparent;
     font-size: 10px;
     font-family: var(--font-mono, monospace);
@@ -665,23 +702,6 @@ pre.hljs-pre:hover .copy-btn {
 
 .context-sep {
     opacity: 0.5;
-}
-
-#chat-send,
-button[type="submit"] {
-    background: var(--accent);
-    border: none;
-    color: var(--bg-primary);
-    width: 36px;
-    height: 36px;
-    border-radius: 6px;
-    cursor: pointer;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    transition: opacity 0.15s, transform 0.1s;
-    flex-shrink: 0;
-    align-self: flex-end;
 }
 
 #chat-send:hover,

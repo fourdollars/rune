@@ -502,7 +502,6 @@ body {
 
 .chat-input-area {
     display: flex;
-    gap: 8px;
     padding-top: 8px;
     border-top: 1px solid var(--border);
     position: relative;
@@ -528,6 +527,7 @@ body {
 }
 
 #chat-input {
+    width: 100%;
     flex: 1;
     background: var(--bg-surface);
     border: 1px solid var(--border);
@@ -536,7 +536,7 @@ body {
     font-family: var(--font-sans);
     font-size: 13px;
     line-height: 1.5;
-    padding: 8px 12px;
+    padding: 8px 38px 8px 12px;
     height: 56px;
     min-height: 56px;
     max-height: min(400px, 60vh);
@@ -550,18 +550,36 @@ body {
 }
 
 #chat-send {
+    position: absolute;
+    bottom: 6px;
+    right: 6px;
     background: var(--accent);
     border: none;
     color: var(--bg-primary);
-    width: 36px;
-    height: 36px;
-    border-radius: 6px;
+    width: 28px;
+    height: 28px;
+    border-radius: 5px;
     cursor: pointer;
-    font-size: 16px;
+    font-size: 14px;
     font-weight: bold;
-    transition: opacity 0.15s;
-    flex-shrink: 0;
-    align-self: flex-end;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    z-index: 5;
+    transition: opacity 0.15s, transform 0.1s;
+}
+
+#chat-input:not(:placeholder-shown) ~ #chat-send {
+    display: flex;
+}
+
+#chat-send:hover { opacity: 0.85; }
+#chat-send:active { transform: scale(0.95); }
+
+#chat-send .rune-icon,
+#chat-send svg {
+    width: 14px;
+    height: 14px;
 }
 
 #chat-send:hover { opacity: 0.8; }
@@ -1791,20 +1809,20 @@ pre.hljs-pre:hover .copy-btn {
 
 .context-overlay {
     position: absolute;
-    bottom: 10px;
-    right: 52px;
-    z-index: 5;
+    bottom: 6px;
+    right: 8px;
+    z-index: 4;
     display: flex;
     align-items: center;
     gap: 5px;
     padding: 2px 6px;
-    border-radius: 8px;
+    border-radius: 4px;
     background: transparent;
     font-size: 10px;
     font-family: var(--font-mono, monospace);
     color: var(--text-muted);
     pointer-events: none;
-    transition: opacity 0.3s;
+    transition: opacity 0.2s;
     white-space: nowrap;
 }
 
