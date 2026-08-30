@@ -172,13 +172,25 @@ async fn auto_detect_openrouter_model() -> String {
                 }
             }
             filtered.sort();
+            if let Some(pos) = filtered.iter().position(|m| m == "openrouter/fusion") {
+                let fusion = filtered.remove(pos);
+                filtered.insert(0, fusion);
+            } else {
+                filtered.insert(0, "openrouter/fusion".to_string());
+            }
+            if let Some(pos) = filtered.iter().position(|m| m == "openrouter/auto") {
+                let auto = filtered.remove(pos);
+                filtered.insert(0, auto);
+            } else {
+                filtered.insert(0, "openrouter/auto".to_string());
+            }
             if let Some(first) = filtered.first() {
                 return first.clone();
             }
         }
     }
     // Fallback if network fails
-    "openai/gpt-4o-mini".to_string()
+    "openrouter/auto".to_string()
 }
 
 /// Start the serve mode.

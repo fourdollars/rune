@@ -868,6 +868,48 @@ impl Provider for OpenAiProvider {
 
             models.sort_by(|a, b| a.id.cmp(&b.id));
 
+            if let Some(pos) = models.iter().position(|m| m.id == "openrouter/fusion") {
+                let fusion_model = models.remove(pos);
+                models.insert(0, fusion_model);
+            } else {
+                let provider_id = if self.openrouter_zdr {
+                    "openrouter-zdr".to_string()
+                } else {
+                    "openrouter".to_string()
+                };
+                models.insert(
+                    0,
+                    ModelInfo {
+                        id: "openrouter/fusion".to_string(),
+                        provider: Some(provider_id),
+                        context_window: None,
+                        reasoning_efforts: Vec::new(),
+                        supported_endpoints: vec!["/chat/completions".to_string()],
+                    },
+                );
+            }
+
+            if let Some(pos) = models.iter().position(|m| m.id == "openrouter/auto") {
+                let auto_model = models.remove(pos);
+                models.insert(0, auto_model);
+            } else {
+                let provider_id = if self.openrouter_zdr {
+                    "openrouter-zdr".to_string()
+                } else {
+                    "openrouter".to_string()
+                };
+                models.insert(
+                    0,
+                    ModelInfo {
+                        id: "openrouter/auto".to_string(),
+                        provider: Some(provider_id),
+                        context_window: None,
+                        reasoning_efforts: Vec::new(),
+                        supported_endpoints: vec!["/chat/completions".to_string()],
+                    },
+                );
+            }
+
             // Populate the reasoning_models cache
             {
                 let mut cache = self.reasoning_models.lock().unwrap();
@@ -4524,10 +4566,12 @@ mod provider_tests {
         assert!(result.is_ok());
         let models = result.unwrap();
 
-        // Should filter out "openai/gpt-4o-mini" and "deepseek/deepseek-chat" because they aren't in ZDR list
-        assert_eq!(models.len(), 2);
-        assert_eq!(models[0].id, "google/gemini-2.0-flash");
-        assert_eq!(models[1].id, "meta-llama/llama-3.3-70b-instruct");
+        // Should have "openrouter/auto" at first position, "openrouter/fusion" at second, plus ZDR-compliant models
+        assert_eq!(models.len(), 4);
+        assert_eq!(models[0].id, "openrouter/auto");
+        assert_eq!(models[1].id, "openrouter/fusion");
+        assert_eq!(models[2].id, "google/gemini-2.0-flash");
+        assert_eq!(models[3].id, "meta-llama/llama-3.3-70b-instruct");
     }
 
     #[test]
@@ -4583,12 +4627,76 @@ mod provider_tests {
         assert!(result.is_ok());
         let models = result.unwrap();
 
-        // Should NOT filter out "openai/gpt-4o-mini" and "deepseek/deepseek-chat"
+        // Should NOT filter out "openai/gpt-4o-mini" and "deepseek/deepseek-chat", with openrouter/auto first and openrouter/fusion second
+        assert_eq!(models.len(), 6);
+        assert_eq!(models[0].id, "openrouter/auto");
+        assert_eq!(models[1].id, "openrouter/fusion");
+        assert_eq!(models[2].id, "deepseek/deepseek-chat");
+        assert_eq!(models[3].id, "google/gemini-2.0-flash");
+        assert_eq!(models[4].id, "meta-llama/llama-3.3-70b-instruct");
+        assert_eq!(models[5].id, "openai/gpt-4o-mini");
+    }
+
+    #[test]
+    fn test_openrouter_list_models_with_existing_auto_model() {
+        use std::io::{Read, Write};
+        use std::net::TcpListener;
+        use std::thread;
+
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let base_url = format!("http://{}", addr);
+
+        thread::spawn(move || {
+            for stream in listener.incoming() {
+                let mut stream = match stream {
+                    Ok(s) => s,
+                    Err(_) => break,
+                };
+                let mut buf = [0; 1024];
+                let _ = stream.read(&mut buf);
+                let request_str = String::from_utf8_lossy(&buf);
+
+                if request_str.contains("GET /models") {
+                    let response_body = r#"{
+                        "data": [
+                            {"id": "anthropic/claude-3.5-sonnet", "context_length": 200000, "supported_parameters": ["tools"]},
+                            {"id": "openrouter/auto", "context_length": 128000, "supported_parameters": ["tools"]},
+                            {"id": "openai/gpt-4o", "context_length": 128000, "supported_parameters": ["tools"]},
+                            {"id": "openrouter/fusion", "context_length": 128000, "supported_parameters": ["tools"]}
+                        ]
+                    }"#;
+                    let response = format!(
+                        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                        response_body.len(),
+                        response_body
+                    );
+                    let _ = stream.write_all(response.as_bytes());
+                }
+            }
+        });
+
+        let p = OpenAiProvider::new(
+            "openrouter".to_string(),
+            "sk-fake".to_string(),
+            Some(base_url),
+            false,
+        );
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let result = rt.block_on(p.list_models());
+        assert!(result.is_ok());
+        let models = result.unwrap();
+
         assert_eq!(models.len(), 4);
-        assert_eq!(models[0].id, "deepseek/deepseek-chat");
-        assert_eq!(models[1].id, "google/gemini-2.0-flash");
-        assert_eq!(models[2].id, "meta-llama/llama-3.3-70b-instruct");
-        assert_eq!(models[3].id, "openai/gpt-4o-mini");
+        assert_eq!(models[0].id, "openrouter/auto");
+        assert_eq!(models[0].context_window, Some(128000));
+        assert_eq!(models[1].id, "openrouter/fusion");
+        assert_eq!(models[1].context_window, Some(128000));
+        assert_eq!(models[2].id, "anthropic/claude-3.5-sonnet");
+        assert_eq!(models[3].id, "openai/gpt-4o");
     }
 
     #[test]
