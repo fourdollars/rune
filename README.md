@@ -1,6 +1,6 @@
 # Rune ᚱ
 
-A high-performance, zero-trust AI agent built in Rust. Single binary, dual mode: interactive CLI assistant and Concourse CI resource type.
+A high-performance, zero-trust AI agent built in Rust. Single binary, triple mode: interactive CLI assistant, Concourse CI resource type, and AI-native Data Exchange Hub (**Rune Notes**).
 
 ## Features
 
@@ -10,11 +10,14 @@ A high-performance, zero-trust AI agent built in Rust. Single binary, dual mode:
   - Seccomp BPF syscall filter (internal) — syscall filtering
   - Landlock filesystem restriction (internal) — file access limits
   - DNS / Domain allowlist — selective outbound network access (configured via `allowed_domains`)
-- **Tool Calling** — 6 built-in tools: `read_file`, `write_file`, `list_dir`, `execute_cmd`, `fetch_url`, `inspect_process`
+- **Tool Calling** — 10 built-in tools (6 standard sandboxed tools + 4 serve-mode notes tools): `read_file`, `write_file`, `list_dir`, `execute_cmd`, `fetch_url`, `inspect_process`, `list_markdown`, `read_markdown`, `write_markdown`, `search_chat`
+- **Rune Notes (Data Exchange Hub)** — AI-native Markdown hub served from the same single binary. Exposes Web UI, MCP endpoint, and REST API. Connects external agents (OpenClaw, Hermes, Copilot, OpenCode, Antigravity) with first-party browser extensions (Rune Chat) and built-in AI chat over plain Markdown files
+- **Rich Markdown System** — Math notation (KaTeX inline/block), Mermaid diagrams-as-code, syntax highlighting (highlight.js), and raw inline SVG markup
+- **Browser Extension (Rune Chat)** — Chrome and Firefox side-panel extension for contextual AI chat and seamless note sync
 - **Command Policy** — Two auto-detected modes: `confirm` (interactive), `allowlist` (whitelist only), `unrestricted`
 - **Skills System** — Load contextual abilities via `@skill_name` in prompts
-- **Provider Registry** — GitHub Copilot (auto token refresh), OpenRouter, Google Gemini, any OpenAI-compatible
-- **MCP Client** — Stdio-based JSON-RPC client for Model Context Protocol servers
+- **Provider Registry** — GitHub Copilot (auto token refresh), OpenRouter (recommended), Google Gemini, any OpenAI-compatible
+- **MCP Client & Server** — Stdio JSON-RPC client for external MCP servers + built-in HTTP MCP server endpoint (`POST /mcp`) for external agents
 - **Streaming Output** — Interactive mode displays tokens incrementally as they arrive
 - **Parallel Tool Calls** — Multiple independent tool calls execute concurrently
 - **Context Window Management** — Auto-compact when context exceeds 85% of model limit
@@ -471,24 +474,95 @@ For scripting, combine skills with pipe mode:
 echo "Use @sysadmin skill. Check disk usage." | rune --json --yes
 ```
 
-## Rune Notes
+## Rune Notes (AI-Native Data Exchange Hub)
 
-A self-hosted, AI-powered Markdown wiki with real-time collaboration and public sharing — all served from the same single binary.
+Rune Notes is a responsive web app and an **AI-native Markdown system**, acting as the central **Data Exchange Hub**. It ships as a **single self-contained executable** — one process serves the web UI, the MCP endpoint, and the REST API.
+
+All clients converge on plain Markdown files stored on the local filesystem as the **single source of truth**.
 
 ```bash
+# Start Rune Notes server
 rune notes --bind 0.0.0.0 --port 9527
 ```
 
-### Features
+### Architecture
 
-- **AI Agent** — Built-in chat assistant that can read, create, and edit your Markdown files
-- **Real-time Collaboration** — Multiple users via Server-Sent Events (SSE)
-- **Public Sharing** — Selectively publish notes/files as rendered Markdown pages
-- **Multi-Note** — Organize files into separate notes (workspaces)
-- **Mermaid Diagrams** — Rendered in preview and public pages
-- **Syntax Highlighting** — Code blocks with highlight.js
-- **Light/Dark Theme** — Public pages follow system `prefers-color-scheme`
-- **Zero Cloud Dependency** — Your data stays on your server
+```mermaid
+flowchart LR
+    subgraph UI["Responsive Web App UI (Desktop · Tablet · Mobile)"]
+    end
+
+    subgraph Clients["External Agentic Clients (MCP)"]
+        OpenClaw["OpenClaw"]
+        Hermes["Hermes Agent"]
+        Copilot["Copilot"]
+        OpenCode["OpenCode"]
+        Antigravity["Antigravity"]
+    end
+
+    subgraph Ext["First-Party Client (API)"]
+        RuneChat["Rune Chat (Browser Extension)"]
+    end
+
+    subgraph InApp["In-App Native"]
+        AIChat["Built-in AI Chat (AI)"]
+        ManualEdit["Manual Edit (Human)"]
+    end
+
+    subgraph Hub["Rune Notes Hub (Single Binary)"]
+        MarkdownStore[("Plain Markdown Files")]
+    end
+
+    OpenClaw -->|MCP| MarkdownStore
+    Hermes -->|MCP| MarkdownStore
+    Copilot -->|MCP| MarkdownStore
+    OpenCode -->|MCP| MarkdownStore
+    Antigravity -->|MCP| MarkdownStore
+    RuneChat -->|REST API| MarkdownStore
+    AIChat -->|Native| MarkdownStore
+    ManualEdit -->|Native| MarkdownStore
+    UI -.-> Hub
+```
+
+### Key Highlights
+
+- **Single Self-Contained Binary** — Zero external runtime, no VM or dependency chain. Self-contained on Linux with kernel-level isolation.
+- **Universal Client Access**:
+  - **External Agents over MCP**: Antigravity, OpenClaw, Hermes Agent, GitHub Copilot, and OpenCode interact directly with notebook workspaces via the built-in MCP endpoint (`POST /mcp`).
+  - **First-Party Browser Extension**: **Rune Chat** (Chrome and Firefox) connects via REST API from the browser side-panel to chat about the active webpage and update notes in real-time.
+  - **In-App Native**: Built-in AI chat agent and human editor manipulate the same Markdown files in place.
+- **Rich Markdown Engine**:
+  - **LaTeX / KaTeX Math** — Inline `$E=mc^2$` and display blocks `$$\int_{-\infty}^{\infty} e^{-x^2} dx = \sqrt{\pi}$$`.
+  - **Mermaid Diagrams** — Flowcharts, sequence diagrams, and class diagrams rendered directly from text.
+  - **Raw Inline SVG** — Directly embed `<svg>` markup for custom visual diagrams without image hosting.
+  - **Syntax Highlighting** — Fenced code blocks with automatic language styling.
+- **Adaptive Responsive Layout**:
+  - **Desktop**: 3-column view (file navigator, Markdown editor, and AI chat side by side).
+  - **Tablet**: Collapsible panels and touch-friendly targets.
+  - **Mobile**: Single-column adaptive view with fast switching.
+- **Real-Time Collaboration** — Server-Sent Events (SSE) stream AI tokens, user presence, and file changes live.
+
+### Browser Extension (Rune Chat)
+
+Rune includes a first-party browser extension located in `browser-extension/`:
+- **Side Panel UI** — Chat with your Rune server about the webpage you're viewing without leaving the tab.
+- **Chrome MV3 & Firefox MV3** — Shared codebase using WebExtension standards.
+- **OAuth 2.1 PKCE** — Secure authentication flow directly to your Rune Notes server.
+- **Build**:
+  ```bash
+  node browser-extension/build.js
+  # Produces dist/chrome/ and dist/firefox/
+  # Zipped automatically in CI as rune-extension-chrome.zip & rune-extension-firefox.zip
+  ```
+
+### Authentication & Providers
+
+Rune Notes supports three authentication strategies:
+1. **GitHub OAuth 2.0** — Easy login with role mapping via usernames or organizations/teams (`org:my-org/team`).
+2. **OAuth 2.0 / OIDC** — Connect to Google, Okta, Authentik, Keycloak, or any standard OIDC identity provider.
+3. **Local Static Password** — Standalone accounts for air-gapped or home-server environments.
+
+**Supported LLM Providers:** OpenRouter (recommended), GitHub Copilot (auto token refresh), Google Gemini, and OpenAI-compatible endpoints.
 
 ### Configuration
 
@@ -496,6 +570,7 @@ rune notes --bind 0.0.0.0 --port 9527
 [notes]
 port = 9527
 bind = "0.0.0.0"
+thinking = "high"
 
 # GitHub OAuth 2.0 Login
 [notes.github]
@@ -522,20 +597,6 @@ groups_claim = "groups"
 admins = ["alice", "grp:platform-admins"]
 users = ["grp:employees"]
 guests = []
-
-# Explicit endpoint fallback when discovery is unavailable
-[[notes.oauth]]
-name = "custom"
-display_name = "Custom SSO"
-client_id = "your_client_id"
-client_secret = "your_client_secret"
-authorization_url = "https://sso.example.com/oauth/authorize"
-token_url = "https://sso.example.com/oauth/token"
-userinfo_url = "https://sso.example.com/oauth/userinfo"
-groups_claim = "roles"
-admins = ["grp:notes-admins"]
-users = ["grp:notes-users"]
-guests = []
 ```
 
 ### Role Permissions
@@ -555,12 +616,11 @@ guests = []
 
 ### Public Pages
 
-Admin can toggle visibility (👁/🙈) for individual notes and files. When both the note and file are set to public, anyone can view the rendered Markdown at:
+Admin can toggle visibility (public/private) for individual notes and files. When set to public, anyone can view rendered Markdown without authentication at:
 
 - **Index:** `http://host:port/notes/` — lists all public notes
-- **Preview:** `http://host:port/notes/{note}/{filename}` — rendered Markdown page
-
-No authentication required for public pages.
+- **Preview:** `http://host:port/notes/{note}/{filename}` — rendered Markdown page with KaTeX math, Mermaid diagrams, and syntax highlighting
+- **Raw content:** `http://host:port/raw/{note}/{filename}`
 
 ## Concourse CI Resource Type
 
