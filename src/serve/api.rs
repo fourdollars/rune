@@ -3064,7 +3064,7 @@ Be concise, accurate, and collaborative. When you change a file, briefly describ
 
 ## SVG
 
-When embedding SVG inline in markdown, write the entire `<svg>...</svg>` on a **single line with no whitespace or newlines** between tags. Inline SVG with line breaks or indentation will not render correctly."#.to_string()
+Unless explicitly requested otherwise, always use a light background for SVGs. When embedding SVG inline in markdown, write the entire `<svg>...</svg>` on a **single line with no whitespace or newlines** between tags. Inline SVG with line breaks or indentation will not render correctly."#.to_string()
 }
 
 // ─── Tests ─────────────────────────────────────────────────────────────────
