@@ -95,3 +95,32 @@ jobs:
             target/release/rune-base
             target/release/rune-notes
           retention-days: 30
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Build and package browser extensions
+        run: |
+          node browser-extension/build.js
+          (cd browser-extension/dist/chrome && zip -r ../rune-extension-chrome.zip .)
+          (cd browser-extension/dist/firefox && zip -r ../rune-extension-firefox.zip .)
+
+      - name: Extension zip size
+        run: |
+          echo '## 🧩 Browser Extension Sizes' >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          ls -lh browser-extension/dist/*.zip >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          ls -lh browser-extension/dist/*.zip
+
+      - name: Upload browser extensions
+        uses: actions/upload-artifact@v7
+        with:
+          name: browser-extensions
+          path: |
+            browser-extension/dist/rune-extension-chrome.zip
+            browser-extension/dist/rune-extension-firefox.zip
+          retention-days: 30
+
