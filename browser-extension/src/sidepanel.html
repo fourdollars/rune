@@ -20,14 +20,21 @@
     </h3>
     <div id="model-indicator" class="model-indicator" style="display:none">
       <span id="model-name" class="model-name" role="button" tabindex="0" title="Switch model"></span>
-      <select id="thinking-select" class="thinking-select" title="Thinking level" aria-label="Thinking level" style="display:none">
-        <option value="off">off</option>
-      </select>
+      <div class="thinking-switcher" id="thinking-switcher" style="display:none">
+        <button type="button" class="thinking-btn" id="thinking-btn" title="Thinking level" aria-label="Thinking level" aria-haspopup="listbox" aria-expanded="false">
+          <span id="thinking-val">off</span>
+          <span class="dropdown-caret">▾</span>
+        </button>
+        <div id="thinking-dropdown" class="dropdown-menu hidden" role="listbox" aria-label="Thinking level"></div>
+      </div>
     </div>
     <div class="header-right">
-      <div class="note-switcher" id="note-switcher" title="Switch note" aria-label="Current note">
-        <span id="current-note-name" class="note-name-badge">—</span>
-        <select id="note-select" aria-label="Select note"></select>
+      <div class="note-switcher" id="note-switcher">
+        <button type="button" class="note-name-badge" id="note-menu-btn" title="Switch note" aria-label="Current note" aria-haspopup="listbox" aria-expanded="false">
+          <span id="current-note-name">—</span>
+          <span class="dropdown-caret">▾</span>
+        </button>
+        <div id="note-dropdown" class="dropdown-menu hidden" role="listbox" aria-label="Select note"></div>
       </div>
       <button id="btn-archive" class="chat-action-btn" title="Archive chat" aria-label="Archive chat">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" width="14" height="14">

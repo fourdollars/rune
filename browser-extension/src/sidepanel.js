@@ -17,10 +17,14 @@ const $input = document.getElementById('input');
 const $notice = document.getElementById('disabled-notice');
 const $statusIndicator = document.getElementById('status-indicator');
 const $currentNoteName = document.getElementById('current-note-name');
-const $noteSelect = document.getElementById('note-select');
+const $noteMenuBtn = document.getElementById('note-menu-btn');
+const $noteDropdown = document.getElementById('note-dropdown');
 const $modelIndicator = document.getElementById('model-indicator');
 const $modelName = document.getElementById('model-name');
-const $thinkingSelect = document.getElementById('thinking-select');
+const $thinkingSwitcher = document.getElementById('thinking-switcher');
+const $thinkingBtn = document.getElementById('thinking-btn');
+const $thinkingVal = document.getElementById('thinking-val');
+const $thinkingDropdown = document.getElementById('thinking-dropdown');
 const $btnArchive = document.getElementById('btn-archive');
 const $modelModal = document.getElementById('model-modal');
 const $modelSearchInput = document.getElementById('model-search-input');
@@ -271,37 +275,71 @@ function updateModelIndicator() {
 }
 
 function updateThinkingSelect() {
-  if (!$thinkingSelect) return;
+  if (!$thinkingSwitcher || !$thinkingBtn) return;
   if (!activeModel) {
-    $thinkingSelect.style.display = 'none';
+    $thinkingSwitcher.style.display = 'none';
     return;
   }
   const currentModelObj = availableModels.find((m) => (m.id || m) === activeModel);
   const efforts = currentModelObj?.reasoning_efforts || [];
   if (efforts.length === 0) {
-    $thinkingSelect.style.display = 'none';
+    $thinkingSwitcher.style.display = 'none';
     return;
   }
   const isGemini3 = activeModel.startsWith('gemini-3.');
-  $thinkingSelect.innerHTML = '';
+  const options = [];
   if (!efforts.includes('none') && !isGemini3) {
-    const offOpt = document.createElement('option');
-    offOpt.value = 'off';
-    offOpt.textContent = 'off';
-    $thinkingSelect.appendChild(offOpt);
+    options.push('off');
   }
   efforts.forEach((level) => {
-    const opt = document.createElement('option');
-    opt.value = level;
-    opt.textContent = level;
-    $thinkingSelect.appendChild(opt);
+    if (!options.includes(level)) options.push(level);
   });
   let val = currentThinking || 'off';
   if (isGemini3 && (val === 'off' || val === 'none')) {
     val = efforts[0] || 'medium';
   }
-  $thinkingSelect.value = val;
-  $thinkingSelect.style.display = '';
+  currentThinking = val;
+  if ($thinkingVal) $thinkingVal.textContent = val;
+  $thinkingSwitcher.style.display = 'inline-flex';
+
+  if (!$thinkingDropdown) return;
+  $thinkingDropdown.innerHTML = '';
+  options.forEach((level) => {
+    const item = document.createElement('div');
+    const isActive = level === val;
+    item.className = 'dropdown-item' + (isActive ? ' active' : '');
+    item.setAttribute('role', 'option');
+    item.setAttribute('aria-selected', String(isActive));
+
+    const textSpan = document.createElement('span');
+    textSpan.className = 'dropdown-item-text';
+    textSpan.textContent = level;
+    item.appendChild(textSpan);
+
+    if (isActive) {
+      const check = document.createElement('span');
+      check.className = 'dropdown-item-check';
+      check.textContent = '✓';
+      item.appendChild(check);
+    }
+
+    item.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      closeAllDropdowns();
+      if (currentThinking !== level) {
+        currentThinking = level;
+        if ($thinkingVal) $thinkingVal.textContent = level;
+        updateThinkingSelect();
+        await browser.runtime.sendMessage({
+          type: 'rune:patchNote',
+          noteId: activeNoteId,
+          patch: { thinking: currentThinking },
+        });
+      }
+    });
+
+    $thinkingDropdown.appendChild(item);
+  });
 }
 
 function formatContextWindow(tokens) {
@@ -500,31 +538,83 @@ function updateContextOverlay(ctxTokens, ctxWindow) {
   else if (pct >= 60) overlay.classList.add('warn');
 }
 
+let cachedNotes = [];
+
+function closeAllDropdowns() {
+  if ($noteDropdown && !$noteDropdown.classList.contains('hidden')) {
+    $noteDropdown.classList.add('hidden');
+    $noteMenuBtn?.setAttribute('aria-expanded', 'false');
+  }
+  if ($thinkingDropdown && !$thinkingDropdown.classList.contains('hidden')) {
+    $thinkingDropdown.classList.add('hidden');
+    $thinkingBtn?.setAttribute('aria-expanded', 'false');
+  }
+}
+
+function renderNoteDropdown() {
+  if (!$noteDropdown) return;
+  $noteDropdown.innerHTML = '';
+  if (!cachedNotes || cachedNotes.length === 0) {
+    const empty = document.createElement('div');
+    empty.className = 'dropdown-empty';
+    empty.textContent = 'No notes available';
+    $noteDropdown.appendChild(empty);
+    return;
+  }
+  for (const note of cachedNotes) {
+    const item = document.createElement('div');
+    const isActive = note.id === activeNoteId;
+    item.className = 'dropdown-item' + (isActive ? ' active' : '');
+    item.setAttribute('role', 'option');
+    item.setAttribute('aria-selected', String(isActive));
+    item.title = note.name || note.id;
+
+    const textSpan = document.createElement('span');
+    textSpan.className = 'dropdown-item-text';
+    textSpan.textContent = note.name || note.id;
+    item.appendChild(textSpan);
+
+    if (isActive) {
+      const check = document.createElement('span');
+      check.className = 'dropdown-item-check';
+      check.textContent = '✓';
+      item.appendChild(check);
+    }
+
+    item.addEventListener('click', (e) => {
+      e.stopPropagation();
+      closeAllDropdowns();
+      if (note.id !== activeNoteId) {
+        setActiveNote(note.id, note.name || note.id);
+        switchToNote(note.id);
+      }
+    });
+
+    $noteDropdown.appendChild(item);
+  }
+}
+
 /** Update the displayed note name in the header badge. */
 function setActiveNote(noteId, noteName) {
   activeNoteId = noteId;
   const label = noteName || noteId;
-  $currentNoteName.textContent = label;
-  $currentNoteName.title = label;
-  // Sync the select element to the active note
-  if ($noteSelect.value !== noteId) $noteSelect.value = noteId;
+  if ($currentNoteName) {
+    $currentNoteName.textContent = label;
+    $currentNoteName.title = label;
+  }
   browser.storage.local.set({ lastSelectedNote: noteId }).catch(() => {});
+  renderNoteDropdown();
 }
 
 /** Populate the note selector dropdown from a note_list payload. */
 function populateNoteList(notes, activeId) {
-  $noteSelect.innerHTML = '';
-  for (const note of notes) {
-    const opt = document.createElement('option');
-    opt.value = note.id;
-    opt.textContent = note.name || note.id;
-    $noteSelect.appendChild(opt);
-  }
+  cachedNotes = Array.isArray(notes) ? notes : [];
   const targetId = activeNoteId || activeId;
-  const active = notes.find((n) => n.id === targetId) ?? notes.find((n) => n.id === activeId) ?? notes[0];
+  const active = cachedNotes.find((n) => n.id === targetId) ?? cachedNotes.find((n) => n.id === activeId) ?? cachedNotes[0];
   if (active) {
-    $noteSelect.value = active.id;
     setActiveNote(active.id, active.name || active.id);
+  } else {
+    renderNoteDropdown();
   }
 }
 
@@ -971,7 +1061,8 @@ function handleSseEvent(rec) {
     case 'note_switched':
       // Server confirmed a note switch — reconnect SSE to the new note.
       if (payload.note_id && payload.note_id !== activeNoteId) {
-        setActiveNote(payload.note_id, $noteSelect.options[$noteSelect.selectedIndex]?.text ?? payload.note_id);
+        const found = cachedNotes.find((n) => n.id === payload.note_id);
+        setActiveNote(payload.note_id, found?.name ?? payload.note_id);
         switchToNote(payload.note_id);
       }
       break;
@@ -1082,11 +1173,37 @@ $form.addEventListener('submit', async (e) => {
   }
 });
 
-// Note switcher: when the user changes the dropdown, switch SSE to that note.
-$noteSelect.addEventListener('change', () => {
-  const selectedId = $noteSelect.value;
-  if (selectedId && selectedId !== activeNoteId) {
-    switchToNote(selectedId);
+// Dropdown click & toggle listeners
+$noteMenuBtn?.addEventListener('click', (e) => {
+  e.stopPropagation();
+  const isHidden = $noteDropdown?.classList.contains('hidden');
+  closeAllDropdowns();
+  if (isHidden) {
+    renderNoteDropdown();
+    $noteDropdown?.classList.remove('hidden');
+    $noteMenuBtn?.setAttribute('aria-expanded', 'true');
+  }
+});
+
+$thinkingBtn?.addEventListener('click', (e) => {
+  e.stopPropagation();
+  const isHidden = $thinkingDropdown?.classList.contains('hidden');
+  closeAllDropdowns();
+  if (isHidden) {
+    $thinkingDropdown?.classList.remove('hidden');
+    $thinkingBtn?.setAttribute('aria-expanded', 'true');
+  }
+});
+
+document.addEventListener('click', () => {
+  closeAllDropdowns();
+});
+
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') {
+    closeAllDropdowns();
+    hideModelDialog();
+    $archiveModal?.classList.add('hidden');
   }
 });
 
@@ -1133,14 +1250,6 @@ $runeTitle?.addEventListener('click', async (e) => {
 $modelName?.addEventListener('click', showModelDialog);
 $modelSearchInput?.addEventListener('input', (e) => {
   renderModelList(e.target.value.trim());
-});
-$thinkingSelect?.addEventListener('change', async (e) => {
-  currentThinking = e.target.value;
-  await browser.runtime.sendMessage({
-    type: 'rune:patchNote',
-    noteId: activeNoteId,
-    patch: { thinking: currentThinking },
-  });
 });
 $modelModalCancel?.addEventListener('click', hideModelDialog);
 
