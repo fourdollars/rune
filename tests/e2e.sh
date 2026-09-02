@@ -199,7 +199,28 @@ set -e
 # Will fail (invalid key) but should not panic or show "unknown provider"
 assert_not_contains "$OUT" "unknown provider" "RUNE_PROVIDER=openai accepted"
 
-# ── WS E2E Tests (login, archive, search) ─────────────────
+# ── Node.js Unit Tests ────────────────────────────────────
+echo "▸ Node.js Unit Tests"
+if command -v node >/dev/null 2>&1; then
+    if node tests/extension_sidepanel.test.js >/dev/null 2>&1; then
+        green "  ✓ browser extension sidepanel tests passed"
+        PASS=$((PASS + 1))
+    else
+        red "  ✗ browser extension sidepanel tests failed"
+        FAIL=$((FAIL + 1))
+    fi
+    if node tests/marked_lines.test.js >/dev/null 2>&1; then
+        green "  ✓ markdown line-tagging renderer tests passed"
+        PASS=$((PASS + 1))
+    else
+        red "  ✗ markdown line-tagging renderer tests failed"
+        FAIL=$((FAIL + 1))
+    fi
+else
+    dim "  (skipped: node not available)"
+fi
+
+# ── WebSocket E2E (SKIPPED — migrated to SSE) ─────────────────
 echo ""
 echo "── WebSocket E2E (SKIPPED — migrated to SSE)"
 # Skipped: WS removed in SSE migration

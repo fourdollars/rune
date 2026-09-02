@@ -571,7 +571,6 @@ function renderNoteDropdown() {
       e.stopPropagation();
       closeAllDropdowns();
       if (note.id !== activeNoteId) {
-        setActiveNote(note.id, note.name || note.id);
         switchToNote(note.id);
       }
     });
@@ -598,10 +597,10 @@ function populateNoteList(notes, activeId) {
   const targetId = activeNoteId || activeId;
   const active = cachedNotes.find((n) => n.id === targetId) ?? cachedNotes.find((n) => n.id === activeId) ?? cachedNotes[0];
   if (active) {
-    const prevActive = activeNoteId;
-    setActiveNote(active.id, active.name || active.id);
-    if (prevActive && prevActive !== active.id && !cachedNotes.some((n) => n.id === prevActive)) {
+    if (activeNoteId && activeNoteId !== active.id && !cachedNotes.some((n) => n.id === activeNoteId)) {
       switchToNote(active.id);
+    } else {
+      setActiveNote(active.id, active.name || active.id);
     }
   } else {
     renderNoteDropdown();
@@ -802,13 +801,17 @@ function clearToolStatus() {
  * switching notes server-side. So we call /api/session directly at startup and
  * after note switches to get prior messages.
  */
+let historyLoadingNoteId = null;
+
 async function loadNoteHistory(noteId) {
-  if (historyLoaded) return;
+  if (historyLoaded || historyLoadingNoteId === noteId) return;
+  historyLoadingNoteId = noteId;
   try {
     const resp = await browser.runtime.sendMessage({
       type: 'rune:loadSession',
       noteId,
     });
+    if (noteId !== activeNoteId) return;
     if (resp?.ok && resp.data) {
       if (resp.data.current_model) {
         activeModel = resp.data.current_model;
@@ -821,10 +824,17 @@ async function loadNoteHistory(noteId) {
         replayHistory(resp.data.history);
       } else {
         historyLoaded = true; // no history — mark loaded so we don't retry
+        $messages.innerHTML = '';
+        currentLoadedHistoryRaw = null;
+        browser.storage.local.remove(`rune_cached_history_${noteId}`).catch(() => {});
       }
     }
   } catch (e) {
     console.warn('[rune] loadNoteHistory failed:', e);
+  } finally {
+    if (historyLoadingNoteId === noteId) {
+      historyLoadingNoteId = null;
+    }
   }
 }
 
@@ -1118,15 +1128,11 @@ function handleSseEvent(rec) {
     case 'note_switched':
       // Server confirmed a note switch — reconnect SSE to the new note.
       if (payload.note_id && payload.note_id !== activeNoteId) {
-        const found = cachedNotes.find((n) => n.id === payload.note_id);
-        setActiveNote(payload.note_id, found?.name ?? payload.note_id);
         switchToNote(payload.note_id);
       }
       break;
     case 'history':
-      // Replay prior conversation — only once per connection to avoid
-      // duplicating messages on reconnect after the initial load.
-      if (!historyLoaded && Array.isArray(payload.messages)) {
+      if (Array.isArray(payload.messages)) {
         historyLoaded = true;
         replayHistory(payload.messages);
       }
@@ -1145,7 +1151,6 @@ async function startSseSubscription(noteId) {
 
   sseAbortController?.abort();
   sseAbortController = new AbortController();
-  historyLoaded = false; // Reset so history is replayed for this connection
   activeNoteId = noteId ?? activeNoteId;
   browser.storage.local.set({ lastSelectedNote: activeNoteId }).catch(() => {});
 
@@ -1166,10 +1171,10 @@ async function startSseSubscription(noteId) {
 
 /**
  * Switch to a different note: clear the chat, abort the current SSE stream,
- * and open a new one for the target note.
+ * load target note's state and history, and open a new SSE stream.
  */
 function switchToNote(noteId) {
-  if (!noteId || noteId === activeNoteId) return;
+  if (!noteId) return;
   $messages.innerHTML = '';
   currentAssistantEl = null;
   currentAssistantText = '';
@@ -1178,8 +1183,12 @@ function switchToNote(noteId) {
   historyLoaded = false;
   const overlay = document.getElementById('context-overlay');
   if (overlay) overlay.classList.add('hidden');
-  browser.storage.local.set({ lastSelectedNote: noteId }).catch(() => {});
+
+  const found = cachedNotes.find((n) => n.id === noteId);
+  setActiveNote(noteId, found?.name || noteId);
+
   restoreCachedState(noteId);
+  loadNoteHistory(noteId);
   startSseSubscription(noteId);
 }
 
@@ -1401,8 +1410,6 @@ checkConfigured().then(async (configured) => {
     // Validate and refresh note list via REST first; falls back to first available note
     const recoveredNote = await fetchNoteListAndRecover(lastSelectedNote);
     const noteToUse = recoveredNote || (cachedNotes.length > 0 ? cachedNotes[0].id : (lastSelectedNote || 'default'));
-    activeNoteId = noteToUse;
-    await restoreCachedState(noteToUse);
-    startSseSubscription(noteToUse);
+    switchToNote(noteToUse);
   }
 });
