@@ -71,7 +71,21 @@ renderer.code = function(token) {
     return `<pre class="hljs-pre"${lineAttr} data-raw="${raw}"><code>${safe}</code></pre>`;
 };
 
-marked.use({ renderer, breaks: true, gfm: true });
+const tokenizer = {
+    del(src) {
+        const match = /^(~~)(?=[^\s~])((?:\\.|[^\\])*?(?:\\.|[^\s~\\]))\1(?=[^~]|$)/.exec(src);
+        if (match) {
+            return {
+                type: 'del',
+                raw: match[0],
+                text: match[2],
+                tokens: this.lexer.inlineTokens(match[2]),
+            };
+        }
+    },
+};
+
+marked.use({ renderer, tokenizer, breaks: true, gfm: true });
 
 // 4. Replicate assignLines logic from web/js/preview.js
 const assignLines = (tokens, startLine = 0) => {
@@ -177,6 +191,19 @@ graph TD;
     const html = parse(markdown);
     assert.match(html, /<div class="mermaid-block" data-line="0" id="mermaid-[a-z0-9]+" data-src="graph TD;?\n?\s*A-->B;?"><\/div>/);
     console.log("✓ Test 7: Mermaid Code Blocks passed");
+}
+
+// Test 8: Strikethrough requires ~~ and preserves single-tilde ranges and approximations
+{
+    const markdown = "> The network latency is ~50ms (~100MB/s bandwidth). Operating temperature is 20~35C with step A1 ~ A3.\n\nHere is ~~valid strikethrough text~~.";
+    const html = parse(markdown);
+    assert.doesNotMatch(html, /<del>50ms/);
+    assert.doesNotMatch(html, /<del>[^<]*20<\/del>/);
+    assert.match(html, /~50ms \(~100MB\/s bandwidth\)/);
+    assert.match(html, /20~35C/);
+    assert.match(html, /A1 ~ A3/);
+    assert.match(html, /<del>valid strikethrough text<\/del>/);
+    console.log("✓ Test 8: Strikethrough requires ~~ and preserves single tilde passed");
 }
 
 console.log("All unit tests passed successfully! 🎉");

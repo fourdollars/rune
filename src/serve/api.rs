@@ -1836,7 +1836,22 @@ const PUBLIC_PREVIEW_HTML: &str = r#"<!DOCTYPE html>
       }
       return '<pre class="hljs-pre" data-raw="' + raw + '"><code>' + text.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;') + '</code></pre>';
     };
-    marked.use({ renderer });
+    marked.use({
+      renderer,
+      tokenizer: {
+        del(src) {
+          const match = /^(~~)(?=[^\s~])((?:\\.|[^\\])*?(?:\\.|[^\s~\\]))\1(?=[^~]|$)/.exec(src);
+          if (match) {
+            return {
+              type: 'del',
+              raw: match[0],
+              text: match[2],
+              tokens: this.lexer.inlineTokens(match[2]),
+            };
+          }
+        },
+      },
+    });
     const html = marked.parse(md);
     const content = document.getElementById('preview');
     content.innerHTML = html;

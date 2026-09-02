@@ -128,7 +128,23 @@ if (typeof marked !== 'undefined') {
     }
   };
 
-  marked.use({ renderer, hooks, breaks: true, gfm: true, extensions: [blockMathExtension, inlineMathExtension] });
+  const tokenizer = {
+    // Enforce GFM strikethrough: require exactly ~~ (double tildes)
+    // Prevents single tildes (e.g. ranges 12~19W, approximations ~32ns) from being parsed as <del>
+    del(src) {
+      const match = /^(~~)(?=[^\s~])((?:\\.|[^\\])*?(?:\\.|[^\s~\\]))\1(?=[^~]|$)/.exec(src);
+      if (match) {
+        return {
+          type: 'del',
+          raw: match[0],
+          text: match[2],
+          tokens: this.lexer.inlineTokens(match[2]),
+        };
+      }
+    },
+  };
+
+  marked.use({ renderer, tokenizer, hooks, breaks: true, gfm: true, extensions: [blockMathExtension, inlineMathExtension] });
 }
 
 // --- Markdown rendering helper ---
