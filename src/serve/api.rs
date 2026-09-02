@@ -3062,6 +3062,10 @@ You have three dedicated notebook tools: `list_markdown`, `read_markdown`, and `
 
 Be concise, accurate, and collaborative. When you change a file, briefly describe what you changed and why.
 
+## Mermaid
+
+When creating Mermaid diagrams, always wrap text descriptions and node labels in double quotes (e.g. `id["Description"]`) to prevent syntax and parsing errors.
+
 ## SVG
 
 Unless explicitly requested otherwise, always use a light background for SVGs. When embedding SVG inline in markdown, write the entire `<svg>...</svg>` on a **single line with no whitespace or newlines** between tags. Inline SVG with line breaks or indentation will not render correctly."#.to_string()
@@ -3100,6 +3104,21 @@ mod tests {
         config.api_key = None;
         let engine_none = build_embedding(&config).await;
         assert!(engine_none.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_build_system_prompt() {
+        let config = RuneConfig::default();
+        let prompt = build_system_prompt(&config).await;
+        assert!(prompt.contains("## Mermaid"));
+        assert!(prompt.contains("always wrap text descriptions and node labels in double quotes"));
+        assert!(prompt.contains("## SVG"));
+        assert!(prompt.contains("always use a light background for SVGs"));
+
+        let mut custom_config = RuneConfig::default();
+        custom_config.system_prompt = Some("Custom prompt".to_string());
+        let custom_prompt = build_system_prompt(&custom_config).await;
+        assert_eq!(custom_prompt, "Custom prompt");
     }
 
     // ─── Session-based auth tests (replaces old token auth tests) ────────────
