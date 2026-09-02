@@ -34,20 +34,6 @@ const $archiveModal = document.getElementById('archive-modal');
 const $archiveModalCancel = document.getElementById('archive-modal-cancel');
 const $archiveModalConfirm = document.getElementById('archive-modal-confirm');
 
-// Each browser gets its own isolated chat "room" (Rune note_id), so
-// concurrent Chrome/Firefox sessions logged into the same server don't see
-// each other's messages. We detect the running browser via its user agent
-// and use that as a distinct default note. TODO: eventually let the user
-// pick/rename the target notebook explicitly instead of relying on this
-// browser-name heuristic.
-function detectDefaultNoteId() {
-  const ua = navigator.userAgent;
-  if (ua.includes('Firefox/')) return 'Mozilla Firefox';
-  if (ua.includes('Edg/')) return 'Microsoft Edge';
-  if (ua.includes('Chrome/')) return 'Google Chrome';
-  return 'Rune';
-}
-const DEFAULT_NOTE_ID = detectDefaultNoteId();
 
 // --- Configure marked (loaded by vendor-bundle.js before this module runs) ---
 function escapeHtml(str) {
@@ -259,7 +245,7 @@ let availableModels = [];
 let activeModel = '';
 let currentThinking = 'off';
 // The note the SSE stream is currently subscribed to.
-let activeNoteId = DEFAULT_NOTE_ID;
+let activeNoteId = '';
 // Whether we've already replayed history for the current activeNoteId session.
 let historyLoaded = false;
 
@@ -612,10 +598,46 @@ function populateNoteList(notes, activeId) {
   const targetId = activeNoteId || activeId;
   const active = cachedNotes.find((n) => n.id === targetId) ?? cachedNotes.find((n) => n.id === activeId) ?? cachedNotes[0];
   if (active) {
+    const prevActive = activeNoteId;
     setActiveNote(active.id, active.name || active.id);
+    if (prevActive && prevActive !== active.id && !cachedNotes.some((n) => n.id === prevActive)) {
+      switchToNote(active.id);
+    }
   } else {
     renderNoteDropdown();
   }
+}
+
+/**
+ * Fetch the latest note list from GET /api/notes over REST.
+ * If preferredNoteId exists in the list, selects it; otherwise defaults to the first available note.
+ * Updates cachedNotes and storage.local, renders dropdown, and returns the target note id (or null).
+ */
+async function fetchNoteListAndRecover(preferredNoteId) {
+  try {
+    const { serverUrl } = await getSyncSettings();
+    const { accessToken } = await getLocalAuth();
+    if (!serverUrl) return null;
+
+    const resp = await fetch(`${serverUrl}/api/notes`, {
+      headers: accessToken ? { Authorization: BEARER_PREFIX + accessToken } : {},
+    });
+    if (!resp.ok) return null;
+
+    const data = await resp.json();
+    if (data.ok && Array.isArray(data.notes) && data.notes.length > 0) {
+      cachedNotes = data.notes;
+      browser.storage.local.set({ rune_cached_notes: data.notes }).catch(() => {});
+      const target = (preferredNoteId && data.notes.find((n) => n.id === preferredNoteId))
+        ? preferredNoteId
+        : data.notes[0].id;
+      populateNoteList(data.notes, target);
+      return target;
+    }
+  } catch (e) {
+    console.warn('[rune] fetchNoteListAndRecover failed:', e);
+  }
+  return null;
 }
 
 let currentLoadedHistoryRaw = null;
@@ -986,18 +1008,53 @@ function handleSseEvent(rec) {
         clearToolStatus();
       }
       break;
-    case 'error':
-      appendSystem(`❌ Error: ${payload.message ?? 'unknown error'}`);
+    case 'error': {
+      const errMsg = payload.message ?? 'unknown error';
+      if (errMsg.includes('Note not found') || errMsg.includes('note_id is required')) {
+        const staleId = activeNoteId;
+        browser.storage.local.remove('lastSelectedNote').catch(() => {});
+        activeNoteId = '';
+        fetchNoteListAndRecover().then((targetNoteId) => {
+          if (targetNoteId) {
+            switchToNote(targetNoteId);
+          } else {
+            appendSystem(`❌ Note "${staleId}" not found, and no other notes available.`);
+          }
+        });
+        currentAssistantEl = null;
+        currentAssistantText = '';
+        currentAssistantDiv = null;
+        clearToolStatus();
+        return;
+      }
+      appendSystem(`❌ Error: ${errMsg}`);
       currentAssistantEl = null;
       currentAssistantText = '';
       currentAssistantDiv = null;
       clearToolStatus();
       setStatus('idle');
       break;
-    case 'auth_error':
-      appendSystem(`❌ Authentication failed: ${payload.message ?? 'unauthorized'}`);
+    }
+    case 'auth_error': {
+      const authMsg = payload.message ?? 'unauthorized';
+      if (authMsg.includes('private') || authMsg.includes('Guests cannot access private notes')) {
+        const staleId = activeNoteId;
+        browser.storage.local.remove('lastSelectedNote').catch(() => {});
+        activeNoteId = '';
+        fetchNoteListAndRecover().then((targetNoteId) => {
+          if (targetNoteId) {
+            switchToNote(targetNoteId);
+          } else {
+            appendSystem(`❌ Note "${staleId}" is private, and no accessible public notes found.`);
+          }
+        });
+        setStatus('disconnected');
+        return;
+      }
+      appendSystem(`❌ Authentication failed: ${authMsg}`);
       setStatus('disconnected');
       break;
+    }
     case 'model_list':
       if (Array.isArray(payload.models)) {
         availableModels = payload.models;
@@ -1333,10 +1390,19 @@ setStatus('disconnected');
 
 checkConfigured().then(async (configured) => {
   if (configured) {
-    const { lastSelectedNote } = await browser.storage.local.get('lastSelectedNote');
-    const initialNoteId = lastSelectedNote || DEFAULT_NOTE_ID;
-    activeNoteId = initialNoteId;
-    await restoreCachedState(initialNoteId);
-    startSseSubscription(initialNoteId);
+    const { lastSelectedNote, rune_cached_notes } = await browser.storage.local.get([
+      'lastSelectedNote',
+      'rune_cached_notes',
+    ]);
+    if (Array.isArray(rune_cached_notes) && rune_cached_notes.length > 0) {
+      cachedNotes = rune_cached_notes;
+    }
+
+    // Validate and refresh note list via REST first; falls back to first available note
+    const recoveredNote = await fetchNoteListAndRecover(lastSelectedNote);
+    const noteToUse = recoveredNote || (cachedNotes.length > 0 ? cachedNotes[0].id : (lastSelectedNote || 'default'));
+    activeNoteId = noteToUse;
+    await restoreCachedState(noteToUse);
+    startSseSubscription(noteToUse);
   }
 });

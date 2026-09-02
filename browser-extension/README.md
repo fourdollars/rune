@@ -65,8 +65,7 @@ server URL, then click "Save & Log In".
   `EventSource`, because `EventSource` cannot send a custom `Authorization`
   header and the SSE endpoint needs the bearer token when no cookie session
   is available.
-- Each browser talks to its own default note (chat room), named after the
-  browser, so concurrent Chrome and Firefox sessions against the same server
-  don't share one conversation.
+- Users can switch between available notebooks directly from the side
+  panel header dropdown; the active selection is remembered in local storage.
 - All user-facing strings are English-only for now; internationalization is
   a deliberately deferred follow-up.

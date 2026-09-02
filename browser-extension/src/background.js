@@ -35,42 +35,6 @@ if (globalThis.browser?.sidePanel?.setPanelBehavior) {
     .catch((e) => console.warn('[rune-notes] setPanelBehavior failed:', e));
 }
 
-// Mirrors sidepanel.js's detectDefaultNoteId() — each browser gets its own
-// isolated chat note so concurrent Chrome/Firefox sessions on the same
-// server don't collide in the same room. Kept in sync manually since the two
-// files run in different contexts (service worker vs. side panel page) and
-// don't share a module graph here.
-function detectDefaultNoteId() {
-  const ua = navigator.userAgent;
-  if (ua.includes('Firefox/')) return 'Mozilla Firefox';
-  if (ua.includes('Edg/')) return 'Microsoft Edge';
-  if (ua.includes('Chrome/')) return 'Google Chrome';
-  return 'Rune';
-}
-
-/**
- * Ensure this browser's default note exists on the server, creating it if
- * missing. Called right after a successful login so the user's note shows up
- * immediately (e.g. in the Rune WebUI's note list) instead of only coming
- * into existence lazily on first chat message via get_or_create_room().
- * Best-effort: a "duplicate name" response is expected and fine; any other
- * failure is swallowed (non-fatal — chat still works even if this fails,
- * since /api/chat auto-creates the room regardless).
- */
-async function ensureDefaultNoteExists() {
-  const noteId = detectDefaultNoteId();
-  try {
-    const resp = await apiFetch('/api/notes', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name: noteId }),
-    });
-    await resp.json().catch(() => ({}));
-  } catch (e) {
-    console.warn('[rune-notes] ensureDefaultNoteExists failed (non-fatal):', e);
-  }
-  return noteId;
-}
 
 browser.runtime.onInstalled.addListener(() => {
   browser.contextMenus.create({
@@ -154,9 +118,6 @@ async function startLogin() {
     clientId,
   });
 
-  // Create this browser's default note right away so it's visible in the
-  // Rune WebUI immediately, rather than waiting for the first chat message.
-  await ensureDefaultNoteExists();
 }
 
 async function doLogout() {
