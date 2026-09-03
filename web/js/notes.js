@@ -1,6 +1,6 @@
 import './state.js';
 globalThis.switchNote = async function switchNote(sessionId, forceFile = null) {
-    if (sessionId === currentNoteId) return;
+    if (sessionId === currentNoteId && !forceFile && specContent) return;
     currentNoteId = sessionId;
     localStorage.setItem('rune_note', sessionId);
     renderNoteList();
@@ -10,7 +10,9 @@ globalThis.switchNote = async function switchNote(sessionId, forceFile = null) {
     // Close existing SSE immediately (stop receiving events from old room)
     if (evtSource) { evtSource.close(); evtSource = null; }
 
-    const data = await api('session', { note: sessionId }, 'PUT');
+    const savedFile = localStorage.getItem('rune_file');
+    const targetReqFile = forceFile || savedFile || null;
+    const data = await api('session', { note: sessionId, file: targetReqFile }, 'PUT');
     if (!data || !data.ok) return;
 
     // Update active model for this note
@@ -39,7 +41,6 @@ globalThis.switchNote = async function switchNote(sessionId, forceFile = null) {
     updateEditorVisibility(fileList.length);
 
     // File priority: forceFile (from direct click) > savedFile > server default
-    const savedFile = localStorage.getItem('rune_file');
     const preferredFile = (savedFile && fileList.includes(savedFile)) ? savedFile : null;
     const targetFile = (forceFile && fileList.includes(forceFile))
         ? forceFile
@@ -47,12 +48,12 @@ globalThis.switchNote = async function switchNote(sessionId, forceFile = null) {
 
     if (targetFile && fileList.includes(targetFile)) {
         currentFilename = targetFile;
-        // If not the one server sent, fetch it
-        if (targetFile !== data.current_file || data.file_content === undefined) {
+        // If server already returned the file content for this file, use it directly
+        if (targetFile === data.current_file && data.file_content !== undefined) {
+            specContent = data.file_content || '';
+        } else {
             const fileData = await api('session', { note: sessionId, file: targetFile }, 'PUT');
             specContent = (fileData && fileData.file_content) || '';
-        } else {
-            specContent = data.file_content || '';
         }
         updateDocTitle(currentFilename);
         renderPreview();

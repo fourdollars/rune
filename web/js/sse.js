@@ -3,7 +3,8 @@ import './state.js';
 globalThis.fetchNoteListAndConnect = async function fetchNoteListAndConnect() {
     // Try saved note first
     const saved = localStorage.getItem('rune_note');
-    if (saved) { connect(saved); return; }
+    const savedFile = localStorage.getItem('rune_file');
+    if (saved) { switchNote(saved, savedFile); return; }
 
     // No saved note — fetch list via REST and connect to first available
     try {
@@ -11,7 +12,7 @@ globalThis.fetchNoteListAndConnect = async function fetchNoteListAndConnect() {
         const data = await res.json();
         if (data.ok && data.notes && data.notes.length > 0) {
             const firstNote = data.notes[0].id;
-            connect(firstNote);
+            switchNote(firstNote);
         }
     } catch {}
 };
@@ -26,6 +27,9 @@ globalThis.connect = function connect(noteId) {
         fetchNoteListAndConnect();
         return;
     }
+
+    currentNoteId = targetNote;
+    try { localStorage.setItem('rune_note', targetNote); } catch {}
 
     const params = new URLSearchParams();
     if (myNickname) params.set('nickname', myNickname);

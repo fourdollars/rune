@@ -60,8 +60,10 @@ globalThis.handleMessage = function handleMessage(msg) {
             // Don't re-fetch current file on every file_list update — that causes SSE race.
             // Only act when file selection state needs to change.
             if (!currentFilename && fileList.length > 0) {
-                // No file selected yet, pick first
-                switchFile(fileList[0]);
+                // Pick saved/pending file if available in fileList, otherwise first file
+                const savedFile = localStorage.getItem('rune_file');
+                const targetFile = (savedFile && fileList.includes(savedFile)) ? savedFile : fileList[0];
+                switchFile(targetFile);
             } else if (currentFilename && !fileList.includes(currentFilename)) {
                 // Current file was deleted — fall back
                 if (fileList.length > 0) {
@@ -153,6 +155,9 @@ globalThis.handleMessage = function handleMessage(msg) {
                 (n.files || []).forEach(f => { n.fileVisibility[f] = false; });
                 (n.public_files || []).forEach(f => { n.fileVisibility[f] = true; });
             });
+            if (msg.active && !currentNoteId) {
+                currentNoteId = msg.active;
+            }
             if (currentNoteId && !notes.find(s => s.id === currentNoteId)) {
                 currentNoteId = '';
             }
@@ -161,7 +166,7 @@ globalThis.handleMessage = function handleMessage(msg) {
             if (!currentNoteId) {
                 const saved = localStorage.getItem('rune_note');
                 const target = (saved && notes.find(s => s.id === saved)) ? saved : (notes.length > 0 ? notes[0].id : '');
-                if (target) switchNote(target);
+                if (target && target !== currentNoteId) switchNote(target);
             }
             updateDocTitle(currentFilename);
             const newBtn = document.getElementById('btn-new-note');

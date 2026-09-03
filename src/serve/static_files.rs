@@ -625,9 +625,9 @@ mod tests {
     #[test]
     fn test_app_js_logout_redirects_to_root() {
         let js = get("js/search.js").unwrap();
-        // confirmLogout must redirect to '/' (login page)
+        // confirmLogout must redirect to /auth/logout
         assert!(
-            js.contains("window.location.href = '/auth/logout';"),
+            js.contains("window.location.href = '/auth/logout'"),
             "confirmLogout must redirect to /auth/logout"
         );
     }

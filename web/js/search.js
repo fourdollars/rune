@@ -110,5 +110,9 @@ globalThis.confirmLogout = function confirmLogout() {
     localStorage.removeItem('rune_session_id');
     localStorage.removeItem('rune_nickname');
     // Server clears HttpOnly cookie via /auth/logout redirect
-    window.location.href = '/auth/logout';
+    const path = window.location.pathname;
+    const nextParam = (path && path.startsWith('/edit'))
+        ? ('?next=' + encodeURIComponent(path + window.location.search))
+        : '';
+    window.location.href = '/auth/logout' + nextParam;
 }

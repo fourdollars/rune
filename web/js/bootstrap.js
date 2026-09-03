@@ -46,19 +46,27 @@ globalThis.getSessionId = function getSessionId() {
             isAdmin = data.role === 'admin';
             isGuest = data.role === 'guest';
             // If URL contains a specific note/file, use it as the initial target
+            let initialTargetNote = _pendingNoteId;
+            let initialTargetFile = _pendingFile ? (_pendingFile.endsWith('.md') ? _pendingFile : _pendingFile + '.md') : null;
             if (_pendingNoteId) {
                 localStorage.setItem('rune_note', _pendingNoteId);
-                if (_pendingFile) localStorage.setItem('rune_file', _pendingFile + '.md');
+                if (_pendingFile) localStorage.setItem('rune_file', initialTargetFile);
                 _pendingNoteId = null;
                 _pendingFile   = null;
             }
-            connect();
+            const savedNote = initialTargetNote || localStorage.getItem('rune_note');
+            const savedFile = initialTargetFile || localStorage.getItem('rune_file');
+            if (savedNote) {
+                switchNote(savedNote, savedFile);
+            } else {
+                fetchNoteListAndConnect();
+            }
         } else {
             localStorage.removeItem('rune_session_id');
             window.location.href = '/?next=' + encodeURIComponent(window.location.pathname);
         }
     } catch {
-        // Network error — SSE will handle auth
-        connect();
+        // Network error — fetch note list and connect
+        fetchNoteListAndConnect();
     }
 })();
