@@ -8,7 +8,7 @@
 // extension's chat looks and feels consistent with the main app, styled via
 // sidepanel.css (a ported subset of web/style.css).
 
-import { getSyncSettings, getLocalAuth } from './common.js';
+import { getSyncSettings, getLocalAuth, apiFetch } from './common.js';
 
 const $messages = document.getElementById('messages');
 const $runeTitle = document.getElementById('rune-title');
@@ -265,6 +265,8 @@ let currentThinking = 'off';
 let activeNoteId = '';
 // Whether we've already replayed history for the current activeNoteId session.
 let historyLoaded = false;
+// Authenticated user login name resolved from server credentials.
+let myLogin = '';
 
 function getFriendlyProviderName(models = availableModels) {
   const currentModelObj = models.find((m) => (m.id || m) === activeModel && m.provider);
@@ -474,7 +476,8 @@ function appendMessage(role, text = '', { senderLabel, model, thinking, steps, t
     const sender = document.createElement('div');
     sender.className = 'sender';
     const nameSpan = document.createElement('span');
-    nameSpan.textContent = senderLabel ?? (role === 'user' ? 'You' : 'ᚱ');
+    const defaultLabel = role === 'user' ? (myLogin ? `${myLogin} (you)` : 'You') : 'ᚱ';
+    nameSpan.textContent = senderLabel ?? defaultLabel;
     sender.appendChild(nameSpan);
 
     if (role === 'assistant' && model) {
@@ -752,7 +755,10 @@ function replayHistory(messages, saveToCache = true) {
   $messages.innerHTML = '';
   for (const msg of messages) {
     const role = msg.role === 'assistant' ? 'assistant' : msg.role === 'user' ? 'user' : 'system';
-    const label = msg.nickname || (role === 'assistant' ? 'ᚱ' : 'You');
+    const isMe = msg.nickname && myLogin && msg.nickname === myLogin;
+    const label = msg.nickname
+      ? (isMe ? `${msg.nickname} (you)` : msg.nickname)
+      : (role === 'assistant' ? 'ᚱ' : (myLogin ? `${myLogin} (you)` : 'You'));
     if (role === 'system') {
       appendSystem(msg.content || '');
       continue;
@@ -1060,9 +1066,21 @@ function handleSseEvent(rec) {
       currentAssistantDiv = null;
       setStatus('idle');
       break;
-    case 'chat_message':
-      // Another participant's message (multi-user room); skip our own echo.
+    case 'auth_result':
+      if (payload.login) {
+        myLogin = payload.login;
+      }
       break;
+    case 'chat_message': {
+      // Another participant's message (multi-user room); skip our own echo.
+      const isMe = payload.nickname && myLogin && payload.nickname === myLogin;
+      if (!isMe && payload.content) {
+        appendMessage('user', payload.content, {
+          senderLabel: payload.nickname || 'user',
+        });
+      }
+      break;
+    }
     case 'status':
       setStatus(payload.state);
       break;
@@ -1454,6 +1472,16 @@ setStatus('disconnected');
 
 checkConfigured().then(async (configured) => {
   if (configured) {
+    try {
+      const resp = await apiFetch('/api/me');
+      if (resp?.ok) {
+        const data = await resp.json();
+        if (data?.ok && data.login) {
+          myLogin = data.login;
+        }
+      }
+    } catch (_) {}
+
     const { lastSelectedNote, rune_cached_notes } = await browser.storage.local.get([
       'lastSelectedNote',
       'rune_cached_notes',

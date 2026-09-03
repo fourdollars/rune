@@ -56,8 +56,8 @@ pub async fn handle_mcp_post(
             // Check Authorization header for Bearer token or username:password
             let auth_header = headers.get("authorization").and_then(|v| v.to_str().ok());
             if let Some(token) = auth_header.and_then(|h| h.strip_prefix("Bearer ")) {
-                if let Some(tok_role) = state.oauth_tokens.get(token).await {
-                    Some(tok_role)
+                if let Some(tok_info) = state.oauth_tokens.get(token).await {
+                    Some(tok_info.role)
                 } else if let Some((u, p)) = token.split_once(':') {
                     if let Some(ref local_cfg) = state.config.notes.local.as_ref() {
                         crate::serve::oauth::verify_local_credentials(u, p, local_cfg)

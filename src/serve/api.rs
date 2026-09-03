@@ -438,7 +438,7 @@ pub async fn events_handler(
     // clients such as the browser extension). Native EventSource cannot set
     // custom headers, but our extension's SSE client uses fetch() + manual
     // stream parsing instead, so it CAN send this header.
-    let bearer_role = if session.is_none() {
+    let bearer_token_entry = if session.is_none() {
         let token = headers
             .get(axum::http::header::AUTHORIZATION)
             .and_then(|v| v.to_str().ok())
@@ -454,14 +454,16 @@ pub async fn events_handler(
     };
 
     // Auth check — must have a valid session OR a valid bearer token
-    let (is_admin, is_guest, login) = match (&session, &bearer_role) {
+    let (is_admin, is_guest, login) = match (&session, &bearer_token_entry) {
         (Some(s), _) => (s.is_admin(), s.is_guest(), s.login.clone()),
-        (None, Some(role)) => (
-            *role == crate::serve::oauth::Role::Admin,
-            *role == crate::serve::oauth::Role::Guest,
-            // Bearer tokens are not tied to a GitHub login string; fall back
-            // to a generic label (nickname param below can still override).
-            "oauth-client".to_string(),
+        (None, Some(token_info)) => (
+            token_info.role == crate::serve::oauth::Role::Admin,
+            token_info.role == crate::serve::oauth::Role::Guest,
+            if token_info.login.is_empty() {
+                "user".to_string()
+            } else {
+                token_info.login.clone()
+            },
         ),
         (None, None) => {
             let err_stream = futures::stream::once(async {
@@ -476,8 +478,8 @@ pub async fn events_handler(
                 .into_response();
         }
     };
-    // Nickname: prefer explicit param, fall back to GitHub login
-    let nickname = params.nickname.unwrap_or_else(|| login.clone());
+    // Nickname is strictly extracted from server-side verified credentials
+    let nickname = login.clone();
 
     // note_id is REQUIRED per spec
     let note_id = match params.note_id {
@@ -730,6 +732,8 @@ fn extract_event_type(json: &str) -> String {
 
 pub async fn chat_handler(
     State(state): State<ServerState>,
+    headers: axum::http::HeaderMap,
+    req_ext: Option<axum::extract::Extension<crate::serve::AuthenticatedUser>>,
     Json(req): Json<ChatReq>,
 ) -> Json<ApiResponse> {
     if req.note_id.is_empty() {
@@ -742,11 +746,44 @@ pub async fn chat_handler(
     let preview: String = req.content.chars().take(50).collect();
     info!("Chat message: {}", preview);
 
+    // Sender identity is strictly extracted from server-side credentials
+    let nickname = if let Some(axum::extract::Extension(user)) = req_ext {
+        user.login
+    } else {
+        let sid = crate::serve::oauth::get_cookie(&headers, "rune_sid");
+        let cookie_session = match sid {
+            Some(ref id) => state.sessions.get(id).await,
+            None => None,
+        };
+        if let Some(s) = cookie_session {
+            s.login
+        } else {
+            let bearer_token = headers
+                .get(axum::http::header::AUTHORIZATION)
+                .and_then(|v| v.to_str().ok())
+                .and_then(|v| v.strip_prefix("Bearer "))
+                .map(str::trim)
+                .filter(|t| !t.is_empty());
+            if let Some(token) = bearer_token {
+                if let Some(token_info) = state.oauth_tokens.get(token).await {
+                    if !token_info.login.is_empty() {
+                        token_info.login
+                    } else {
+                        "user".to_string()
+                    }
+                } else {
+                    "user".to_string()
+                }
+            } else {
+                "user".to_string()
+            }
+        }
+    };
+
     // Get (or create) the room for this note
     let room = state.get_or_create_room(&req.note_id).await;
 
     // Broadcast user message to the room
-    let nickname = req.nickname.clone().unwrap_or_else(|| "user".to_string());
     let user_msg = SseMsg::ChatMessage {
         nickname: nickname.clone(),
         content: req.content.clone(),
@@ -759,7 +796,7 @@ pub async fn chat_handler(
         .insert_async(
             req.note_id.clone(),
             "user".to_string(),
-            nickname,
+            nickname.clone(),
             req.content.clone(),
         )
         .await;
@@ -794,7 +831,7 @@ pub async fn chat_handler(
     let state_clone = state.clone();
     let note_id = req.note_id.clone();
     let content = req.content.clone();
-    let nick = req.nickname.clone().unwrap_or_else(|| "user".to_string());
+    let nick = nickname.clone();
     let cancel = new_token.clone();
     tokio::spawn(async move {
         tokio::select! {
@@ -2560,7 +2597,7 @@ pub async fn notes_list_json_handler(
     Json(serde_json::json!({ "ok": true, "notes": notes }))
 }
 
-/// GET /api/me — return current authenticated user info from session cookie.
+/// GET /api/me — return current authenticated user info from session cookie or Bearer token.
 pub async fn me_handler(
     State(state): State<ServerState>,
     headers: axum::http::HeaderMap,
@@ -2571,20 +2608,37 @@ pub async fn me_handler(
         Some(ref id) => state.sessions.get(id).await,
         None => None,
     };
-    match session {
-        Some(s) => Json(serde_json::json!({
+    if let Some(s) = session {
+        return Json(serde_json::json!({
             "ok": true,
             "login": s.login,
             "role": s.role.as_str(),
             "avatar_url": s.avatar_url,
         }))
-        .into_response(),
-        None => (
-            axum::http::StatusCode::UNAUTHORIZED,
-            Json(serde_json::json!({"ok": false, "error": "Not authenticated"})),
-        )
-            .into_response(),
+        .into_response();
     }
+    let bearer_token = headers
+        .get(axum::http::header::AUTHORIZATION)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.strip_prefix("Bearer "))
+        .map(str::trim)
+        .filter(|t| !t.is_empty());
+    if let Some(token) = bearer_token {
+        if let Some(token_info) = state.oauth_tokens.get(token).await {
+            return Json(serde_json::json!({
+                "ok": true,
+                "login": token_info.login,
+                "role": token_info.role.as_str(),
+                "avatar_url": "",
+            }))
+            .into_response();
+        }
+    }
+    (
+        axum::http::StatusCode::UNAUTHORIZED,
+        Json(serde_json::json!({"ok": false, "error": "Not authenticated"})),
+    )
+        .into_response()
 }
 
 // ─── Agent chat handler ────────────────────────────────────────────────────
@@ -5071,7 +5125,8 @@ mod isolation_tests {
         let tmp = tempfile::tempdir().unwrap();
         let (admin_broadcast_tx, _) = broadcast::channel(256);
         let db = crate::serve::db::ChatDb::open(&tmp.path().join("t.db")).unwrap();
-        let _ = db.create_note("Linux Kernel", "Linux Kernel", Some("🐧"));
+        let _ = db.create_note("Linux Kernel", "Linux Kernel", None);
+        let _ = db.rename_note("Linux Kernel", "Linux Kernel", Some("🐧"));
         let _ = db.set_note_public("Linux Kernel", true);
         let _ = db.set_file_public("Linux Kernel", "README.md", true);
 
@@ -5673,5 +5728,106 @@ mod isolation_tests {
         );
         assert_eq!(super::percent_decode_lossy("foo%2Fbar"), "foo/bar");
         assert_eq!(super::percent_decode_lossy("a+b%20c"), "a+b c");
+    }
+
+    #[tokio::test]
+    async fn test_chat_handler_server_side_credential_extraction() {
+        let (state, _tmp) = make_state();
+        state.chat_db.create_note("note1", "Note 1", None).unwrap();
+
+        // 1. When AuthenticatedUser extension is present, client's req.nickname is ignored
+        let headers = axum::http::HeaderMap::new();
+        let user_ext = Some(axum::extract::Extension(crate::serve::AuthenticatedUser {
+            login: "alice".to_string(),
+            role: crate::serve::oauth::Role::User,
+        }));
+        let req = super::ChatReq {
+            note_id: "note1".to_string(),
+            content: "Hello from alice".to_string(),
+            nickname: Some("spoofed_hacker".to_string()),
+        };
+        let res = super::chat_handler(
+            axum::extract::State(state.clone()),
+            headers,
+            user_ext,
+            axum::Json(req),
+        )
+        .await;
+        assert_eq!(res.ok, true);
+
+        // Check DB persisted records: sender should be "alice", NOT "spoofed_hacker"
+        let history = state
+            .chat_db
+            .load_recent_async("note1".to_string(), 10)
+            .await;
+        assert_eq!(history.len(), 1);
+        assert_eq!(history[0].nickname, "alice");
+
+        // 2. When Bearer token is provided in headers
+        let token = crate::serve::oauth_pkce::OAuthAccessToken {
+            token: "valid_bearer_token".to_string(),
+            role: crate::serve::oauth::Role::User,
+            login: "bob".to_string(),
+            expires_at: crate::serve::db::now_secs() + 3600,
+        };
+        state.oauth_tokens.insert(token).await;
+
+        let mut bearer_headers = axum::http::HeaderMap::new();
+        bearer_headers.insert(
+            axum::http::header::AUTHORIZATION,
+            "Bearer valid_bearer_token".parse().unwrap(),
+        );
+
+        let req2 = super::ChatReq {
+            note_id: "note1".to_string(),
+            content: "Hello from bob via bearer".to_string(),
+            nickname: None,
+        };
+        let res2 = super::chat_handler(
+            axum::extract::State(state.clone()),
+            bearer_headers,
+            None,
+            axum::Json(req2),
+        )
+        .await;
+        assert_eq!(res2.ok, true);
+
+        let history2 = state
+            .chat_db
+            .load_recent_async("note1".to_string(), 10)
+            .await;
+        assert_eq!(history2.len(), 2);
+        assert_eq!(history2[1].nickname, "bob");
+    }
+
+    #[tokio::test]
+    async fn test_me_handler_bearer_token() {
+        use axum::response::IntoResponse;
+        use http_body_util::BodyExt;
+
+        let (state, _tmp) = make_state();
+        let token = crate::serve::oauth_pkce::OAuthAccessToken {
+            token: "me_bearer_token".to_string(),
+            role: crate::serve::oauth::Role::Admin,
+            login: "admin_user".to_string(),
+            expires_at: crate::serve::db::now_secs() + 3600,
+        };
+        state.oauth_tokens.insert(token).await;
+
+        let mut headers = axum::http::HeaderMap::new();
+        headers.insert(
+            axum::http::header::AUTHORIZATION,
+            "Bearer me_bearer_token".parse().unwrap(),
+        );
+
+        let resp = super::me_handler(axum::extract::State(state), headers)
+            .await
+            .into_response();
+        assert_eq!(resp.status(), axum::http::StatusCode::OK);
+        let body_bytes = resp.into_body().collect().await.unwrap().to_bytes();
+        let body: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
+        assert_eq!(body["ok"], true);
+        assert_eq!(body["login"], "admin_user");
+        assert_eq!(body["role"], "admin");
     }
 }

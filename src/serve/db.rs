@@ -106,6 +106,7 @@ impl ChatDb {
             CREATE TABLE IF NOT EXISTS oauth_tokens (
                 token       TEXT PRIMARY KEY,
                 role        TEXT NOT NULL,
+                login       TEXT NOT NULL DEFAULT '',
                 expires_at  INTEGER NOT NULL
             );
         ",
@@ -127,6 +128,8 @@ impl ChatDb {
         let _ = conn.execute_batch("ALTER TABLE messages ADD COLUMN thinking TEXT;");
         let _ = conn.execute_batch("ALTER TABLE messages ADD COLUMN context_tokens INTEGER;");
         let _ = conn.execute_batch("ALTER TABLE sessions ADD COLUMN public INTEGER DEFAULT 0;");
+        let _ = conn
+            .execute_batch("ALTER TABLE oauth_tokens ADD COLUMN login TEXT NOT NULL DEFAULT '';");
         let _ = conn.execute_batch(
             "
             CREATE TABLE IF NOT EXISTS file_visibility (
@@ -414,13 +417,19 @@ impl ChatDb {
         Ok(res)
     }
 
-    pub fn save_oauth_token(&self, token: &str, role: &str, expires_at: i64) -> anyhow::Result<()> {
+    pub fn save_oauth_token(
+        &self,
+        token: &str,
+        role: &str,
+        login: &str,
+        expires_at: i64,
+    ) -> anyhow::Result<()> {
         let conn = self.conn.lock().unwrap();
         conn.execute(
-            "INSERT INTO oauth_tokens (token, role, expires_at)
-             VALUES (?1, ?2, ?3)
-             ON CONFLICT(token) DO UPDATE SET role=?2, expires_at=?3",
-            params![token, role, expires_at],
+            "INSERT INTO oauth_tokens (token, role, login, expires_at)
+             VALUES (?1, ?2, ?3, ?4)
+             ON CONFLICT(token) DO UPDATE SET role=?2, login=?3, expires_at=?4",
+            params![token, role, login, expires_at],
         )?;
         Ok(())
     }
@@ -431,13 +440,18 @@ impl ChatDb {
         Ok(())
     }
 
-    pub fn load_active_oauth_tokens(&self) -> anyhow::Result<Vec<(String, String, i64)>> {
+    pub fn load_active_oauth_tokens(&self) -> anyhow::Result<Vec<(String, String, String, i64)>> {
         let conn = self.conn.lock().unwrap();
         let now = now_secs();
-        let mut stmt =
-            conn.prepare("SELECT token, role, expires_at FROM oauth_tokens WHERE expires_at > ?1")?;
+        let mut stmt = conn.prepare(
+            "SELECT token, role, login, expires_at FROM oauth_tokens WHERE expires_at > ?1",
+        )?;
         let rows = stmt.query_map(params![now], |row| {
-            Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+            let token: String = row.get(0)?;
+            let role: String = row.get(1)?;
+            let login: String = row.get(2).unwrap_or_default();
+            let expires_at: i64 = row.get(3)?;
+            Ok((token, role, login, expires_at))
         })?;
         let mut res = Vec::new();
         for r in rows {

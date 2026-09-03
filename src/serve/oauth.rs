@@ -77,6 +77,13 @@ impl Session {
     }
 }
 
+/// An authenticated user identity resolved from request credentials (cookie or Bearer token).
+#[derive(Debug, Clone)]
+pub struct AuthenticatedUser {
+    pub login: String,
+    pub role: Role,
+}
+
 // ─── SessionStore ──────────────────────────────────────────────────────────
 
 /// Persistent session store with in-memory cache and SQLite backing.

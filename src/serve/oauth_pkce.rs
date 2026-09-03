@@ -29,6 +29,7 @@ pub struct AuthCode {
     pub redirect_uri: String,
     pub code_challenge: String,
     pub role: Role,
+    pub login: String,
     pub expires_at: std::time::Instant,
 }
 
@@ -65,9 +66,11 @@ impl AuthCodeStore {
     }
 }
 
+#[derive(Clone, Debug)]
 pub struct OAuthAccessToken {
     pub token: String,
     pub role: Role,
+    pub login: String,
     pub expires_at: i64,
 }
 
@@ -86,13 +89,14 @@ impl OAuthTokenStore {
         let mut map = HashMap::new();
         if let Some(ref db) = db {
             if let Ok(records) = db.load_active_oauth_tokens() {
-                for (token, role_str, expires_at) in records {
+                for (token, role_str, login, expires_at) in records {
                     let role = Role::from_str(&role_str);
                     map.insert(
                         token.clone(),
                         OAuthAccessToken {
                             token,
                             role,
+                            login,
                             expires_at,
                         },
                     );
@@ -108,12 +112,12 @@ impl OAuthTokenStore {
     pub async fn insert(&self, token: OAuthAccessToken) {
         if let Some(ref db) = self.db {
             let role_str = token.role.as_str().to_string();
-            let _ = db.save_oauth_token(&token.token, &role_str, token.expires_at);
+            let _ = db.save_oauth_token(&token.token, &role_str, &token.login, token.expires_at);
         }
         self.inner.write().await.insert(token.token.clone(), token);
     }
 
-    pub async fn get(&self, token: &str) -> Option<Role> {
+    pub async fn get(&self, token: &str) -> Option<OAuthAccessToken> {
         let mut store = self.inner.write().await;
         if let Some(t) = store.get(token) {
             let now = crate::serve::db::now_secs();
@@ -124,7 +128,7 @@ impl OAuthTokenStore {
                 store.remove(token);
                 None
             } else {
-                Some(t.role.clone())
+                Some(t.clone())
             }
         } else {
             None
@@ -211,6 +215,7 @@ pub async fn oauth_authorize_handler(
             redirect_uri: query.redirect_uri.clone(),
             code_challenge: query.code_challenge.clone().unwrap_or_default(),
             role: sess.role.clone(),
+            login: sess.login.clone(),
             expires_at: std::time::Instant::now() + std::time::Duration::from_secs(60),
         };
         state.oauth_codes.insert(auth_code).await;
@@ -327,6 +332,7 @@ pub async fn oauth_token_handler(
     let access_token = OAuthAccessToken {
         token: token.clone(),
         role: auth_code.role,
+        login: auth_code.login,
         expires_at,
     };
 
@@ -485,6 +491,7 @@ mod tests {
             redirect_uri: "http://localhost".to_string(),
             code_challenge: "challenge".to_string(),
             role: Role::Admin,
+            login: "alice".to_string(),
             expires_at: std::time::Instant::now() + std::time::Duration::from_secs(60),
         };
 
@@ -492,6 +499,7 @@ mod tests {
 
         let retrieved = store.get("test_code").await;
         assert!(retrieved.is_some());
+        assert_eq!(retrieved.as_ref().unwrap().login, "alice");
 
         // Single use check
         let retrieved_again = store.get("test_code").await;
@@ -504,17 +512,20 @@ mod tests {
         let token = OAuthAccessToken {
             token: "test_token".to_string(),
             role: Role::Admin,
+            login: "alice".to_string(),
             expires_at: crate::serve::db::now_secs() + 3600,
         };
 
         store.insert(token).await;
 
-        let role = store.get("test_token").await;
-        assert!(matches!(role, Some(Role::Admin)));
+        let token_info = store.get("test_token").await;
+        assert!(token_info.is_some());
+        assert_eq!(token_info.as_ref().unwrap().role, Role::Admin);
+        assert_eq!(token_info.as_ref().unwrap().login, "alice");
 
         // Token persists
-        let role_again = store.get("test_token").await;
-        assert!(matches!(role_again, Some(Role::Admin)));
+        let token_again = store.get("test_token").await;
+        assert!(token_again.is_some());
     }
 
     #[tokio::test]
@@ -528,6 +539,7 @@ mod tests {
         let token = OAuthAccessToken {
             token: "restart_token_123".to_string(),
             role: Role::Admin,
+            login: "bob".to_string(),
             expires_at: crate::serve::db::now_secs() + 2592000,
         };
         store1.insert(token).await;
@@ -546,8 +558,10 @@ mod tests {
         let session_store2 = crate::serve::oauth::SessionStore::new_with_db(Some(db.clone()));
 
         // 3. Verify token and session were restored from DB
-        let role = store2.get("restart_token_123").await;
-        assert_eq!(role, Some(Role::Admin));
+        let token_info = store2.get("restart_token_123").await;
+        assert!(token_info.is_some());
+        assert_eq!(token_info.as_ref().unwrap().role, Role::Admin);
+        assert_eq!(token_info.as_ref().unwrap().login, "bob");
 
         let restored_session = session_store2.get("restart_session_456").await;
         assert!(restored_session.is_some());

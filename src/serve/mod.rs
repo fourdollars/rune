@@ -12,6 +12,7 @@ pub mod oauth;
 pub mod oauth_pkce;
 mod static_files;
 pub use db::ChatDb;
+pub use oauth::AuthenticatedUser;
 
 use crate::config::RuneConfig;
 use crate::provider::ModelInfo;
@@ -479,7 +480,7 @@ pub async fn run(config: RuneConfig, opts: NotesOptions) {
     async fn auth_middleware(
         axum::extract::State(state): axum::extract::State<ServerState>,
         ConnectInfo(_addr): ConnectInfo<SocketAddr>,
-        req: axum::http::Request<axum::body::Body>,
+        mut req: axum::http::Request<axum::body::Body>,
         next: axum::middleware::Next,
     ) -> axum::response::Response {
         // 1. Try session cookie first.
@@ -502,16 +503,21 @@ pub async fn run(config: RuneConfig, opts: NotesOptions) {
         } else {
             None
         };
-        let bearer_role = match bearer_token {
+        let bearer_token_entry = match bearer_token {
             Some(token) => state.oauth_tokens.get(&token).await,
             None => None,
         };
 
-        let (is_admin, is_guest) = match (&cookie_session, &bearer_role) {
-            (Some(s), _) => (s.is_admin(), s.is_guest()),
-            (None, Some(role)) => (
-                *role == crate::serve::oauth::Role::Admin,
-                *role == crate::serve::oauth::Role::Guest,
+        let (is_admin, is_guest, login) = match (&cookie_session, &bearer_token_entry) {
+            (Some(s), _) => (s.is_admin(), s.is_guest(), s.login.clone()),
+            (None, Some(token_info)) => (
+                token_info.role == crate::serve::oauth::Role::Admin,
+                token_info.role == crate::serve::oauth::Role::Guest,
+                if token_info.login.is_empty() {
+                    "user".to_string()
+                } else {
+                    token_info.login.clone()
+                },
             ),
             (None, None) => {
                 let body = axum::Json(
@@ -520,6 +526,19 @@ pub async fn run(config: RuneConfig, opts: NotesOptions) {
                 return (StatusCode::UNAUTHORIZED, body).into_response();
             }
         };
+
+        let authenticated_role = if is_admin {
+            crate::serve::oauth::Role::Admin
+        } else if is_guest {
+            crate::serve::oauth::Role::Guest
+        } else {
+            crate::serve::oauth::Role::User
+        };
+
+        req.extensions_mut().insert(AuthenticatedUser {
+            login,
+            role: authenticated_role,
+        });
 
         // Guest: block all mutations (only allow GET and session selection)
         if is_guest && req.method() != axum::http::Method::GET {

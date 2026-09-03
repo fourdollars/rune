@@ -555,6 +555,41 @@ async function runTests() {
     console.log('✓ Test 9 passed: Switch Model modal title and tooltip display LLM provider info');
   }
 
+  // ─── Test 10: auth_result updates username and renders sender labels ─────
+  {
+    const fixture = setupSidepanelContext();
+    const { elements } = fixture;
+
+    // Simulate auth_result SSE event
+    fixture.exec(`
+      handleSseEvent({
+        event: 'auth_result',
+        data: JSON.stringify({ ok: true, login: 'alice', is_admin: false, is_guest: false })
+      });
+    `);
+
+    // Replay history with messages from 'alice' and 'bob'
+    fixture.exec(`
+      replayHistory([
+        { id: 1, role: 'user', nickname: 'alice', content: 'Hello' },
+        { id: 2, role: 'user', nickname: 'bob', content: 'Hi alice' },
+        { id: 3, role: 'assistant', nickname: '', content: 'Welcome' }
+      ]);
+    `);
+
+    const $messages = elements['messages'];
+    assert.strictEqual($messages.children.length, 3);
+    const aliceSender = $messages.children[0].children[0].children[0].textContent;
+    const bobSender = $messages.children[1].children[0].children[0].textContent;
+    const assistantSender = $messages.children[2].children[0].children[0].textContent;
+
+    assert.strictEqual(aliceSender, 'alice (you)', 'User own message should be labeled alice (you)');
+    assert.strictEqual(bobSender, 'bob', 'Other user message should be labeled bob');
+    assert.strictEqual(assistantSender, 'ᚱ', 'Assistant message should be labeled ᚱ');
+
+    console.log('✓ Test 10 passed: auth_result updates username and renders sender labels');
+  }
+
   console.log("All extension sidepanel tests passed successfully! 🎉");
 }
 
