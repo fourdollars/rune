@@ -26,6 +26,7 @@ globalThis.renderPreview = function renderPreview() {
 
         const tokens = marked.lexer(specContent);
         assignLines(tokens, 0);
+        if (typeof resetSlugger === 'function') resetSlugger();
         preview.innerHTML = marked.parser(tokens);
         // Render LaTeX math expressions with KaTeX
         if (typeof renderMathInElement !== 'undefined') {
@@ -109,3 +110,20 @@ globalThis.copyCodeBlock = function copyCodeBlock(button) {
     if (navigator.clipboard && window.isSecureContext) navigator.clipboard.writeText(raw).then(done).catch(() => fallbackCopy(raw, done));
     else fallbackCopy(raw, done);
 };
+
+// Handle in-preview anchor links (#heading) with smooth scroll
+if (typeof preview !== 'undefined' && preview) {
+    preview.addEventListener('click', (e) => {
+        const a = e.target.closest('a[href^="#"]');
+        if (!a) return;
+        const href = a.getAttribute('href');
+        if (!href || href === '#') return;
+        const targetId = decodeURIComponent(href.slice(1));
+        const target = preview.querySelector(`[id="${CSS.escape(targetId)}"]`) || document.getElementById(targetId);
+        if (target) {
+            e.preventDefault();
+            target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }
+    });
+}
+

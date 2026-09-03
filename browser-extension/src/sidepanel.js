@@ -58,7 +58,33 @@ if (typeof mermaid !== 'undefined') {
 }
 
 if (typeof marked !== 'undefined') {
+  function createSlugger() {
+    const occurrences = new Map();
+    return function slugify(text) {
+      const rawSlug = (text || '')
+        .toLowerCase()
+        .trim()
+        .replace(/<[^>]*>/g, '')
+        .replace(/[^\p{L}\p{N}\p{M}\s_-]/gu, '')
+        .replace(/\s/g, '-');
+      const baseSlug = rawSlug || 'heading';
+      const count = occurrences.get(baseSlug) || 0;
+      occurrences.set(baseSlug, count + 1);
+      if (count === 0) return baseSlug;
+      return `${baseSlug}-${count}`;
+    };
+  }
+
+  let slugify = createSlugger();
   const renderer = new marked.Renderer();
+
+  renderer.heading = function(token) {
+    const { depth, text, tokens } = token;
+    const id = slugify(text);
+    const idAttr = id ? ` id="${id}"` : '';
+    const body = this.parser ? this.parser.parseInline(tokens) : text;
+    return `<h${depth}${idAttr}>${body}</h${depth}>\n`;
+  };
 
   renderer.code = function(token) {
     const { text, lang } = token;
@@ -80,6 +106,10 @@ if (typeof marked !== 'undefined') {
   };
 
   const hooks = {
+    preprocess(markdown) {
+      slugify = createSlugger();
+      return markdown;
+    },
     postprocess(html) {
       return html.replace(/<p>(\s*<svg[\s\S]*?<\/svg>\s*)<\/p>/gi, '$1');
     }

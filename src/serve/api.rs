@@ -1843,7 +1843,7 @@ pub async fn chat_cancel_handler(
 
 // ─── Public (no-auth) handlers ──────────────────────────────────────────────
 
-const PUBLIC_PREVIEW_HTML: &str = r#"<!DOCTYPE html>
+const PUBLIC_PREVIEW_HTML: &str = r##"<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
@@ -1856,6 +1856,9 @@ const PUBLIC_PREVIEW_HTML: &str = r#"<!DOCTYPE html>
 <link rel="stylesheet" href="/assets/katex.min.css">
 <style>
   /* Override SPA body rules from style.css */
+  html {
+    scroll-behavior: smooth;
+  }
   body {
     margin: 0 !important;
     padding: 20px !important;
@@ -1864,6 +1867,9 @@ const PUBLIC_PREVIEW_HTML: &str = r#"<!DOCTYPE html>
     font-family: var(--font-sans) !important;
     height: auto !important;
     overflow: auto !important;
+  }
+  h1, h2, h3, h4, h5, h6 {
+    scroll-margin-top: 16px;
   }
   .public-container {
     max-width: 860px;
@@ -1908,7 +1914,31 @@ const PUBLIC_PREVIEW_HTML: &str = r#"<!DOCTYPE html>
     const resp = await fetch(rawUrl);
     if (!resp.ok) { document.getElementById('loading').textContent = 'Not found or not public.'; return; }
     const md = await resp.text();
+    function createSlugger() {
+      const occurrences = new Map();
+      return function slugify(text) {
+        const rawSlug = (text || '')
+          .toLowerCase()
+          .trim()
+          .replace(/<[^>]*>/g, '')
+          .replace(/[^\p{L}\p{N}\p{M}\s_-]/gu, '')
+          .replace(/\s/g, '-');
+        const baseSlug = rawSlug || 'heading';
+        const count = occurrences.get(baseSlug) || 0;
+        occurrences.set(baseSlug, count + 1);
+        if (count === 0) return baseSlug;
+        return baseSlug + '-' + count;
+      };
+    }
+    let slugify = createSlugger();
     const renderer = new marked.Renderer();
+    renderer.heading = function(token) {
+      const { depth, text, tokens } = token;
+      const id = slugify(text);
+      const idAttr = id ? ' id="' + id + '"' : '';
+      const body = this.parser ? this.parser.parseInline(tokens) : text;
+      return '<h' + depth + idAttr + '>' + body + '</h' + depth + '>\n';
+    };
     renderer.code = function({text, lang}) {
       const raw = text.replace(/"/g,'&quot;');
       if (lang && lang.toLowerCase() === 'mermaid') {
@@ -1925,6 +1955,12 @@ const PUBLIC_PREVIEW_HTML: &str = r#"<!DOCTYPE html>
     };
     marked.use({
       renderer,
+      hooks: {
+        preprocess(markdown) {
+          slugify = createSlugger();
+          return markdown;
+        },
+      },
       tokenizer: {
         del(src) {
           const match = /^(~~)(?=[^\s~])((?:\\.|[^\\])*?(?:\\.|[^\s~\\]))\1(?=[^~]|$)/.exec(src);
@@ -1942,6 +1978,29 @@ const PUBLIC_PREVIEW_HTML: &str = r#"<!DOCTYPE html>
     const html = marked.parse(md);
     const content = document.getElementById('preview');
     content.innerHTML = html;
+
+    // Anchor link smooth scrolling
+    content.addEventListener('click', (e) => {
+      const a = e.target.closest('a[href^="#"]');
+      if (!a) return;
+      const href = a.getAttribute('href');
+      if (!href || href === '#') return;
+      const targetId = decodeURIComponent(href.slice(1));
+      const target = content.querySelector(`[id="${CSS.escape(targetId)}"]`) || document.getElementById(targetId);
+      if (target) {
+        e.preventDefault();
+        history.pushState(null, '', '#' + encodeURIComponent(targetId));
+        target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }
+    });
+
+    if (window.location.hash) {
+      const hashId = decodeURIComponent(window.location.hash.slice(1));
+      const el = content.querySelector(`[id="${CSS.escape(hashId)}"]`) || document.getElementById(hashId);
+      if (el) {
+        setTimeout(() => el.scrollIntoView({ behavior: 'smooth', block: 'start' }), 100);
+      }
+    }
     function copyCodeBlock(btn) {
       const pre = btn.closest('pre');
       if (!pre) return;
@@ -2026,7 +2085,7 @@ const PUBLIC_PREVIEW_HTML: &str = r#"<!DOCTYPE html>
 </script>
 <footer><a href="/">Sign In</a> · Wrought by <a href="https://fourdollars.github.io/rune/">ᚱᚢᚾᛖ</a></footer>
 </body>
-</html>"#;
+</html>"##;
 
 pub async fn public_notes_list_handler(
     State(state): State<ServerState>,

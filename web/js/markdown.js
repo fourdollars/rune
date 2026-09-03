@@ -5,7 +5,38 @@ if (typeof marked !== 'undefined') {
         return (token && typeof token.startLine === 'number') ? ` data-line="${token.startLine}"` : '';
     };
 
+    function createSlugger() {
+        const occurrences = new Map();
+        return function slugify(text) {
+            const rawSlug = (text || '')
+                .toLowerCase()
+                .trim()
+                .replace(/<[^>]*>/g, '')
+                .replace(/[^\p{L}\p{N}\p{M}\s_-]/gu, '')
+                .replace(/\s/g, '-');
+            const baseSlug = rawSlug || 'heading';
+            const count = occurrences.get(baseSlug) || 0;
+            occurrences.set(baseSlug, count + 1);
+            if (count === 0) return baseSlug;
+            return `${baseSlug}-${count}`;
+        };
+    }
+
+    let slugify = createSlugger();
+    globalThis.resetSlugger = function resetSlugger() {
+        slugify = createSlugger();
+    };
+
     const renderer = new marked.Renderer();
+
+    renderer.heading = function(token) {
+        const { depth, text, tokens } = token;
+        const lineAttr = getLineAttr(token);
+        const id = slugify(text);
+        const idAttr = id ? ` id="${id}"` : '';
+        const body = this.parser ? this.parser.parseInline(tokens) : text;
+        return `<h${depth}${idAttr}${lineAttr}>${body}</h${depth}>\n`;
+    };
 
     // Helper to wrap renderer methods to inject data-line attributes
     const wrap = (methodName) => {
@@ -21,7 +52,6 @@ if (typeof marked !== 'undefined') {
     };
 
     wrap('paragraph');
-    wrap('heading');
     wrap('blockquote');
     wrap('list');
     wrap('listitem');
@@ -46,8 +76,12 @@ if (typeof marked !== 'undefined') {
         return `<pre class="hljs-pre"${lineAttr} data-raw="${raw}"><code>${safe}</code></pre>`;
     };
 
-    // hooks: unwrap <svg> mistakenly wrapped in <p>
+    // hooks: reset slugger on new markdown parse, unwrap <svg> mistakenly wrapped in <p>
     const hooks = {
+        preprocess(markdown) {
+            slugify = createSlugger();
+            return markdown;
+        },
         postprocess(html) {
             // <p><svg ...>...</svg></p>  →  <svg ...>...</svg>
             return html.replace(/<p>(\s*<svg[\s\S]*?<\/svg>\s*)<\/p>/gi, '$1');

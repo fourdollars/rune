@@ -30,7 +30,34 @@ const getLineAttr = (token) => {
     return (token && typeof token.startLine === 'number') ? ` data-line="${token.startLine}"` : '';
 };
 
+function createSlugger() {
+    const occurrences = new Map();
+    return function slugify(text) {
+        const rawSlug = (text || '')
+            .toLowerCase()
+            .trim()
+            .replace(/<[^>]*>/g, '')
+            .replace(/[^\p{L}\p{N}\p{M}\s_-]/gu, '')
+            .replace(/\s/g, '-');
+        const baseSlug = rawSlug || 'heading';
+        const count = occurrences.get(baseSlug) || 0;
+        occurrences.set(baseSlug, count + 1);
+        if (count === 0) return baseSlug;
+        return `${baseSlug}-${count}`;
+    };
+}
+
+let slugify = createSlugger();
 const renderer = new marked.Renderer();
+
+renderer.heading = function(token) {
+    const { depth, text, tokens } = token;
+    const lineAttr = getLineAttr(token);
+    const id = slugify(text);
+    const idAttr = id ? ` id="${id}"` : '';
+    const body = this.parser ? this.parser.parseInline(tokens) : text;
+    return `<h${depth}${idAttr}${lineAttr}>${body}</h${depth}>\n`;
+};
 
 // Helper to wrap renderer methods to inject data-line attributes
 const wrap = (methodName) => {
@@ -46,7 +73,6 @@ const wrap = (methodName) => {
 };
 
 wrap('paragraph');
-wrap('heading');
 wrap('blockquote');
 wrap('list');
 wrap('listitem');
@@ -71,6 +97,13 @@ renderer.code = function(token) {
     return `<pre class="hljs-pre"${lineAttr} data-raw="${raw}"><code>${safe}</code></pre>`;
 };
 
+const hooks = {
+    preprocess(markdown) {
+        slugify = createSlugger();
+        return markdown;
+    }
+};
+
 const tokenizer = {
     del(src) {
         const match = /^(~~)(?=[^\s~])((?:\\.|[^\\])*?(?:\\.|[^\s~\\]))\1(?=[^~]|$)/.exec(src);
@@ -85,7 +118,7 @@ const tokenizer = {
     },
 };
 
-marked.use({ renderer, tokenizer, breaks: true, gfm: true });
+marked.use({ renderer, tokenizer, hooks, breaks: true, gfm: true });
 
 // 4. Replicate assignLines logic from web/js/preview.js
 const assignLines = (tokens, startLine = 0) => {
@@ -141,7 +174,7 @@ First paragraph.
 
 Second paragraph.`;
     const html = parse(markdown);
-    assert.match(html, /<h1 data-line="0">Title<\/h1>/);
+    assert.match(html, /<h1 id="title" data-line="0">Title<\/h1>/);
     assert.match(html, /<p data-line="2">First paragraph\.<\/p>/);
     assert.match(html, /<p data-line="4">Second paragraph\.<\/p>/);
     console.log("✓ Test 3: Multiple Blocks line numbers passed");
@@ -204,6 +237,23 @@ graph TD;
     assert.match(html, /A1 ~ A3/);
     assert.match(html, /<del>valid strikethrough text<\/del>/);
     console.log("✓ Test 8: Strikethrough requires ~~ and preserves single tilde passed");
+}
+
+// Test 9: Heading slugification and TOC anchor link targets (Recipe Guide)
+{
+    const markdown = `# 經典義式肉醬千層麵 (Classic Beef Lasagna Recipe)
+## 1. Ingredients & Prep (食材與前置準備)
+### 製作步驟
+## 2. Cooking & Assembly (烹調與組裝)
+### 製作步驟
+`;
+    const html = parse(markdown);
+    assert.match(html, /<h1 id="經典義式肉醬千層麵-classic-beef-lasagna-recipe" data-line="0">經典義式肉醬千層麵 \(Classic Beef Lasagna Recipe\)<\/h1>/);
+    assert.match(html, /<h2 id="1-ingredients--prep-食材與前置準備" data-line="1">1\. Ingredients &amp; Prep \(食材與前置準備\)<\/h2>/);
+    assert.match(html, /<h3 id="製作步驟" data-line="2">製作步驟<\/h3>/);
+    assert.match(html, /<h2 id="2-cooking--assembly-烹調與組裝" data-line="3">2\. Cooking &amp; Assembly \(烹調與組裝\)<\/h2>/);
+    assert.match(html, /<h3 id="製作步驟-1" data-line="4">製作步驟<\/h3>/);
+    console.log("✓ Test 9: Heading slugification and TOC anchor link targets (Recipe Guide) passed");
 }
 
 console.log("All unit tests passed successfully! 🎉");

@@ -399,14 +399,18 @@ body {
     box-sizing: border-box;
 }
 
-#preview h1, #preview h2, #preview h3 {
+#preview h1, #preview h2, #preview h3, #preview h4, #preview h5, #preview h6 {
     color: var(--accent);
     margin: 1.2em 0 0.6em;
+    scroll-margin-top: 16px;
 }
 
 #preview h1 { font-size: 1.8em; }
 #preview h2 { font-size: 1.4em; }
 #preview h3 { font-size: 1.1em; }
+#preview h4 { font-size: 1.0em; }
+#preview h5 { font-size: 0.9em; }
+#preview h6 { font-size: 0.85em; }
 
 #preview p { margin: 0.6em 0; }
 
