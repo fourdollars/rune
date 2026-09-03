@@ -27,6 +27,7 @@ const $thinkingVal = document.getElementById('thinking-val');
 const $thinkingDropdown = document.getElementById('thinking-dropdown');
 const $btnArchive = document.getElementById('btn-archive');
 const $modelModal = document.getElementById('model-modal');
+const $modelModalTitle = document.getElementById('model-modal-title');
 const $modelSearchInput = document.getElementById('model-search-input');
 const $modelList = document.getElementById('model-list');
 const $modelModalCancel = document.getElementById('model-modal-cancel');
@@ -265,6 +266,31 @@ let activeNoteId = '';
 // Whether we've already replayed history for the current activeNoteId session.
 let historyLoaded = false;
 
+function getFriendlyProviderName(models = availableModels) {
+  const currentModelObj = models.find((m) => (m.id || m) === activeModel && m.provider);
+  const modelWithProvider = currentModelObj || models.find((m) => m && m.provider);
+  const providerName = modelWithProvider ? modelWithProvider.provider : '';
+  if (!providerName) return '';
+  const lower = providerName.toLowerCase();
+  if (lower === 'gemini') return 'Google Gemini';
+  if (lower === 'github-copilot') return 'GitHub Copilot';
+  if (lower === 'openrouter') return 'OpenRouter';
+  if (lower === 'openrouter-zdr') return 'OpenRouter w/ ZDR';
+  if (lower === 'openai') return 'OpenAI';
+  if (lower === 'openai-compatible') return 'OpenAI compatible';
+  return providerName.charAt(0).toUpperCase() + providerName.slice(1);
+}
+
+function updateModelModalTitle() {
+  if (!$modelModalTitle) return;
+  const friendlyProvider = getFriendlyProviderName();
+  if (friendlyProvider) {
+    $modelModalTitle.textContent = `Switch Model (${friendlyProvider})`;
+  } else {
+    $modelModalTitle.textContent = 'Switch Model';
+  }
+}
+
 function updateModelIndicator() {
   if (!$modelIndicator || !$modelName) return;
   if (!activeModel) {
@@ -272,8 +298,14 @@ function updateModelIndicator() {
     return;
   }
   $modelName.textContent = activeModel;
-  $modelName.title = `Switch model (current: ${activeModel})`;
+  const friendlyProvider = getFriendlyProviderName();
+  if (friendlyProvider) {
+    $modelName.title = `Switch model (${friendlyProvider} · current: ${activeModel})`;
+  } else {
+    $modelName.title = `Switch model (current: ${activeModel})`;
+  }
   $modelIndicator.style.display = 'flex';
+  updateModelModalTitle();
 }
 
 function updateThinkingSelect() {
@@ -379,6 +411,12 @@ function renderModelList(filter = '') {
 
     const badgeContainer = document.createElement('span');
     badgeContainer.className = 'model-badges';
+    if (m.reasoning_efforts && m.reasoning_efforts.length > 0) {
+      const reasonBadge = document.createElement('span');
+      reasonBadge.className = 'model-reasoning-badge';
+      reasonBadge.textContent = m.reasoning_efforts.join(' | ');
+      badgeContainer.appendChild(reasonBadge);
+    }
     if (m.context_window) {
       const ctxBadge = document.createElement('span');
       ctxBadge.className = 'model-ctx-badge';
@@ -405,6 +443,7 @@ function renderModelList(filter = '') {
 function showModelDialog() {
   if (!$modelModal) return;
   if (availableModels.length === 0) return;
+  updateModelModalTitle();
   if ($modelSearchInput) $modelSearchInput.value = '';
   renderModelList('');
   $modelModal.classList.remove('hidden');

@@ -40,6 +40,8 @@ function createMockElement(id = '', tag = 'div') {
     setAttribute: (k, v) => { attributes[k] = String(v); },
     getAttribute: (k) => attributes[k] ?? null,
     removeAttribute: (k) => { delete attributes[k]; },
+    focus: () => {},
+    blur: () => {},
     addEventListener: (evt, fn) => {
       if (!listeners[evt]) listeners[evt] = [];
       listeners[evt].push(fn);
@@ -493,6 +495,64 @@ async function runTests() {
       'fetchNoteListAndRecover should fallback to first available note when lastSelectedNote is missing'
     );
     console.log('✓ Test 8 passed: Startup note recovery resolves to first available note');
+  }
+
+  // ── Test 9: Provider info in Switch Model modal title and tooltip ──────────────
+  {
+    const fixture = setupSidepanelContext();
+    const $modelModalTitle = fixture.elements['model-modal-title'];
+    const $modelName = fixture.elements['model-name'];
+
+    // Test GitHub Copilot
+    fixture.exec(`
+      availableModels = [
+        { id: 'claude-3.5-sonnet', provider: 'github-copilot', context_window: 200000 },
+        { id: 'gpt-4o', provider: 'github-copilot', context_window: 128000 }
+      ];
+      activeModel = 'claude-3.5-sonnet';
+      updateModelIndicator();
+      showModelDialog();
+    `);
+    assert.strictEqual(
+      $modelModalTitle.textContent,
+      'Switch Model (GitHub Copilot)',
+      'Modal title should show Switch Model (GitHub Copilot)'
+    );
+    assert.ok(
+      $modelName.title.includes('GitHub Copilot'),
+      'Model name tooltip should mention GitHub Copilot'
+    );
+
+    // Test OpenRouter w/ ZDR
+    fixture.exec(`
+      availableModels = [
+        { id: 'anthropic/claude-3.5-sonnet', provider: 'openrouter-zdr' }
+      ];
+      activeModel = 'anthropic/claude-3.5-sonnet';
+      updateModelIndicator();
+      showModelDialog();
+    `);
+    assert.strictEqual(
+      $modelModalTitle.textContent,
+      'Switch Model (OpenRouter w/ ZDR)',
+      'Modal title should show Switch Model (OpenRouter w/ ZDR)'
+    );
+
+    // Test Google Gemini
+    fixture.exec(`
+      availableModels = [
+        { id: 'gemini-2.5-pro', provider: 'gemini' }
+      ];
+      activeModel = 'gemini-2.5-pro';
+      updateModelIndicator();
+      showModelDialog();
+    `);
+    assert.strictEqual(
+      $modelModalTitle.textContent,
+      'Switch Model (Google Gemini)',
+      'Modal title should show Switch Model (Google Gemini)'
+    );
+    console.log('✓ Test 9 passed: Switch Model modal title and tooltip display LLM provider info');
   }
 
   console.log("All extension sidepanel tests passed successfully! 🎉");
