@@ -98,7 +98,77 @@ globalThis.renderChatMath = function renderChatMath(el) {
     }
 };
 
-globalThis.updateOnlineCount = function updateOnlineCount(count) {
-    const el = document.getElementById('online-count');
-    if (el) el.textContent = count;
+let currentOnlineUsers = [];
+
+function renderOnlineUsersList(users) {
+    const listEl = document.getElementById('online-users-list');
+    if (!listEl) return;
+    listEl.innerHTML = '';
+
+    if (!users || users.length === 0) {
+        const emptyLi = document.createElement('li');
+        emptyLi.className = 'online-user-empty';
+        emptyLi.textContent = 'No users online';
+        listEl.appendChild(emptyLi);
+        return;
+    }
+
+    // Sort users alphabetically
+    const sorted = [...users].sort((a, b) => a.localeCompare(b));
+    for (const user of sorted) {
+        const li = document.createElement('li');
+        li.className = 'online-user-item';
+
+        const dot = document.createElement('span');
+        dot.className = 'online-user-dot';
+        dot.setAttribute('aria-hidden', 'true');
+
+        const nameSpan = document.createElement('span');
+        nameSpan.className = 'online-user-name';
+        const isMe = user && myNickname && user === myNickname;
+        nameSpan.textContent = isMe ? `${user} (you)` : user;
+        if (isMe) {
+            li.classList.add('me');
+        }
+
+        li.appendChild(dot);
+        li.appendChild(nameSpan);
+        listEl.appendChild(li);
+    }
 }
+globalThis.renderOnlineUsersList = renderOnlineUsersList;
+
+function updateOnlineCount(count, users) {
+    const safeCount = count ?? (Array.isArray(users) ? users.length : 0);
+    const el = document.getElementById('online-count');
+    if (el) el.textContent = safeCount;
+    const popoverCount = document.getElementById('online-users-popover-count');
+    if (popoverCount) popoverCount.textContent = safeCount;
+
+    if (Array.isArray(users)) {
+        currentOnlineUsers = [...users];
+        renderOnlineUsersList(currentOnlineUsers);
+    }
+}
+globalThis.updateOnlineCount = updateOnlineCount;
+
+function toggleOnlineUsers() {
+    const popover = document.getElementById('online-users-popover');
+    if (!popover) return;
+    const isHidden = popover.classList.toggle('hidden');
+    const btn = document.getElementById('btn-online-users');
+    if (btn) {
+        btn.setAttribute('aria-expanded', String(!isHidden));
+    }
+}
+globalThis.toggleOnlineUsers = toggleOnlineUsers;
+
+function closeOnlineUsers() {
+    const popover = document.getElementById('online-users-popover');
+    if (popover && !popover.classList.contains('hidden')) {
+        popover.classList.add('hidden');
+        const btn = document.getElementById('btn-online-users');
+        if (btn) btn.setAttribute('aria-expanded', 'false');
+    }
+}
+globalThis.closeOnlineUsers = closeOnlineUsers;

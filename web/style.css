@@ -1237,6 +1237,120 @@ pre.hljs-pre:hover .copy-btn {
     opacity: 1;
     color: var(--text-primary);
 }
+
+/* --- Online users indicator & popover --- */
+.online-users-wrapper {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+}
+
+.online-users-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--text-muted);
+    background: transparent;
+    border: 1px solid transparent;
+    cursor: pointer;
+    line-height: 1;
+}
+
+.online-users-btn:hover,
+.online-users-btn[aria-expanded="true"] {
+    background: var(--bg-hover, rgba(255, 255, 255, 0.08));
+    color: var(--text-primary);
+    border-color: var(--border);
+    opacity: 1;
+}
+
+.online-users-btn svg.rune-icon {
+    width: 14px;
+    height: 14px;
+    opacity: 0.85;
+}
+
+.online-users-popover {
+    position: absolute;
+    top: calc(100% + 6px);
+    right: 0;
+    z-index: 1050;
+    background: var(--bg-primary);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.28);
+    width: 210px;
+    max-height: 280px;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+.online-users-popover.hidden {
+    display: none !important;
+}
+
+.online-users-popover-header {
+    padding: 8px 12px;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-muted);
+    border-bottom: 1px solid var(--border);
+    background: var(--bg-secondary);
+}
+
+.online-users-list {
+    list-style: none;
+    margin: 0;
+    padding: 4px 0;
+    overflow-y: auto;
+    max-height: 220px;
+}
+
+.online-user-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 12px;
+    font-size: 13px;
+    color: var(--text-primary);
+    transition: background 0.1s;
+}
+
+.online-user-item:hover {
+    background: var(--bg-hover, rgba(255, 255, 255, 0.05));
+}
+
+.online-user-item.me .online-user-name {
+    font-weight: 600;
+}
+
+.online-user-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: #238636;
+    box-shadow: 0 0 4px rgba(35, 134, 54, 0.6);
+    flex-shrink: 0;
+}
+
+.online-user-name {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.online-user-empty {
+    padding: 12px;
+    font-size: 12px;
+    color: var(--text-muted);
+    text-align: center;
+    font-style: italic;
+}
 /* --- Multi-file markdown manager --- */
 .doc-title-area {
     display: flex;

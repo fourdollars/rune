@@ -476,6 +476,38 @@ mod tests {
     }
 
     #[test]
+    fn test_index_html_has_online_users_ui() {
+        let html = get("index.html").unwrap();
+        assert!(
+            html.contains("btn-online-users"),
+            "missing btn-online-users"
+        );
+        assert!(html.contains("online-count"), "missing online-count");
+        assert!(
+            html.contains("online-users-popover"),
+            "missing online-users-popover"
+        );
+        assert!(
+            html.contains("online-users-list"),
+            "missing online-users-list"
+        );
+    }
+
+    #[test]
+    fn test_chat_history_js_has_online_users_logic() {
+        let js = get("js/chat-history.js").unwrap();
+        assert!(
+            js.contains("renderOnlineUsersList"),
+            "missing renderOnlineUsersList"
+        );
+        assert!(
+            js.contains("toggleOnlineUsers"),
+            "missing toggleOnlineUsers"
+        );
+        assert!(js.contains("closeOnlineUsers"), "missing closeOnlineUsers");
+    }
+
+    #[test]
     fn test_app_js_has_logout_functions() {
         let js = get("js/search.js").unwrap();
         assert!(

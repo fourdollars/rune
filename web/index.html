@@ -224,6 +224,19 @@
                         </select>
                     </div>
                     <div class="chat-header-actions">
+                         <div class="online-users-wrapper">
+                             <button id="btn-online-users" class="chat-action-btn online-users-btn" data-action="toggle-online-users" data-icon="user" title="Online users in this note" aria-label="Online users in this note" aria-expanded="false" aria-haspopup="dialog">
+                                 <span id="online-count">0</span>
+                             </button>
+                             <div id="online-users-popover" class="online-users-popover hidden" role="dialog" aria-modal="false" aria-label="Online users">
+                                 <div class="online-users-popover-header">
+                                     <span class="online-users-popover-title">Online (<span id="online-users-popover-count">0</span>)</span>
+                                 </div>
+                                 <ul id="online-users-list" class="online-users-list">
+                                     <li class="online-user-empty">No users online</li>
+                                 </ul>
+                             </div>
+                         </div>
                          <button id="btn-search" class="chat-action-btn" data-action="show-search-dialog" data-icon="search" title="Search chat history" aria-label="Search chat history"></button>
                          <button id="btn-archive" class="chat-action-btn" data-action="show-archive-dialog" data-icon="archive" title="Archive chat" aria-label="Archive chat"></button>
                     </div>

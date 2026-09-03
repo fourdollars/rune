@@ -186,7 +186,7 @@ globalThis.handleMessage = function handleMessage(msg) {
             replayHistory(msg.messages);
             break;
         case 'users_update':
-            updateOnlineCount(msg.count);
+            updateOnlineCount(msg.count, msg.users);
             break;
         case 'approval_request':
             showApprovalRequest(msg.id, msg.detail);

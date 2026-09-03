@@ -30,10 +30,6 @@ use tokio::sync::{broadcast, mpsc, RwLock as TokioRwLock};
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, warn};
 
-// ─── Online user counter ───────────────────────────────────────────────────
-
-static ONLINE_COUNT: AtomicU32 = AtomicU32::new(0);
-
 // ─── Per-note isolation ────────────────────────────────────────────────────
 
 /// Each note gets its own isolated "chat room" with independent SSE channel,
@@ -59,6 +55,7 @@ pub struct NoteRoom {
     pub goal_condition: TokioRwLock<Option<String>>,
     pub goal_status: TokioRwLock<Option<String>>,
     pub goal_model: TokioRwLock<Option<String>>,
+    pub online_users: Arc<TokioRwLock<HashMap<String, usize>>>,
 }
 
 impl NoteRoom {
@@ -76,7 +73,44 @@ impl NoteRoom {
             goal_condition: TokioRwLock::new(None),
             goal_status: TokioRwLock::new(None),
             goal_model: TokioRwLock::new(None),
+            online_users: Arc::new(TokioRwLock::new(HashMap::new())),
         }
+    }
+}
+
+/// RAII guard to ensure an active SSE connection is removed from NoteRoom's online_users when dropped.
+struct UserPresenceGuard {
+    room: Arc<NoteRoom>,
+    nickname: String,
+}
+
+impl Drop for UserPresenceGuard {
+    fn drop(&mut self) {
+        let room = Arc::clone(&self.room);
+        let nickname = self.nickname.clone();
+        tokio::spawn(async move {
+            let (users, count) = {
+                let mut map = room.online_users.write().await;
+                if let Some(entry) = map.get_mut(&nickname) {
+                    *entry = entry.saturating_sub(1);
+                    if *entry == 0 {
+                        map.remove(&nickname);
+                    }
+                }
+                let mut u: Vec<String> = map.keys().cloned().collect();
+                u.sort();
+                let c = u.len() as u32;
+                (u, c)
+            };
+
+            let users_update_msg = SseMsg::UsersUpdate { count, users };
+            broadcast_to_room(&room, &users_update_msg);
+
+            let leave_msg = SseMsg::System {
+                content: format!("{} left", nickname),
+            };
+            broadcast_to_room(&room, &leave_msg);
+        });
     }
 }
 
@@ -123,7 +157,11 @@ pub enum SseMsg {
     #[serde(rename = "system")]
     System { content: String },
     #[serde(rename = "users_update")]
-    UsersUpdate { count: u32 },
+    UsersUpdate {
+        count: u32,
+        #[serde(default)]
+        users: Vec<String>,
+    },
     #[serde(rename = "history")]
     History {
         messages: Vec<crate::serve::db::ChatRecord>,
@@ -554,8 +592,22 @@ pub async fn events_handler(
     let room = state.get_or_create_room(&note_id).await;
     let mut room_rx = room.broadcast_tx.subscribe();
 
-    // Increment online count
-    let count = ONLINE_COUNT.fetch_add(1, Ordering::Relaxed) + 1;
+    // Register user in this note room's online_users
+    let (users, count) = {
+        let mut map = room.online_users.write().await;
+        *map.entry(nickname.clone()).or_insert(0) += 1;
+        let mut u: Vec<String> = map.keys().cloned().collect();
+        u.sort();
+        let c = u.len() as u32;
+        (u, c)
+    };
+
+    // Broadcast users_update to all participants currently in this room
+    let users_update_msg = SseMsg::UsersUpdate {
+        count,
+        users: users.clone(),
+    };
+    broadcast_to_room(&room, &users_update_msg);
 
     // Build initial messages to send
     let mut init_msgs = Vec::new();
@@ -605,7 +657,7 @@ pub async fn events_handler(
 
     // Users update (not sent to guests per spec)
     if !is_guest {
-        init_msgs.push(SseMsg::UsersUpdate { count });
+        init_msgs.push(SseMsg::UsersUpdate { count, users });
     }
 
     // Goal status update
@@ -656,11 +708,14 @@ pub async fn events_handler(
     };
     broadcast_to_room(&room, &join_msg);
 
-    let nickname_clone = nickname.clone();
-    let state_clone = state.clone();
-    let room_clone = Arc::clone(&room);
+    let guard = UserPresenceGuard {
+        room: Arc::clone(&room),
+        nickname: nickname.clone(),
+    };
 
     let stream = async_stream::stream! {
+        let _presence_guard = guard;
+
         // Send initial messages
         for msg in init_msgs {
             if let Ok(json) = serde_json::to_string(&msg) {
@@ -687,11 +742,6 @@ pub async fn events_handler(
                 Err(broadcast::error::RecvError::Closed) => break,
             }
         }
-
-        // Client disconnected — decrement count
-        let count = ONLINE_COUNT.fetch_sub(1, Ordering::Relaxed) - 1;
-        let leave_msg = SseMsg::System { content: format!("{} left", nickname_clone) };
-        broadcast_to_room(&room_clone, &leave_msg);
     };
 
     Sse::new(stream)
@@ -3410,10 +3460,92 @@ mod tests {
 
     #[test]
     fn test_sse_msg_users_update() {
-        let msg = SseMsg::UsersUpdate { count: 5 };
+        let msg = SseMsg::UsersUpdate {
+            count: 2,
+            users: vec!["alice".to_string(), "bob".to_string()],
+        };
         let json = serde_json::to_string(&msg).unwrap();
         assert!(json.contains(r#""type":"users_update""#));
-        assert!(json.contains(r#""count":5"#));
+        assert!(json.contains(r#""count":2"#));
+        assert!(json.contains(r#""users":["alice","bob"]"#));
+    }
+
+    #[tokio::test]
+    async fn test_note_room_online_users() {
+        let room = NoteRoom::new("test-room".into());
+        {
+            let mut map = room.online_users.write().await;
+            *map.entry("charlie".into()).or_insert(0) += 1;
+            *map.entry("alice".into()).or_insert(0) += 1;
+            *map.entry("bob".into()).or_insert(0) += 2;
+        }
+        let (users, count) = {
+            let map = room.online_users.read().await;
+            let mut u: Vec<String> = map.keys().cloned().collect();
+            u.sort();
+            let c = u.len() as u32;
+            (u, c)
+        };
+        assert_eq!(count, 3);
+        assert_eq!(users, vec!["alice", "bob", "charlie"]);
+
+        // Disconnect one session of bob
+        {
+            let mut map = room.online_users.write().await;
+            if let Some(entry) = map.get_mut("bob") {
+                *entry = entry.saturating_sub(1);
+            }
+        }
+        assert_eq!(room.online_users.read().await.get("bob"), Some(&1));
+
+        // Disconnect last session of alice
+        {
+            let mut map = room.online_users.write().await;
+            if let Some(entry) = map.get_mut("alice") {
+                *entry = entry.saturating_sub(1);
+                if *entry == 0 {
+                    map.remove("alice");
+                }
+            }
+        }
+        let (users, count) = {
+            let map = room.online_users.read().await;
+            let mut u: Vec<String> = map.keys().cloned().collect();
+            u.sort();
+            let c = u.len() as u32;
+            (u, c)
+        };
+        assert_eq!(count, 2);
+        assert_eq!(users, vec!["bob", "charlie"]);
+    }
+
+    #[tokio::test]
+    async fn test_user_presence_guard_drop_removes_user() {
+        let room = Arc::new(NoteRoom::new("test-guard-room".into()));
+        {
+            let mut map = room.online_users.write().await;
+            *map.entry("alice".into()).or_insert(0) += 1;
+            *map.entry("bob".into()).or_insert(0) += 1;
+        }
+
+        let guard = UserPresenceGuard {
+            room: Arc::clone(&room),
+            nickname: "alice".into(),
+        };
+
+        // Drop guard (simulating stream termination on client disconnect)
+        drop(guard);
+
+        // Allow spawned tokio task to run
+        tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+
+        let map = room.online_users.read().await;
+        assert_eq!(
+            map.get("alice"),
+            None,
+            "alice should be removed upon guard drop"
+        );
+        assert_eq!(map.get("bob"), Some(&1), "bob should still be online");
     }
 
     #[test]

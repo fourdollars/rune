@@ -47,6 +47,8 @@ const actions = {
     'toggle-compact-menu': () => toggleCompactMenu(),
     'toggle-toolbar-overflow': () => toggleToolbarOverflow(),
     'show-pane': element => showPane(element.dataset.pane),
+    'toggle-online-users': () => toggleOnlineUsers(),
+    'close-online-users': () => closeOnlineUsers(),
     'row-menu': element => toggleRowMenu(element),
     'run-command': element => runCommand(element),
 };
@@ -54,12 +56,18 @@ const actions = {
 export function initActions() {
     document.addEventListener('click', event => {
         const target = event.target.closest('[data-action]');
-        if (!target || target.tagName === 'SELECT') return;
-        const handler = actions[target.dataset.action];
-        if (!handler) return;
-        event.preventDefault();
-        event.stopPropagation();
-        handler(target, event);
+        if (target && target.tagName !== 'SELECT') {
+            const handler = actions[target.dataset.action];
+            if (handler) {
+                event.preventDefault();
+                event.stopPropagation();
+                handler(target, event);
+                return;
+            }
+        }
+        if (!event.target.closest('#btn-online-users, #online-users-popover')) {
+            if (typeof closeOnlineUsers === 'function') closeOnlineUsers();
+        }
     });
     document.addEventListener('change', event => {
         const target = event.target.closest('[data-action]');
@@ -71,6 +79,9 @@ export function initActions() {
         if (event.target.id === 'emoji-search-input') filterEmojis(event.target.value.trim().toLowerCase());
     });
     document.addEventListener('keydown', event => {
+        if (event.key === 'Escape') {
+            if (typeof closeOnlineUsers === 'function') closeOnlineUsers();
+        }
         if (event.key !== 'Enter') return;
         if (event.target.matches('[data-action="search-input"]')) doSearch();
         if (event.target.matches('[data-action="dir-path"]')) navigateDir(event.target.value);

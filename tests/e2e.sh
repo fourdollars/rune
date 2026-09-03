@@ -216,6 +216,13 @@ if command -v node >/dev/null 2>&1; then
         red "  ✗ markdown line-tagging renderer tests failed"
         FAIL=$((FAIL + 1))
     fi
+    if node tests/online_users.test.js >/dev/null 2>&1; then
+        green "  ✓ online users counter and popover list tests passed"
+        PASS=$((PASS + 1))
+    else
+        red "  ✗ online users counter and popover list tests failed"
+        FAIL=$((FAIL + 1))
+    fi
 else
     dim "  (skipped: node not available)"
 fi

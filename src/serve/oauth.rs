@@ -879,9 +879,14 @@ pub async fn oauth_callback_handler(
 
     // Create session
     let session_id = generate_session_id();
+    let login = if github_user.login.starts_with("github:") {
+        github_user.login.clone()
+    } else {
+        format!("github:{}", github_user.login)
+    };
     let session = Session {
         id: session_id.clone(),
-        login: github_user.login.clone(),
+        login: login.clone(),
         role: role.clone(),
         avatar_url: github_user.avatar_url,
         expires_at: crate::serve::db::now_secs() + SESSION_DURATION_SECS,
@@ -890,7 +895,7 @@ pub async fn oauth_callback_handler(
 
     eprintln!(
         "[auth] login: {} role={} method=github",
-        github_user.login,
+        login,
         role.as_str()
     );
 
@@ -1094,16 +1099,21 @@ pub async fn oauth_generic_callback_handler(
     };
 
     let session_id = generate_session_id();
+    let login = if identity.starts_with(&format!("{}:", provider.name)) {
+        identity
+    } else {
+        format!("{}:{}", provider.name, identity)
+    };
     let session = Session {
         id: session_id.clone(),
-        login: identity,
+        login: login.clone(),
         role,
         avatar_url: avatar_from_userinfo(&userinfo),
         expires_at: crate::serve::db::now_secs() + SESSION_DURATION_SECS,
     };
     eprintln!(
         "[auth] login: {} role={} method=oauth provider={}",
-        session.login,
+        login,
         session.role.as_str(),
         provider.name
     );
@@ -1338,9 +1348,14 @@ pub async fn local_login_handler(
 
     // Create session
     let session_id = generate_session_id();
+    let login = if req.username.starts_with("local:") {
+        req.username.clone()
+    } else {
+        format!("local:{}", req.username)
+    };
     let session = Session {
         id: session_id.clone(),
-        login: req.username.clone(),
+        login: login.clone(),
         role: role.clone(),
         avatar_url: String::new(), // No avatar for local accounts
         expires_at: crate::serve::db::now_secs() + SESSION_DURATION_SECS,
@@ -1349,7 +1364,7 @@ pub async fn local_login_handler(
 
     eprintln!(
         "[auth] login: {} role={} method=local",
-        req.username,
+        login,
         role.as_str()
     );
 
@@ -1368,7 +1383,8 @@ pub async fn local_login_handler(
         response_headers,
         axum::Json(serde_json::json!({
             "ok": true,
-            "username": req.username,
+            "username": login,
+            "login": login,
             "role": role.as_str()
         })),
     )
@@ -1918,5 +1934,49 @@ mod tests {
 
         assert_eq!(response.status(), StatusCode::FOUND);
         assert!(sessions.get(&sid).await.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_local_auth_handler_prefixes_local() {
+        let (admin_broadcast_tx, _) = tokio::sync::broadcast::channel(16);
+        let sessions = SessionStore::new();
+        let mut config = crate::config::RuneConfig::default();
+        config.notes.local = Some(crate::config::LocalConfig {
+            admins: vec!["admin:admin123".into()],
+            users: vec!["user:user123".into()],
+            guests: vec![],
+        });
+        let state = ServerState {
+            config,
+            sessions: sessions.clone(),
+            files: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
+            active_file: Arc::new(tokio::sync::RwLock::new(String::new())),
+            models: Arc::new(tokio::sync::RwLock::new(vec![])),
+            rooms: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
+            global_default_model: Arc::new(tokio::sync::RwLock::new(String::new())),
+            admin_broadcast_tx,
+            chat_db: crate::serve::db::ChatDb::open(std::path::Path::new(":memory:")).unwrap(),
+            data_dir: std::path::PathBuf::from("/tmp/rune-test"),
+            oauth_codes: crate::serve::oauth_pkce::AuthCodeStore::new(),
+            oauth_tokens: crate::serve::oauth_pkce::OAuthTokenStore::new(),
+            oauth_providers: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
+            mcp_sessions: crate::mcp::mcp_session::McpSessionStore::new(),
+            provider_registry: Arc::new(tokio::sync::RwLock::new(
+                crate::provider::ProviderRegistry::new(),
+            )),
+        };
+
+        let req = LocalLoginRequest {
+            username: "admin".into(),
+            password: "admin123".into(),
+        };
+        let resp = local_login_handler(State(state), axum::Json(req)).await;
+        assert_eq!(resp.status(), StatusCode::OK);
+
+        // Check the created session login
+        let all_sessions = sessions.inner.read().await;
+        assert_eq!(all_sessions.len(), 1);
+        let sess = all_sessions.values().next().unwrap();
+        assert_eq!(sess.login, "local:admin");
     }
 }

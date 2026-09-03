@@ -20,6 +20,8 @@ globalThis.switchNote = async function switchNote(sessionId, forceFile = null) {
     }
 
     // Replay history from response
+    if (typeof closeOnlineUsers === 'function') closeOnlineUsers();
+    if (typeof updateOnlineCount === 'function') updateOnlineCount(1, [myNickname].filter(Boolean));
     document.getElementById('chat-messages').innerHTML = '';
     currentAssistantEl = null;
     currentAssistantText = '';
