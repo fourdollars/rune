@@ -83,6 +83,7 @@ function setupSidepanelContext() {
 
   const docListeners = {};
   const documentMock = {
+    title: '',
     getElementById: (id) => getEl(id),
     createElement: (tag) => createMockElement('', tag),
     createTextNode: (txt) => ({ nodeType: 3, textContent: txt }),
@@ -104,6 +105,7 @@ function setupSidepanelContext() {
   };
 
   const storageData = {};
+  const storageListeners = [];
   const sentMessages = [];
   let sseStreams = [];
 
@@ -135,6 +137,13 @@ function setupSidepanelContext() {
       sync: {
         get: async () => ({ serverUrl: 'http://localhost:9527' }),
         set: async () => {},
+      },
+      onChanged: {
+        addListener: (fn) => storageListeners.push(fn),
+        removeListener: (fn) => {
+          const idx = storageListeners.indexOf(fn);
+          if (idx !== -1) storageListeners.splice(idx, 1);
+        },
       },
     },
     runtime: {
@@ -263,8 +272,10 @@ function setupSidepanelContext() {
 
   return {
     context,
+    documentMock,
     elements,
     storageData,
+    storageListeners,
     sentMessages,
     fetchCalls,
     exec: (code) => vm.runInContext(code, context),
@@ -588,6 +599,44 @@ async function runTests() {
     assert.strictEqual(assistantSender, 'ᚱ', 'Assistant message should be labeled ᚱ');
 
     console.log('✓ Test 10 passed: auth_result updates username and renders sender labels');
+  }
+
+  // ── Test 11: Dynamic extension title and Rune title tooltip ────────────────
+  {
+    const fixture = setupSidepanelContext();
+    const { elements, documentMock } = fixture;
+    const $runeTitle = elements['rune-title'];
+
+    fixture.exec(`
+      updateExtensionTitle('http://localhost:9527');
+    `);
+
+    assert.strictEqual(
+      documentMock.title,
+      'ᚱᚢᚾᛖ Chat @ http://localhost:9527',
+      'Document title should be ᚱᚢᚾᛖ Chat @ http://localhost:9527'
+    );
+    assert.strictEqual(
+      $runeTitle.title,
+      'Open http://localhost:9527',
+      'Rune title link tooltip should be Open http://localhost:9527'
+    );
+
+    fixture.exec(`
+      updateExtensionTitle('');
+    `);
+    assert.strictEqual(
+      documentMock.title,
+      'ᚱᚢᚾᛖ Chat',
+      'Document title should fall back to ᚱᚢᚾᛖ Chat when serverUrl is empty'
+    );
+    assert.strictEqual(
+      $runeTitle.title,
+      'Open Rune Notes',
+      'Rune title link tooltip should fall back to Open Rune Notes'
+    );
+
+    console.log('✓ Test 11 passed: extension title updates dynamically with server URL');
   }
 
   console.log("All extension sidepanel tests passed successfully! 🎉");

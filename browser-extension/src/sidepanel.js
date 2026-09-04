@@ -35,6 +35,35 @@ const $archiveModal = document.getElementById('archive-modal');
 const $archiveModalCancel = document.getElementById('archive-modal-cancel');
 const $archiveModalConfirm = document.getElementById('archive-modal-confirm');
 
+function updateExtensionTitle(serverUrl) {
+  const fullTitle = serverUrl ? `ᚱᚢᚾᛖ Chat @ ${serverUrl}` : 'ᚱᚢᚾᛖ Chat';
+  document.title = fullTitle;
+
+  if ($runeTitle) {
+    $runeTitle.title = serverUrl ? `Open ${serverUrl}` : 'Open Rune Notes';
+    $runeTitle.setAttribute('aria-label', $runeTitle.title);
+  }
+
+  if (browser.action?.setTitle) {
+    try { browser.action.setTitle({ title: fullTitle }); } catch (_) {}
+  }
+
+  if (browser.sidebarAction?.setTitle) {
+    try { browser.sidebarAction.setTitle({ title: fullTitle }); } catch (_) {}
+  }
+}
+
+getSyncSettings().then(({ serverUrl }) => {
+  updateExtensionTitle(serverUrl);
+}).catch(() => {});
+
+if (browser.storage?.onChanged) {
+  browser.storage.onChanged.addListener((changes, area) => {
+    if (area === 'sync' && changes.serverUrl) {
+      updateExtensionTitle(changes.serverUrl.newValue);
+    }
+  });
+}
 
 // --- Configure marked (loaded by vendor-bundle.js before this module runs) ---
 function escapeHtml(str) {
@@ -932,6 +961,7 @@ async function loadNoteHistory(noteId) {
 async function checkConfigured() {
   const { serverUrl } = await getSyncSettings();
   const configured = Boolean(serverUrl);
+  updateExtensionTitle(serverUrl);
   $notice.hidden = configured;
   $input.disabled = !configured;
   $form.querySelector('button').disabled = !configured;
@@ -1376,7 +1406,7 @@ document.addEventListener('keydown', (e) => {
   }
 });
 
-// Title click listener: switch to existing Rune server tab or open a new one (or options page if not configured yet)
+// Title click listener: switch to existing Rune Notes tab or open a new one (or options page if not configured yet)
 $runeTitle?.addEventListener('click', async (e) => {
   e.preventDefault();
   const { serverUrl } = await getSyncSettings();

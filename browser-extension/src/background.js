@@ -1,6 +1,6 @@
 // background.js — service worker (Chrome) / event page (Firefox).
 // Owns: OAuth PKCE flow, token storage, context menu registration,
-// message relay between content-script <-> side panel <-> Rune server.
+// message relay between content-script <-> side panel <-> Rune Notes server.
 
 import {
   getSyncSettings,
@@ -35,6 +35,27 @@ if (globalThis.browser?.sidePanel?.setPanelBehavior) {
     .catch((e) => console.warn('[rune-notes] setPanelBehavior failed:', e));
 }
 
+async function updateExtensionTitle(serverUrl) {
+  const title = serverUrl ? `ᚱᚢᚾᛖ Chat @ ${serverUrl}` : 'ᚱᚢᚾᛖ Chat';
+  if (browser.action?.setTitle) {
+    try { await browser.action.setTitle({ title }); } catch (_) {}
+  }
+  if (browser.sidebarAction?.setTitle) {
+    try { await browser.sidebarAction.setTitle({ title }); } catch (_) {}
+  }
+}
+
+getSyncSettings().then(({ serverUrl }) => {
+  updateExtensionTitle(serverUrl);
+}).catch(() => {});
+
+if (browser.storage?.onChanged) {
+  browser.storage.onChanged.addListener((changes, area) => {
+    if (area === 'sync' && changes.serverUrl) {
+      updateExtensionTitle(changes.serverUrl.newValue);
+    }
+  });
+}
 
 browser.runtime.onInstalled.addListener(() => {
   browser.contextMenus.create({
@@ -55,7 +76,7 @@ browser.contextMenus.onClicked.addListener(async (info, tab) => {
 
 /**
  * Full OAuth 2.1 Authorization Code + PKCE flow against the user's own
- * Rune server:
+ * Rune Notes server:
  *   1. Dynamic Client Registration (POST /oauth/register) -> client_id.
  *      Re-registers every login for simplicity (the server is a stateless
  *      "open client" model, so this is cheap and avoids stale-client-id
@@ -73,7 +94,7 @@ browser.contextMenus.onClicked.addListener(async (info, tab) => {
 async function startLogin() {
   const { serverUrl } = await getSyncSettings();
   if (!serverUrl) {
-    throw new Error('Rune Server URL is not set yet — please configure and authorize it on the settings page first');
+    throw new Error('Rune Notes URL is not set yet — please configure and authorize it on the settings page first');
   }
 
   const redirectUri = browser.identity.getRedirectURL();
@@ -113,7 +134,7 @@ async function startLogin() {
 
   await setLocalAuth({
     accessToken: tokenResp.access_token,
-    refreshToken: null, // Rune server does not currently issue refresh tokens.
+    refreshToken: null, // Rune Notes server does not currently issue refresh tokens.
     tokenExpiresAt: Date.now() + (tokenResp.expires_in ?? 3600) * 1000,
     clientId,
   });
@@ -142,7 +163,7 @@ async function doLogout() {
 
   // Also hit /auth/logout via launchWebAuthFlow to clear the server-side Web
   // session cookie (rune_sid), synchronizing the logout between extension
-  // and Rune Server so that the next login prompt properly asks for credentials.
+  // and Rune Notes Server so that the next login prompt properly asks for credentials.
   const { serverUrl } = await getSyncSettings();
   if (serverUrl && browser?.identity?.launchWebAuthFlow && browser?.identity?.getRedirectURL) {
     try {

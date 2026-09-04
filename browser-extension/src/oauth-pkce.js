@@ -30,7 +30,7 @@ export function generateState() {
 }
 
 /**
- * RFC 7591 Dynamic Client Registration against the Rune server.
+ * RFC 7591 Dynamic Client Registration against the Rune Notes server.
  * Rune's /oauth/register accepts any registration (open-client model) and
  * always returns a fresh client_id when none is supplied.
  */

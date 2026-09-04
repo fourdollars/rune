@@ -22,6 +22,7 @@ const TARGETS = {
 
 // Vendor libs bundled into vendor-bundle.js (loaded as a plain <script> in sidepanel.html)
 const VENDOR_BUNDLE = [
+  'vendor/browser-polyfill.min.js',
   'vendor/marked.min.js',
   'vendor/highlight.min.js',
   'vendor/katex.min.js',

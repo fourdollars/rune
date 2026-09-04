@@ -1,6 +1,6 @@
 # Rune Chat Browser Extension
 
-Chat with your own self-hosted Rune server about the page you're
+Chat with your own self-hosted Rune Notes server about the page you're
 currently browsing — right from a Chrome or Firefox side panel.
 
 ## Directory layout
@@ -22,7 +22,7 @@ browser-extension/
     ├─ background.js         Service worker (Chrome) / event page (Firefox): owns the
     │                       OAuth login/logout flow, token storage, context menu,
     │                       side-panel-click behavior, and message relay between the
-    │                       content script, side panel, and the Rune server
+    │                       content script, side panel, and the Rune Notes server
     ├─ content-script.js     Extracts the current page's title/URL/selected-or-full text
     │                       so the AI can answer questions about the page being viewed
     ├─ options.html/.js      Settings page: server URL entry, dynamic host permission
