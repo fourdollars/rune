@@ -47,7 +47,7 @@ function isPaletteChord(event) {
 
 function activatesLikeButton(target) {
     if (!(target instanceof Element)) return null;
-    const node = target.closest('[role="button"]');
+    const node = target.closest('[role="button"], [role="option"]');
     // Resize handles run off mousedown/mouseup and own their key handling.
     if (!node || node.tagName === 'BUTTON' || node.classList.contains('resize-handle')) return null;
     return node;

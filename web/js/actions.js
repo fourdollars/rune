@@ -76,13 +76,18 @@ export function initActions() {
     document.addEventListener('input', event => {
         if (event.target.id === 'file-search-input') renderNoteList();
         if (event.target.id === 'model-search-input') filterModels(event.target.value);
-        if (event.target.id === 'emoji-search-input') filterEmojis(event.target.value.trim().toLowerCase());
+        if (event.target.id === 'emoji-search-input') filterEmojis(event.target.value);
     });
     document.addEventListener('keydown', event => {
         if (event.key === 'Escape') {
             if (typeof closeOnlineUsers === 'function') closeOnlineUsers();
         }
         if (event.key !== 'Enter') return;
+        if (event.target.id === 'emoji-search-input') {
+            event.preventDefault();
+            if (typeof commitEmojiSearch === 'function') commitEmojiSearch(event.target.value);
+            return;
+        }
         if (event.target.matches('[data-action="search-input"]')) doSearch();
         if (event.target.matches('[data-action="dir-path"]')) navigateDir(event.target.value);
     });

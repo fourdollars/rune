@@ -2484,6 +2484,39 @@ body.tree-open #app-scrim {
     background: var(--bg-hover);
     border-color: var(--accent);
 }
+.emoji-custom-preview {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 10px;
+    margin-bottom: 8px;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    cursor: pointer;
+    transition: background 0.15s, border-color 0.15s;
+    box-sizing: border-box;
+}
+.emoji-custom-preview:hover,
+.emoji-custom-preview:focus,
+.emoji-custom-preview.active {
+    background: var(--bg-hover);
+    border-color: var(--accent);
+}
+.emoji-custom-char {
+    font-size: 20px;
+    line-height: 1;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+}
+.emoji-custom-label {
+    font-size: 13px;
+    color: var(--text-primary);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
 .emoji-category-section {
     margin-bottom: 12px;
 }

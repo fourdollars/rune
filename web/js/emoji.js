@@ -119,6 +119,40 @@ globalThis.markSelectedEmoji = function markSelectedEmoji() {
     });
 };
 
+const EMOJI_REGEX = /(\p{Extended_Pictographic}(?:\u200D\p{Extended_Pictographic}|[\uFE0E\uFE0F]|\p{Emoji_Modifier})*|[\u{1F1E6}-\u{1F1FF}]{2})/u;
+
+export function extractCustomEmoji(query) {
+    if (!query) return null;
+    const match = query.match(EMOJI_REGEX);
+    if (match) return match[0];
+    const chars = [...query];
+    if (chars.length === 1 && !/^[a-zA-Z0-9\s]$/.test(query)) {
+        return chars[0];
+    }
+    return null;
+}
+
+function customOption(char) {
+    const item = document.createElement('div');
+    item.className = 'emoji-custom-preview' + (char === selectedNoteIcon ? ' active' : '');
+    item.role = 'option';
+    item.tabIndex = 0;
+    item.setAttribute('aria-selected', String(char === selectedNoteIcon));
+    item.dataset.action = 'select-emoji';
+    item.dataset.emoji = char;
+
+    const iconSpan = document.createElement('span');
+    iconSpan.className = 'emoji-custom-char';
+    iconSpan.textContent = char;
+
+    const textSpan = document.createElement('span');
+    textSpan.className = 'emoji-custom-label';
+    textSpan.textContent = `Use "${char}" as icon`;
+
+    item.append(iconSpan, textSpan);
+    return item;
+}
+
 globalThis.selectEmoji = function selectEmoji(emoji) {
     selectedNoteIcon = emoji;
     renderNoteIconTrigger();
@@ -126,11 +160,12 @@ globalThis.selectEmoji = function selectEmoji(emoji) {
     closeEmojiPicker();
 };
 
-globalThis.filterEmojis = function filterEmojis(query) {
+globalThis.filterEmojis = function filterEmojis(rawQuery) {
     const container = document.getElementById('emoji-categories-container');
     const tabs = document.getElementById('emoji-picker-tabs');
     if (!container) return;
 
+    const query = (rawQuery || '').trim();
     if (!query) {
         if (tabs) tabs.style.display = 'flex';
         initEmojiPicker();
@@ -140,12 +175,31 @@ globalThis.filterEmojis = function filterEmojis(query) {
 
     if (tabs) tabs.style.display = 'none';
     container.replaceChildren();
+
+    const queryLower = query.toLowerCase();
+    const customEmoji = extractCustomEmoji(query);
+
+    if (customEmoji) {
+        container.appendChild(customOption(customEmoji));
+    }
+
     const { wrapper, grid } = section('Search Results');
 
     let count = 0;
+    const seen = new Set();
+    if (customEmoji) {
+        seen.add(customEmoji);
+        grid.appendChild(choice(customEmoji, `Custom: ${customEmoji}`));
+        count++;
+    }
+
     Object.values(EMOJI_CATEGORIES).forEach(category => {
         category.list.forEach(emoji => {
-            if (!emoji.tags.toLowerCase().includes(query)) return;
+            if (seen.has(emoji.char)) return;
+            const matchesChar = emoji.char === query;
+            const matchesTag = emoji.tags.toLowerCase().includes(queryLower);
+            if (!matchesChar && !matchesTag) return;
+            seen.add(emoji.char);
             count++;
             grid.appendChild(choice(emoji.char, emoji.tags));
         });
@@ -158,4 +212,20 @@ globalThis.filterEmojis = function filterEmojis(query) {
         grid.appendChild(noResults);
     }
     container.appendChild(wrapper);
+};
+
+globalThis.commitEmojiSearch = function commitEmojiSearch(rawQuery) {
+    const query = (rawQuery || '').trim();
+    if (!query) return;
+
+    const customEmoji = extractCustomEmoji(query);
+    if (customEmoji) {
+        selectEmoji(customEmoji);
+        return;
+    }
+
+    const firstOption = document.querySelector('#emoji-categories-container [data-action="select-emoji"]');
+    if (firstOption && firstOption.dataset.emoji) {
+        selectEmoji(firstOption.dataset.emoji);
+    }
 };
