@@ -4,24 +4,538 @@
   <meta charset="utf-8" />
   <title>Rune Chat Settings</title>
   <style>
-    body { font-family: system-ui, sans-serif; max-width: 480px; margin: 2rem auto; padding: 0 1rem; }
-    label { display: block; margin-top: 1rem; font-weight: 600; }
-    input[type="url"] { width: 100%; padding: 0.5rem; margin-top: 0.25rem; box-sizing: border-box; }
-    button { margin-top: 1rem; padding: 0.5rem 1rem; }
-    #status { margin-top: 1rem; font-size: 0.9rem; }
+    :root {
+      color-scheme: light dark;
+      --bg-primary: #1e1e2e;
+      --bg-secondary: #181825;
+      --bg-surface: #11111b;
+      --bg-hover: #313244;
+      --text-primary: #cdd6f4;
+      --text-secondary: #a6adc8;
+      --text-muted: #6c7086;
+      --accent: #89b4fa;
+      --accent-hover: #b4befe;
+      --accent-dim: rgba(137, 180, 250, 0.12);
+      --border: #313244;
+      --success: #a6e3a1;
+      --success-bg: rgba(166, 227, 161, 0.15);
+      --warning: #f9e2af;
+      --warning-bg: rgba(249, 226, 175, 0.15);
+      --error: #f38ba8;
+      --error-bg: rgba(243, 139, 168, 0.15);
+      --font-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+      --radius: 8px;
+    }
+
+    @media (prefers-color-scheme: light) {
+      :root {
+        --bg-primary: #f6f8fa;
+        --bg-secondary: #ffffff;
+        --bg-surface: #eaeef2;
+        --bg-hover: #dde1e5;
+        --text-primary: #24292e;
+        --text-secondary: #57606a;
+        --text-muted: #8c959f;
+        --accent: #0969da;
+        --accent-hover: #0860ca;
+        --accent-dim: rgba(9, 105, 218, 0.08);
+        --border: #d0d7de;
+        --success: #1a7f37;
+        --success-bg: rgba(26, 127, 55, 0.1);
+        --warning: #9a6700;
+        --warning-bg: rgba(154, 103, 0, 0.1);
+        --error: #cf222e;
+        --error-bg: rgba(207, 34, 46, 0.1);
+      }
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: var(--font-sans);
+      background: var(--bg-primary);
+      color: var(--text-primary);
+      max-width: 640px;
+      margin: 2rem auto;
+      padding: 0 1.25rem 3rem;
+      line-height: 1.5;
+    }
+
+    .header-title {
+      font-size: 1.5rem;
+      font-weight: 700;
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      margin-bottom: 0.25rem;
+    }
+
+    .rune-rainbow {
+      background: linear-gradient(90deg, #ff6b6b, #ffa94d, #ffd43b, #69db7c, #4dabf7, #9775fa);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+
+    .header-desc {
+      color: var(--text-secondary);
+      font-size: 0.9rem;
+      margin-bottom: 1.5rem;
+    }
+
+    .section {
+      background: var(--bg-secondary);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 1.25rem;
+      margin-bottom: 1.25rem;
+    }
+
+    .section-title {
+      font-size: 1.05rem;
+      font-weight: 600;
+      margin-bottom: 0.75rem;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    /* Server Cards */
+    .server-list {
+      display: flex;
+      flex-direction: column;
+      gap: 0.5rem;
+    }
+
+    .server-card {
+      background: var(--bg-surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 0.6rem 0.85rem;
+      display: flex;
+      flex-direction: column;
+      gap: 0.35rem;
+      transition: border-color 0.15s ease, background 0.15s ease, transform 0.15s ease, opacity 0.15s ease;
+      position: relative;
+    }
+
+    .server-card.active {
+      border-color: var(--accent);
+      background: var(--accent-dim);
+    }
+
+    .server-card.dragging {
+      opacity: 0.35;
+      border: 1px dashed var(--accent);
+      transform: scale(0.98);
+    }
+
+    .drag-handle {
+      cursor: grab;
+      color: var(--text-muted);
+      font-size: 1.05rem;
+      line-height: 1;
+      padding: 0 2px;
+      user-select: none;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      transition: color 0.15s ease;
+    }
+
+    .drag-handle:hover {
+      color: var(--text-primary);
+    }
+
+    .drag-handle:active {
+      cursor: grabbing;
+    }
+
+    .server-card-top {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 0.5rem;
+    }
+
+    .server-name-row {
+      display: flex;
+      align-items: center;
+      gap: 0.35rem;
+      min-width: 0;
+      flex: 1;
+    }
+
+    .server-name {
+      font-weight: 600;
+      font-size: 0.9rem;
+      color: var(--text-primary);
+      cursor: pointer;
+      transition: color 0.15s ease;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .server-name:hover {
+      color: var(--accent);
+    }
+
+    .btn-icon {
+      background: transparent;
+      border: 1px solid transparent;
+      cursor: pointer;
+      color: var(--text-muted);
+      font-size: 0.8rem;
+      padding: 1px 3px;
+      border-radius: 4px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      transition: all 0.15s ease;
+      flex-shrink: 0;
+    }
+
+    .btn-icon svg {
+      width: 13px;
+      height: 13px;
+    }
+
+    .btn-icon:hover {
+      color: var(--accent);
+      background: var(--bg-hover);
+      border-color: var(--border);
+    }
+
+    .edit-name-box {
+      display: flex;
+      align-items: center;
+      gap: 0.3rem;
+      width: 100%;
+    }
+
+    .input-rename {
+      flex: 1;
+      padding: 0.2rem 0.4rem;
+      font-size: 0.82rem;
+      border: 1px solid var(--accent);
+      border-radius: 4px;
+      background: var(--bg-surface);
+      color: var(--text-primary);
+      outline: none;
+    }
+
+    .badge {
+      font-size: 0.65rem;
+      font-weight: 600;
+      padding: 1px 5px;
+      border-radius: 9999px;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      flex-shrink: 0;
+    }
+
+    .badge-active {
+      background: var(--accent);
+      color: #ffffff;
+    }
+
+    .status-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.25rem;
+      font-size: 0.72rem;
+      font-weight: 500;
+      padding: 1px 6px;
+      border-radius: 9999px;
+      white-space: nowrap;
+      flex-shrink: 0;
+    }
+
+    .status-pill.logged-in {
+      background: var(--success-bg);
+      color: var(--success);
+    }
+
+    .status-pill.logged-out {
+      background: var(--warning-bg);
+      color: var(--warning);
+    }
+
+    .server-card-bottom {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 0.5rem;
+    }
+
+    .server-url {
+      font-size: 0.8rem;
+      color: var(--text-secondary);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      min-width: 0;
+      flex: 1;
+      margin: 0;
+    }
+
+    .server-actions {
+      display: flex;
+      align-items: center;
+      gap: 0.3rem;
+      flex-shrink: 0;
+    }
+
+    .btn-icon-action {
+      background: var(--bg-secondary);
+      border: 1px solid var(--border);
+      color: var(--text-secondary);
+      width: 26px;
+      height: 26px;
+      border-radius: 5px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      transition: all 0.15s ease;
+      padding: 0;
+      flex-shrink: 0;
+    }
+
+    .btn-icon-action svg {
+      width: 13px;
+      height: 13px;
+    }
+
+    .btn-icon-action:hover:not(:disabled) {
+      background: var(--bg-hover);
+      color: var(--text-primary);
+      border-color: var(--accent);
+    }
+
+    .btn-icon-action:disabled {
+      opacity: 0.6;
+      cursor: default;
+    }
+
+    .btn-icon-action.btn-activate-active {
+      background: var(--accent);
+      color: #ffffff;
+      border-color: var(--accent);
+    }
+
+    .btn-icon-action.btn-login {
+      background: var(--accent);
+      color: #ffffff;
+      border-color: var(--accent);
+    }
+
+    .btn-icon-action.btn-login:hover:not(:disabled) {
+      background: var(--accent-hover);
+      border-color: var(--accent-hover);
+    }
+
+    .btn-icon-action.btn-delete:hover:not(:disabled) {
+      background: var(--error-bg);
+      color: var(--error);
+      border-color: var(--error);
+    }
+
+    /* General Buttons */
+    .btn {
+      font-family: inherit;
+      font-size: 0.8rem;
+      font-weight: 500;
+      padding: 0.35rem 0.7rem;
+      border-radius: 6px;
+      border: 1px solid transparent;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 0.35rem;
+      transition: all 0.15s ease;
+    }
+
+    .btn:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+
+    .btn-primary {
+      background: var(--accent);
+      color: #ffffff;
+      border-color: var(--accent);
+    }
+
+    .btn-primary:hover:not(:disabled) {
+      background: var(--accent-hover);
+      border-color: var(--accent-hover);
+    }
+
+    .btn-secondary {
+      background: var(--bg-surface);
+      color: var(--text-primary);
+      border-color: var(--border);
+    }
+
+    .btn-secondary:hover:not(:disabled) {
+      background: var(--bg-hover);
+    }
+
+    .btn-sm {
+      font-size: 0.75rem;
+      padding: 0.2rem 0.5rem;
+    }
+
+    .btn-danger {
+      background: transparent;
+      color: var(--error);
+      border-color: var(--border);
+      margin-left: auto;
+    }
+
+    .btn-danger:hover:not(:disabled) {
+      background: var(--error-bg);
+      border-color: var(--error);
+    }
+
+    /* Forms */
+    .form-group {
+      margin-bottom: 0.75rem;
+    }
+
+    .form-group label {
+      display: block;
+      font-size: 0.82rem;
+      font-weight: 600;
+      margin-bottom: 0.3rem;
+      color: var(--text-secondary);
+    }
+
+    .form-group input[type="text"],
+    .form-group input[type="url"] {
+      width: 100%;
+      padding: 0.45rem 0.65rem;
+      font-size: 0.88rem;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      background: var(--bg-surface);
+      color: var(--text-primary);
+      box-sizing: border-box;
+      outline: none;
+      transition: border-color 0.15s ease;
+    }
+
+    .form-group input:focus {
+      border-color: var(--accent);
+    }
+
+    .form-checkbox {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      font-size: 0.82rem;
+      color: var(--text-secondary);
+      margin-bottom: 0.9rem;
+      cursor: pointer;
+    }
+
+    .form-checkbox input {
+      cursor: pointer;
+    }
+
+    .form-actions {
+      display: flex;
+      gap: 0.6rem;
+      align-items: center;
+    }
+
+    .empty-state {
+      padding: 1.5rem 1rem;
+      text-align: center;
+      color: var(--text-muted);
+      font-size: 0.88rem;
+      border: 1px dashed var(--border);
+      border-radius: var(--radius);
+    }
+
+    #status-banner {
+      margin-top: 1rem;
+      padding: 0.65rem 0.9rem;
+      border-radius: 6px;
+      font-size: 0.88rem;
+      line-height: 1.4;
+      display: none;
+    }
+
+    #status-banner.show {
+      display: block;
+    }
+
+    #status-banner.success {
+      background: var(--success-bg);
+      color: var(--success);
+      border: 1px solid var(--success);
+    }
+
+    #status-banner.warning {
+      background: var(--warning-bg);
+      color: var(--warning);
+      border: 1px solid var(--warning);
+    }
+
+    #status-banner.error {
+      background: var(--error-bg);
+      color: var(--error);
+      border: 1px solid var(--error);
+    }
   </style>
 </head>
 <body>
-  <h1>Rune Chat Settings</h1>
-  <p>Enter the URL of your own Rune Notes server (no default value; other features stay disabled until this is set).</p>
+  <div class="header-title">
+    <span class="rune-rainbow">ᚱᚢᚾᛖ</span> Chat Settings
+  </div>
+  <p class="header-desc">Manage your Rune Notes servers, switch between them, and authorize OAuth access.</p>
 
-  <label for="serverUrl">Rune Notes URL</label>
-  <input type="url" id="serverUrl" placeholder="https://rune.example.com" />
+  <!-- Server Cards List -->
+  <div class="section">
+    <div class="section-title">
+      <span>Configured Servers</span>
+    </div>
+    <div id="server-list" class="server-list"></div>
+    <div id="empty-state" class="empty-state" style="display: none;">
+      No Rune Notes servers configured yet. Add your first server below.
+    </div>
+  </div>
 
-  <button id="save">Save &amp; Log In</button>
-  <button id="logout" disabled hidden>Log Out</button>
+  <!-- Add Server Section -->
+  <div class="section">
+    <div class="section-title">Add New Server</div>
+    <form id="add-server-form">
+      <div class="form-group">
+        <label for="serverName">Server Name (optional)</label>
+        <input type="text" id="serverName" placeholder="e.g. Local Dev, Home Lab, Production" autocomplete="off" />
+      </div>
 
-  <div id="status"></div>
+      <div class="form-group">
+        <label for="serverUrl">Rune Notes URL *</label>
+        <input type="url" id="serverUrl" placeholder="https://notes.example.com" required autocomplete="off" />
+      </div>
+
+      <label class="form-checkbox">
+        <input type="checkbox" id="setAsActive" checked />
+        <span>Set as active server immediately</span>
+      </label>
+
+      <div class="form-actions">
+        <button type="submit" id="btnAddAndLogin" class="btn btn-primary">Add &amp; Log In</button>
+        <button type="button" id="btnAddOnly" class="btn btn-secondary">Add Only</button>
+      </div>
+    </form>
+  </div>
+
+  <div id="status-banner" role="alert"></div>
 
   <script src="../vendor/browser-polyfill.min.js"></script>
   <script type="module" src="options.js"></script>

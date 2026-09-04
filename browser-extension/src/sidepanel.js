@@ -35,12 +35,14 @@ const $archiveModal = document.getElementById('archive-modal');
 const $archiveModalCancel = document.getElementById('archive-modal-cancel');
 const $archiveModalConfirm = document.getElementById('archive-modal-confirm');
 
-function updateExtensionTitle(serverUrl) {
-  const fullTitle = serverUrl ? `ᚱᚢᚾᛖ Chat @ ${serverUrl}` : 'ᚱᚢᚾᛖ Chat';
+function updateExtensionTitle(serverUrl, serverName) {
+  const displayName = (serverName && serverName.trim()) ? serverName.trim() : (serverUrl || '');
+  const fullTitle = displayName ? `ᚱᚢᚾᛖ Chat @ ${displayName}` : 'ᚱᚢᚾᛖ Chat';
   document.title = fullTitle;
 
   if ($runeTitle) {
-    $runeTitle.title = serverUrl ? `Open ${serverUrl}` : 'Open Rune Notes';
+    const tooltipTarget = serverUrl ? `${serverUrl}${serverName && serverName !== serverUrl ? ` (${serverName})` : ''}` : 'Rune Notes';
+    $runeTitle.title = `Open ${tooltipTarget}`;
     $runeTitle.setAttribute('aria-label', $runeTitle.title);
   }
 
@@ -53,14 +55,28 @@ function updateExtensionTitle(serverUrl) {
   }
 }
 
-getSyncSettings().then(({ serverUrl }) => {
-  updateExtensionTitle(serverUrl);
-}).catch(() => {});
+async function refreshExtensionTitle() {
+  const syncSettings = await getSyncSettings();
+  const serverUrl = syncSettings.serverUrl;
+  const servers = Array.isArray(syncSettings.servers) ? syncSettings.servers : [];
+  const found = servers.find((s) => s.url === serverUrl);
+  const serverName = found?.name || '';
+  updateExtensionTitle(serverUrl, serverName);
+}
+
+refreshExtensionTitle().catch(() => {});
 
 if (browser.storage?.onChanged) {
   browser.storage.onChanged.addListener((changes, area) => {
-    if (area === 'sync' && changes.serverUrl) {
-      updateExtensionTitle(changes.serverUrl.newValue);
+    if (area === 'sync') {
+      if (changes.serverUrl || changes.servers) {
+        refreshExtensionTitle().catch(() => {});
+      }
+      if (changes.serverUrl) {
+        activeNoteId = '';
+        cachedNotes = [];
+        initOrReconnect();
+      }
     }
   });
 }
@@ -704,7 +720,15 @@ function setActiveNote(noteId, noteName) {
     $currentNoteName.textContent = label;
     $currentNoteName.title = label;
   }
-  browser.storage.local.set({ lastSelectedNote: noteId }).catch(() => {});
+  getSyncSettings().then(({ serverUrl }) => {
+    const payload = { lastSelectedNote: noteId };
+    if (serverUrl) {
+      payload[`rune_last_note_${serverUrl}`] = noteId;
+    }
+    browser.storage.local.set(payload).catch(() => {});
+  }).catch(() => {
+    browser.storage.local.set({ lastSelectedNote: noteId }).catch(() => {});
+  });
   renderNoteDropdown();
 }
 
@@ -743,7 +767,11 @@ async function fetchNoteListAndRecover(preferredNoteId) {
     const data = await resp.json();
     if (data.ok && Array.isArray(data.notes) && data.notes.length > 0) {
       cachedNotes = data.notes;
-      browser.storage.local.set({ rune_cached_notes: data.notes }).catch(() => {});
+      const payload = { rune_cached_notes: data.notes };
+      if (serverUrl) {
+        payload[`rune_cached_notes_${serverUrl}`] = data.notes;
+      }
+      browser.storage.local.set(payload).catch(() => {});
       const target = (preferredNoteId && data.notes.find((n) => n.id === preferredNoteId))
         ? preferredNoteId
         : data.notes[0].id;
@@ -761,12 +789,24 @@ let currentLoadedHistoryRaw = null;
 async function saveHistoryCache(noteId, messages) {
   if (!noteId || !Array.isArray(messages)) return;
   try {
-    await browser.storage.local.set({ [`rune_cached_history_${noteId}`]: messages });
+    const { serverUrl } = await getSyncSettings();
+    const payload = { [`rune_cached_history_${noteId}`]: messages };
+    if (serverUrl) {
+      payload[`rune_cached_history_${serverUrl}_${noteId}`] = messages;
+    }
+    await browser.storage.local.set(payload);
   } catch {}
 }
 
 async function restoreCachedState(noteId) {
   try {
+    const { serverUrl } = await getSyncSettings();
+    const serverKeyHistory = serverUrl ? `rune_cached_history_${serverUrl}_${noteId}` : null;
+    const serverKeyModels = serverUrl ? `rune_cached_models_${serverUrl}` : null;
+    const serverKeyNotes = serverUrl ? `rune_cached_notes_${serverUrl}` : null;
+    const serverKeyModel = serverUrl ? `rune_model_${serverUrl}_${noteId}` : null;
+    const serverKeyThinking = serverUrl ? `rune_thinking_${serverUrl}_${noteId}` : null;
+
     const keys = [
       `rune_cached_history_${noteId}`,
       'rune_cached_models',
@@ -774,23 +814,33 @@ async function restoreCachedState(noteId) {
       `rune_model_${noteId}`,
       `rune_thinking_${noteId}`,
     ];
+    if (serverKeyHistory) keys.push(serverKeyHistory);
+    if (serverKeyModels) keys.push(serverKeyModels);
+    if (serverKeyNotes) keys.push(serverKeyNotes);
+    if (serverKeyModel) keys.push(serverKeyModel);
+    if (serverKeyThinking) keys.push(serverKeyThinking);
+
     const cached = await browser.storage.local.get(keys);
-    if (Array.isArray(cached.rune_cached_models) && cached.rune_cached_models.length) {
-      availableModels = cached.rune_cached_models;
+    const models = (serverKeyModels && cached[serverKeyModels]) || cached.rune_cached_models;
+    if (Array.isArray(models) && models.length) {
+      availableModels = models;
     }
-    if (cached[`rune_model_${noteId}`]) {
-      activeModel = cached[`rune_model_${noteId}`];
+    const model = (serverKeyModel && cached[serverKeyModel]) || cached[`rune_model_${noteId}`];
+    if (model) {
+      activeModel = model;
     }
-    if (cached[`rune_thinking_${noteId}`]) {
-      currentThinking = cached[`rune_thinking_${noteId}`];
+    const thinking = (serverKeyThinking && cached[serverKeyThinking]) || cached[`rune_thinking_${noteId}`];
+    if (thinking) {
+      currentThinking = thinking;
     }
-    if (Array.isArray(cached.rune_cached_notes) && cached.rune_cached_notes.length) {
-      populateNoteList(cached.rune_cached_notes, noteId);
+    const notes = (serverKeyNotes && cached[serverKeyNotes]) || cached.rune_cached_notes;
+    if (Array.isArray(notes) && notes.length) {
+      populateNoteList(notes, noteId);
     }
     updateModelIndicator();
     updateThinkingSelect();
 
-    const history = cached[`rune_cached_history_${noteId}`];
+    const history = (serverKeyHistory && cached[serverKeyHistory]) || cached[`rune_cached_history_${noteId}`];
     if (Array.isArray(history) && history.length) {
       currentLoadedHistoryRaw = JSON.stringify(history);
       replayHistory(history, false);
@@ -937,7 +987,11 @@ async function loadNoteHistory(noteId) {
         activeModel = resp.data.current_model;
         updateModelIndicator();
         updateThinkingSelect();
-        browser.storage.local.set({ [`rune_model_${noteId}`]: activeModel }).catch(() => {});
+        getSyncSettings().then(({ serverUrl }) => {
+          const payload = { [`rune_model_${noteId}`]: activeModel };
+          if (serverUrl) payload[`rune_model_${serverUrl}_${noteId}`] = activeModel;
+          browser.storage.local.set(payload).catch(() => {});
+        }).catch(() => {});
       }
       if (resp.data.history?.length) {
         historyLoaded = true;
@@ -946,7 +1000,11 @@ async function loadNoteHistory(noteId) {
         historyLoaded = true; // no history — mark loaded so we don't retry
         $messages.innerHTML = '';
         currentLoadedHistoryRaw = null;
-        browser.storage.local.remove(`rune_cached_history_${noteId}`).catch(() => {});
+        getSyncSettings().then(({ serverUrl }) => {
+          const keys = [`rune_cached_history_${noteId}`];
+          if (serverUrl) keys.push(`rune_cached_history_${serverUrl}_${noteId}`);
+          browser.storage.local.remove(keys).catch(() => {});
+        }).catch(() => {});
       }
     }
   } catch (e) {
@@ -961,7 +1019,7 @@ async function loadNoteHistory(noteId) {
 async function checkConfigured() {
   const { serverUrl } = await getSyncSettings();
   const configured = Boolean(serverUrl);
-  updateExtensionTitle(serverUrl);
+  await refreshExtensionTitle();
   $notice.hidden = configured;
   $input.disabled = !configured;
   $form.querySelector('button').disabled = !configured;
@@ -1155,7 +1213,11 @@ function handleSseEvent(rec) {
       const errMsg = payload.message ?? 'unknown error';
       if (errMsg.includes('Note not found') || errMsg.includes('note_id is required')) {
         const staleId = activeNoteId;
-        browser.storage.local.remove('lastSelectedNote').catch(() => {});
+        getSyncSettings().then(({ serverUrl }) => {
+          const keys = ['lastSelectedNote'];
+          if (serverUrl) keys.push(`rune_last_note_${serverUrl}`);
+          browser.storage.local.remove(keys).catch(() => {});
+        }).catch(() => {});
         activeNoteId = '';
         fetchNoteListAndRecover().then((targetNoteId) => {
           if (targetNoteId) {
@@ -1182,7 +1244,11 @@ function handleSseEvent(rec) {
       const authMsg = payload.message ?? 'unauthorized';
       if (authMsg.includes('private') || authMsg.includes('Guests cannot access private notes')) {
         const staleId = activeNoteId;
-        browser.storage.local.remove('lastSelectedNote').catch(() => {});
+        getSyncSettings().then(({ serverUrl }) => {
+          const keys = ['lastSelectedNote'];
+          if (serverUrl) keys.push(`rune_last_note_${serverUrl}`);
+          browser.storage.local.remove(keys).catch(() => {});
+        }).catch(() => {});
         activeNoteId = '';
         fetchNoteListAndRecover().then((targetNoteId) => {
           if (targetNoteId) {
@@ -1201,28 +1267,51 @@ function handleSseEvent(rec) {
     case 'model_list':
       if (Array.isArray(payload.models)) {
         availableModels = payload.models;
-        browser.storage.local.set({ rune_cached_models: availableModels }).catch(() => {});
       }
       if (payload.active) {
         activeModel = payload.active;
-        browser.storage.local.set({ [`rune_model_${activeNoteId}`]: activeModel }).catch(() => {});
       }
       if (payload.thinking) {
         currentThinking = payload.thinking;
-        browser.storage.local.set({ [`rune_thinking_${activeNoteId}`]: currentThinking }).catch(() => {});
       }
+      getSyncSettings().then(({ serverUrl }) => {
+        const p = {};
+        if (Array.isArray(payload.models)) {
+          p.rune_cached_models = payload.models;
+          if (serverUrl) p[`rune_cached_models_${serverUrl}`] = payload.models;
+        }
+        if (payload.active) {
+          p[`rune_model_${activeNoteId}`] = payload.active;
+          if (serverUrl) p[`rune_model_${serverUrl}_${activeNoteId}`] = payload.active;
+        }
+        if (payload.thinking) {
+          p[`rune_thinking_${activeNoteId}`] = payload.thinking;
+          if (serverUrl) p[`rune_thinking_${serverUrl}_${activeNoteId}`] = payload.thinking;
+        }
+        browser.storage.local.set(p).catch(() => {});
+      }).catch(() => {});
       updateModelIndicator();
       updateThinkingSelect();
       break;
     case 'model_changed':
       if (payload.model) {
         activeModel = payload.model;
-        browser.storage.local.set({ [`rune_model_${activeNoteId}`]: activeModel }).catch(() => {});
       }
       if (payload.thinking) {
         currentThinking = payload.thinking;
-        browser.storage.local.set({ [`rune_thinking_${activeNoteId}`]: currentThinking }).catch(() => {});
       }
+      getSyncSettings().then(({ serverUrl }) => {
+        const p = {};
+        if (payload.model) {
+          p[`rune_model_${activeNoteId}`] = payload.model;
+          if (serverUrl) p[`rune_model_${serverUrl}_${activeNoteId}`] = payload.model;
+        }
+        if (payload.thinking) {
+          p[`rune_thinking_${activeNoteId}`] = payload.thinking;
+          if (serverUrl) p[`rune_thinking_${serverUrl}_${activeNoteId}`] = payload.thinking;
+        }
+        browser.storage.local.set(p).catch(() => {});
+      }).catch(() => {});
       updateModelIndicator();
       updateThinkingSelect();
       appendSystem(`Model switched to: ${activeModel} ${currentThinking}`);
@@ -1236,7 +1325,11 @@ function handleSseEvent(rec) {
     case 'thinking_changed':
       if (payload.thinking) {
         currentThinking = payload.thinking;
-        browser.storage.local.set({ [`rune_thinking_${activeNoteId}`]: currentThinking }).catch(() => {});
+        getSyncSettings().then(({ serverUrl }) => {
+          const p = { [`rune_thinking_${activeNoteId}`]: payload.thinking };
+          if (serverUrl) p[`rune_thinking_${serverUrl}_${activeNoteId}`] = payload.thinking;
+          browser.storage.local.set(p).catch(() => {});
+        }).catch(() => {});
       }
       updateThinkingSelect();
       appendSystem(`Model switched to: ${activeModel} ${currentThinking}`);
@@ -1244,7 +1337,11 @@ function handleSseEvent(rec) {
     case 'archive_done':
       $messages.innerHTML = '';
       currentLoadedHistoryRaw = null;
-      browser.storage.local.remove(`rune_cached_history_${activeNoteId}`).catch(() => {});
+      getSyncSettings().then(({ serverUrl }) => {
+        const keys = [`rune_cached_history_${activeNoteId}`];
+        if (serverUrl) keys.push(`rune_cached_history_${serverUrl}_${activeNoteId}`);
+        browser.storage.local.remove(keys).catch(() => {});
+      }).catch(() => {});
       appendSystem('Chat archived.');
       {
         const overlay = document.getElementById('context-overlay');
@@ -1254,7 +1351,11 @@ function handleSseEvent(rec) {
     case 'note_list':
       // Populate the note switcher dropdown and update the header badge.
       if (Array.isArray(payload.notes)) {
-        browser.storage.local.set({ rune_cached_notes: payload.notes }).catch(() => {});
+        getSyncSettings().then(({ serverUrl }) => {
+          const p = { rune_cached_notes: payload.notes };
+          if (serverUrl) p[`rune_cached_notes_${serverUrl}`] = payload.notes;
+          browser.storage.local.set(p).catch(() => {});
+        }).catch(() => {});
         populateNoteList(payload.notes, payload.active);
       }
       break;
@@ -1285,7 +1386,11 @@ async function startSseSubscription(noteId) {
   sseAbortController?.abort();
   sseAbortController = new AbortController();
   activeNoteId = noteId ?? activeNoteId;
-  browser.storage.local.set({ lastSelectedNote: activeNoteId }).catch(() => {});
+  const payload = { lastSelectedNote: activeNoteId };
+  if (serverUrl) {
+    payload[`rune_last_note_${serverUrl}`] = activeNoteId;
+  }
+  browser.storage.local.set(payload).catch(() => {});
 
   try {
     await subscribeEvents({
@@ -1530,8 +1635,10 @@ initChatInputResize(document.getElementById('chat-input-resizer'), $input);
 
 setStatus('disconnected');
 
-checkConfigured().then(async (configured) => {
+async function initOrReconnect() {
+  const configured = await checkConfigured();
   if (configured) {
+    const { serverUrl } = await getSyncSettings();
     try {
       const resp = await apiFetch('/api/me');
       if (resp?.ok) {
@@ -1542,17 +1649,29 @@ checkConfigured().then(async (configured) => {
       }
     } catch (_) {}
 
-    const { lastSelectedNote, rune_cached_notes } = await browser.storage.local.get([
-      'lastSelectedNote',
-      'rune_cached_notes',
-    ]);
-    if (Array.isArray(rune_cached_notes) && rune_cached_notes.length > 0) {
-      cachedNotes = rune_cached_notes;
+    const serverKeyNote = serverUrl ? `rune_last_note_${serverUrl}` : null;
+    const serverKeyCachedNotes = serverUrl ? `rune_cached_notes_${serverUrl}` : null;
+    const keys = ['lastSelectedNote', 'rune_cached_notes'];
+    if (serverKeyNote) keys.push(serverKeyNote);
+    if (serverKeyCachedNotes) keys.push(serverKeyCachedNotes);
+
+    const localData = await browser.storage.local.get(keys);
+    const targetPrefNote = (serverKeyNote && localData[serverKeyNote]) || localData.lastSelectedNote || null;
+    const initialNotes = (serverKeyCachedNotes && localData[serverKeyCachedNotes]) || localData.rune_cached_notes;
+    if (Array.isArray(initialNotes) && initialNotes.length > 0) {
+      cachedNotes = initialNotes;
+    } else {
+      cachedNotes = [];
     }
 
-    // Validate and refresh note list via REST first; falls back to first available note
-    const recoveredNote = await fetchNoteListAndRecover(lastSelectedNote);
-    const noteToUse = recoveredNote || (cachedNotes.length > 0 ? cachedNotes[0].id : (lastSelectedNote || 'default'));
+    // Validate and refresh note list via REST first; falls back to preferred note, or first available note
+    const recoveredNote = await fetchNoteListAndRecover(targetPrefNote);
+    const noteToUse = recoveredNote || (cachedNotes.length > 0 ? cachedNotes[0].id : (targetPrefNote || 'default'));
     switchToNote(noteToUse);
+  } else {
+    $messages.innerHTML = '';
+    setStatus('disconnected');
   }
-});
+}
+
+initOrReconnect();

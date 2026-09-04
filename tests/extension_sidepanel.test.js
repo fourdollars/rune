@@ -105,6 +105,7 @@ function setupSidepanelContext() {
   };
 
   const storageData = {};
+  const syncStorageData = { serverUrl: 'http://localhost:9527' };
   const storageListeners = [];
   const sentMessages = [];
   let sseStreams = [];
@@ -135,8 +136,27 @@ function setupSidepanelContext() {
         },
       },
       sync: {
-        get: async () => ({ serverUrl: 'http://localhost:9527' }),
-        set: async () => {},
+        get: async (keys) => {
+          if (typeof keys === 'string') {
+            return { [keys]: syncStorageData[keys] };
+          }
+          if (Array.isArray(keys)) {
+            const res = {};
+            keys.forEach((k) => { res[k] = syncStorageData[k]; });
+            return res;
+          }
+          return { ...syncStorageData };
+        },
+        set: async (obj) => {
+          Object.assign(syncStorageData, obj);
+        },
+        remove: async (key) => {
+          if (Array.isArray(key)) {
+            key.forEach((k) => delete syncStorageData[k]);
+          } else {
+            delete syncStorageData[key];
+          }
+        },
       },
       onChanged: {
         addListener: (fn) => storageListeners.push(fn),
@@ -248,7 +268,7 @@ function setupSidepanelContext() {
     fetch: fetchMock,
     marked: markedMock,
     DOMParser: DOMParserMock,
-    getSyncSettings: async () => ({ serverUrl: 'http://localhost:9527' }),
+    getSyncSettings: async () => ({ serverUrl: syncStorageData.serverUrl || 'http://localhost:9527' }),
     getLocalAuth: async () => ({ accessToken: 'test-token' }),
     setTimeout,
     clearTimeout,
@@ -272,9 +292,11 @@ function setupSidepanelContext() {
 
   return {
     context,
+    browserMock,
     documentMock,
     elements,
     storageData,
+    syncStorageData,
     storageListeners,
     sentMessages,
     fetchCalls,
@@ -608,27 +630,36 @@ async function runTests() {
     const $runeTitle = elements['rune-title'];
 
     fixture.exec(`
-      updateExtensionTitle('http://localhost:9527');
+      updateExtensionTitle('http://localhost:9527', 'Local Dev');
     `);
 
     assert.strictEqual(
       documentMock.title,
-      'ᚱᚢᚾᛖ Chat @ http://localhost:9527',
-      'Document title should be ᚱᚢᚾᛖ Chat @ http://localhost:9527'
+      'ᚱᚢᚾᛖ Chat @ Local Dev',
+      'Document title should be ᚱᚢᚾᛖ Chat @ Local Dev'
     );
     assert.strictEqual(
       $runeTitle.title,
-      'Open http://localhost:9527',
-      'Rune title link tooltip should be Open http://localhost:9527'
+      'Open http://localhost:9527 (Local Dev)',
+      'Rune title link tooltip should include server name'
     );
 
     fixture.exec(`
-      updateExtensionTitle('');
+      updateExtensionTitle('http://localhost:9527', '');
+    `);
+    assert.strictEqual(
+      documentMock.title,
+      'ᚱᚢᚾᛖ Chat @ http://localhost:9527',
+      'Document title should fall back to URL when serverName is empty'
+    );
+
+    fixture.exec(`
+      updateExtensionTitle('', '');
     `);
     assert.strictEqual(
       documentMock.title,
       'ᚱᚢᚾᛖ Chat',
-      'Document title should fall back to ᚱᚢᚾᛖ Chat when serverUrl is empty'
+      'Document title should fall back to ᚱᚢᚾᛖ Chat when serverUrl and serverName are empty'
     );
     assert.strictEqual(
       $runeTitle.title,
@@ -636,7 +667,122 @@ async function runTests() {
       'Rune title link tooltip should fall back to Open Rune Notes'
     );
 
-    console.log('✓ Test 11 passed: extension title updates dynamically with server URL');
+    console.log('✓ Test 11 passed: extension title updates dynamically with Server Name');
+  }
+
+  // ── Test 12: Multi-server helpers in common.js ────────────────────────────
+  {
+    const fixture = setupSidepanelContext();
+    globalThis.browser = fixture.browserMock;
+
+    const commonPath = path.resolve(__dirname, '../browser-extension/src/common.js');
+    const commonModule = await import(commonPath);
+
+    // Initial state: serverUrl is http://localhost:9527, servers list should migrate
+    const servers = await commonModule.getServers();
+    assert.strictEqual(servers.length, 1);
+    assert.strictEqual(servers[0].url, 'http://localhost:9527');
+
+    // Add a new server
+    await commonModule.saveServer({
+      name: 'Production Notes',
+      url: 'https://notes.example.com',
+      setActive: true,
+    });
+
+    const updatedServers = await commonModule.getServers();
+    assert.strictEqual(updatedServers.length, 2);
+    assert.strictEqual(await commonModule.getActiveServerUrl(), 'https://notes.example.com');
+
+    // Rename server
+    const renamed = await commonModule.updateServerName('https://notes.example.com', 'Prod Cloud');
+    assert.strictEqual(renamed.name, 'Prod Cloud');
+    const activeServer = await commonModule.getActiveServer();
+    assert.strictEqual(activeServer.name, 'Prod Cloud');
+
+    // Per-server auth storage
+    await commonModule.setLocalAuth({ accessToken: 'prod-token-123' }, 'https://notes.example.com');
+    await commonModule.setLocalAuth({ accessToken: 'local-token-456' }, 'http://localhost:9527');
+
+    const prodAuth = await commonModule.getLocalAuth('https://notes.example.com');
+    assert.strictEqual(prodAuth.accessToken, 'prod-token-123');
+
+    const localAuth = await commonModule.getLocalAuth('http://localhost:9527');
+    assert.strictEqual(localAuth.accessToken, 'local-token-456');
+
+    // Active switch
+    await commonModule.setActiveServer('http://localhost:9527');
+    assert.strictEqual(await commonModule.getActiveServerUrl(), 'http://localhost:9527');
+    const currentActiveAuth = await commonModule.getLocalAuth();
+    assert.strictEqual(currentActiveAuth.accessToken, 'local-token-456');
+
+    // Add third server and test reordering
+    await commonModule.saveServer({
+      name: 'Staging Notes',
+      url: 'https://staging.example.com',
+    });
+    const threeServers = await commonModule.getServers();
+    assert.strictEqual(threeServers.length, 3);
+    assert.strictEqual(threeServers[0].url, 'http://localhost:9527');
+    assert.strictEqual(threeServers[1].url, 'https://notes.example.com');
+    assert.strictEqual(threeServers[2].url, 'https://staging.example.com');
+
+    // Move item at index 2 (staging) to index 0
+    await commonModule.reorderServers(2, 0);
+    const listAfterReorder = await commonModule.getServers();
+    assert.strictEqual(listAfterReorder[0].url, 'https://staging.example.com');
+    assert.strictEqual(listAfterReorder[1].url, 'http://localhost:9527');
+    assert.strictEqual(listAfterReorder[2].url, 'https://notes.example.com');
+
+    // Remove server
+    await commonModule.removeServer('http://localhost:9527');
+    const remainingServers = await commonModule.getServers();
+    assert.strictEqual(remainingServers.length, 2);
+    assert.strictEqual(remainingServers[0].url, 'https://staging.example.com');
+    assert.strictEqual(remainingServers[1].url, 'https://notes.example.com');
+
+    console.log('✓ Test 12 passed: multi-server management, renaming, reordering & per-server auth in common.js');
+  }
+
+  // ── Test 13: Per-server last note retention on server switch ──────────────
+  {
+    const fixture = setupSidepanelContext();
+    const { storageData, syncStorageData } = fixture;
+
+    // Set Server A active with note-2 remembered
+    syncStorageData.serverUrl = 'http://localhost:9527';
+    storageData['rune_last_note_http://localhost:9527'] = 'note-2';
+    storageData['rune_last_note_https://remote.example.com'] = 'remote-note-b';
+
+    // Simulate selecting a note on Server A
+    await fixture.exec(`
+      setActiveNote('note-2', 'Note Two');
+    `);
+    assert.strictEqual(
+      storageData['rune_last_note_http://localhost:9527'],
+      'note-2',
+      'setActiveNote should persist note-2 under rune_last_note_http://localhost:9527'
+    );
+
+    // Now switch serverUrl to Remote Server
+    syncStorageData.serverUrl = 'https://remote.example.com';
+    await fixture.exec(`
+      setActiveNote('remote-note-b', 'Remote Note B');
+    `);
+    assert.strictEqual(
+      storageData['rune_last_note_https://remote.example.com'],
+      'remote-note-b',
+      'setActiveNote should persist remote-note-b under rune_last_note_https://remote.example.com'
+    );
+
+    // Server A's last note should still be preserved
+    assert.strictEqual(
+      storageData['rune_last_note_http://localhost:9527'],
+      'note-2',
+      'Server A last note should remain preserved after switching to Remote Server'
+    );
+
+    console.log('✓ Test 13 passed: per-server last note retention preserves active note per server');
   }
 
   console.log("All extension sidepanel tests passed successfully! 🎉");
@@ -646,3 +792,5 @@ runTests().catch((err) => {
   console.error("Test failure:", err);
   process.exit(1);
 });
+
+

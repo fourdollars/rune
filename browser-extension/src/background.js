@@ -4,6 +4,7 @@
 
 import {
   getSyncSettings,
+  getActiveServerUrl,
   getLocalAuth,
   setLocalAuth,
   clearLocalAuth,
@@ -35,8 +36,9 @@ if (globalThis.browser?.sidePanel?.setPanelBehavior) {
     .catch((e) => console.warn('[rune-notes] setPanelBehavior failed:', e));
 }
 
-async function updateExtensionTitle(serverUrl) {
-  const title = serverUrl ? `ᚱᚢᚾᛖ Chat @ ${serverUrl}` : 'ᚱᚢᚾᛖ Chat';
+async function updateExtensionTitle(serverUrl, serverName) {
+  const displayName = (serverName && serverName.trim()) ? serverName.trim() : (serverUrl || '');
+  const title = displayName ? `ᚱᚢᚾᛖ Chat @ ${displayName}` : 'ᚱᚢᚾᛖ Chat';
   if (browser.action?.setTitle) {
     try { await browser.action.setTitle({ title }); } catch (_) {}
   }
@@ -45,14 +47,21 @@ async function updateExtensionTitle(serverUrl) {
   }
 }
 
-getSyncSettings().then(({ serverUrl }) => {
-  updateExtensionTitle(serverUrl);
-}).catch(() => {});
+async function refreshExtensionTitle() {
+  const syncSettings = await getSyncSettings();
+  const serverUrl = syncSettings.serverUrl;
+  const servers = Array.isArray(syncSettings.servers) ? syncSettings.servers : [];
+  const found = servers.find((s) => s.url === serverUrl);
+  const serverName = found?.name || '';
+  await updateExtensionTitle(serverUrl, serverName);
+}
+
+refreshExtensionTitle().catch(() => {});
 
 if (browser.storage?.onChanged) {
   browser.storage.onChanged.addListener((changes, area) => {
-    if (area === 'sync' && changes.serverUrl) {
-      updateExtensionTitle(changes.serverUrl.newValue);
+    if (area === 'sync' && (changes.serverUrl || changes.servers)) {
+      refreshExtensionTitle().catch(() => {});
     }
   });
 }
@@ -91,8 +100,8 @@ browser.contextMenus.onClicked.addListener(async (info, tab) => {
  * So there is no silent refresh; once the access token expires the user
  * must log in again via this same flow.
  */
-async function startLogin() {
-  const { serverUrl } = await getSyncSettings();
+async function startLogin(targetServerUrl) {
+  const serverUrl = targetServerUrl || (await getActiveServerUrl());
   if (!serverUrl) {
     throw new Error('Rune Notes URL is not set yet — please configure and authorize it on the settings page first');
   }
@@ -137,25 +146,25 @@ async function startLogin() {
     refreshToken: null, // Rune Notes server does not currently issue refresh tokens.
     tokenExpiresAt: Date.now() + (tokenResp.expires_in ?? 3600) * 1000,
     clientId,
-  });
-
+  }, serverUrl);
 }
 
-async function doLogout() {
+async function doLogout(targetServerUrl) {
   // Best-effort server-side revocation (RFC 7009 style /oauth/revoke) so a
   // "Logout" click actually invalidates the token immediately, rather than
   // leaving it valid server-side for its full remaining lifetime (up to 30
   // days) with only the local copy erased. Non-fatal if it fails (e.g. no
   // network, server down, or server predates this endpoint) — we still
   // clear local storage either way so the extension forgets the token.
-  const { accessToken } = await getLocalAuth();
-  if (accessToken) {
+  const serverUrl = targetServerUrl || (await getActiveServerUrl());
+  const { accessToken } = await getLocalAuth(serverUrl);
+  if (accessToken && serverUrl) {
     try {
       await apiFetch('/oauth/revoke', {
         method: 'POST',
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
         body: `token=${encodeURIComponent(accessToken)}`,
-      });
+      }, serverUrl);
     } catch (e) {
       console.warn('[rune-notes] /oauth/revoke failed (continuing local logout):', e);
     }
@@ -164,7 +173,6 @@ async function doLogout() {
   // Also hit /auth/logout via launchWebAuthFlow to clear the server-side Web
   // session cookie (rune_sid), synchronizing the logout between extension
   // and Rune Notes Server so that the next login prompt properly asks for credentials.
-  const { serverUrl } = await getSyncSettings();
   if (serverUrl && browser?.identity?.launchWebAuthFlow && browser?.identity?.getRedirectURL) {
     try {
       const redirectUri = browser.identity.getRedirectURL();
@@ -178,7 +186,7 @@ async function doLogout() {
     }
   }
 
-  await clearLocalAuth();
+  await clearLocalAuth(serverUrl);
 }
 
 /** Message router: options.js / sidepanel.js talk to background via runtime messages. */
@@ -187,23 +195,23 @@ browser.runtime.onMessage.addListener((message, sender, sendResponse) => {
     switch (message?.type) {
       case 'rune:login':
         try {
-          await startLogin();
+          await startLogin(message?.serverUrl);
           sendResponse({ ok: true });
         } catch (e) {
           sendResponse({ ok: false, error: String(e?.message ?? e) });
         }
         break;
       case 'rune:logout':
-        await doLogout();
+        await doLogout(message?.serverUrl);
         sendResponse({ ok: true });
         break;
       case 'rune:authStatus':
-        sendResponse({ ok: true, loggedIn: await isLoggedIn() });
+        sendResponse({ ok: true, loggedIn: await isLoggedIn(message?.serverUrl) });
         break;
       case 'rune:checkServer': {
         // Used by options.js to validate a URL before saving (GET /api/auth/config).
         try {
-          const resp = await apiFetch('/api/auth/config');
+          const resp = await apiFetch('/api/auth/config', {}, message?.serverUrl);
           sendResponse({ ok: resp.ok, status: resp.status });
         } catch (e) {
           sendResponse({ ok: false, error: String(e?.message ?? e) });
