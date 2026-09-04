@@ -44,8 +44,8 @@ pub fn safe_truncate(s: &str, max_bytes: usize) -> &str {
 #[derive(Debug, Clone, Deserialize)]
 pub struct PolicyConfig {
     /// Execution mode:
-    /// - "confirm": interactive CLI default — prompts user before dangerous tools
-    /// - "allowlist": pipe/Concourse CI default — auto-executes within allowlist, blocks the rest
+    /// - "allowlist": default — auto-executes within allowlist, blocks the rest
+    /// - "confirm": interactive prompt mode — prompts user before dangerous tools
     /// - "unrestricted": all policy checks skipped (opt-in via --policy-mode or config)
     #[serde(default = "default_policy_mode")]
     pub mode: String,
@@ -89,7 +89,7 @@ pub struct PolicyConfig {
 }
 
 fn default_policy_mode() -> String {
-    "confirm".to_string()
+    "allowlist".to_string()
 }
 
 fn default_max_tmp_mb() -> u64 {
@@ -261,12 +261,12 @@ fn default_state_dir() -> String {
 impl Default for PolicyConfig {
     fn default() -> Self {
         Self {
-            mode: "confirm".to_string(),
+            mode: "allowlist".to_string(),
             allowed_commands: Vec::new(),
             allowed_domains: Vec::new(),
             allowed_syscalls: Vec::new(), // empty = block all dangerous syscalls
-            allowed_paths_rw: vec!["/tmp".to_string()],
-            allowed_paths_ro: vec!["/bin".to_string(), "/usr".to_string(), "/lib".to_string()],
+            allowed_paths_rw: Vec::new(),
+            allowed_paths_ro: Vec::new(),
             allowed_files_ro: Vec::new(),
             allowed_files_rw: Vec::new(),
             denied_paths: vec!["/root".to_string(), "/etc/shadow".to_string()],
@@ -1326,12 +1326,14 @@ mod config_tests {
     #[test]
     fn test_policy_config_default() {
         let p = PolicyConfig::default();
-        assert_eq!(p.mode, "confirm");
+        assert_eq!(p.mode, "allowlist");
         assert!(p.allowed_commands.is_empty());
         assert!(p.allowed_domains.is_empty());
         assert!(p.allowed_syscalls.is_empty()); // empty = block all dangerous syscalls
-        assert!(p.allowed_paths_rw.contains(&"/tmp".to_string()));
-        assert!(p.allowed_paths_ro.contains(&"/bin".to_string()));
+        assert!(p.allowed_paths_rw.is_empty());
+        assert!(p.allowed_paths_ro.is_empty());
+        assert!(p.allowed_files_ro.is_empty());
+        assert!(p.allowed_files_rw.is_empty());
         assert!(p.denied_paths.contains(&"/root".to_string()));
         assert_eq!(p.max_memory_mb, 512);
         assert_eq!(p.max_pids, 64);
@@ -1417,11 +1419,11 @@ denied_paths = ["/etc/shadow"]
     }
 
     #[test]
-    fn test_default_policy_mode_is_confirm() {
+    fn test_default_policy_mode_is_allowlist() {
         let policy = PolicyConfig::default();
         assert_eq!(
-            policy.mode, "confirm",
-            "default policy should be confirm for interactive"
+            policy.mode, "allowlist",
+            "default policy should be allowlist"
         );
     }
 
@@ -2253,7 +2255,7 @@ max_pids = 256
 allowed_commands = ["ls"]
 "#;
         let policy: PolicyConfig = toml::from_str(toml_str).unwrap();
-        assert_eq!(policy.mode, "confirm");
+        assert_eq!(policy.mode, "allowlist");
     }
 
     #[test]

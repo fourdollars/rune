@@ -4382,17 +4382,12 @@ read(3, "root:x:0:0:...", 4096) = 1234"#;
     }
 
     #[tokio::test]
-    async fn test_agent_policy_allowed_paths_rw_default_has_tmp() {
+    async fn test_agent_policy_allowed_paths_rw_default_is_empty() {
         let config = crate::config::RuneConfig::default();
         let mut registry = crate::provider::ProviderRegistry::new();
         registry.register(Box::new(MockProvider));
         let agent = Agent::new(config, registry, false, None);
-        assert!(agent
-            .config
-            .policy
-            .allowed_paths_rw
-            .iter()
-            .any(|p| p == "/tmp"));
+        assert!(agent.config.policy.allowed_paths_rw.is_empty());
     }
 
     #[tokio::test]

@@ -137,7 +137,7 @@ thinking = "high"          # off|low|medium|high|xhigh
 # system_prompt = "You are a helpful assistant."  # optional: override default system prompt (AGENTS.md still appended)
 
 [policy]
-mode = "confirm"           # confirm | allowlist | unrestricted
+mode = "allowlist"         # allowlist | confirm | unrestricted
 allowed_commands = ["ls", "cat", "head", "ps", "echo", "date"]
 allowed_domains = ["wttr.in", "*.github.com"]
 allowed_paths_rw = ["/tmp", "/workspace"]
@@ -231,8 +231,8 @@ All tool executions are sandboxed:
 
 | Mode | Behavior |
 |------|----------|
-| `confirm` | Interactive CLI default. Prompts `Execute? [Y/n]` before dangerous tool calls. When a command is blocked (permission denied), Rune uses strace to probe which files were denied and prompts: `Add to allowed_files_ro/rw? [Y/n]`. Approved paths are persisted to config. |
-| `allowlist` | Pipe/CI default. Only whitelisted commands can execute; everything else is blocked silently. Blocked resources (domains, commands) trigger interactive allowlist prompts in interactive mode. |
+| `allowlist` | Default. Auto-executes within allowlist, blocks everything else. |
+| `confirm` | Interactive prompt mode. Prompts `Execute? [Y/n]` before dangerous tool calls. When a command is blocked (permission denied), Rune uses strace to probe which files were denied and prompts: `Add to allowed_files_ro/rw? [Y/n]`. Approved paths are persisted to config. |
 | `unrestricted` | All policy checks skipped — sandbox, allowlists, confirm prompts are disabled. Development only. |
 
 ### Automatic Allowlist Expansion (confirm mode)

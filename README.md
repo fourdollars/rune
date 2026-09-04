@@ -14,7 +14,7 @@ A high-performance, zero-trust AI agent built in Rust. Single binary, triple mod
 - **Rune Notes (Data Exchange Hub)** — AI-native Markdown hub served from the same single binary. Exposes Web UI, MCP endpoint, and REST API. Connects external agents (OpenClaw, Hermes, Copilot, OpenCode, Antigravity) with first-party browser extensions (Rune Chat) and built-in AI chat over plain Markdown files
 - **Rich Markdown System** — Math notation (KaTeX inline/block), Mermaid diagrams-as-code, syntax highlighting (highlight.js), and raw inline SVG markup
 - **Browser Extension (Rune Chat)** — Chrome and Firefox side-panel extension for contextual AI chat and seamless note sync
-- **Command Policy** — Two auto-detected modes: `confirm` (interactive), `allowlist` (whitelist only), `unrestricted`
+- **Command Policy** — Three modes: `allowlist` (default; whitelist only), `confirm` (interactive prompts), `unrestricted`
 - **Skills System** — Load contextual abilities via `@skill_name` in prompts
 - **Provider Registry** — GitHub Copilot (auto token refresh), OpenRouter (recommended), Google Gemini, any OpenAI-compatible
 - **MCP Client & Server** — Stdio JSON-RPC client for external MCP servers + built-in HTTP MCP server endpoint (`POST /mcp`) for external agents
@@ -47,7 +47,7 @@ api_key = "ghu_your_github_copilot_pat"
 skills_dir = "./skills"
 
 [policy]
-mode = "confirm"
+mode = "allowlist"
 allowed_domains = ["wttr.in"]
 allowed_commands = ["ls", "cat", "head", "ps", "echo", "uname", "free", "df", "date", "hostname"]
 EOF
@@ -223,7 +223,7 @@ context_window = 128000       # model context window in tokens
 # compact_keep_last = 6      # keep last N messages when compacting
 
 [policy]
-mode = "confirm"             # confirm | allowlist | unrestricted
+mode = "allowlist"           # allowlist | confirm | unrestricted
 allowed_commands = ["ls", "cat", "head", "ps", "echo"]
 allowed_domains = ["wttr.in", "api.github.com"]
 # allowed_syscalls = []    # dangerous syscalls to ALLOW through seccomp (empty = block all)
@@ -385,15 +385,15 @@ Every tool invocation passes through up to 5 isolation layers:
 ```
 
 ### Command Policy
-
+ 
 | Mode | Behavior | Default for |
 |------|----------|-------------|
-| `confirm` | Prompt Y/n before dangerous tool calls; blocked resources trigger Add-to-allowlist prompts | Interactive CLI |
-| `allowlist` | Auto-execute within allowlist, block everything else | Pipe mode, Concourse CI |
+| `allowlist` | Auto-execute within allowlist, block everything else | Default for all modes (Interactive CLI, Pipe mode, Concourse CI) |
+| `confirm` | Prompt Y/n before dangerous tool calls; blocked resources trigger Add-to-allowlist prompts | Opt-in via `mode = "confirm"` |
 | `unrestricted` | All policy checks skipped | Opt-in via `--unrestricted` flag |
 
 **Defaults by context:**
-- **Interactive CLI** (`rune`): `confirm` — prompts before each dangerous tool call
+- **Interactive CLI** (`rune`): `allowlist` (default) — auto-executes within allowlist; use `mode = "confirm"` for interactive prompts
 - **Pipe mode** (`echo "..." \| rune`): `allowlist` — runs within configured allowlists
 - **Concourse CI** (check/get/put): `allowlist` — enforces sandbox policy from pipeline YAML
 

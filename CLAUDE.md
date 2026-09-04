@@ -53,14 +53,13 @@ Sandboxing is implemented by **re-exec'ing the same binary** with hidden subcomm
 
 Because `AGENTS.md` is always appended, edits to it directly affect agent behavior at runtime. Keep it accurate.
 
-## Policy Modes (auto-detected by context)
+## Policy Modes
 
-| Context | Default mode |
-|---------|--------------|
-| Interactive CLI (TTY) | `confirm` — prompts `Execute? [Y/n]` before dangerous tools; blocked resources trigger separate "Add to allowlist?" prompts that persist to `~/.rune/rune.toml` |
-| Pipe mode (stdin not a TTY) | `allowlist` — silent block of anything not whitelisted |
-| Concourse `check`/`in`/`out` | `allowlist` |
-| `--unrestricted` flag | bypasses all policy |
+| Mode | Description |
+|------|-------------|
+| `allowlist` (default) | Auto-execute within allowlist, silent block of anything not whitelisted (default across all contexts) |
+| `confirm` | Prompts `Execute? [Y/n]` before dangerous tools; blocked resources trigger separate "Add to allowlist?" prompts that persist to `~/.rune/rune.toml` |
+| `--unrestricted` flag | Bypasses all policy checks |
 
 Path-based auto-allow: `read_file`/`read_markdown` skip the prompt if the resolved path is under `allowed_paths_ro` ∪ `allowed_paths_rw`; `write_file`/`write_markdown` skip if under `allowed_paths_rw`. CWD is implicitly added to `allowed_paths_ro` at startup.
 

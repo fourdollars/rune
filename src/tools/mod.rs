@@ -101,7 +101,7 @@ impl ToolRegistry {
             serve_mode: false,
             allowed_dirs,
             allowed_domains: Vec::new(),
-            policy_mode: "confirm".to_string(),
+            policy_mode: "allowlist".to_string(),
             policy_allowed_commands: Vec::new(),
             policy_allowed_syscalls: Vec::new(),
             policy_denied_paths: Vec::new(),

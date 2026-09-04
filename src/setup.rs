@@ -1793,8 +1793,8 @@ pub async fn run_setup(config_path_override: Option<String>) {
     } else {
         // Fresh install defaults
         toml_content.push_str("[policy]\n");
-        toml_content.push_str("mode = \"confirm\"\n");
-        toml_content.push_str("allowed_commands = [\"ls\", \"cat\", \"head\", \"ps\", \"echo\", \"uname\", \"free\", \"df\", \"date\", \"hostname\"]\n");
+        toml_content.push_str("mode = \"allowlist\"\n");
+        toml_content.push_str("allowed_commands = []\n");
         toml_content.push_str("allowed_domains = []\n");
     }
 
