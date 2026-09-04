@@ -131,7 +131,7 @@
         </div>
     </div>
 
-    <div id="app" data-pane="editor">
+    <div id="app" data-pane="preview">
         <!-- Compact chrome: CSS-gated to <=768px, never a parallel mobile DOM. -->
         <header id="compact-bar">
             <button id="btn-compact-nav" class="compact-bar-btn" data-action="toggle-tree-drawer" data-icon="menu"
@@ -175,17 +175,17 @@
                             title="Show notes" aria-label="Show notes" aria-expanded="false" aria-controls="panel-left"></button>
                     <div id="split-title"></div>
                     <div class="split-title-controls">
-                        <button id="btn-edit" class="split-title-btn" data-action="toggle-edit" data-icon="pencil" title="Toggle editor" aria-label="Toggle editor" aria-pressed="true"></button>
-                        <button id="btn-preview" class="split-title-btn" data-action="toggle-preview" data-icon="eye" title="Toggle preview" aria-label="Toggle preview" aria-pressed="false"></button>
+                        <button id="btn-edit" class="split-title-btn" data-action="toggle-edit" data-icon="pencil" title="Toggle editor" aria-label="Toggle editor" aria-pressed="false"></button>
+                        <button id="btn-preview" class="split-title-btn" data-action="toggle-preview" data-icon="eye" title="Toggle preview" aria-label="Toggle preview" aria-pressed="true"></button>
                         <button id="btn-chat" class="split-title-btn split-title-chat" data-action="toggle-chat" data-icon="bot" title="Toggle chat" aria-label="Toggle chat" aria-pressed="true"></button>
                         <button id="btn-sync-scroll" class="split-title-btn active" data-action="toggle-sync-scroll" data-icon="sync-scroll" title="Toggle sync scroll" aria-label="Toggle synced scrolling" aria-pressed="true"></button>
                     </div>
                 </div>
                 <div id="split-body">
-                    <div id="preview-container" class="hidden">
+                    <div id="preview-container">
                         <div id="preview"></div>
                     </div>
-                    <div id="editor-container">
+                    <div id="editor-container" class="hidden">
                         <div id="editor-toolbar" class="editor-toolbar" role="toolbar" aria-label="Markdown formatting">
                             <button type="button" data-action="format" data-format="bold" title="Bold (Ctrl+B)"><b class="tb-glyph">B</b><span class="tb-label">Bold</span></button>
                             <button type="button" data-action="format" data-format="italic" title="Italic (Ctrl+I)"><i class="tb-glyph">I</i><span class="tb-label">Italic</span></button>
@@ -260,8 +260,8 @@
         </aside>
 
         <nav id="pane-switcher" aria-label="Pane switcher">
-            <button type="button" id="pane-btn-editor" data-action="show-pane" data-pane="editor" aria-pressed="true">Editor</button>
-            <button type="button" id="pane-btn-preview" data-action="show-pane" data-pane="preview" aria-pressed="false">Preview</button>
+            <button type="button" id="pane-btn-editor" data-action="show-pane" data-pane="editor" aria-pressed="false">Editor</button>
+            <button type="button" id="pane-btn-preview" data-action="show-pane" data-pane="preview" aria-pressed="true">Preview</button>
             <button type="button" id="pane-btn-chat" data-action="show-pane" data-pane="chat" aria-pressed="false">Chat</button>
         </nav>
     </div>

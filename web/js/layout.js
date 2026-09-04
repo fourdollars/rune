@@ -24,7 +24,7 @@ globalThis.updateEditorVisibility = function updateEditorVisibility(fileCount) {
             try {
                 const se = localStorage.getItem('rune_show_edit');
                 const sp = localStorage.getItem('rune_show_preview');
-                showEdit    = se !== null ? se === '1' : true;
+                showEdit    = se !== null ? se === '1' : false;
                 showPreview = sp !== null ? sp === '1' : true;
             } catch {}
         }

@@ -176,7 +176,13 @@ async function runRegression(browser) {
     );
     return (hidden && shown) || `hidden=${hidden} restored=${shown}`;
   });
-  await check('editor toggle hides and restores the editor pane', async () => {
+  await check('editor toggle shows and restores the editor pane', async () => {
+    await page.click('#btn-edit');
+    await page.waitForTimeout(400);
+    const shown = await page.evaluate(() => {
+      const el = document.getElementById('editor-container');
+      return !!el && !el.classList.contains('hidden') && el.getBoundingClientRect().width > 0;
+    });
     await page.click('#btn-edit');
     await page.waitForTimeout(400);
     const hidden = await page.evaluate(() => {
@@ -185,11 +191,7 @@ async function runRegression(browser) {
     });
     await page.click('#btn-edit');
     await page.waitForTimeout(400);
-    const shown = await page.evaluate(() => {
-      const el = document.getElementById('editor-container');
-      return !!el && !el.classList.contains('hidden') && el.getBoundingClientRect().width > 0;
-    });
-    return (hidden && shown) || `hidden=${hidden} restored=${shown}`;
+    return (shown && hidden) || `shown=${shown} hidden=${hidden}`;
   });
   await check('sync-scroll toggle flips its active state', async () => {
     const before = await page.evaluate(

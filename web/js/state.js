@@ -1,9 +1,9 @@
 const initial = {
     pendingNoteId: null,
     pendingFile: null,
-    showEdit: true,
+    showEdit: false,
     showPreview: true,
-    paneFocus: 'edit',
+    paneFocus: 'preview',
     syncScrollEnabled: true,
     editorStateRestored: false,
     currentFilename: '',
