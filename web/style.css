@@ -1061,11 +1061,22 @@ pre.hljs-pre:hover .copy-btn {
 }
 
 /* --- Inline SVG in preview --- */
-#preview svg {
+#preview svg:not(.katex svg):not(.rune-icon):not(.copy-btn svg) {
     max-width: 100%;
     height: auto;
     display: block;
     margin: 8px 0;
+}
+
+/* Ensure KaTeX internal SVGs (square roots \sqrt, accents, stretchy characters) keep their exact layout */
+#preview .katex svg,
+.katex svg {
+    position: absolute !important;
+    height: inherit !important;
+    width: 100% !important;
+    max-width: none !important;
+    margin: 0 !important;
+    display: block !important;
 }
 
 /* --- Edit/Preview toggle layout --- */

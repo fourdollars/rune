@@ -88,6 +88,11 @@ if (typeof marked !== 'undefined') {
         }
     };
 
+    const escapeHtml = (str) => {
+        if (typeof globalThis.escapeHtml === 'function') return globalThis.escapeHtml(str);
+        return (str || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    };
+
     // --- Math extensions: intercept $$ and $ before marked mangles the content ---
     // Block math: $$...$$  (must be registered before inline to take priority)
     const blockMathExtension = {

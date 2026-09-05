@@ -1953,6 +1953,47 @@ const PUBLIC_PREVIEW_HTML: &str = r##"<!DOCTYPE html>
       }
       return '<pre class="hljs-pre" data-raw="' + raw + '"><code>' + text.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;') + '</code></pre>';
     };
+    const escapeHtml = (str) => {
+      return (str || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    };
+    const blockMathExtension = {
+      name: 'blockMath',
+      level: 'block',
+      start(src) { return src.indexOf('$$'); },
+      tokenizer(src) {
+        const match = src.match(/^\$\$([\s\S]+?)\$\$/);
+        if (match) return { type: 'blockMath', raw: match[0], text: match[1].trim() };
+      },
+      renderer(token) {
+        if (typeof katex !== 'undefined') {
+          try {
+            return '<div class="math-block">' + katex.renderToString(token.text, { displayMode: true, throwOnError: false }) + '</div>';
+          } catch (e) {
+            return '<div class="math-block math-error">' + escapeHtml(token.text) + '</div>';
+          }
+        }
+        return '<div class="math-block">$$' + escapeHtml(token.text) + '$$</div>';
+      }
+    };
+    const inlineMathExtension = {
+      name: 'inlineMath',
+      level: 'inline',
+      start(src) { return src.indexOf('$'); },
+      tokenizer(src) {
+        const match = src.match(/^\$(?!\$)((?:[^$\\]|\\[\s\S])+?)\$/);
+        if (match) return { type: 'inlineMath', raw: match[0], text: match[1] };
+      },
+      renderer(token) {
+        if (typeof katex !== 'undefined') {
+          try {
+            return '<span class="math-inline">' + katex.renderToString(token.text, { displayMode: false, throwOnError: false }) + '</span>';
+          } catch (e) {
+            return '<span class="math-inline math-error">$' + escapeHtml(token.text) + '$</span>';
+          }
+        }
+        return '<span class="math-inline">$' + escapeHtml(token.text) + '$</span>';
+      }
+    };
     marked.use({
       renderer,
       hooks: {
@@ -1974,6 +2015,7 @@ const PUBLIC_PREVIEW_HTML: &str = r##"<!DOCTYPE html>
           }
         },
       },
+      extensions: [blockMathExtension, inlineMathExtension],
     });
     const html = marked.parse(md);
     const content = document.getElementById('preview');

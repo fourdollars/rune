@@ -118,7 +118,37 @@ const tokenizer = {
     },
 };
 
-marked.use({ renderer, tokenizer, hooks, breaks: true, gfm: true });
+const escapeHtml = (str) => {
+    return (str || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+};
+
+const blockMathExtension = {
+    name: 'blockMath',
+    level: 'block',
+    start(src) { return src.indexOf('$$'); },
+    tokenizer(src) {
+        const match = src.match(/^\$\$([\s\S]+?)\$\$/);
+        if (match) return { type: 'blockMath', raw: match[0], text: match[1].trim() };
+    },
+    renderer(token) {
+        return '<div class="math-block">$$' + escapeHtml(token.text) + '$$</div>';
+    }
+};
+
+const inlineMathExtension = {
+    name: 'inlineMath',
+    level: 'inline',
+    start(src) { return src.indexOf('$'); },
+    tokenizer(src) {
+        const match = src.match(/^\$(?!\$)((?:[^$\\]|\\[\s\S])+?)\$/);
+        if (match) return { type: 'inlineMath', raw: match[0], text: match[1] };
+    },
+    renderer(token) {
+        return '<span class="math-inline">$' + escapeHtml(token.text) + '$</span>';
+    }
+};
+
+marked.use({ renderer, tokenizer, hooks, breaks: true, gfm: true, extensions: [blockMathExtension, inlineMathExtension] });
 
 // 4. Replicate assignLines logic from web/js/preview.js
 const assignLines = (tokens, startLine = 0) => {
@@ -254,6 +284,16 @@ graph TD;
     assert.match(html, /<h2 id="2-cooking--assembly-烹調與組裝" data-line="3">2\. Cooking &amp; Assembly \(烹調與組裝\)<\/h2>/);
     assert.match(html, /<h3 id="製作步驟-1" data-line="4">製作步驟<\/h3>/);
     console.log("✓ Test 9: Heading slugification and TOC anchor link targets (Recipe Guide) passed");
+}
+
+// Test 10: Inline and Block Math formulas including \sqrt{2}
+{
+    const markdown = "Here is an inline formula: $\\sqrt{2}$ and $E = mc^2$.\n\n$$\\sum_{i=1}^n i = \\frac{n(n+1)}{2}$$";
+    const html = parse(markdown);
+    assert.ok(html.includes('<span class="math-inline">$\\sqrt{2}$</span>'));
+    assert.ok(html.includes('<span class="math-inline">$E = mc^2$</span>'));
+    assert.ok(html.includes('<div class="math-block">$$\\sum_{i=1}^n i = \\frac{n(n+1)}{2}$$</div>'));
+    console.log("✓ Test 10: Inline and Block Math formulas passed");
 }
 
 console.log("All unit tests passed successfully! 🎉");

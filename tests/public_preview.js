@@ -58,7 +58,7 @@ Use \`console.log()\` to debug.
 
 ## Math
 
-Inline: $E = mc^2$
+Inline: $E = mc^2$ and $\sqrt{2}$
 
 Display:
 $$\\sum_{i=1}^{n} i = \\frac{n(n+1)}{2}$$
@@ -187,10 +187,13 @@ async function testKaTeX(browser) {
     const katexCount = await page.evaluate(() =>
       document.querySelectorAll('#preview .katex').length
     );
-    if (katexCount >= 2) {
-      ok(`KaTeX rendered ${katexCount} math element(s) (inline + display)`);
+    const sqrtCount = await page.evaluate(() =>
+      document.querySelectorAll('#preview .katex .sqrt svg').length
+    );
+    if (katexCount >= 3 && sqrtCount >= 1) {
+      ok(`KaTeX rendered ${katexCount} math element(s) including square root SVG (${sqrtCount})`);
     } else {
-      ko('KaTeX not rendered', `found ${katexCount} .katex elements`);
+      ko('KaTeX not rendered', `found ${katexCount} .katex elements, ${sqrtCount} sqrt svg elements`);
     }
   });
 }
