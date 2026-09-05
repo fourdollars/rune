@@ -150,10 +150,47 @@ if (typeof marked !== 'undefined') {
     return `<pre class="hljs-pre" data-raw="${raw}"><code>${safe}</code></pre>`;
   };
 
+  function escapePipesInTableMath(markdown) {
+    if (!markdown || !markdown.includes('|') || !markdown.includes('$')) return markdown;
+    const lines = markdown.split('\n');
+    const isCodeFence = (l) => /^\s*(```|~~~)/.test(l);
+    const isDelimiter = (l) => /^\s*\|?\s*:?-+:?\s*(\|\s*:?-+:?\s*)+\|?\s*$/.test(l);
+    const tableLineIndices = new Set();
+    let inCode = false;
+    for (let i = 0; i < lines.length; i++) {
+      const l = lines[i];
+      if (isCodeFence(l)) {
+        inCode = !inCode;
+        continue;
+      }
+      if (!inCode && isDelimiter(l) && i > 0 && lines[i - 1].includes('|')) {
+        tableLineIndices.add(i - 1);
+        tableLineIndices.add(i);
+        for (let j = i + 1; j < lines.length; j++) {
+          if (isCodeFence(lines[j]) || !lines[j].trim() || !lines[j].includes('|')) break;
+          tableLineIndices.add(j);
+        }
+      }
+    }
+    const processed = [];
+    for (let i = 0; i < lines.length; i++) {
+      let line = lines[i];
+      if (tableLineIndices.has(i)) {
+        line = line.replace(/\$\$([\s\S]+?)\$\$|\$(?!\$)((?:[^$\\]|\\[\s\S])+?)\$/g, (m, b, inline) => {
+          const content = b || inline;
+          const escaped = content.replace(/\\\||\|/g, '\\|');
+          return b ? '$$' + escaped + '$$' : '$' + escaped + '$';
+        });
+      }
+      processed.push(line);
+    }
+    return processed.join('\n');
+  }
+
   const hooks = {
     preprocess(markdown) {
       slugify = createSlugger();
-      return markdown;
+      return escapePipesInTableMath(markdown);
     },
     postprocess(html) {
       return html.replace(/<p>(\s*<svg[\s\S]*?<\/svg>\s*)<\/p>/gi, '$1');

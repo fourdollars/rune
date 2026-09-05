@@ -24,7 +24,8 @@ globalThis.renderPreview = function renderPreview() {
             }
         };
 
-        const tokens = marked.lexer(specContent);
+        const preprocessed = typeof escapePipesInTableMath === 'function' ? escapePipesInTableMath(specContent) : specContent;
+        const tokens = marked.lexer(preprocessed);
         assignLines(tokens, 0);
         if (typeof resetSlugger === 'function') resetSlugger();
         preview.innerHTML = marked.parser(tokens);

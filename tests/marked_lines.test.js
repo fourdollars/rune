@@ -97,10 +97,47 @@ renderer.code = function(token) {
     return `<pre class="hljs-pre"${lineAttr} data-raw="${raw}"><code>${safe}</code></pre>`;
 };
 
+function escapePipesInTableMath(markdown) {
+    if (!markdown || !markdown.includes('|') || !markdown.includes('$')) return markdown;
+    const lines = markdown.split('\n');
+    const isCodeFence = (l) => /^\s*(```|~~~)/.test(l);
+    const isDelimiter = (l) => /^\s*\|?\s*:?-+:?\s*(\|\s*:?-+:?\s*)+\|?\s*$/.test(l);
+    const tableLineIndices = new Set();
+    let inCode = false;
+    for (let i = 0; i < lines.length; i++) {
+        const l = lines[i];
+        if (isCodeFence(l)) {
+            inCode = !inCode;
+            continue;
+        }
+        if (!inCode && isDelimiter(l) && i > 0 && lines[i - 1].includes('|')) {
+            tableLineIndices.add(i - 1);
+            tableLineIndices.add(i);
+            for (let j = i + 1; j < lines.length; j++) {
+                if (isCodeFence(lines[j]) || !lines[j].trim() || !lines[j].includes('|')) break;
+                tableLineIndices.add(j);
+            }
+        }
+    }
+    const processed = [];
+    for (let i = 0; i < lines.length; i++) {
+        let line = lines[i];
+        if (tableLineIndices.has(i)) {
+            line = line.replace(/\$\$([\s\S]+?)\$\$|\$(?!\$)((?:[^$\\]|\\[\s\S])+?)\$/g, (m, b, inline) => {
+                const content = b || inline;
+                const escaped = content.replace(/\\\||\|/g, '\\|');
+                return b ? '$$' + escaped + '$$' : '$' + escaped + '$';
+            });
+        }
+        processed.push(line);
+    }
+    return processed.join('\n');
+}
+
 const hooks = {
     preprocess(markdown) {
         slugify = createSlugger();
-        return markdown;
+        return escapePipesInTableMath(markdown);
     }
 };
 
@@ -175,7 +212,8 @@ const assignLines = (tokens, startLine = 0) => {
 };
 
 function parse(markdown) {
-    const tokens = marked.lexer(markdown);
+    const preprocessed = typeof escapePipesInTableMath === 'function' ? escapePipesInTableMath(markdown) : markdown;
+    const tokens = marked.lexer(preprocessed);
     assignLines(tokens, 0);
     return marked.parser(tokens);
 }
@@ -294,6 +332,26 @@ graph TD;
     assert.ok(html.includes('<span class="math-inline">$E = mc^2$</span>'));
     assert.ok(html.includes('<div class="math-block">$$\\sum_{i=1}^n i = \\frac{n(n+1)}{2}$$</div>'));
     console.log("✓ Test 10: Inline and Block Math formulas passed");
+}
+
+// Test 11: Tables containing LaTeX formulas with vertical bars/pipes ($|a+b| = |a|+|b|$)
+{
+    const markdown = `| Property | Formula | Remarks |
+| --- | --- | --- |
+| Triangle Inequality | $|a+b| \\leq |a|+|b|$ | Equality holds when $ab \\geq 0$ |
+| Absolute Value Equality | $|a+b| = |a|+|b|$ | Example 1 |
+| Product Absolute Value | $|ab| = |a||b|$ | Example 2 |
+`;
+    const html = parse(markdown);
+    // Table should contain all 3 columns and not be broken into excessive columns
+    assert.match(html, /<table>/);
+    assert.match(html, /<th>Property<\/th>/);
+    assert.match(html, /<th>Formula<\/th>/);
+    assert.match(html, /<th>Remarks<\/th>/);
+    assert.ok(html.includes('<span class="math-inline">$|a+b| \\leq |a|+|b|$</span>'));
+    assert.ok(html.includes('<span class="math-inline">$|a+b| = |a|+|b|$</span>'));
+    assert.ok(html.includes('<span class="math-inline">$|ab| = |a||b|$</span>'));
+    console.log("✓ Test 11: Tables with LaTeX formulas containing pipes passed");
 }
 
 console.log("All unit tests passed successfully! 🎉");
