@@ -72,11 +72,12 @@ globalThis.createFile = async function createFile() {
     const name = await showDialog({ title: 'New File', message: 'Filename must end in .md', input: true, placeholder: 'example.md' });
     if (!name) return;
     if (!name.endsWith('.md')) { addSystemMessage('Error: filename must end in .md'); return; }
-    if (!/^[a-zA-Z0-9_\-\.]+\.md$/.test(name)) { addSystemMessage('Error: invalid filename'); return; }
+    if (!/^[\p{L}\p{N}_\-\.]+\.md$/u.test(name)) { addSystemMessage('Error: invalid filename'); return; }
     api('notes/' + encodeURIComponent(currentNoteId) + '/files', { name });
 };
 
 globalThis.deleteCurrentFile = async function deleteCurrentFile() {
+    if (!currentFilename) return;
     const ok = await showDialog({ title: 'Delete File', message: 'Delete ' + currentFilename + '?', danger: true });
     if (!ok) return;
     api('notes/' + encodeURIComponent(currentNoteId) + '/files/' + encodeURIComponent(currentFilename), undefined, 'DELETE');
@@ -102,9 +103,10 @@ globalThis.switchFile = async function switchFile(name) {
 };
 
 globalThis.renameCurrentFile = function renameCurrentFile(newName) {
+    if (!currentFilename) return;
     const clean = newName.trim();
     if (!clean || clean === currentFilename) return;
     if (!clean.endsWith('.md')) { addSystemMessage('Error: filename must end in .md'); return; }
-    if (!/^[a-zA-Z0-9_\-\.]+\.md$/.test(clean)) { addSystemMessage('Error: invalid filename'); return; }
+    if (!/^[\p{L}\p{N}_\-\.]+\.md$/u.test(clean)) { addSystemMessage('Error: invalid filename'); return; }
     api('notes/' + encodeURIComponent(currentNoteId) + '/files/' + encodeURIComponent(currentFilename), { name: clean }, 'PATCH');
-}
+};

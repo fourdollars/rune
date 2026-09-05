@@ -397,10 +397,11 @@ impl ApiResponse {
 pub fn is_valid_filename(name: &str) -> bool {
     !name.is_empty()
         && name.ends_with(".md")
-        && name.len() <= 64
+        && name.chars().count() <= 64
+        && name.len() <= 255
         && name
             .chars()
-            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-' || c == '.')
+            .all(|c| c.is_alphanumeric() || c == '_' || c == '-' || c == '.')
         && !name.contains("..")
 }
 
@@ -3339,6 +3340,9 @@ mod tests {
         assert!(is_valid_filename("my-doc.md"));
         assert!(is_valid_filename("arch_v2.md"));
         assert!(is_valid_filename("CAPS.md"));
+        assert!(is_valid_filename("01-數與式.md"));
+        assert!(is_valid_filename("高一數學.md"));
+        assert!(is_valid_filename("résumé_v1.md"));
         assert!(!is_valid_filename(""));
         assert!(!is_valid_filename("file.txt"));
         assert!(!is_valid_filename("../etc/passwd.md"));
@@ -4124,6 +4128,57 @@ mod integration_tests {
         .await;
         assert_eq!(body["ok"], true);
         assert_eq!(body["file_content"], serde_json::Value::Null);
+    }
+
+    #[tokio::test]
+    async fn test_file_create_and_update_unicode_chinese() {
+        let (app, _tmp) = test_app();
+        post_json(&app, "/api/notes", json!({"name": "高一數學"})).await;
+        let (_, body) = post_json(
+            &app,
+            "/api/notes/高一數學/files",
+            json!({"name": "01-數與式.md"}),
+        )
+        .await;
+        assert_eq!(body["ok"], true);
+
+        // Update with content
+        let (_, body) = request_json(
+            &app,
+            "PUT",
+            "/api/notes/高一數學/files/01-數與式.md",
+            Some(json!({"content": "# 數與式\n\n實數與絕對值"})),
+        )
+        .await;
+        assert_eq!(body["ok"], true);
+
+        // Switch to session and verify content
+        let (_, body) = request_json(
+            &app,
+            "PUT",
+            "/api/session",
+            Some(json!({"note": "高一數學", "file": "01-數與式.md"})),
+        )
+        .await;
+        assert_eq!(body["ok"], true);
+        assert_eq!(body["current_file"], "01-數與式.md");
+        assert_eq!(body["file_content"], "# 數與式\n\n實數與絕對值");
+    }
+
+    #[tokio::test]
+    async fn test_file_update_invalid_empty_filename() {
+        let (app, _tmp) = test_app();
+        post_json(&app, "/api/notes", json!({"name": "math"})).await;
+
+        let (_, body) = request_json(
+            &app,
+            "PUT",
+            "/api/notes/math/files/invalid-name.txt",
+            Some(json!({"content": "content"})),
+        )
+        .await;
+        assert_eq!(body["ok"], false);
+        assert_eq!(body["error"], "Invalid or missing filename");
     }
 
     #[tokio::test]

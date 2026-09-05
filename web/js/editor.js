@@ -128,7 +128,7 @@ globalThis.initEditor = function initEditor() {
         clearTimeout(debounceTimer);
         debounceTimer = setTimeout(() => {
             if (showPreview) renderPreview();
-            if (editorDirty && currentNoteId) {
+            if (editorDirty && currentNoteId && currentFilename) {
                 api('notes/' + encodeURIComponent(currentNoteId) + '/files/' + encodeURIComponent(currentFilename), { content: specContent }, 'PUT');
                 editorDirty = false;
             }
