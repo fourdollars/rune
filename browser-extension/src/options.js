@@ -81,7 +81,6 @@ const ICONS = {
   refresh: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"/></svg>`,
   logout: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>`,
   trash: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg>`,
-  pencil: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></svg>`,
 };
 
 async function renderServers() {
@@ -109,6 +108,7 @@ async function renderServers() {
 
   serverAuthList.forEach(({ server, isLoggedIn }, index) => {
     const isActive = server.url === activeUrl;
+    const hasCustomName = Boolean(server.name && server.name !== server.url);
 
     const card = document.createElement('div');
     card.className = `server-card ${isActive ? 'active' : ''}`;
@@ -117,31 +117,28 @@ async function renderServers() {
     card.draggable = true;
 
     card.innerHTML = `
-      <div class="server-card-top">
+      <div class="server-info">
+        <span class="drag-handle" title="Drag to reorder" aria-label="Drag to reorder">⠿</span>
         <div class="server-name-row">
-          <span class="drag-handle" title="Drag to reorder" aria-label="Drag to reorder">⠿</span>
           <span class="server-name" title="Click to rename">${escapeHtml(server.name || server.url)}</span>
-          <button type="button" class="btn-icon btn-rename" title="Rename server" aria-label="Rename server">${ICONS.pencil}</button>
+          ${hasCustomName ? `<span class="server-url" title="${escapeHtml(server.url)}">${escapeHtml(server.url)}</span>` : ''}
           ${isActive ? '<span class="badge badge-active">Active</span>' : ''}
-        </div>
-        <div class="server-status">
-          ${isLoggedIn
-            ? '<span class="status-pill logged-in">🟢 Logged in</span>'
-            : '<span class="status-pill logged-out">⚪ Not logged in</span>'}
+          <span class="server-status">
+            ${isLoggedIn
+              ? '<span class="status-pill logged-in">🟢 Logged in</span>'
+              : '<span class="status-pill logged-out">⚪ Not logged in</span>'}
+          </span>
         </div>
       </div>
-      <div class="server-card-bottom">
-        <div class="server-url" title="${escapeHtml(server.url)}">${escapeHtml(server.url)}</div>
-        <div class="server-actions">
-          ${!isActive
-            ? `<button type="button" class="btn-icon-action btn-activate" title="Set as active server" aria-label="Set as active server">${ICONS.star}</button>`
-            : `<button type="button" class="btn-icon-action btn-activate-active" title="Currently active" aria-label="Currently active" disabled>${ICONS.starFilled}</button>`}
-          ${isLoggedIn
-            ? `<button type="button" class="btn-icon-action btn-reauth" title="Re-authorize OAuth" aria-label="Re-authorize OAuth">${ICONS.refresh}</button>
-               <button type="button" class="btn-icon-action btn-logout" title="Log Out" aria-label="Log Out">${ICONS.logout}</button>`
-            : `<button type="button" class="btn-icon-action btn-login" title="Log In" aria-label="Log In">${ICONS.login}</button>`}
-          <button type="button" class="btn-icon-action btn-delete" title="Remove server" aria-label="Remove server">${ICONS.trash}</button>
-        </div>
+      <div class="server-actions">
+        ${!isActive
+          ? `<button type="button" class="btn-icon-action btn-activate" title="Set as active server" aria-label="Set as active server">${ICONS.star}</button>`
+          : `<button type="button" class="btn-icon-action btn-activate-active" title="Currently active" aria-label="Currently active" disabled>${ICONS.starFilled}</button>`}
+        ${isLoggedIn
+          ? `<button type="button" class="btn-icon-action btn-reauth" title="Re-authorize OAuth" aria-label="Re-authorize OAuth">${ICONS.refresh}</button>
+             <button type="button" class="btn-icon-action btn-logout" title="Log Out" aria-label="Log Out">${ICONS.logout}</button>`
+          : `<button type="button" class="btn-icon-action btn-login" title="Log In" aria-label="Log In">${ICONS.login}</button>`}
+        <button type="button" class="btn-icon-action btn-delete" title="Remove server" aria-label="Remove server">${ICONS.trash}</button>
       </div>
     `;
 
@@ -216,14 +213,6 @@ async function renderServers() {
         renderServers();
       });
     };
-
-    const btnRename = card.querySelector('.btn-rename');
-    if (btnRename) {
-      btnRename.addEventListener('click', (e) => {
-        e.stopPropagation();
-        setupRename();
-      });
-    }
 
     const serverNameEl = card.querySelector('.server-name');
     if (serverNameEl) {
