@@ -49,6 +49,7 @@ threshold = 0.6                    # cosine similarity threshold
 [notes]
 port = 9527
 bind = "0.0.0.0"
+model = "openrouter/auto,openrouter/fusion" # single model or comma-separated allowed models
 thinking = "high"
 
 # GitHub OAuth 2.0 Login

@@ -106,12 +106,15 @@ impl ServerState {
         room
     }
 
-    /// Effective model for a note: per-note override if set, else global default.
+    /// Effective model for a note: per-note override if set and allowed, else global default.
     pub async fn effective_model(&self, note_id: &str) -> String {
         let room = self.get_or_create_room(note_id).await;
         let override_model = room.model_override.read().await;
+        let models = self.models.read().await;
         if let Some(ref m) = *override_model {
-            return m.clone();
+            if !m.is_empty() && (models.is_empty() || models.iter().any(|model| model.id == *m)) {
+                return m.clone();
+            }
         }
         self.global_default_model.read().await.clone()
     }
@@ -271,7 +274,7 @@ pub async fn run(config: RuneConfig, opts: NotesOptions) {
         .notes
         .model
         .as_ref()
-        .map(|m| m.is_empty())
+        .map(|m| m.trim().is_empty())
         .unwrap_or(true)
     {
         Vec::new()
@@ -311,8 +314,16 @@ pub async fn run(config: RuneConfig, opts: NotesOptions) {
                             if let Some(found) = discovered.iter().find(|d| d.id == model.id) {
                                 model.reasoning_efforts = found.reasoning_efforts.clone();
                                 model.context_window = found.context_window;
+                                model.provider = found.provider.clone();
+                                model.supported_endpoints = found.supported_endpoints.clone();
                             } else if !fallback_efforts.is_empty() {
                                 model.reasoning_efforts = fallback_efforts.clone();
+                            }
+                            if model.provider.is_none() {
+                                model.provider = discovered
+                                    .first()
+                                    .and_then(|d| d.provider.clone())
+                                    .or_else(|| config.provider.clone());
                             }
                         }
                     }
@@ -440,12 +451,43 @@ pub async fn run(config: RuneConfig, opts: NotesOptions) {
                     if let Ok(new_models) = registry.list_models().await {
                         if !new_models.is_empty() {
                             eprintln!("  ✓ Model refresh: {} models discovered", new_models.len());
-                            *state_clone.models.write().await = new_models.clone();
+                            let has_configured_models = config_clone
+                                .notes
+                                .model
+                                .as_ref()
+                                .map(|m| !m.trim().is_empty())
+                                .unwrap_or(false);
+                            if has_configured_models {
+                                let mut current_models = state_clone.models.write().await;
+                                let fallback_efforts = new_models[0].reasoning_efforts.clone();
+                                for model in current_models.iter_mut() {
+                                    if let Some(found) =
+                                        new_models.iter().find(|d| d.id == model.id)
+                                    {
+                                        model.reasoning_efforts = found.reasoning_efforts.clone();
+                                        model.context_window = found.context_window;
+                                        model.provider = found.provider.clone();
+                                        model.supported_endpoints =
+                                            found.supported_endpoints.clone();
+                                    } else if !fallback_efforts.is_empty() {
+                                        model.reasoning_efforts = fallback_efforts.clone();
+                                    }
+                                    if model.provider.is_none() {
+                                        model.provider = new_models
+                                            .first()
+                                            .and_then(|d| d.provider.clone())
+                                            .or_else(|| config_clone.provider.clone());
+                                    }
+                                }
+                            } else {
+                                *state_clone.models.write().await = new_models.clone();
+                            }
                             // Broadcast updated model list to all connected rooms
+                            let updated_models = state_clone.models.read().await.clone();
                             let rooms = state_clone.rooms.read().await;
                             for (_, room) in rooms.iter() {
                                 let model_entries: Vec<crate::serve::api::ModelListEntry> =
-                                    new_models
+                                    updated_models
                                         .iter()
                                         .map(|m| crate::serve::api::ModelListEntry {
                                             id: m.id.clone(),
@@ -1700,6 +1742,31 @@ mod tests {
         assert_eq!(models.len(), 2);
         assert_eq!(models[0], "gpt-5-mini");
         assert_eq!(models[1], "claude-sonnet-4.6");
+    }
+
+    #[test]
+    fn test_model_list_single_model() {
+        let model_str = "openrouter/auto";
+        let models: Vec<String> = model_str
+            .split(',')
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect();
+        assert_eq!(models.len(), 1);
+        assert_eq!(models[0], "openrouter/auto");
+    }
+
+    #[test]
+    fn test_model_list_multiple_models_trimmed() {
+        let model_str = " openrouter/auto , openrouter/fusion ";
+        let models: Vec<String> = model_str
+            .split(',')
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect();
+        assert_eq!(models.len(), 2);
+        assert_eq!(models[0], "openrouter/auto");
+        assert_eq!(models[1], "openrouter/fusion");
     }
     // ─────────────────────────────────────────────────────────────────────────
     // Regression: guest GET /api/notes (login probe) must not return 403.

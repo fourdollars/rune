@@ -103,7 +103,7 @@ pub struct NotesConfig {
     pub port: Option<u16>,
     /// Bind address (default: 127.0.0.1).
     pub bind: Option<String>,
-    /// Model to use for notes mode. If not set or empty, defaults to auto-detecting the first OpenRouter model.
+    /// Model(s) to use for notes mode. Can be a single model or comma-separated list of allowed models (e.g. "openrouter/auto" or "openrouter/auto,openrouter/fusion"). If not set or empty, defaults to auto-detecting models from provider.
     pub model: Option<String>,
     /// GitHub OAuth configuration. Required for serve mode.
     pub github: Option<GitHubOAuthConfig>,

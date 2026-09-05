@@ -4520,6 +4520,15 @@ mod isolation_tests {
     }
 
     #[tokio::test]
+    async fn test_effective_model_disallowed_override_fallback() {
+        let (state, _tmp) = make_state();
+        let room = state.get_or_create_room("note-x").await;
+        *room.model_override.write().await = Some("unauthorized-model-999".into());
+        let model = state.effective_model("note-x").await;
+        assert_eq!(model, "gpt-5-mini");
+    }
+
+    #[tokio::test]
     async fn test_model_info_context_window_applied_to_cfg() {
         // When ModelInfo has a context_window, it should override cfg.context_window
         // This test verifies the lookup logic mirrors what handle_chat_message does.
