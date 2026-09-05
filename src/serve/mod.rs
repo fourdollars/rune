@@ -438,8 +438,15 @@ pub async fn run(config: RuneConfig, opts: NotesOptions) {
         });
     }
 
-    // Background model refresh (every 30 minutes)
-    {
+    // Background model refresh (every 30 minutes, only when notes model is not explicitly configured)
+    let has_configured_notes_model = config
+        .notes
+        .model
+        .as_ref()
+        .map(|m| !m.trim().is_empty())
+        .unwrap_or(false);
+
+    if !has_configured_notes_model {
         let state_clone = state.clone();
         let config_clone = config.clone();
         tokio::spawn(async move {
@@ -451,37 +458,7 @@ pub async fn run(config: RuneConfig, opts: NotesOptions) {
                     if let Ok(new_models) = registry.list_models().await {
                         if !new_models.is_empty() {
                             eprintln!("  ✓ Model refresh: {} models discovered", new_models.len());
-                            let has_configured_models = config_clone
-                                .notes
-                                .model
-                                .as_ref()
-                                .map(|m| !m.trim().is_empty())
-                                .unwrap_or(false);
-                            if has_configured_models {
-                                let mut current_models = state_clone.models.write().await;
-                                let fallback_efforts = new_models[0].reasoning_efforts.clone();
-                                for model in current_models.iter_mut() {
-                                    if let Some(found) =
-                                        new_models.iter().find(|d| d.id == model.id)
-                                    {
-                                        model.reasoning_efforts = found.reasoning_efforts.clone();
-                                        model.context_window = found.context_window;
-                                        model.provider = found.provider.clone();
-                                        model.supported_endpoints =
-                                            found.supported_endpoints.clone();
-                                    } else if !fallback_efforts.is_empty() {
-                                        model.reasoning_efforts = fallback_efforts.clone();
-                                    }
-                                    if model.provider.is_none() {
-                                        model.provider = new_models
-                                            .first()
-                                            .and_then(|d| d.provider.clone())
-                                            .or_else(|| config_clone.provider.clone());
-                                    }
-                                }
-                            } else {
-                                *state_clone.models.write().await = new_models.clone();
-                            }
+                            *state_clone.models.write().await = new_models.clone();
                             // Broadcast updated model list to all connected rooms
                             let updated_models = state_clone.models.read().await.clone();
                             let rooms = state_clone.rooms.read().await;
@@ -1767,6 +1744,46 @@ mod tests {
         assert_eq!(models.len(), 2);
         assert_eq!(models[0], "openrouter/auto");
         assert_eq!(models[1], "openrouter/fusion");
+    }
+
+    #[test]
+    fn test_has_configured_notes_model() {
+        let mut config = RuneConfig::default();
+        config.notes.model = None;
+        let has_configured = config
+            .notes
+            .model
+            .as_ref()
+            .map(|m| !m.trim().is_empty())
+            .unwrap_or(false);
+        assert!(!has_configured);
+
+        config.notes.model = Some("".to_string());
+        let has_configured = config
+            .notes
+            .model
+            .as_ref()
+            .map(|m| !m.trim().is_empty())
+            .unwrap_or(false);
+        assert!(!has_configured);
+
+        config.notes.model = Some("   ".to_string());
+        let has_configured = config
+            .notes
+            .model
+            .as_ref()
+            .map(|m| !m.trim().is_empty())
+            .unwrap_or(false);
+        assert!(!has_configured);
+
+        config.notes.model = Some("openrouter/auto,openrouter/fusion".to_string());
+        let has_configured = config
+            .notes
+            .model
+            .as_ref()
+            .map(|m| !m.trim().is_empty())
+            .unwrap_or(false);
+        assert!(has_configured);
     }
     // ─────────────────────────────────────────────────────────────────────────
     // Regression: guest GET /api/notes (login probe) must not return 403.
