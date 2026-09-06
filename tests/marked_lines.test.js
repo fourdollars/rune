@@ -162,9 +162,12 @@ const escapeHtml = (str) => {
 const blockMathExtension = {
     name: 'blockMath',
     level: 'block',
-    start(src) { return src.indexOf('$$'); },
+    start(src) {
+        const match = src.match(/\n[ \t]*\$\$/);
+        return match ? match.index + 1 : -1;
+    },
     tokenizer(src) {
-        const match = src.match(/^\$\$([\s\S]+?)\$\$/);
+        const match = src.match(/^[ \t]*\$\$([\s\S]+?)\$\$/);
         if (match) return { type: 'blockMath', raw: match[0], text: match[1].trim() };
     },
     renderer(token) {
@@ -352,6 +355,16 @@ graph TD;
     assert.ok(html.includes('<span class="math-inline">$|a+b| = |a|+|b|$</span>'));
     assert.ok(html.includes('<span class="math-inline">$|ab| = |a||b|$</span>'));
     console.log("✓ Test 11: Tables with LaTeX formulas containing pipes passed");
+}
+
+// Test 12: Inline code backticks wrapping math expressions (`$$...$$` and `$x$`)
+{
+    const markdown = "Preview and notes support `$$...$$` and `$x$` without converting them to math blocks.";
+    const html = parse(markdown);
+    assert.ok(html.includes('<code>$$...$$</code>'));
+    assert.ok(html.includes('<code>$x$</code>'));
+    assert.doesNotMatch(html, /<div class="math-block">/);
+    console.log("✓ Test 12: Inline code backticks wrapping math expressions passed");
 }
 
 console.log("All unit tests passed successfully! 🎉");

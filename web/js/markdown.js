@@ -131,14 +131,16 @@ if (typeof marked !== 'undefined') {
         return (str || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
     };
 
-    // --- Math extensions: intercept $$ and $ before marked mangles the content ---
     // Block math: $$...$$  (must be registered before inline to take priority)
     const blockMathExtension = {
         name: 'blockMath',
         level: 'block',
-        start(src) { return src.indexOf('$$'); },
+        start(src) {
+            const match = src.match(/\n[ \t]*\$\$/);
+            return match ? match.index + 1 : -1;
+        },
         tokenizer(src) {
-            const match = src.match(/^\$\$([\s\S]+?)\$\$/);
+            const match = src.match(/^[ \t]*\$\$([\s\S]+?)\$\$/);
             if (match) {
                 return { type: 'blockMath', raw: match[0], text: match[1].trim() };
             }
