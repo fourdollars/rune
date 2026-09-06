@@ -429,10 +429,22 @@ function updateThinkingSelect() {
     return;
   }
   const currentModelObj = availableModels.find((m) => (m.id || m) === activeModel);
-  const efforts = currentModelObj?.reasoning_efforts || [];
+  let efforts = currentModelObj?.reasoning_efforts || [];
+  const isOpenRouterAuto = activeModel.startsWith('openrouter/auto');
+  if (isOpenRouterAuto && efforts.length === 0) {
+    efforts = ['low', 'medium', 'high', 'xhigh', 'max'];
+  }
   if (efforts.length === 0) {
     $thinkingSwitcher.style.display = 'none';
     return;
+  }
+  const label = isOpenRouterAuto ? 'Cost tier' : 'Thinking level';
+  if ($thinkingBtn) {
+    $thinkingBtn.title = label;
+    $thinkingBtn.setAttribute('aria-label', label);
+  }
+  if ($thinkingDropdown) {
+    $thinkingDropdown.setAttribute('aria-label', label);
   }
   const isGemini3 = activeModel.startsWith('gemini-3.');
   const options = [];

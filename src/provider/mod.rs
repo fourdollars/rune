@@ -600,6 +600,9 @@ impl OpenAiProvider {
     }
 
     fn supports_reasoning(&self, model: &str) -> bool {
+        if model.starts_with("openrouter/") {
+            return true;
+        }
         {
             let cache = self.reasoning_models.lock().unwrap();
             if !cache.is_empty() {
@@ -831,7 +834,18 @@ impl Provider for OpenAiProvider {
                     false
                 };
 
-                let reasoning_efforts = if supports_reasoning {
+                let openrouter_cost_tiers = vec![
+                    "low".to_string(),
+                    "medium".to_string(),
+                    "high".to_string(),
+                    "xhigh".to_string(),
+                    "max".to_string(),
+                ];
+
+                let reasoning_efforts = if m.id.starts_with("openrouter/auto") {
+                    reasoning_set.insert(m.id.clone());
+                    openrouter_cost_tiers.clone()
+                } else if supports_reasoning {
                     reasoning_set.insert(m.id.clone());
                     vec![
                         "minimal".to_string(),
@@ -868,8 +882,19 @@ impl Provider for OpenAiProvider {
 
             models.sort_by(|a, b| a.id.cmp(&b.id));
 
+            let openrouter_cost_tiers = vec![
+                "low".to_string(),
+                "medium".to_string(),
+                "high".to_string(),
+                "xhigh".to_string(),
+                "max".to_string(),
+            ];
+
+            reasoning_set.insert("openrouter/auto".to_string());
+
             if let Some(pos) = models.iter().position(|m| m.id == "openrouter/fusion") {
-                let fusion_model = models.remove(pos);
+                let mut fusion_model = models.remove(pos);
+                fusion_model.reasoning_efforts = vec![];
                 models.insert(0, fusion_model);
             } else {
                 let provider_id = if self.openrouter_zdr {
@@ -883,14 +908,15 @@ impl Provider for OpenAiProvider {
                         id: "openrouter/fusion".to_string(),
                         provider: Some(provider_id),
                         context_window: None,
-                        reasoning_efforts: Vec::new(),
+                        reasoning_efforts: vec![],
                         supported_endpoints: vec!["/chat/completions".to_string()],
                     },
                 );
             }
 
             if let Some(pos) = models.iter().position(|m| m.id == "openrouter/auto") {
-                let auto_model = models.remove(pos);
+                let mut auto_model = models.remove(pos);
+                auto_model.reasoning_efforts = openrouter_cost_tiers.clone();
                 models.insert(0, auto_model);
             } else {
                 let provider_id = if self.openrouter_zdr {
@@ -904,7 +930,7 @@ impl Provider for OpenAiProvider {
                         id: "openrouter/auto".to_string(),
                         provider: Some(provider_id),
                         context_window: None,
-                        reasoning_efforts: Vec::new(),
+                        reasoning_efforts: openrouter_cost_tiers.clone(),
                         supported_endpoints: vec!["/chat/completions".to_string()],
                     },
                 );
@@ -940,8 +966,19 @@ impl Provider for OpenAiProvider {
             let mut payload_value: serde_json::Value = serde_json::to_value(&request)
                 .map_err(|e| anyhow!("failed to serialize request: {}", e))?;
 
-            // Inject thinking/reasoning_effort if set
-            if is_openrouter {
+            // Inject thinking/reasoning_effort or auto-router plugins if set
+            if is_openrouter && request.model.starts_with("openrouter/auto") {
+                if let Some(ref thinking) = request.thinking {
+                    if thinking != "off" && thinking != "none" {
+                        payload_value["plugins"] = serde_json::json!([
+                            {
+                                "id": "auto-router",
+                                "cost_tier": thinking
+                            }
+                        ]);
+                    }
+                }
+            } else if is_openrouter {
                 if let Some(ref thinking) = request.thinking {
                     let reasoning_obj = if thinking == "off" || thinking == "none" {
                         serde_json::json!({
@@ -1086,7 +1123,21 @@ impl Provider for OpenAiProvider {
             if let Value::Object(ref mut map) = payload {
                 map.insert("stream".to_string(), Value::Bool(true));
 
-                if is_openrouter {
+                if is_openrouter && request.model.starts_with("openrouter/auto") {
+                    if let Some(ref thinking) = request.thinking {
+                        if thinking != "off" && thinking != "none" {
+                            map.insert(
+                                "plugins".to_string(),
+                                serde_json::json!([
+                                    {
+                                        "id": "auto-router",
+                                        "cost_tier": thinking
+                                    }
+                                ]),
+                            );
+                        }
+                    }
+                } else if is_openrouter {
                     if let Some(ref thinking) = request.thinking {
                         let reasoning_obj = if thinking == "off" || thinking == "none" {
                             serde_json::json!({
@@ -4703,6 +4754,8 @@ mod provider_tests {
     fn test_openrouter_supports_reasoning() {
         let p = OpenAiProvider::new("openrouter".to_string(), "sk-fake".to_string(), None, false);
         // Fallbacks
+        assert!(p.supports_reasoning("openrouter/auto"));
+        assert!(p.supports_reasoning("openrouter/fusion"));
         assert!(p.supports_reasoning("openai/o1-mini"));
         assert!(p.supports_reasoning("openai/o3-mini"));
         assert!(p.supports_reasoning("deepseek/deepseek-r1"));
@@ -4714,14 +4767,26 @@ mod provider_tests {
             let mut cache = p.reasoning_models.lock().unwrap();
             cache.insert("my-special-model".to_string());
         }
-        // Once cache is populated, only items in cache match
+        // Once cache is populated, only items in cache (or openrouter/ models) match
         assert!(p.supports_reasoning("my-special-model"));
+        assert!(p.supports_reasoning("openrouter/auto"));
         assert!(!p.supports_reasoning("openai/o1-mini"));
     }
 
     #[test]
     fn test_openrouter_normalize_thinking() {
         let p = OpenAiProvider::new("openrouter".to_string(), "sk-fake".to_string(), None, false);
+        // openrouter/ model preserves thinking/cost tier
+        let req0 = LlmRequest {
+            model: "openrouter/auto".to_string(),
+            messages: vec![],
+            tools: None,
+            max_tokens: None,
+            thinking: Some("medium".to_string()),
+        };
+        let normalized0 = p.normalize_thinking(req0);
+        assert_eq!(normalized0.thinking, Some("medium".to_string()));
+
         // Fallback model supporting reasoning preserves thinking
         let req = LlmRequest {
             model: "openai/o1-mini".to_string(),
@@ -4743,6 +4808,104 @@ mod provider_tests {
         };
         let normalized2 = p.normalize_thinking(req2);
         assert_eq!(normalized2.thinking, None);
+    }
+
+    #[test]
+    fn test_openrouter_auto_router_plugins_payload() {
+        let req_with_tier = LlmRequest {
+            model: "openrouter/auto".to_string(),
+            messages: vec![],
+            tools: None,
+            max_tokens: None,
+            thinking: Some("medium".to_string()),
+        };
+        let is_auto_router = |model: &str| model.starts_with("openrouter/auto");
+        let mut payload_value = serde_json::to_value(&req_with_tier).unwrap();
+        if is_auto_router(&req_with_tier.model) {
+            if let Some(ref thinking) = req_with_tier.thinking {
+                if thinking != "off" && thinking != "none" {
+                    payload_value["plugins"] = serde_json::json!([
+                        {
+                            "id": "auto-router",
+                            "cost_tier": thinking
+                        }
+                    ]);
+                }
+            }
+        }
+        assert_eq!(
+            payload_value["plugins"],
+            serde_json::json!([{"id": "auto-router", "cost_tier": "medium"}])
+        );
+
+        let req_beta = LlmRequest {
+            model: "openrouter/auto-beta".to_string(),
+            messages: vec![],
+            tools: None,
+            max_tokens: None,
+            thinking: Some("high".to_string()),
+        };
+        let mut payload_value_beta = serde_json::to_value(&req_beta).unwrap();
+        if is_auto_router(&req_beta.model) {
+            if let Some(ref thinking) = req_beta.thinking {
+                if thinking != "off" && thinking != "none" {
+                    payload_value_beta["plugins"] = serde_json::json!([
+                        {
+                            "id": "auto-router",
+                            "cost_tier": thinking
+                        }
+                    ]);
+                }
+            }
+        }
+        assert_eq!(
+            payload_value_beta["plugins"],
+            serde_json::json!([{"id": "auto-router", "cost_tier": "high"}])
+        );
+
+        let req_with_off = LlmRequest {
+            model: "openrouter/auto".to_string(),
+            messages: vec![],
+            tools: None,
+            max_tokens: None,
+            thinking: Some("off".to_string()),
+        };
+        let mut payload_value_off = serde_json::to_value(&req_with_off).unwrap();
+        if is_auto_router(&req_with_off.model) {
+            if let Some(ref thinking) = req_with_off.thinking {
+                if thinking != "off" && thinking != "none" {
+                    payload_value_off["plugins"] = serde_json::json!([
+                        {
+                            "id": "auto-router",
+                            "cost_tier": thinking
+                        }
+                    ]);
+                }
+            }
+        }
+        assert!(payload_value_off.get("plugins").is_none());
+
+        let req_fusion = LlmRequest {
+            model: "openrouter/fusion".to_string(),
+            messages: vec![],
+            tools: None,
+            max_tokens: None,
+            thinking: Some("medium".to_string()),
+        };
+        let mut payload_value_fusion = serde_json::to_value(&req_fusion).unwrap();
+        if is_auto_router(&req_fusion.model) {
+            if let Some(ref thinking) = req_fusion.thinking {
+                if thinking != "off" && thinking != "none" {
+                    payload_value_fusion["plugins"] = serde_json::json!([
+                        {
+                            "id": "auto-router",
+                            "cost_tier": thinking
+                        }
+                    ]);
+                }
+            }
+        }
+        assert!(payload_value_fusion.get("plugins").is_none());
     }
 
     #[test]

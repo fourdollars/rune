@@ -24,7 +24,13 @@ globalThis.updateThinkingSelect = function updateThinkingSelect() {
 
     // Find current model's reasoning_efforts
     const currentModelObj = availableModels.find(m => (m.id || m) === activeModel);
-    const efforts = (currentModelObj && currentModelObj.reasoning_efforts) || [];
+    let efforts = (currentModelObj && currentModelObj.reasoning_efforts) || [];
+
+    const isOpenRouterAuto = activeModel && activeModel.startsWith('openrouter/auto');
+
+    if (isOpenRouterAuto && efforts.length === 0) {
+        efforts = ['low', 'medium', 'high', 'xhigh', 'max'];
+    }
 
     if (!isAdmin || efforts.length === 0) {
         selects.forEach(s => s.style.display = 'none');
@@ -32,9 +38,12 @@ globalThis.updateThinkingSelect = function updateThinkingSelect() {
     }
 
     const isGemini3 = activeModel && activeModel.startsWith('gemini-3.');
+    const label = isOpenRouterAuto ? 'Cost tier' : 'Thinking level';
 
     // Build options: prepend "off" only when "none" is not already in the list, and not Gemini 3.x
     selects.forEach(select => {
+        select.title = label;
+        select.setAttribute('aria-label', label);
         select.innerHTML = '';
         if (!efforts.includes('none') && !isGemini3) {
             const offOpt = document.createElement('option');

@@ -283,12 +283,25 @@ pub async fn run(config: RuneConfig, opts: NotesOptions) {
             .split(',')
             .map(|s| s.trim().to_string())
             .filter(|s| !s.is_empty())
-            .map(|id| ModelInfo {
-                id,
-                provider: None,
-                context_window: None,
-                reasoning_efforts: default_reasoning_efforts.clone(),
-                supported_endpoints: vec![],
+            .map(|id| {
+                let reasoning_efforts = if id.starts_with("openrouter/auto") {
+                    vec![
+                        "low".to_string(),
+                        "medium".to_string(),
+                        "high".to_string(),
+                        "xhigh".to_string(),
+                        "max".to_string(),
+                    ]
+                } else {
+                    default_reasoning_efforts.clone()
+                };
+                ModelInfo {
+                    id,
+                    provider: None,
+                    context_window: None,
+                    reasoning_efforts,
+                    supported_endpoints: vec![],
+                }
             })
             .collect()
     };
@@ -331,11 +344,22 @@ pub async fn run(config: RuneConfig, opts: NotesOptions) {
                 Ok(_) => {
                     if models.is_empty() {
                         eprintln!("  ⚠ Provider returned no models, using default");
+                        let fallback_efforts = if serve_model.starts_with("openrouter/auto") {
+                            vec![
+                                "low".to_string(),
+                                "medium".to_string(),
+                                "high".to_string(),
+                                "xhigh".to_string(),
+                                "max".to_string(),
+                            ]
+                        } else {
+                            vec![]
+                        };
                         models = vec![ModelInfo {
                             id: serve_model.clone(),
                             provider: None,
                             context_window: None,
-                            reasoning_efforts: vec![],
+                            reasoning_efforts: fallback_efforts,
                             supported_endpoints: vec![],
                         }];
                     }
@@ -343,11 +367,22 @@ pub async fn run(config: RuneConfig, opts: NotesOptions) {
                 Err(e) => {
                     if models.is_empty() {
                         eprintln!("  ⚠ Failed to discover models: {}", e);
+                        let fallback_efforts = if serve_model.starts_with("openrouter/auto") {
+                            vec![
+                                "low".to_string(),
+                                "medium".to_string(),
+                                "high".to_string(),
+                                "xhigh".to_string(),
+                                "max".to_string(),
+                            ]
+                        } else {
+                            vec![]
+                        };
                         models = vec![ModelInfo {
                             id: serve_model.clone(),
                             provider: None,
                             context_window: None,
-                            reasoning_efforts: vec![],
+                            reasoning_efforts: fallback_efforts,
                             supported_endpoints: vec![],
                         }];
                     }
@@ -356,11 +391,22 @@ pub async fn run(config: RuneConfig, opts: NotesOptions) {
             Err(e) => {
                 if models.is_empty() {
                     eprintln!("  ⚠ Cannot build provider for model discovery: {}", e);
+                    let fallback_efforts = if serve_model.starts_with("openrouter/auto") {
+                        vec![
+                            "low".to_string(),
+                            "medium".to_string(),
+                            "high".to_string(),
+                            "xhigh".to_string(),
+                            "max".to_string(),
+                        ]
+                    } else {
+                        vec![]
+                    };
                     models = vec![ModelInfo {
                         id: serve_model.clone(),
                         provider: None,
                         context_window: None,
-                        reasoning_efforts: vec![],
+                        reasoning_efforts: fallback_efforts,
                         supported_endpoints: vec![],
                     }];
                 }

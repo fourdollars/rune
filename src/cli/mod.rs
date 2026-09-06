@@ -193,7 +193,7 @@ fn print_help() {
     println!(
         "    {:<24} {}",
         "/thinking [level]".green(),
-        "Show/set thinking: off|low|medium|high|xhigh"
+        "Show/set thinking or cost tier: off|low|medium|high|xhigh|max"
     );
     println!("    {:<24} {}", "/version".green(), "Show version info");
     println!("    {:<24} {}", "/help".green(), "Show this help");
@@ -723,9 +723,16 @@ fn show_info(cfg: &config::RuneConfig, agent: &crate::agent::Agent) {
         );
     }
     println!("    {} model: {}", "•".dimmed(), cfg.model.green());
+    let is_openrouter_auto = cfg.model.starts_with("openrouter/auto");
+    let thinking_label = if is_openrouter_auto {
+        "cost tier"
+    } else {
+        "thinking"
+    };
     println!(
-        "    {} thinking: {}",
+        "    {} {}: {}",
         "•".dimmed(),
+        thinking_label,
         cfg.thinking.as_deref().unwrap_or("none").cyan()
     );
     if let Some(ref url) = cfg.base_url {
@@ -1836,25 +1843,44 @@ pub async fn run() {
                 );
             }
             cmd if cmd == "/thinking" || cmd.starts_with("/thinking ") => {
+                let is_openrouter_auto = agent.config.model.starts_with("openrouter/auto");
+                let label = if is_openrouter_auto {
+                    "Cost tier:"
+                } else {
+                    "Thinking:"
+                };
                 let arg = cmd.strip_prefix("/thinking").unwrap().trim();
                 if arg.is_empty() {
                     let current = agent.config.thinking.as_deref().unwrap_or("none");
-                    println!("{} {}", "Thinking:".bold(), current.cyan());
+                    println!("{} {}", label.bold(), current.cyan());
                 } else {
                     match arg {
-                        "none" | "off" | "low" | "medium" | "high" | "xhigh" => {
+                        "none" | "off" | "low" | "medium" | "high" | "xhigh" | "max"
+                        | "minimal" => {
                             agent.config.thinking = if arg == "none" || arg == "off" {
                                 None
                             } else {
                                 Some(arg.to_string())
                             };
-                            println!("  {} Thinking set to: {}", "✓".green(), arg.cyan());
+                            let action_label = if is_openrouter_auto {
+                                "Cost tier"
+                            } else {
+                                "Thinking"
+                            };
+                            println!("  {} {} set to: {}", "✓".green(), action_label, arg.cyan());
                         }
                         _ => {
-                            eprintln!(
-                                "  {} Invalid level. Use: off, low, medium, high, xhigh",
-                                "⚠".yellow()
-                            );
+                            if is_openrouter_auto {
+                                eprintln!(
+                                    "  {} Invalid tier. Use: off, low, medium, high, xhigh, max",
+                                    "⚠".yellow()
+                                );
+                            } else {
+                                eprintln!(
+                                    "  {} Invalid level. Use: off, low, medium, high, xhigh, max",
+                                    "⚠".yellow()
+                                );
+                            }
                         }
                     }
                 }
