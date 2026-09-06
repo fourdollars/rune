@@ -3328,7 +3328,13 @@ When creating Mermaid diagrams, always wrap text descriptions and node labels in
 
 ## SVG
 
-Unless explicitly requested otherwise, always use a light background for SVGs. When embedding SVG inline in markdown, write the entire `<svg>...</svg>` on a **single line with no whitespace or newlines** between tags. Inline SVG with line breaks or indentation will not render correctly."#.to_string()
+Unless explicitly requested otherwise, always use a light background for SVGs. When embedding SVG inline in markdown, write the entire `<svg>...</svg>` on a **single line with no whitespace or newlines** between tags. Inline SVG with line breaks or indentation will not render correctly.
+
+## Markdown Formatting
+
+When applying bold (`**`) or italic (`*`) formatting to text with quotes, brackets, or mixed CJK/English terms:
+- **Quotes and brackets outside**: Always place quotation marks and brackets *outside* the bold/italic delimiters (e.g. write `「**術語**」`, `（**術語**）`, `《**書名**》` instead of `**「術語」**` or `**（術語）**`) to ensure correct CommonMark rendering.
+- **Spacing**: Ensure proper spacing between alphanumeric words and bold delimiters (e.g. write `Why **重點**` or `Why 「**重點**」` instead of `Why**「重點」**`)."#.to_string()
 }
 
 // ─── Tests ─────────────────────────────────────────────────────────────────
@@ -3377,6 +3383,8 @@ mod tests {
         assert!(prompt.contains("always wrap text descriptions and node labels in double quotes"));
         assert!(prompt.contains("## SVG"));
         assert!(prompt.contains("always use a light background for SVGs"));
+        assert!(prompt.contains("## Markdown Formatting"));
+        assert!(prompt.contains("Quotes and brackets outside"));
 
         let mut custom_config = RuneConfig::default();
         custom_config.system_prompt = Some("Custom prompt".to_string());
