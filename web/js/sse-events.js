@@ -123,13 +123,13 @@ globalThis.handleMessage = function handleMessage(msg) {
         case 'model_list':
             availableModels = msg.models || [];  // [{id, context_window, reasoning_efforts}, ...]
             activeModel = msg.active || '';
-            currentThinking = msg.thinking || 'off';
+            currentThinking = msg.thinking || ((activeModel && activeModel.startsWith('openrouter/auto')) ? 'low' : 'off');
             updateModelIndicator();
             updateThinkingSelect();
             break;
         case 'model_changed':
             activeModel = msg.model || '';
-            currentThinking = msg.thinking || 'off';
+            currentThinking = msg.thinking || ((activeModel && activeModel.startsWith('openrouter/auto')) ? 'low' : 'off');
             updateModelIndicator();
             updateThinkingSelect();
             addSystemMessage('Model switched to: ' + activeModel + ' ' + currentThinking);

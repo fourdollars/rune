@@ -449,12 +449,6 @@ async fn fetch_openrouter_models(openrouter_zdr: bool) -> Option<Vec<String>> {
         }
     }
     filtered.sort();
-    if let Some(pos) = filtered.iter().position(|m| m == "openrouter/fusion") {
-        let fusion = filtered.remove(pos);
-        filtered.insert(0, fusion);
-    } else {
-        filtered.insert(0, "openrouter/fusion".to_string());
-    }
     if let Some(pos) = filtered.iter().position(|m| m == "openrouter/auto") {
         let auto = filtered.remove(pos);
         filtered.insert(0, auto);
@@ -1075,11 +1069,10 @@ pub async fn run_setup(config_path_override: Option<String>) {
                 println!("   {} Custom", format!("[{}]", models.len() + 1).cyan());
             } else {
                 println!("   {} openrouter/auto", "[1]".cyan());
-                println!("   {} openrouter/fusion", "[2]".cyan());
-                println!("   {} openai/gpt-4o-mini", "[3]".cyan());
-                println!("   {} anthropic/claude-3.5-sonnet", "[4]".cyan());
-                println!("   {} google/gemini-pro", "[5]".cyan());
-                println!("   {} Custom", "[6]".cyan());
+                println!("   {} openai/gpt-4o-mini", "[2]".cyan());
+                println!("   {} anthropic/claude-3.5-sonnet", "[3]".cyan());
+                println!("   {} google/gemini-pro", "[4]".cyan());
+                println!("   {} Custom", "[5]".cyan());
             }
         }
         _ => {
@@ -1188,10 +1181,9 @@ pub async fn run_setup(config_path_override: Option<String>) {
                 } else {
                     match choice {
                         "1" | "" => "openrouter/auto".to_string(),
-                        "2" => "openrouter/fusion".to_string(),
-                        "3" => "openai/gpt-4o-mini".to_string(),
-                        "4" => "anthropic/claude-3.5-sonnet".to_string(),
-                        "5" => "google/gemini-pro".to_string(),
+                        "2" => "openai/gpt-4o-mini".to_string(),
+                        "3" => "anthropic/claude-3.5-sonnet".to_string(),
+                        "4" => "google/gemini-pro".to_string(),
                         _ => {
                             let custom = prompt("  Model name: ")
                                 .unwrap_or_default()
@@ -1652,11 +1644,10 @@ pub async fn run_setup(config_path_override: Option<String>) {
                 println!("   {} Custom", format!("[{}]", models.len() + 1).cyan());
             } else {
                 println!("   {} openrouter/auto", "[1]".cyan());
-                println!("   {} openrouter/fusion", "[2]".cyan());
-                println!("   {} openai/gpt-4o-mini", "[3]".cyan());
-                println!("   {} anthropic/claude-3.5-sonnet", "[4]".cyan());
-                println!("   {} google/gemini-pro", "[5]".cyan());
-                println!("   {} Custom", "[6]".cyan());
+                println!("   {} openai/gpt-4o-mini", "[2]".cyan());
+                println!("   {} anthropic/claude-3.5-sonnet", "[3]".cyan());
+                println!("   {} google/gemini-pro", "[4]".cyan());
+                println!("   {} Custom", "[5]".cyan());
             }
             println!();
         } else if provider_choice.trim() == "2" {
@@ -1704,10 +1695,9 @@ pub async fn run_setup(config_path_override: Option<String>) {
             } else {
                 match notes_model_choice {
                     "1" => "openrouter/auto".to_string(),
-                    "2" => "openrouter/fusion".to_string(),
-                    "3" => "openai/gpt-4o-mini".to_string(),
-                    "4" => "anthropic/claude-3.5-sonnet".to_string(),
-                    "5" => "google/gemini-pro".to_string(),
+                    "2" => "openai/gpt-4o-mini".to_string(),
+                    "3" => "anthropic/claude-3.5-sonnet".to_string(),
+                    "4" => "google/gemini-pro".to_string(),
                     "" => "".to_string(),
                     _ => {
                         let custom = prompt("  Model name: ")
@@ -2216,12 +2206,11 @@ allowed_domains = ["example.com"]"#;
 
     #[test]
     fn test_model_openrouter_claude() {
-        let m = match ("4", "4") {
+        let m = match ("4", "3") {
             ("4", "1") => "openrouter/auto",
-            ("4", "2") => "openrouter/fusion",
-            ("4", "3") => "openai/gpt-4o-mini",
-            ("4", "4") => "anthropic/claude-3.5-sonnet",
-            ("4", "5") => "google/gemini-pro",
+            ("4", "2") => "openai/gpt-4o-mini",
+            ("4", "3") => "anthropic/claude-3.5-sonnet",
+            ("4", "4") => "google/gemini-pro",
             _ => "unknown",
         };
         assert_eq!(m, "anthropic/claude-3.5-sonnet");
@@ -2430,12 +2419,6 @@ allowed_domains = ["example.com"]"#;
             }
         }
         filtered.sort();
-        if let Some(pos) = filtered.iter().position(|m| m == "openrouter/fusion") {
-            let fusion = filtered.remove(pos);
-            filtered.insert(0, fusion);
-        } else {
-            filtered.insert(0, "openrouter/fusion".to_string());
-        }
         if let Some(pos) = filtered.iter().position(|m| m == "openrouter/auto") {
             let auto = filtered.remove(pos);
             filtered.insert(0, auto);
@@ -2443,11 +2426,10 @@ allowed_domains = ["example.com"]"#;
             filtered.insert(0, "openrouter/auto".to_string());
         }
 
-        assert_eq!(filtered.len(), 4);
+        assert_eq!(filtered.len(), 3);
         assert_eq!(filtered[0], "openrouter/auto");
-        assert_eq!(filtered[1], "openrouter/fusion");
-        assert_eq!(filtered[2], "google/gemini-2.0-flash");
-        assert_eq!(filtered[3], "meta-llama/llama-3.3-70b-instruct");
+        assert_eq!(filtered[1], "google/gemini-2.0-flash");
+        assert_eq!(filtered[2], "meta-llama/llama-3.3-70b-instruct");
     }
 
     #[test]

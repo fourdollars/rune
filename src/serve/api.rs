@@ -1258,13 +1258,25 @@ pub async fn note_patch_handler(
 
         let current_effective = state.effective_thinking(&note_id).await;
         let effective_thinking = if let Some(ref t) = current_effective {
-            if t == "off" || new_efforts.contains(t) {
+            if t == "off" && model.starts_with("openrouter/auto") {
+                *room.thinking_override.write().await = Some("low".to_string());
+                state.chat_db.set_note_thinking(&note_id, Some("low"));
+                "low".to_string()
+            } else if t == "off" || new_efforts.contains(t) {
                 t.clone()
+            } else if model.starts_with("openrouter/auto") {
+                *room.thinking_override.write().await = Some("low".to_string());
+                state.chat_db.set_note_thinking(&note_id, Some("low"));
+                "low".to_string()
             } else {
                 *room.thinking_override.write().await = Some("off".to_string());
                 state.chat_db.set_note_thinking(&note_id, Some("off"));
                 "off".to_string()
             }
+        } else if model.starts_with("openrouter/auto") {
+            *room.thinking_override.write().await = Some("low".to_string());
+            state.chat_db.set_note_thinking(&note_id, Some("low"));
+            "low".to_string()
         } else {
             "off".to_string()
         };

@@ -119,14 +119,21 @@ impl ServerState {
         self.global_default_model.read().await.clone()
     }
 
-    /// Effective thinking for a note: per-note override if set, else config.thinking.
+    /// Effective thinking for a note: per-note override if set, else config.thinking, or "low" for openrouter/auto.
     pub async fn effective_thinking(&self, note_id: &str) -> Option<String> {
         let room = self.get_or_create_room(note_id).await;
         let override_val = room.thinking_override.read().await;
         if let Some(ref t) = *override_val {
             return Some(t.clone());
         }
-        self.config.thinking.clone()
+        if let Some(ref t) = self.config.thinking {
+            return Some(t.clone());
+        }
+        let effective_model = self.effective_model(note_id).await;
+        if effective_model.starts_with("openrouter/auto") {
+            return Some("low".to_string());
+        }
+        None
     }
 }
 
@@ -176,12 +183,6 @@ async fn auto_detect_openrouter_model() -> String {
                 }
             }
             filtered.sort();
-            if let Some(pos) = filtered.iter().position(|m| m == "openrouter/fusion") {
-                let fusion = filtered.remove(pos);
-                filtered.insert(0, fusion);
-            } else {
-                filtered.insert(0, "openrouter/fusion".to_string());
-            }
             if let Some(pos) = filtered.iter().position(|m| m == "openrouter/auto") {
                 let auto = filtered.remove(pos);
                 filtered.insert(0, auto);

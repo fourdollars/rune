@@ -457,7 +457,7 @@ function updateThinkingSelect() {
   efforts.forEach((level) => {
     if (!options.includes(level)) options.push(level);
   });
-  let val = currentThinking || 'off';
+  let val = currentThinking || (isOpenRouterAuto ? 'low' : 'off');
   if (isGemini3 && (val === 'off' || val === 'none')) {
     val = efforts[0] || 'medium';
   }

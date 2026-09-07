@@ -73,14 +73,20 @@ console.log('=== OpenRouter Cost Tier & Auto-Router Test Suite ===');
     const payload = { model };
     const isOpenRouterAuto = model.startsWith('openrouter/auto');
     if (isOpenRouterAuto) {
-      if (thinking && thinking !== 'off' && thinking !== 'none') {
-        payload.plugins = [{ id: 'auto-router', cost_tier: thinking }];
+      const tier = (thinking === undefined || thinking === null) ? 'low' : thinking;
+      if (tier && tier !== 'off' && tier !== 'none') {
+        payload.plugins = [{ id: 'auto-router', cost_tier: tier }];
       }
     } else if (thinking && thinking !== 'off' && thinking !== 'none') {
       payload.reasoning = { enabled: true, effort: thinking };
     }
     return payload;
   }
+
+  // openrouter/auto with default (undefined) cost tier -> defaults to low
+  const defaultPayload = buildPayload('openrouter/auto');
+  assert.deepStrictEqual(defaultPayload.plugins, [{ id: 'auto-router', cost_tier: 'low' }]);
+  assert.strictEqual(defaultPayload.reasoning, undefined);
 
   // openrouter/auto with medium cost tier
   const mediumPayload = buildPayload('openrouter/auto', 'medium');

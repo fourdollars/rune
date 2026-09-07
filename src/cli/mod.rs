@@ -729,11 +729,12 @@ fn show_info(cfg: &config::RuneConfig, agent: &crate::agent::Agent) {
     } else {
         "thinking"
     };
+    let default_val = if is_openrouter_auto { "low" } else { "none" };
     println!(
         "    {} {}: {}",
         "•".dimmed(),
         thinking_label,
-        cfg.thinking.as_deref().unwrap_or("none").cyan()
+        cfg.thinking.as_deref().unwrap_or(default_val).cyan()
     );
     if let Some(ref url) = cfg.base_url {
         println!("    {} endpoint: {}", "•".dimmed(), url.dimmed());
@@ -1851,7 +1852,8 @@ pub async fn run() {
                 };
                 let arg = cmd.strip_prefix("/thinking").unwrap().trim();
                 if arg.is_empty() {
-                    let current = agent.config.thinking.as_deref().unwrap_or("none");
+                    let default_val = if is_openrouter_auto { "low" } else { "none" };
+                    let current = agent.config.thinking.as_deref().unwrap_or(default_val);
                     println!("{} {}", label.bold(), current.cyan());
                 } else {
                     match arg {
