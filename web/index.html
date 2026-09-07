@@ -48,7 +48,7 @@
     <div id="logout-modal" class="modal-overlay hidden">
         <div class="modal" role="dialog" aria-modal="true" aria-labelledby="logout-modal-title">
             <h2 id="logout-modal-title">Logout</h2>
-            <p>Are you sure you want to log out?<br>Your saved nickname and token will be cleared.</p>
+            <p>Are you sure you want to log out?</p>
             <div class="modal-actions">
                 <button class="btn-secondary" data-action="hide-logout-dialog">Cancel</button>
                 <button class="btn-primary" data-action="confirm-logout">Logout</button>
@@ -147,6 +147,7 @@
             <button type="button" role="menuitem" data-action="show-archive-dialog" data-icon="archive">Archive chat</button>
             <button type="button" role="menuitem" data-action="show-model-dialog" data-icon="chip">Switch model</button>
             <button type="button" role="menuitem" data-action="toggle-sync-scroll" data-icon="sync-scroll">Sync scroll</button>
+            <button type="button" role="menuitem" data-action="open-command-palette" data-icon="command">Command palette</button>
             <button type="button" role="menuitem" data-action="show-new-note-dialog" data-icon="plus">New note</button>
             <button type="button" role="menuitem" data-action="show-logout-dialog" data-icon="logout">Log out</button>
         </div>
@@ -161,8 +162,13 @@
                 <input type="text" id="file-search-input" class="file-search-input" placeholder="Search markdown files..." autocomplete="off" aria-label="Search markdown files">
                 <div class="note-tree" id="note-tree"></div>
                 <div class="explorer-actions">
-                     <button id="btn-new-note" class="explorer-action-btn" data-action="show-new-note-dialog" data-icon="plus" title="New note" aria-label="New note"></button>
-                     <button id="btn-logout" class="explorer-action-btn" data-action="show-logout-dialog" data-icon="logout" title="Logout" aria-label="Log out"></button>
+                    <div class="explorer-actions-group">
+                        <button id="btn-new-note" class="explorer-action-btn" data-action="show-new-note-dialog" data-icon="plus" title="New note" aria-label="New note"></button>
+                        <button id="btn-command-palette" class="explorer-action-btn" data-action="open-command-palette" data-icon="command" title="Command palette (Ctrl+K)" aria-label="Command palette"></button>
+                    </div>
+                    <div class="explorer-actions-group">
+                        <button id="btn-logout" class="explorer-action-btn" data-action="show-logout-dialog" data-icon="logout" title="Logout" aria-label="Log out"></button>
+                    </div>
                 </div>
             </div>
         </aside>

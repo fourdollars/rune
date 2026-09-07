@@ -1846,11 +1846,16 @@ pre.hljs-pre:hover .copy-btn {
     margin-top: auto;
     display: flex;
     align-items: center;
-    justify-content: center;
-    gap: 2px;
-    padding: 8px 6px;
+    justify-content: space-between;
+    padding: 8px 10px;
     border-top: 1px solid var(--border);
     flex-shrink: 0;
+}
+
+.explorer-actions-group {
+    display: flex;
+    align-items: center;
+    gap: 4px;
 }
 
 .explorer-action-btn {

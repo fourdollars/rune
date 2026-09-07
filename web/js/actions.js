@@ -50,6 +50,7 @@ const actions = {
     'toggle-online-users': () => toggleOnlineUsers(),
     'close-online-users': () => closeOnlineUsers(),
     'row-menu': element => toggleRowMenu(element),
+    'open-command-palette': () => openCommandPalette(),
     'run-command': element => runCommand(element),
 };
 
