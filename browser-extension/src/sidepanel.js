@@ -34,6 +34,14 @@ const $modelModalCancel = document.getElementById('model-modal-cancel');
 const $archiveModal = document.getElementById('archive-modal');
 const $archiveModalCancel = document.getElementById('archive-modal-cancel');
 const $archiveModalConfirm = document.getElementById('archive-modal-confirm');
+const $autocomplete = document.getElementById('chat-autocomplete');
+
+let cachedSkills = [];
+let cachedNoteFiles = [];
+let autocompleteActiveTrigger = null;
+let autocompleteActiveRange = null;
+let autocompleteSelectedIndex = 0;
+let autocompleteFilteredItems = [];
 
 function updateExtensionTitle(serverUrl, serverName) {
   const displayName = (serverName && serverName.trim()) ? serverName.trim() : (serverUrl || '');
@@ -1423,11 +1431,201 @@ function handleSseEvent(rec) {
         replayHistory(payload.messages);
       }
       break;
+    case 'file_list':
+      if (Array.isArray(payload.files)) {
+        cachedNoteFiles = payload.files.map((f) => typeof f === 'string' ? f : (f.name || ''));
+      }
+      break;
     default:
-      // users_update / file_list / etc. — ignore for chat UI.
+      // users_update / etc. — ignore for chat UI.
       break;
 
   }
+}
+
+async function fetchSkills() {
+  try {
+    const resp = await apiFetch('/api/skills');
+    if (resp?.ok) {
+      const data = await resp.json();
+      if (data && data.ok && data.data && Array.isArray(data.data.skills)) {
+        cachedSkills = data.data.skills;
+      } else if (data && Array.isArray(data.skills)) {
+        cachedSkills = data.skills;
+      }
+    }
+  } catch (e) {
+    console.warn('[rune] Failed to fetch skills:', e);
+  }
+}
+
+function detectAutocompleteTrigger(input) {
+  const cursor = input.selectionStart;
+  const text = input.value.slice(0, cursor);
+  const match = /(?:^|\s)([+@])([a-zA-Z0-9_\-\.]*)$/.exec(text);
+  if (!match) return null;
+
+  const trigger = match[1];
+  const query = match[2];
+  const matchIndex = match.index + (match[0].length - trigger.length - query.length);
+
+  return {
+    trigger,
+    query,
+    start: matchIndex,
+    end: cursor,
+  };
+}
+
+function updateAutocomplete() {
+  if (!$input || !$autocomplete) return;
+  const range = detectAutocompleteTrigger($input);
+  if (!range) {
+    hideAutocomplete();
+    return;
+  }
+
+  autocompleteActiveTrigger = range.trigger;
+  autocompleteActiveRange = range;
+  const queryLower = range.query.toLowerCase();
+
+  if (autocompleteActiveTrigger === '+') {
+    autocompleteFilteredItems = cachedSkills
+      .filter((s) => s.name.toLowerCase().includes(queryLower))
+      .map((s) => ({
+        type: 'skill',
+        name: s.name,
+        description: s.description || '',
+        insertText: `+${s.name} `,
+      }));
+  } else if (autocompleteActiveTrigger === '@') {
+    autocompleteFilteredItems = cachedNoteFiles
+      .filter((f) => f.toLowerCase().includes(queryLower))
+      .map((f) => ({
+        type: 'file',
+        name: f,
+        description: '',
+        insertText: `@${f} `,
+      }));
+  } else {
+    autocompleteFilteredItems = [];
+  }
+
+  if (autocompleteFilteredItems.length === 0) {
+    hideAutocomplete();
+    return;
+  }
+
+  if (autocompleteSelectedIndex >= autocompleteFilteredItems.length) {
+    autocompleteSelectedIndex = 0;
+  }
+
+  renderAutocomplete();
+}
+
+function renderAutocomplete() {
+  if (!$autocomplete) return;
+  $autocomplete.replaceChildren();
+
+  autocompleteFilteredItems.forEach((item, idx) => {
+    const row = document.createElement('div');
+    row.className = 'chat-autocomplete-item' + (idx === autocompleteSelectedIndex ? ' selected' : '');
+    row.setAttribute('role', 'option');
+    row.setAttribute('aria-selected', idx === autocompleteSelectedIndex ? 'true' : 'false');
+
+    const prefix = document.createElement('span');
+    prefix.className = 'chat-autocomplete-prefix';
+    prefix.textContent = item.type === 'skill' ? '+' : '@';
+    row.appendChild(prefix);
+
+    const name = document.createElement('span');
+    name.className = 'chat-autocomplete-name';
+    name.textContent = item.name;
+    row.appendChild(name);
+
+    if (item.description) {
+      const desc = document.createElement('span');
+      desc.className = 'chat-autocomplete-desc';
+      desc.textContent = item.description;
+      row.appendChild(desc);
+    }
+
+    row.addEventListener('mousedown', (e) => {
+      e.preventDefault();
+      applyAutocompleteItem(idx);
+    });
+
+    $autocomplete.appendChild(row);
+  });
+
+  $autocomplete.classList.remove('hidden');
+  const selectedEl = $autocomplete.children[autocompleteSelectedIndex];
+  if (selectedEl && typeof selectedEl.scrollIntoView === 'function') {
+    selectedEl.scrollIntoView({ block: 'nearest' });
+  }
+}
+
+function hideAutocomplete() {
+  if ($autocomplete) {
+    $autocomplete.classList.add('hidden');
+    $autocomplete.replaceChildren();
+  }
+  autocompleteActiveTrigger = null;
+  autocompleteActiveRange = null;
+  autocompleteFilteredItems = [];
+  autocompleteSelectedIndex = 0;
+}
+
+function isAutocompleteOpen() {
+  return $autocomplete && !$autocomplete.classList.contains('hidden') && autocompleteFilteredItems.length > 0;
+}
+
+function applyAutocompleteItem(idx) {
+  if (idx < 0 || idx >= autocompleteFilteredItems.length || !autocompleteActiveRange || !$input) return;
+  const item = autocompleteFilteredItems[idx];
+  const before = $input.value.slice(0, autocompleteActiveRange.start);
+  const after = $input.value.slice(autocompleteActiveRange.end);
+  $input.value = before + item.insertText + after;
+
+  const newCursor = before.length + item.insertText.length;
+  if (typeof $input.setSelectionRange === 'function') {
+    $input.setSelectionRange(newCursor, newCursor);
+  }
+  $input.focus();
+
+  hideAutocomplete();
+}
+
+function handleAutocompleteKeydown(e) {
+  if (!isAutocompleteOpen()) return false;
+
+  if (e.key === 'ArrowDown') {
+    autocompleteSelectedIndex = (autocompleteSelectedIndex + 1) % autocompleteFilteredItems.length;
+    renderAutocomplete();
+    e.preventDefault();
+    e.stopPropagation();
+    return true;
+  }
+  if (e.key === 'ArrowUp') {
+    autocompleteSelectedIndex = (autocompleteSelectedIndex - 1 + autocompleteFilteredItems.length) % autocompleteFilteredItems.length;
+    renderAutocomplete();
+    e.preventDefault();
+    e.stopPropagation();
+    return true;
+  }
+  if (e.key === 'Enter' || e.key === 'Tab') {
+    applyAutocompleteItem(autocompleteSelectedIndex);
+    e.preventDefault();
+    e.stopPropagation();
+    return true;
+  }
+  if (e.key === 'Escape') {
+    hideAutocomplete();
+    e.preventDefault();
+    e.stopPropagation();
+    return true;
+  }
+  return false;
 }
 
 async function startSseSubscription(noteId) {
@@ -1471,6 +1669,7 @@ function switchToNote(noteId) {
   currentAssistantDiv = null;
   currentLoadedHistoryRaw = null;
   historyLoaded = false;
+  cachedNoteFiles = [];
   const overlay = document.getElementById('context-overlay');
   if (overlay) overlay.classList.add('hidden');
 
@@ -1483,10 +1682,21 @@ function switchToNote(noteId) {
 }
 
 $input.addEventListener('keydown', (e) => {
+  if (handleAutocompleteKeydown(e)) return;
   if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
     e.preventDefault();
     $form.dispatchEvent(new Event('submit', { cancelable: true }));
   }
+});
+
+$input.addEventListener('input', () => updateAutocomplete());
+$input.addEventListener('keyup', (e) => {
+  if (['ArrowDown', 'ArrowUp', 'Enter', 'Tab', 'Escape'].includes(e.key)) return;
+  updateAutocomplete();
+});
+$input.addEventListener('click', () => updateAutocomplete());
+$input.addEventListener('blur', () => {
+  setTimeout(() => hideAutocomplete(), 150);
 });
 
 $form.addEventListener('submit', async (e) => {
@@ -1719,6 +1929,7 @@ async function initOrReconnect() {
     // Validate and refresh note list via REST first; falls back to preferred note, or first available note
     const recoveredNote = await fetchNoteListAndRecover(targetPrefNote);
     const noteToUse = recoveredNote || (cachedNotes.length > 0 ? cachedNotes[0].id : (targetPrefNote || 'default'));
+    fetchSkills().catch(() => {});
     switchToNote(noteToUse);
   } else {
     $messages.innerHTML = '';

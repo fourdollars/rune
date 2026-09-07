@@ -15,7 +15,7 @@ A high-performance, zero-trust AI agent built in Rust. Single binary, triple mod
 - **Rich Markdown System** — Math notation (KaTeX inline/block), Mermaid diagrams-as-code, syntax highlighting (highlight.js), and raw inline SVG markup
 - **Browser Extension (Rune Chat)** — Chrome and Firefox side-panel extension for contextual AI chat and seamless note sync
 - **Command Policy** — Three modes: `allowlist` (default; whitelist only), `confirm` (interactive prompts), `unrestricted`
-- **Skills System** — Load contextual abilities via `@skill_name` in prompts
+- **Skills System** — Load contextual abilities via `+skill_name` in prompts
 - **Provider Registry** — GitHub Copilot (auto token refresh), OpenRouter (recommended), Google Gemini, any OpenAI-compatible
 - **MCP Client & Server** — Stdio JSON-RPC client for external MCP servers + built-in HTTP MCP server endpoint (`POST /mcp`) for external agents
 - **Streaming Output** — Interactive mode displays tokens incrementally as they arrive
@@ -463,15 +463,15 @@ skills/
     └── references/
 ```
 
-Use `@skill_name` in prompts:
+Use `+skill_name` in prompts:
 ```
-ᚱ› Use @sysadmin skill. Check disk usage.
+ᚱ› Use +sysadmin skill. Check disk usage.
   📚 Loaded skill: sysadmin
 ```
 
 For scripting, combine skills with pipe mode:
 ```bash
-echo "Use @sysadmin skill. Check disk usage." | rune --json --yes
+echo "Use +sysadmin skill. Check disk usage." | rune --json --yes
 ```
 
 ## Rune Notes (AI-Native Data Exchange Hub)

@@ -26,6 +26,7 @@ static ASSETS: LazyLock<HashMap<&'static str, Vec<u8>>> = LazyLock::new(|| {
     for path in [
         "js/actions.js",
         "js/api.js",
+        "js/autocomplete.js",
         "js/bootstrap.js",
         "js/chat-history.js",
         "js/chat-stream.js",
@@ -63,6 +64,7 @@ static ASSETS: LazyLock<HashMap<&'static str, Vec<u8>>> = LazyLock::new(|| {
         let compressed: &'static [u8] = match path {
             "js/actions.js" => zst_asset!("js/actions.js"),
             "js/api.js" => zst_asset!("js/api.js"),
+            "js/autocomplete.js" => zst_asset!("js/autocomplete.js"),
             "js/bootstrap.js" => zst_asset!("js/bootstrap.js"),
             "js/chat-history.js" => zst_asset!("js/chat-history.js"),
             "js/chat-stream.js" => zst_asset!("js/chat-stream.js"),
@@ -178,9 +180,11 @@ mod tests {
     fn test_state_and_delegated_actions_modules_present() {
         let state = get("js/state.js").unwrap();
         let actions = get("js/actions.js").unwrap();
+        let autocomplete = get("js/autocomplete.js").unwrap();
         assert!(state.contains("export const store"));
         assert!(state.contains("subscribe"));
         assert!(actions.contains("document.addEventListener('click'"));
+        assert!(autocomplete.contains("initAutocomplete"));
         assert!(!actions.contains("rune_mobile_"));
     }
 

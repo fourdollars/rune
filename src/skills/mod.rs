@@ -1,5 +1,5 @@
 use anyhow::{Context, Result};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::env;
 use std::fs;
@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 
 use crate::embedding::{EmbeddingEngine, VectorStore};
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SkillMetadata {
     pub name: String,
     pub description: Option<String>,
@@ -28,7 +28,7 @@ pub struct SkillLoader {
 }
 
 impl SkillLoader {
-    /// 建立 loader，指定搜尋路徑順序
+    /// Create a loader with specified search path order
     pub fn new(search_paths: Vec<PathBuf>) -> Self {
         let search_paths = search_paths
             .into_iter()
@@ -52,8 +52,8 @@ impl SkillLoader {
         Self { search_paths }
     }
 
-    /// 根據名稱搜尋並載入 skill
-    /// 搜尋順序：自訂 search_paths -> $RUNE_HOME/skills/{name}/SKILL.md -> ~/.rune/skills/{name}/SKILL.md -> .rune/skills/{name}/SKILL.md
+    /// Search and load a skill by name.
+    /// Search order: custom search_paths -> $RUNE_HOME/skills/{name}/SKILL.md -> ~/.rune/skills/{name}/SKILL.md -> .rune/skills/{name}/SKILL.md
     pub fn load(&self, name: &str) -> Result<Skill> {
         // candidate locations
         let mut candidates: Vec<PathBuf> = Vec::new();
@@ -124,34 +124,75 @@ impl SkillLoader {
         })
     }
 
-    /// 從 prompt 文字中提取 @skill_name 引用
+    /// Extract +skill_name references from prompt text.
     pub fn extract_skill_refs(prompt: &str) -> Vec<String> {
         let mut refs = Vec::new();
         let mut seen = HashSet::new();
 
-        let mut chars = prompt.chars().peekable();
-        while let Some(c) = chars.next() {
-            if c == '@' {
-                let mut token = String::new();
-                while let Some(&next) = chars.peek() {
-                    if next.is_alphanumeric() || next == '_' || next == '-' || next == '.' {
-                        token.push(next);
-                        chars.next();
-                    } else {
-                        break;
+        let chars: Vec<char> = prompt.chars().collect();
+        let mut i = 0;
+        while i < chars.len() {
+            if chars[i] == '+' {
+                // Check left boundary: start of string or whitespace / punctuation (not alphanumeric or '+')
+                let valid_left = if i == 0 {
+                    true
+                } else {
+                    let prev = chars[i - 1];
+                    !prev.is_alphanumeric() && prev != '+'
+                };
+
+                // Check right boundary: must have at least one alphabetic character immediately following '+'
+                if valid_left && i + 1 < chars.len() && chars[i + 1].is_ascii_alphabetic() {
+                    let mut j = i + 1;
+                    while j < chars.len() {
+                        let c = chars[j];
+                        if c.is_ascii_alphanumeric() || c == '_' || c == '-' || c == '.' {
+                            j += 1;
+                        } else {
+                            break;
+                        }
                     }
-                }
-                if !token.is_empty() && !seen.contains(&token) {
-                    seen.insert(token.clone());
-                    refs.push(token);
+                    let mut token: String = chars[i + 1..j].iter().collect();
+                    // Strip trailing dots if any (e.g. "+git." at end of sentence)
+                    while token.ends_with('.') {
+                        token.pop();
+                    }
+                    if !token.is_empty() && !seen.contains(&token) {
+                        seen.insert(token.clone());
+                        refs.push(token);
+                    }
+                    i = j;
+                    continue;
                 }
             }
+            i += 1;
         }
 
         refs
     }
 
-    /// 載入所有被引用的 skills 並組合成系統提示片段
+    /// List all discoverable skills across search directories.
+    pub fn list_skills(&self) -> Vec<SkillMetadata> {
+        let dirs = self.all_skill_dirs();
+        let mut skills = Vec::new();
+        let mut seen = HashSet::new();
+
+        for base in &dirs {
+            for skill_file in discover_skill_files(base, 0) {
+                if let Ok(raw) = fs::read_to_string(&skill_file) {
+                    let (meta, _body) = parse_frontmatter(&raw, &skill_file, None);
+                    if !seen.contains(&meta.name) {
+                        seen.insert(meta.name.clone());
+                        skills.push(meta);
+                    }
+                }
+            }
+        }
+        skills.sort_by(|a, b| a.name.cmp(&b.name));
+        skills
+    }
+
+    /// Load all referenced skills and combine them into system prompt context.
     pub fn resolve_skills(&self, prompt: &str) -> Result<Vec<Skill>> {
         let refs = Self::extract_skill_refs(prompt);
         let mut skills = Vec::new();
@@ -300,7 +341,7 @@ pub fn discover_skill_files(base: &Path, depth: usize) -> Vec<PathBuf> {
     results
 }
 
-/// 解析簡單的 YAML-like frontmatter（不使用 yaml crate）
+/// Parse simple YAML-like frontmatter (without external yaml crate).
 fn parse_frontmatter(
     content: &str,
     source_path: &Path,
@@ -450,7 +491,7 @@ mod tests {
 
     #[test]
     fn test_extract_skill_refs() {
-        let s = "This references @alpha and @beta-1 and @alpha again.";
+        let s = "This references +alpha and +beta-1 and +alpha again.";
         let refs = SkillLoader::extract_skill_refs(s);
         assert_eq!(refs, vec!["alpha".to_string(), "beta-1".to_string()]);
     }
@@ -485,7 +526,7 @@ mod tests {
     }
 
     #[test]
-    fn test_extract_skill_refs_no_at() {
+    fn test_extract_skill_refs_no_plus() {
         assert_eq!(
             SkillLoader::extract_skill_refs("just some normal text"),
             Vec::<String>::new()
@@ -493,41 +534,54 @@ mod tests {
     }
 
     #[test]
-    fn test_extract_skill_refs_at_end_of_string() {
+    fn test_extract_skill_refs_plus_end_of_string() {
         assert_eq!(
-            SkillLoader::extract_skill_refs("use @myskill"),
+            SkillLoader::extract_skill_refs("use +myskill"),
             vec!["myskill"]
         );
     }
 
     #[test]
     fn test_extract_skill_refs_multiple_unique() {
-        let refs = SkillLoader::extract_skill_refs("@a and @b and @c");
+        let refs = SkillLoader::extract_skill_refs("+a and +b and +c");
         assert_eq!(refs, vec!["a", "b", "c"]);
     }
 
     #[test]
     fn test_extract_skill_refs_deduplication() {
-        let refs = SkillLoader::extract_skill_refs("@dup @dup @dup");
+        let refs = SkillLoader::extract_skill_refs("+dup +dup +dup");
         assert_eq!(refs, vec!["dup"]);
     }
 
     #[test]
     fn test_extract_skill_refs_with_dots() {
-        let refs = SkillLoader::extract_skill_refs("use @my.skill.v2");
+        let refs = SkillLoader::extract_skill_refs("use +my.skill.v2");
         assert_eq!(refs, vec!["my.skill.v2"]);
     }
 
     #[test]
     fn test_extract_skill_refs_stops_at_special_chars() {
-        let refs = SkillLoader::extract_skill_refs("use @skill! done");
+        let refs = SkillLoader::extract_skill_refs("use +skill! done");
         assert_eq!(refs, vec!["skill"]);
     }
 
     #[test]
-    fn test_extract_skill_refs_at_symbol_alone() {
-        // lone @ with no following alphanum should produce nothing
-        let refs = SkillLoader::extract_skill_refs("email user@ domain");
+    fn test_extract_skill_refs_boundary_and_false_positives() {
+        // C++, g++, 1+2, +100, +886, + item should all NOT trigger skill refs
+        let refs =
+            SkillLoader::extract_skill_refs("I love C++ and g++ and 1+2=3 and +100 or + item");
+        assert_eq!(refs, Vec::<String>::new());
+
+        // But parenthesis or brackets should work
+        let refs2 =
+            SkillLoader::extract_skill_refs("Please load (+git) and [+rust] and \"+diagram\".");
+        assert_eq!(refs2, vec!["git", "rust", "diagram"]);
+    }
+
+    #[test]
+    fn test_extract_skill_refs_plus_symbol_alone() {
+        // lone + with no following alphanum should produce nothing
+        let refs = SkillLoader::extract_skill_refs("sum = a + b +");
         assert_eq!(refs, Vec::<String>::new());
     }
 
@@ -634,11 +688,15 @@ mod tests {
 
         let loader = SkillLoader::new(vec![dir.clone()]);
         let skills = loader
-            .resolve_skills("Please use @alpha and @beta")
+            .resolve_skills("Please use +alpha and +beta")
             .unwrap();
         assert_eq!(skills.len(), 2);
         assert_eq!(skills[0].metadata.name, "alpha");
         assert_eq!(skills[1].metadata.name, "beta");
+
+        let listed = loader.list_skills();
+        assert!(listed.iter().any(|s| s.name == "alpha"));
+        assert!(listed.iter().any(|s| s.name == "beta"));
 
         let _ = fs::remove_dir_all(&dir);
     }

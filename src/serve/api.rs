@@ -12,6 +12,7 @@ use crate::provider::{
     CopilotProvider, GeminiProvider, ModelInfo, OpenAiProvider, ProviderRegistry,
 };
 use crate::serve::ServerState;
+use crate::skills::SkillLoader;
 use axum::{
     extract::{Query, State},
     http::StatusCode,
@@ -1476,6 +1477,16 @@ pub async fn dir_browse_handler(
     })
     .unwrap_or_default();
 
+    Json(ApiResponse::with_data(data))
+}
+
+pub async fn skills_handler(State(state): State<ServerState>) -> Json<ApiResponse> {
+    let search_paths = vec![std::path::PathBuf::from(&state.config.skills_dir)];
+    let loader = SkillLoader::new(search_paths);
+    let skills = loader.list_skills();
+    let data = serde_json::json!({
+        "skills": skills,
+    });
     Json(ApiResponse::with_data(data))
 }
 
@@ -6185,5 +6196,27 @@ mod isolation_tests {
         assert_eq!(body["ok"], true);
         assert_eq!(body["login"], "admin_user");
         assert_eq!(body["role"], "admin");
+    }
+
+    #[tokio::test]
+    async fn test_skills_handler() {
+        let (mut state, tmp) = make_state();
+        let skills_dir = tmp.path().join("skills");
+        std::fs::create_dir_all(skills_dir.join("test-skill")).unwrap();
+        std::fs::write(
+            skills_dir.join("test-skill").join("SKILL.md"),
+            "---\nname: test-skill\ndescription: A test skill\n---\nBody",
+        )
+        .unwrap();
+        state.config.skills_dir = skills_dir.to_string_lossy().to_string();
+
+        let resp = super::skills_handler(axum::extract::State(state)).await;
+        assert_eq!(resp.ok, true);
+        let data = resp.0.data.expect("data should exist");
+        let skills = data
+            .get("skills")
+            .and_then(|s| s.as_array())
+            .expect("skills array");
+        assert!(skills.iter().any(|s| s["name"] == "test-skill"));
     }
 }

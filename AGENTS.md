@@ -9,7 +9,7 @@ Rune is a zero-trust AI agent runtime written in Rust. The **Agent** is the orch
 
 ```
 Agent.run(user_input)
-  ├─ Resolve @skill references → inject as system message
+  ├─ Resolve +skill references → inject as system message
   ├─ Build system prompt (custom if configured, else default; AGENTS.md always appended)
   ├─ Append user message
   └─ Loop:
@@ -141,7 +141,7 @@ Up to 5 isolation layers per tool invocation (best-effort; the executor applies 
 
 ## Skills
 
-Skills are `@name`-referenced bundles (`SKILL.md` + metadata). On reference:
+Skills are `+name`-referenced bundles (`SKILL.md` + metadata). On reference:
 1. SkillLoader resolves and loads the skill content
 2. If skill defines `tools_allow`, tool availability is restricted for that turn
 3. Content is injected as a system-role message

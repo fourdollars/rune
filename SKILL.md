@@ -270,17 +270,17 @@ Rune provides 10 built-in tools. The first 6 are always available; the last 4 ar
 
 ## Skills
 
-Rune supports loading skills via `@skill_name` in prompts:
+Rune supports loading skills via `+skill_name` in prompts:
 
 ```
-ᚱ› Use @sysadmin skill. Show system uptime.
+ᚱ› Use +sysadmin skill. Show system uptime.
 ```
 
 Skills are stored in the `skills_dir` (default: `./skills`). Skill files (`SKILL.md`) are discovered recursively up to 3 levels deep within the skills directory.
 
 ### Preloading Skills
 
-Use `--skills a,b` to preload specific skills by name at startup. When set, only the specified skills are injected into context; `@ref` dynamic loading and semantic search are disabled.
+Use `--skills a,b` to preload specific skills by name at startup. When set, only the specified skills are injected into context; `+ref` dynamic loading and semantic search are disabled.
 
 ### Semantic Skill Matching
 

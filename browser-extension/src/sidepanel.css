@@ -678,6 +678,62 @@ pre.hljs-pre:hover .copy-btn {
     align-items: flex-end;
 }
 
+/* Chat Autocomplete Popup */
+.chat-autocomplete {
+    position: absolute;
+    bottom: calc(100% + 4px);
+    left: 12px;
+    right: 12px;
+    max-height: 200px;
+    overflow-y: auto;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25);
+    z-index: 100;
+    display: flex;
+    flex-direction: column;
+    padding: 4px;
+    gap: 2px;
+}
+.chat-autocomplete.hidden {
+    display: none;
+}
+.chat-autocomplete-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 10px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 13px;
+    color: var(--text-primary);
+    user-select: none;
+}
+.chat-autocomplete-item:hover,
+.chat-autocomplete-item.selected {
+    background: var(--bg-hover);
+}
+.chat-autocomplete-prefix {
+    font-weight: bold;
+    color: var(--accent);
+    font-family: var(--font-mono, monospace);
+    font-size: 14px;
+}
+.chat-autocomplete-name {
+    font-weight: 600;
+    color: var(--text-primary);
+}
+.chat-autocomplete-desc {
+    font-size: 12px;
+    color: var(--text-muted);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    margin-left: auto;
+    max-width: 50%;
+}
+
 .chat-input-resizer {
     position: absolute;
     top: -4px;

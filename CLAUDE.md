@@ -46,7 +46,7 @@ Sandboxing is implemented by **re-exec'ing the same binary** with hidden subcomm
 
 `src/agent/mod.rs` (~4800 lines) is the orchestration core. The loop:
 
-1. Resolve `@skill_name` references in the prompt → inject as system message
+1. Resolve `+skill_name` references in the prompt → inject as system message
 2. Build system prompt (custom override or default) — **`AGENTS.md` is always appended** to whatever system prompt is active
 3. Call provider → if no `tool_calls`, return `FinalAnswer`; else execute each via `SandboxExecutor` and append results
 4. Repeat until `FinalAnswer` / `MaxSteps` / `TokenBudgetExhausted` / `Error` / `UserInterrupt`

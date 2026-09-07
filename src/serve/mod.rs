@@ -684,6 +684,7 @@ pub async fn run(config: RuneConfig, opts: NotesOptions) {
         // Tool callbacks
         .route("/api/approval", post(api::approval_handler))
         .route("/api/dirs", get(api::dir_browse_handler))
+        .route("/api/skills", get(api::skills_handler))
         .layer(axum_mw::from_fn_with_state(state.clone(), auth_middleware));
 
     async fn cors_middleware(

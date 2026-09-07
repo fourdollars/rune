@@ -208,7 +208,7 @@ fn print_help() {
     println!(
         "    {} Use {} in prompts to load skill context",
         "•".dimmed(),
-        "@skill_name".cyan()
+        "+skill_name".cyan()
     );
     println!(
         "    {} Use {}/{} to browse command history",
@@ -330,7 +330,7 @@ fn show_skills(cfg: &config::RuneConfig) {
     println!("{}", "Skill Loader:".bold());
     println!("  {} {}", "search_dir:".dimmed(), cfg.skills_dir);
     println!(
-        "  {} Use @skill_name in prompts to load skills",
+        "  {} Use +skill_name in prompts to load skills",
         "usage:".dimmed()
     );
     let skill_dir = std::path::Path::new(&cfg.skills_dir);

@@ -40,6 +40,7 @@ function createMockElement(id = '', tag = 'div') {
     setAttribute: (k, v) => { attributes[k] = String(v); },
     getAttribute: (k) => attributes[k] ?? null,
     removeAttribute: (k) => { delete attributes[k]; },
+    setSelectionRange: () => {},
     focus: () => {},
     blur: () => {},
     addEventListener: (evt, fn) => {
@@ -270,6 +271,7 @@ function setupSidepanelContext() {
     DOMParser: DOMParserMock,
     getSyncSettings: async () => ({ serverUrl: syncStorageData.serverUrl || 'http://localhost:9527' }),
     getLocalAuth: async () => ({ accessToken: 'test-token' }),
+    apiFetch: async () => ({ ok: true, json: async () => ({ ok: true, skills: [] }) }),
     setTimeout,
     clearTimeout,
     setInterval,
@@ -783,6 +785,47 @@ async function runTests() {
     );
 
     console.log('✓ Test 13 passed: per-server last note retention preserves active note per server');
+  }
+
+  // ── Test 14: autocomplete triggers for +skills and @files ─────────────────
+  {
+    const fixture = setupSidepanelContext();
+    const $input = fixture.elements['input'];
+    const $autocomplete = fixture.elements['chat-autocomplete'];
+
+    fixture.exec(`
+      cachedSkills = [{ name: 'git', description: 'Git operations' }, { name: 'rust', description: 'Rust compiler' }];
+      cachedNoteFiles = ['welcome.md', 'notes.md'];
+    `);
+
+    // Type "+gi"
+    $input.value = '+gi';
+    $input.selectionStart = 3;
+    fixture.exec('updateAutocomplete()');
+
+    assert.strictEqual($autocomplete.classList.contains('hidden'), false, 'Autocomplete should be visible for +gi');
+    assert.strictEqual($autocomplete.children.length, 1, 'Should find 1 matching skill');
+    assert.strictEqual(fixture.exec('autocompleteFilteredItems[0].name'), 'git');
+
+    // Apply item
+    fixture.exec('applyAutocompleteItem(0)');
+    assert.strictEqual($input.value, '+git ');
+    assert.strictEqual($autocomplete.classList.contains('hidden'), true, 'Autocomplete should hide after applying');
+
+    // Type "@we"
+    $input.value = '@we';
+    $input.selectionStart = 3;
+    fixture.exec('updateAutocomplete()');
+
+    assert.strictEqual($autocomplete.classList.contains('hidden'), false, 'Autocomplete should be visible for @we');
+    assert.strictEqual($autocomplete.children.length, 1, 'Should find 1 matching file');
+    assert.strictEqual(fixture.exec('autocompleteFilteredItems[0].name'), 'welcome.md');
+
+    // Apply file item
+    fixture.exec('applyAutocompleteItem(0)');
+    assert.strictEqual($input.value, '@welcome.md ');
+
+    console.log('✓ Test 14 passed: autocomplete popup for +skills and @files');
   }
 
   console.log("All extension sidepanel tests passed successfully! 🎉");

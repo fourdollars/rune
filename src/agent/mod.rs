@@ -890,13 +890,13 @@ impl Agent {
         });
     }
 
-    /// Resolve @skill references in user input and inject skill content as system context.
-    /// If no explicit @skill refs found and embedding is enabled, try semantic search.
+    /// Resolve +skill references in user input and inject skill content as system context.
+    /// If no explicit +skill refs found and embedding is enabled, try semantic search.
     async fn inject_skills(&mut self, user_input: &str) {
         let skill_refs = SkillLoader::extract_skill_refs(user_input);
 
         if !skill_refs.is_empty() {
-            // Explicit @skill references take priority
+            // Explicit +skill references take priority
             for name in &skill_refs {
                 self.load_and_inject_skill(name);
             }
@@ -1001,7 +1001,7 @@ impl Agent {
 
     /// Run the agent loop: send user input → LLM → tools → repeat until done.
     pub async fn run(&mut self, user_input: &str) -> StopReason {
-        // Resolve and inject @skill references
+        // Resolve and inject +skill references
         self.executed_commands.clear();
         self.tool_call_names.clear();
         self.tool_calls_log.clear();
