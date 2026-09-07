@@ -1782,7 +1782,7 @@ mod tests {
 
     #[test]
     fn test_model_list_multiple_models_trimmed() {
-        let model_str = " openrouter/auto , openrouter/fusion ";
+        let model_str = " openrouter/auto , deepseek/deepseek-chat ";
         let models: Vec<String> = model_str
             .split(',')
             .map(|s| s.trim().to_string())
@@ -1790,7 +1790,7 @@ mod tests {
             .collect();
         assert_eq!(models.len(), 2);
         assert_eq!(models[0], "openrouter/auto");
-        assert_eq!(models[1], "openrouter/fusion");
+        assert_eq!(models[1], "deepseek/deepseek-chat");
     }
 
     #[test]
@@ -1823,7 +1823,7 @@ mod tests {
             .unwrap_or(false);
         assert!(!has_configured);
 
-        config.notes.model = Some("openrouter/auto,openrouter/fusion".to_string());
+        config.notes.model = Some("openrouter/auto,deepseek/deepseek-chat".to_string());
         let has_configured = config
             .notes
             .model

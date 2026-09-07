@@ -4695,7 +4695,7 @@ mod provider_tests {
                             {"id": "anthropic/claude-3.5-sonnet", "context_length": 200000, "supported_parameters": ["tools"]},
                             {"id": "openrouter/auto", "context_length": 128000, "supported_parameters": ["tools"]},
                             {"id": "openai/gpt-4o", "context_length": 128000, "supported_parameters": ["tools"]},
-                            {"id": "openrouter/fusion", "context_length": 128000, "supported_parameters": ["tools"]}
+                            {"id": "meta-llama/llama-3.3-70b-instruct", "context_length": 131072, "supported_parameters": ["tools"]}
                         ]
                     }"#;
                     let response = format!(
@@ -4726,9 +4726,9 @@ mod provider_tests {
         assert_eq!(models[0].id, "openrouter/auto");
         assert_eq!(models[0].context_window, Some(128000));
         assert_eq!(models[1].id, "anthropic/claude-3.5-sonnet");
-        assert_eq!(models[2].id, "openai/gpt-4o");
-        assert_eq!(models[3].id, "openrouter/fusion");
-        assert_eq!(models[3].context_window, Some(128000));
+        assert_eq!(models[2].id, "meta-llama/llama-3.3-70b-instruct");
+        assert_eq!(models[2].context_window, Some(131072));
+        assert_eq!(models[3].id, "openai/gpt-4o");
     }
 
     #[test]
@@ -4736,7 +4736,6 @@ mod provider_tests {
         let p = OpenAiProvider::new("openrouter".to_string(), "sk-fake".to_string(), None, false);
         // Fallbacks
         assert!(p.supports_reasoning("openrouter/auto"));
-        assert!(p.supports_reasoning("openrouter/fusion"));
         assert!(p.supports_reasoning("openai/o1-mini"));
         assert!(p.supports_reasoning("openai/o3-mini"));
         assert!(p.supports_reasoning("deepseek/deepseek-r1"));
@@ -4750,8 +4749,8 @@ mod provider_tests {
         }
         // Once cache is populated, only items in cache (or openrouter/ models) match
         assert!(p.supports_reasoning("my-special-model"));
-        assert!(p.supports_reasoning("openrouter/auto"));
         assert!(!p.supports_reasoning("openai/o1-mini"));
+        assert!(p.supports_reasoning("openrouter/auto"));
     }
 
     #[test]
@@ -4768,27 +4767,27 @@ mod provider_tests {
         let normalized0 = p.normalize_thinking(req0);
         assert_eq!(normalized0.thinking, Some("medium".to_string()));
 
-        // Fallback model supporting reasoning preserves thinking
+        // Non-reasoning model strips thinking
         let req = LlmRequest {
-            model: "openai/o1-mini".to_string(),
-            messages: vec![],
-            tools: None,
-            max_tokens: None,
-            thinking: Some("high".to_string()),
-        };
-        let normalized = p.normalize_thinking(req);
-        assert_eq!(normalized.thinking, Some("high".to_string()));
-
-        // Fallback model NOT supporting reasoning strips thinking
-        let req2 = LlmRequest {
             model: "openai/gpt-4o-mini".to_string(),
             messages: vec![],
             tools: None,
             max_tokens: None,
             thinking: Some("high".to_string()),
         };
+        let normalized = p.normalize_thinking(req);
+        assert_eq!(normalized.thinking, None);
+
+        // Reasoning model preserves thinking
+        let req2 = LlmRequest {
+            model: "deepseek/deepseek-r1".to_string(),
+            messages: vec![],
+            tools: None,
+            max_tokens: None,
+            thinking: Some("high".to_string()),
+        };
         let normalized2 = p.normalize_thinking(req2);
-        assert_eq!(normalized2.thinking, None);
+        assert_eq!(normalized2.thinking, Some("high".to_string()));
     }
 
     #[test]
@@ -4865,16 +4864,16 @@ mod provider_tests {
         apply_plugins(&req_with_off, &mut payload_value_off);
         assert!(payload_value_off.get("plugins").is_none());
 
-        let req_fusion = LlmRequest {
-            model: "openrouter/fusion".to_string(),
+        let req_other = LlmRequest {
+            model: "openai/gpt-4o".to_string(),
             messages: vec![],
             tools: None,
             max_tokens: None,
             thinking: Some("medium".to_string()),
         };
-        let mut payload_value_fusion = serde_json::to_value(&req_fusion).unwrap();
-        apply_plugins(&req_fusion, &mut payload_value_fusion);
-        assert!(payload_value_fusion.get("plugins").is_none());
+        let mut payload_value_other = serde_json::to_value(&req_other).unwrap();
+        apply_plugins(&req_other, &mut payload_value_other);
+        assert!(payload_value_other.get("plugins").is_none());
     }
 
     #[test]

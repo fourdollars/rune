@@ -45,14 +45,14 @@ console.log('=== OpenRouter Cost Tier & Auto-Router Test Suite ===');
   assert.deepStrictEqual(betaResult.options, ['off', 'low', 'medium', 'high', 'xhigh', 'max']);
   assert.strictEqual(betaResult.visible, true);
 
-  // 3. openrouter/fusion model (fusion is deliberation, not auto-router)
-  const fusionResult = getThinkingOptions('openrouter/fusion', {
-    id: 'openrouter/fusion',
+  // 3. Regular model without reasoning (e.g. openai/gpt-4o)
+  const nonReasoningResult = getThinkingOptions('openai/gpt-4o', {
+    id: 'openai/gpt-4o',
     provider: 'openrouter',
     reasoning_efforts: [],
   });
-  assert.strictEqual(fusionResult.label, 'Thinking level');
-  assert.strictEqual(fusionResult.visible, false);
+  assert.strictEqual(nonReasoningResult.label, 'Thinking level');
+  assert.strictEqual(nonReasoningResult.visible, false);
 
   // 4. Regular model with reasoning (e.g. DeepSeek R1)
   const deepseekResult = getThinkingOptions('deepseek/deepseek-r1', {
@@ -103,10 +103,10 @@ console.log('=== OpenRouter Cost Tier & Auto-Router Test Suite ===');
   assert.strictEqual(offPayload.plugins, undefined);
   assert.strictEqual(offPayload.reasoning, undefined);
 
-  // openrouter/fusion with medium -> uses normal reasoning or no auto-router plugin
-  const fusionPayload = buildPayload('openrouter/fusion', 'medium');
-  assert.strictEqual(fusionPayload.plugins, undefined);
-  assert.deepStrictEqual(fusionPayload.reasoning, { enabled: true, effort: 'medium' });
+  // other model (e.g. deepseek/deepseek-r1) with medium -> uses normal reasoning and NO auto-router plugin
+  const reasoningPayload = buildPayload('deepseek/deepseek-r1', 'medium');
+  assert.strictEqual(reasoningPayload.plugins, undefined);
+  assert.deepStrictEqual(reasoningPayload.reasoning, { enabled: true, effort: 'medium' });
 
   // openrouter/auto with max cost tier
   const maxPayload = buildPayload('openrouter/auto', 'max');
