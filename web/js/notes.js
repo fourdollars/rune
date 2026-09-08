@@ -10,8 +10,7 @@ globalThis.switchNote = async function switchNote(sessionId, forceFile = null) {
     // Close existing SSE immediately (stop receiving events from old room)
     if (evtSource) { evtSource.close(); evtSource = null; }
 
-    const savedFile = localStorage.getItem('rune_file');
-    const targetReqFile = forceFile || savedFile || null;
+    const targetReqFile = forceFile || null;
     const data = await api('session', { note: sessionId, file: targetReqFile }, 'PUT');
     if (!data || !data.ok) return;
 
@@ -40,11 +39,10 @@ globalThis.switchNote = async function switchNote(sessionId, forceFile = null) {
     fileList = data.files || [];
     updateEditorVisibility(fileList.length);
 
-    // File priority: forceFile (from direct click) > savedFile > server default
-    const preferredFile = (savedFile && fileList.includes(savedFile)) ? savedFile : null;
+    // File priority: forceFile (if specified) > server default (first file in note) > first in fileList
     const targetFile = (forceFile && fileList.includes(forceFile))
         ? forceFile
-        : (preferredFile || data.current_file);
+        : (data.current_file || (fileList.length > 0 ? fileList[0] : null));
 
     if (targetFile && fileList.includes(targetFile)) {
         currentFilename = targetFile;
@@ -62,6 +60,7 @@ globalThis.switchNote = async function switchNote(sessionId, forceFile = null) {
         currentFilename = '';
         specContent = '';
         updateDocTitle('');
+        setEditorValue('');
     }
     try { localStorage.setItem('rune_file', currentFilename); } catch {}
     updateBrowserUrl(currentNoteId, currentFilename);

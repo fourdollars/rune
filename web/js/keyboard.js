@@ -37,10 +37,16 @@ function inEditor(target) {
     return target instanceof Element && !!target.closest('.CodeMirror');
 }
 
-// CodeMirror owns Ctrl-K inside the editor (insert link); everywhere else the
-// same key opens the palette.
-function isPaletteChord(event) {
+// CodeMirror owns Ctrl-K inside the editor (insert link); everywhere else
+// Ctrl+K opens the command palette, Ctrl+O opens quick open.
+function isCommandPaletteChord(event) {
     if (event.key !== 'k' && event.key !== 'K') return false;
+    if (!(event.ctrlKey || event.metaKey) || event.altKey || event.shiftKey) return false;
+    return !inEditor(event.target);
+}
+
+function isQuickOpenChord(event) {
+    if (event.key !== 'o' && event.key !== 'O') return false;
     if (!(event.ctrlKey || event.metaKey) || event.altKey || event.shiftKey) return false;
     return !inEditor(event.target);
 }
@@ -59,10 +65,16 @@ export function initKeyboard() {
             if (closeTopmostOverlay()) event.preventDefault();
             return;
         }
-        if (isPaletteChord(event)) {
+        if (isCommandPaletteChord(event)) {
             event.preventDefault();
             if (isCommandPaletteOpen()) closeCommandPalette();
             else openCommandPalette();
+            return;
+        }
+        if (isQuickOpenChord(event)) {
+            event.preventDefault();
+            if (isCommandPaletteOpen()) closeCommandPalette();
+            else openQuickOpen();
             return;
         }
         if (event.key !== 'Enter' && event.key !== ' ') return;
