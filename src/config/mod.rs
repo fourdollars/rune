@@ -1749,15 +1749,27 @@ log_level = "info"
 
     #[test]
     fn test_expand_tilde_home_prefix() {
+        let orig = std::env::var("HOME").ok();
         std::env::set_var("HOME", "/home/testuser");
         assert_eq!(expand_tilde("~/skills"), "/home/testuser/skills");
         assert_eq!(expand_tilde("~/a/b/c"), "/home/testuser/a/b/c");
+        if let Some(h) = orig {
+            std::env::set_var("HOME", h);
+        } else {
+            std::env::remove_var("HOME");
+        }
     }
 
     #[test]
     fn test_expand_tilde_bare_tilde() {
+        let orig = std::env::var("HOME").ok();
         std::env::set_var("HOME", "/home/testuser");
         assert_eq!(expand_tilde("~"), "/home/testuser");
+        if let Some(h) = orig {
+            std::env::set_var("HOME", h);
+        } else {
+            std::env::remove_var("HOME");
+        }
     }
 
     #[test]
@@ -1777,6 +1789,7 @@ log_level = "info"
 
     #[test]
     fn test_expand_tilde_vec_mixed() {
+        let orig = std::env::var("HOME").ok();
         std::env::set_var("HOME", "/home/u");
         let mut v = vec![
             "~/skills".to_string(),
@@ -1794,6 +1807,11 @@ log_level = "info"
                 "/home/u/other/dir",
             ]
         );
+        if let Some(h) = orig {
+            std::env::set_var("HOME", h);
+        } else {
+            std::env::remove_var("HOME");
+        }
     }
 
     // =========================================================

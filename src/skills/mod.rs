@@ -293,6 +293,9 @@ impl SkillLoader {
 
     /// Path for the skill vector store.
     fn vector_store_path() -> PathBuf {
+        if let Ok(rune_home) = env::var("RUNE_HOME") {
+            return PathBuf::from(rune_home).join("vectors").join("skills.json");
+        }
         let home = env::var("HOME").unwrap_or_else(|_| ".".to_string());
         PathBuf::from(home)
             .join(".rune")
@@ -784,10 +787,11 @@ mod tests {
     async fn test_index_skills_prunes_deleted_skills() {
         use crate::embedding::{EmbeddingConfig, VectorEntry};
         let temp_home = std::env::temp_dir().join(format!("rune-home-{}", std::process::id()));
-        let orig_home = std::env::var("HOME").ok();
-        std::env::set_var("HOME", &temp_home);
+        let rune_dir = temp_home.join(".rune");
+        let orig_rune_home = std::env::var("RUNE_HOME").ok();
+        std::env::set_var("RUNE_HOME", &rune_dir);
 
-        let skill_dir = temp_home.join(".rune").join("skills");
+        let skill_dir = rune_dir.join("skills");
         let active_skill = skill_dir.join("active-skill");
         fs::create_dir_all(&active_skill).unwrap();
         fs::write(
@@ -831,11 +835,11 @@ mod tests {
         assert_eq!(result_store.entries.len(), 1);
         assert_eq!(result_store.entries[0].key, "active-skill");
 
-        // Restore HOME env
-        if let Some(h) = orig_home {
-            std::env::set_var("HOME", h);
+        // Restore RUNE_HOME env
+        if let Some(h) = orig_rune_home {
+            std::env::set_var("RUNE_HOME", h);
         } else {
-            std::env::remove_var("HOME");
+            std::env::remove_var("RUNE_HOME");
         }
         let _ = fs::remove_dir_all(&temp_home);
     }

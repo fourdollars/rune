@@ -323,6 +323,11 @@ impl ToolRegistry {
     /// Run a command in sandbox and return ToolOutput.
     async fn sandboxed_cmd(&self, cmd: &str, timeout_secs: u64, cwd: Option<&str>) -> ToolOutput {
         let effective_cwd = cwd.map(|s| s.to_string()).or_else(|| {
+            if self.policy_mount_home.is_some() {
+                if let Ok(real_home) = std::env::var("HOME") {
+                    return Some(real_home);
+                }
+            }
             if let Ok(current) = std::env::current_dir() {
                 let current_str = current.to_string_lossy().to_string();
                 let is_allowed = self.mount_pwd
@@ -333,11 +338,7 @@ impl ToolRegistry {
                     || self
                         .policy_allowed_paths_ro
                         .iter()
-                        .any(|p| current_str.starts_with(p.trim_end_matches('/')))
-                    || self
-                        .policy_mount_home
-                        .as_ref()
-                        .map_or(false, |h| current_str.starts_with(h.trim_end_matches('/')));
+                        .any(|p| current_str.starts_with(p.trim_end_matches('/')));
 
                 if is_allowed {
                     return Some(current_str);
@@ -1551,6 +1552,30 @@ mod tests {
                 .iter()
                 .any(|p| p.to_string_lossy().contains("test_home_dir")),
             "Landlock read_write_paths should include policy.mount_home"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_policy_mount_home_sets_effective_cwd_to_home() {
+        let temp_home = tempfile::tempdir_in("/var/tmp").expect("tempdir");
+        let mut registry = ToolRegistry::new(vec![]);
+        let mut policy = crate::config::PolicyConfig::default();
+        policy.mount_home = Some(temp_home.path().to_string_lossy().to_string());
+        policy.mode = "unrestricted".to_string();
+        registry.set_policy(&policy);
+
+        let res = registry
+            .execute_cmd(serde_json::json!({
+                "cmd": "pwd"
+            }))
+            .await;
+        assert_eq!(res.is_error, false, "Execution failed: {}", res.content);
+        let real_home = std::env::var("HOME").unwrap_or_else(|_| "/root".to_string());
+        assert!(
+            res.content.contains(&real_home),
+            "Expected pwd to be real HOME ({}), got: {}",
+            real_home,
+            res.content
         );
     }
 

@@ -950,9 +950,15 @@ mod tests {
     #[test]
     fn test_data_dir_uses_home_env() {
         let _lock = ENV_LOCK.lock().unwrap();
+        let orig = std::env::var("HOME").ok();
         std::env::set_var("HOME", "/tmp/fake_home");
         let d = data_dir();
         assert_eq!(d, std::path::PathBuf::from("/tmp/fake_home/.rune"));
+        if let Some(v) = orig {
+            std::env::set_var("HOME", v);
+        } else {
+            std::env::remove_var("HOME");
+        }
     }
 
     #[test]
@@ -965,26 +971,40 @@ mod tests {
         assert_eq!(d, std::path::PathBuf::from("./.rune"));
         if let Some(v) = orig {
             std::env::set_var("HOME", v);
+        } else {
+            std::env::remove_var("HOME");
         }
     }
 
     #[test]
     fn test_note_markdown_dir_structure() {
         let _lock = ENV_LOCK.lock().unwrap();
+        let orig = std::env::var("HOME").ok();
         std::env::set_var("HOME", "/tmp/fake_home");
         let d = note_markdown_dir("my-session");
         assert_eq!(
             d,
             std::path::PathBuf::from("/tmp/fake_home/.rune/notes/my-session/markdown")
         );
+        if let Some(v) = orig {
+            std::env::set_var("HOME", v);
+        } else {
+            std::env::remove_var("HOME");
+        }
     }
 
     #[test]
     fn test_note_markdown_dir_special_chars() {
         let _lock = ENV_LOCK.lock().unwrap();
+        let orig = std::env::var("HOME").ok();
         std::env::set_var("HOME", "/tmp/fake_home");
         let d = note_markdown_dir("session-123_abc");
         assert!(d.to_string_lossy().contains("session-123_abc"));
+        if let Some(v) = orig {
+            std::env::set_var("HOME", v);
+        } else {
+            std::env::remove_var("HOME");
+        }
     }
 
     // ──────────────────────────────────────────────
@@ -1511,17 +1531,29 @@ mod tests {
     #[test]
     fn test_data_dir_ends_with_rune() {
         let _lock = ENV_LOCK.lock().unwrap();
+        let orig = std::env::var("HOME").ok();
         std::env::set_var("HOME", "/some/path");
         let d = data_dir();
         assert_eq!(d.file_name().unwrap(), ".rune");
+        if let Some(v) = orig {
+            std::env::set_var("HOME", v);
+        } else {
+            std::env::remove_var("HOME");
+        }
     }
 
     #[test]
     fn test_note_markdown_dir_ends_with_markdown() {
         let _lock = ENV_LOCK.lock().unwrap();
+        let orig = std::env::var("HOME").ok();
         std::env::set_var("HOME", "/tmp");
         let d = note_markdown_dir("sess");
         assert_eq!(d.file_name().unwrap(), "markdown");
+        if let Some(v) = orig {
+            std::env::set_var("HOME", v);
+        } else {
+            std::env::remove_var("HOME");
+        }
     }
 
     // ──────────────────────────────────────────────
@@ -1695,12 +1727,18 @@ mod tests {
     #[tokio::test]
     async fn test_data_dir_db_path() {
         let _lock = ENV_LOCK.lock().unwrap();
+        let orig = std::env::var("HOME").ok();
         std::env::set_var("HOME", "/tmp/testrun");
         let db_path = data_dir().join("chat.db");
         assert_eq!(
             db_path,
             std::path::PathBuf::from("/tmp/testrun/.rune/chat.db")
         );
+        if let Some(v) = orig {
+            std::env::set_var("HOME", v);
+        } else {
+            std::env::remove_var("HOME");
+        }
     }
 
     // ──────────────────────────────────────────────
@@ -1718,6 +1756,7 @@ mod tests {
         use tokio::time::{timeout, Duration};
 
         let _lock = ENV_LOCK.lock().unwrap();
+        let orig = std::env::var("HOME").ok();
         std::env::set_var("HOME", "/tmp/test_run_home");
 
         let config = RuneConfig::default();
@@ -1728,6 +1767,12 @@ mod tests {
 
         // run() binds and serves; we cancel after 100ms
         let result = timeout(Duration::from_millis(100), run(config, opts)).await;
+
+        if let Some(v) = orig {
+            std::env::set_var("HOME", v);
+        } else {
+            std::env::remove_var("HOME");
+        }
 
         // Timeout means the server started listening (good);
         // an Err(Elapsed) is expected and correct.

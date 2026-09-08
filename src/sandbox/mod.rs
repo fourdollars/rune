@@ -222,15 +222,33 @@ impl SandboxExecutor {
             wrapper_parts.push(flags.join(" "));
         }
 
+        let (mount_exe_cmd, rune_exe_inside) = if use_tmpfs && Self::is_rune_binary() {
+            if let Ok(exe_path) = std::env::current_exe() {
+                let escaped_exe = shell_escape(&exe_path.to_string_lossy());
+                (
+                    format!(" && {{ touch /tmp/.rune-exe 2>/dev/null || true; mount --bind {} /tmp/.rune-exe 2>/dev/null || true; }}", escaped_exe),
+                    "/tmp/.rune-exe".to_string(),
+                )
+            } else {
+                (String::new(), "rune".to_string())
+            }
+        } else {
+            let self_exe = std::env::current_exe()
+                .ok()
+                .and_then(|p| p.to_str().map(|s| s.to_string()))
+                .unwrap_or_else(|| "rune".to_string());
+            (String::new(), self_exe)
+        };
+
         // Layer 3: Seccomp filter via _seccomp subcommand
-        let seccomp_wrapper = self.build_seccomp_wrapper(false).await;
+        let seccomp_wrapper = self.build_seccomp_wrapper(&rune_exe_inside, false).await;
         if let Some(ref sw) = seccomp_wrapper {
             active_layers.push("seccomp(ptrace,mount,kexec,bpf)".to_string());
             debug!("sandbox: seccomp filter active");
         }
 
         // Layer 4: Landlock filesystem restriction
-        let landlock_wrapper = self.build_landlock_wrapper().await;
+        let landlock_wrapper = self.build_landlock_wrapper(&rune_exe_inside).await;
         if let Some(ref lw) = landlock_wrapper {
             active_layers.push(format!(
                 "landlock(rw={},ro={})",
@@ -243,27 +261,19 @@ impl SandboxExecutor {
         // Network guard layer (skip if not running as rune binary)
         let mut net_guard_wrapper: Option<String> = None;
         if use_net_guard_empty && Self::is_rune_binary() {
-            let self_exe_ng = std::env::current_exe()
-                .ok()
-                .and_then(|p| p.to_str().map(|s| s.to_string()))
-                .unwrap_or_else(|| "rune".to_string());
             net_guard_wrapper = Some(format!(
                 "'{}' _net-guard --allow-domains \"\" --",
-                self_exe_ng
+                rune_exe_inside
             ));
         }
         if !self.config.allowed_domains.is_empty()
             && !self.config.allowed_domains.iter().any(|d| d == "*")
             && Self::is_rune_binary()
         {
-            let self_exe = std::env::current_exe()
-                .ok()
-                .and_then(|p| p.to_str().map(|s| s.to_string()))
-                .unwrap_or_else(|| "rune".to_string());
             let domains = self.config.allowed_domains.join(",");
             net_guard_wrapper = Some(format!(
                 "'{}' _net-guard --allow-domains {} --",
-                self_exe, domains
+                rune_exe_inside, domains
             ));
         }
 
@@ -287,22 +297,6 @@ impl SandboxExecutor {
 
         let inner_cmd = inner_cmd_parts.join(" ");
 
-        let target_cwd = cwd.unwrap_or("/tmp");
-        let escaped_target_cwd = shell_escape(target_cwd);
-
-        let mount_tmp = if let Some(ref session_dir) = self.config.session_tmp_dir {
-            let escaped_session_dir = shell_escape(&session_dir.to_string_lossy());
-            format!(
-                "mkdir -p {} && mount --bind {} /tmp",
-                escaped_session_dir, escaped_session_dir
-            )
-        } else {
-            format!(
-                "mount -t tmpfs -o size={}M,mode=1777 tmpfs /tmp",
-                self.config.tmp_size_mb
-            )
-        };
-
         let (mount_home_cmd, target_home, target_home_raw) = if let Some(ref custom_home) =
             self.config.mount_home
         {
@@ -318,6 +312,26 @@ impl SandboxExecutor {
             (String::new(), "'/tmp'".to_string(), "/tmp".to_string())
         };
 
+        let target_cwd = cwd.unwrap_or(if self.config.mount_home.is_some() {
+            &target_home_raw
+        } else {
+            "/tmp"
+        });
+        let escaped_target_cwd = shell_escape(target_cwd);
+
+        let mount_tmp = if let Some(ref session_dir) = self.config.session_tmp_dir {
+            let escaped_session_dir = shell_escape(&session_dir.to_string_lossy());
+            format!(
+                "mkdir -p {} && mount --bind {} /tmp",
+                escaped_session_dir, escaped_session_dir
+            )
+        } else {
+            format!(
+                "mount -t tmpfs -o size={}M,mode=1777 tmpfs /tmp",
+                self.config.tmp_size_mb
+            )
+        };
+
         // If tmpfs isolation is active, mount tmpfs/session_dir + isolate /etc and /proc
         let inner_cmd = if use_tmpfs {
             // Build the full script that runs inside the mount namespace.
@@ -325,6 +339,7 @@ impl SandboxExecutor {
             let mount_setup = format!(
                 concat!(
                     "{mount_tmp}",
+                    "{mount_exe_cmd}",
                     "{mount_home_cmd}",
                     // cd re-resolves CWD through the new mount so that Landlock's
                     // inode-based rule matches the process's CWD inode.
@@ -346,6 +361,7 @@ impl SandboxExecutor {
                     " && unset INVOCATION_ID JOURNAL_STREAM SYSTEMD_EXEC_PID MANAGERPID DBUS_SESSION_BUS_ADDRESS XDG_RUNTIME_DIR PWD && export PWD={target_cwd} HOME={target_home} && exec {cmd}",
                 ),
                 mount_tmp = mount_tmp,
+                mount_exe_cmd = mount_exe_cmd,
                 mount_home_cmd = mount_home_cmd,
                 target_cwd = escaped_target_cwd,
                 target_home = target_home,
@@ -391,7 +407,9 @@ impl SandboxExecutor {
         // Default cwd to /tmp to prevent PWD leaking real working dir (P2)
         command.current_dir("/tmp");
         if let Some(dir) = cwd {
-            command.current_dir(dir);
+            if std::path::Path::new(dir).is_dir() {
+                command.current_dir(dir);
+            }
         }
         if let Some(envs) = env {
             for (k, v) in envs {
@@ -457,23 +475,23 @@ impl SandboxExecutor {
             .unwrap_or(false)
     }
 
-    async fn build_seccomp_wrapper(&self, block_net: bool) -> Option<String> {
+    async fn build_seccomp_wrapper(&self, self_exe: &str, block_net: bool) -> Option<String> {
         // Use self-exe _seccomp subcommand (always available — single binary)
         if !Self::is_rune_binary() {
             // Not running as rune (e.g. test binary) — skip sandbox wrappers
             return None;
         }
-        let self_exe = std::env::current_exe()
-            .ok()
-            .and_then(|p| p.to_str().map(|s| s.to_string()))
-            .unwrap_or_else(|| "rune".to_string());
 
         // Probe whether prctl(PR_SET_SECCOMP, SECCOMP_MODE_FILTER) is permitted.
         // Some container runtimes (e.g. ChromeOS Crostini / LXC) block this via
         // SECCOMP_RET_TRAP, which kills the child with SIGTRAP (exit 133) before
         // any useful work happens.  Run a trivial allow-all filter test first; if it
         // fails we degrade gracefully rather than crashing every tool invocation.
-        let seccomp_available = Command::new(&self_exe)
+        let probe_exe = std::env::current_exe()
+            .ok()
+            .and_then(|p| p.to_str().map(|s| s.to_string()))
+            .unwrap_or_else(|| "rune".to_string());
+        let seccomp_available = Command::new(&probe_exe)
             .args(["_seccomp", "--allow-syscalls", "*", "true"])
             .output()
             .await
@@ -504,15 +522,11 @@ impl SandboxExecutor {
     /// Landlock requires direct syscalls; we approximate with filesystem checks
     /// in the probe phase since raw landlock from a shell wrapper is impractical.
     /// The real protection comes from the user namespace UID remapping.
-    async fn build_landlock_wrapper(&self) -> Option<String> {
+    async fn build_landlock_wrapper(&self, self_exe: &str) -> Option<String> {
         // Use self-exe _landlock subcommand (always available — single binary)
         if !Self::is_rune_binary() {
             return None;
         }
-        let self_exe = std::env::current_exe()
-            .ok()
-            .and_then(|p| p.to_str().map(|s| s.to_string()))
-            .unwrap_or_else(|| "rune".to_string());
 
         // Build _landlock subcommand with configured paths
         let mut parts = vec![format!("'{}' _landlock", self_exe)];
