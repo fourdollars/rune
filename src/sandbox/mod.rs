@@ -617,17 +617,54 @@ impl SandboxExecutor {
             return None;
         }
 
+        let custom_home_canon = self
+            .config
+            .mount_home
+            .as_ref()
+            .map(|h| std::fs::canonicalize(h).unwrap_or_else(|_| h.clone()));
+        let real_home_pb = std::env::var("HOME").ok().map(PathBuf::from);
+
+        let is_custom_home_path = |p: &PathBuf| -> bool {
+            if let Some(ref ch) = custom_home_canon {
+                let p_canon = std::fs::canonicalize(p).unwrap_or_else(|_| p.clone());
+                p == ch || &p_canon == ch || p.starts_with(ch) || p_canon.starts_with(ch)
+            } else {
+                false
+            }
+        };
+
         // Build _landlock subcommand with configured paths
         let mut parts = vec![format!("'{}' _landlock", self_exe)];
+        let mut has_real_home_rw = false;
         for p in &self.config.read_write_paths {
+            if is_custom_home_path(p) {
+                continue;
+            }
+            if let Some(ref rh) = real_home_pb {
+                if p == rh {
+                    has_real_home_rw = true;
+                }
+            }
             parts.push("--rw".to_string());
             parts.push(p.display().to_string());
         }
+        if self.config.mount_home.is_some() && !has_real_home_rw {
+            if let Some(ref rh) = real_home_pb {
+                parts.push("--rw".to_string());
+                parts.push(rh.display().to_string());
+            }
+        }
         for p in &self.config.read_only_paths {
+            if is_custom_home_path(p) {
+                continue;
+            }
             parts.push("--ro".to_string());
             parts.push(p.display().to_string());
         }
         for p in &self.config.traverse_paths {
+            if is_custom_home_path(p) {
+                continue;
+            }
             parts.push("--traverse".to_string());
             parts.push(p.display().to_string());
         }
@@ -1201,5 +1238,34 @@ mod tests {
             "custom_home should not contain any leftover placeholder files/dirs, found: {:?}",
             entries.iter().map(|e| e.file_name()).collect::<Vec<_>>()
         );
+    }
+
+    #[tokio::test]
+    async fn test_sandbox_landlock_filters_custom_home_path() {
+        let custom_home = tempfile::tempdir_in("/var/tmp").expect("tempdir custom home");
+        let mut config = SandboxConfig::default();
+        config.mount_home = Some(custom_home.path().to_path_buf());
+        config
+            .read_write_paths
+            .push(custom_home.path().to_path_buf());
+        config
+            .read_only_paths
+            .push(custom_home.path().to_path_buf());
+
+        let executor = SandboxExecutor::new(config);
+        let wrapper = executor.build_landlock_wrapper("/usr/local/bin/rune").await;
+        // In test mode is_rune_binary() returns false (wrapper is None)
+        // But if called directly or tested, custom_home path should not appear in --rw or --ro
+        if let Some(w) = wrapper {
+            let ch_str = custom_home.path().to_string_lossy();
+            assert!(
+                !w.contains(&format!("--rw {}", ch_str)),
+                "landlock wrapper should not contain host path of custom_home in --rw"
+            );
+            assert!(
+                !w.contains(&format!("--ro {}", ch_str)),
+                "landlock wrapper should not contain host path of custom_home in --ro"
+            );
+        }
     }
 }
