@@ -297,6 +297,9 @@ impl SandboxExecutor {
 
         let inner_cmd = inner_cmd_parts.join(" ");
 
+        let mut cleanup_files: Vec<PathBuf> = Vec::new();
+        let mut cleanup_dirs: Vec<PathBuf> = Vec::new();
+
         let (mount_home_cmd, target_home, target_home_raw) = if let Some(ref custom_home) =
             self.config.mount_home
         {
@@ -316,6 +319,8 @@ impl SandboxExecutor {
 
             // Phase 2: Overlay whitelist items (from rune.toml, skills, and -M/-m) that reside under real_home
             let real_home_path = std::path::Path::new(&real_home);
+            let custom_home_canon =
+                std::fs::canonicalize(custom_home).unwrap_or_else(|_| custom_home.clone());
             let mut overlay_paths: Vec<PathBuf> = Vec::new();
             for p in self
                 .config
@@ -323,7 +328,12 @@ impl SandboxExecutor {
                 .iter()
                 .chain(self.config.read_only_paths.iter())
             {
-                if p.starts_with(real_home_path) && !overlay_paths.contains(p) {
+                let p_canon = std::fs::canonicalize(p).unwrap_or_else(|_| p.clone());
+                // Skip custom_home itself to prevent recursive self-mounts like notes-home/notes-home
+                if p.starts_with(real_home_path)
+                    && p_canon != custom_home_canon
+                    && !overlay_paths.contains(p)
+                {
                     overlay_paths.push(p.clone());
                 }
             }
@@ -333,6 +343,26 @@ impl SandboxExecutor {
                     if rel.as_os_str().is_empty() {
                         continue;
                     }
+
+                    let target_in_custom = custom_home.join(rel);
+                    if !target_in_custom.exists() {
+                        if p.is_dir() {
+                            cleanup_dirs.push(target_in_custom.clone());
+                        } else {
+                            cleanup_files.push(target_in_custom.clone());
+                        }
+                        let mut parent = target_in_custom.parent();
+                        while let Some(pr) = parent {
+                            if pr == custom_home || !pr.starts_with(custom_home) {
+                                break;
+                            }
+                            if !pr.exists() && !cleanup_dirs.contains(&pr.to_path_buf()) {
+                                cleanup_dirs.push(pr.to_path_buf());
+                            }
+                            parent = pr.parent();
+                        }
+                    }
+
                     let rel_str = rel.to_string_lossy();
                     let orig_source = format!("/tmp/.orig_home/{}", rel_str);
                     let target_dest = p.to_string_lossy().to_string();
@@ -472,6 +502,19 @@ impl SandboxExecutor {
 
         let timeout = std::time::Duration::from_secs(self.config.timeout_secs);
         let result = tokio::time::timeout(timeout, child.wait_with_output()).await;
+
+        // Clean up temporary mountpoint files and empty placeholder directories created in custom_home
+        for f in cleanup_files {
+            if f.is_file() {
+                let _ = std::fs::remove_file(&f);
+            }
+        }
+        cleanup_dirs.sort_by(|a, b| b.components().count().cmp(&a.components().count()));
+        for d in cleanup_dirs {
+            if d.is_dir() {
+                let _ = std::fs::remove_dir(&d); // only removes if empty
+            }
+        }
 
         match result {
             Ok(Ok(output)) => {
@@ -1116,6 +1159,47 @@ mod tests {
         assert!(
             result.stdout.contains(&real_home),
             "PWD should match real home path when mount_home is set"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_sandbox_mount_home_leaves_no_artifacts() {
+        let custom_home = tempfile::tempdir_in("/var/tmp").expect("tempdir custom home");
+        let real_home = std::env::var("HOME").unwrap_or_else(|_| "/root".to_string());
+        let real_home_path = PathBuf::from(&real_home);
+
+        if !real_home_path.exists() {
+            return;
+        }
+
+        let mut config = SandboxConfig::default();
+        config.mount_home = Some(custom_home.path().to_path_buf());
+        config
+            .read_write_paths
+            .push(custom_home.path().to_path_buf());
+
+        // Add dummy paths under HOME that don't exist in custom_home
+        let sample_file = real_home_path.join(".bashrc");
+        if sample_file.exists() {
+            config.read_only_paths.push(sample_file.clone());
+        }
+
+        let executor = SandboxExecutor::new(config);
+        let result = executor
+            .run_shell_command("echo hello", None, None)
+            .await
+            .expect("should succeed");
+        assert_eq!(result.exit_code, 0);
+
+        // Verify custom_home is completely clean
+        let entries: Vec<_> = std::fs::read_dir(custom_home.path())
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .collect();
+        assert!(
+            entries.is_empty(),
+            "custom_home should not contain any leftover placeholder files/dirs, found: {:?}",
+            entries.iter().map(|e| e.file_name()).collect::<Vec<_>>()
         );
     }
 }

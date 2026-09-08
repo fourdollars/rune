@@ -1746,9 +1746,11 @@ log_level = "info"
     }
 
     // --- expand_tilde tests ---
+    static HOME_TEST_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
     #[test]
     fn test_expand_tilde_home_prefix() {
+        let _lock = HOME_TEST_MUTEX.lock().unwrap();
         let orig = std::env::var("HOME").ok();
         std::env::set_var("HOME", "/home/testuser");
         assert_eq!(expand_tilde("~/skills"), "/home/testuser/skills");
@@ -1762,6 +1764,7 @@ log_level = "info"
 
     #[test]
     fn test_expand_tilde_bare_tilde() {
+        let _lock = HOME_TEST_MUTEX.lock().unwrap();
         let orig = std::env::var("HOME").ok();
         std::env::set_var("HOME", "/home/testuser");
         assert_eq!(expand_tilde("~"), "/home/testuser");
@@ -1789,6 +1792,7 @@ log_level = "info"
 
     #[test]
     fn test_expand_tilde_vec_mixed() {
+        let _lock = HOME_TEST_MUTEX.lock().unwrap();
         let orig = std::env::var("HOME").ok();
         std::env::set_var("HOME", "/home/u");
         let mut v = vec![
@@ -2026,6 +2030,7 @@ mode = "confirm"
 
     #[test]
     fn test_expand_tilde_home_not_set() {
+        let _lock = HOME_TEST_MUTEX.lock().unwrap();
         // Temporarily unset HOME — if HOME is absent, return original
         let original = std::env::var("HOME").ok();
         std::env::remove_var("HOME");
@@ -2039,6 +2044,7 @@ mode = "confirm"
 
     #[test]
     fn test_expand_tilde_bare_home_not_set() {
+        let _lock = HOME_TEST_MUTEX.lock().unwrap();
         let original = std::env::var("HOME").ok();
         std::env::remove_var("HOME");
         let result = expand_tilde("~");
