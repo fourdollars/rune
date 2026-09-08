@@ -607,16 +607,8 @@ impl SandboxExecutor {
         Some(cmd)
     }
 
-    /// Build a landlock wrapper using a helper script.
-    /// Landlock requires direct syscalls; we approximate with filesystem checks
-    /// in the probe phase since raw landlock from a shell wrapper is impractical.
-    /// The real protection comes from the user namespace UID remapping.
-    async fn build_landlock_wrapper(&self, self_exe: &str) -> Option<String> {
-        // Use self-exe _landlock subcommand (always available — single binary)
-        if !Self::is_rune_binary() {
-            return None;
-        }
-
+    /// Build the landlock argument list with configured paths.
+    pub fn build_landlock_args(&self, self_exe: &str) -> Vec<String> {
         let custom_home_canon = self
             .config
             .mount_home
@@ -669,6 +661,20 @@ impl SandboxExecutor {
             parts.push(p.display().to_string());
         }
         parts.push("--".to_string());
+        parts
+    }
+
+    /// Build a landlock wrapper using a helper script.
+    /// Landlock requires direct syscalls; we approximate with filesystem checks
+    /// in the probe phase since raw landlock from a shell wrapper is impractical.
+    /// The real protection comes from the user namespace UID remapping.
+    async fn build_landlock_wrapper(&self, self_exe: &str) -> Option<String> {
+        // Use self-exe _landlock subcommand (always available — single binary)
+        if !Self::is_rune_binary() {
+            return None;
+        }
+
+        let parts = self.build_landlock_args(self_exe);
         info!(rw = ?self.config.read_write_paths, ro = ?self.config.read_only_paths, "sandbox: landlock filesystem restriction active");
         Some(parts.join(" "))
     }
@@ -1243,6 +1249,7 @@ mod tests {
     #[tokio::test]
     async fn test_sandbox_landlock_filters_custom_home_path() {
         let custom_home = tempfile::tempdir_in("/var/tmp").expect("tempdir custom home");
+        let real_home = std::env::var("HOME").unwrap_or_else(|_| "/root".to_string());
         let mut config = SandboxConfig::default();
         config.mount_home = Some(custom_home.path().to_path_buf());
         config
@@ -1253,19 +1260,26 @@ mod tests {
             .push(custom_home.path().to_path_buf());
 
         let executor = SandboxExecutor::new(config);
-        let wrapper = executor.build_landlock_wrapper("/usr/local/bin/rune").await;
-        // In test mode is_rune_binary() returns false (wrapper is None)
-        // But if called directly or tested, custom_home path should not appear in --rw or --ro
-        if let Some(w) = wrapper {
-            let ch_str = custom_home.path().to_string_lossy();
-            assert!(
-                !w.contains(&format!("--rw {}", ch_str)),
-                "landlock wrapper should not contain host path of custom_home in --rw"
-            );
-            assert!(
-                !w.contains(&format!("--ro {}", ch_str)),
-                "landlock wrapper should not contain host path of custom_home in --ro"
-            );
-        }
+        let args = executor.build_landlock_args("/usr/local/bin/rune");
+        let w = args.join(" ");
+        let ch_str = custom_home.path().to_string_lossy();
+
+        // Host path of custom_home should not appear in --rw or --ro
+        assert!(
+            !w.contains(&format!("--rw {}", ch_str)),
+            "landlock args should not contain host path of custom_home in --rw, got: {}",
+            w
+        );
+        assert!(
+            !w.contains(&format!("--ro {}", ch_str)),
+            "landlock args should not contain host path of custom_home in --ro, got: {}",
+            w
+        );
+        // Real home should be included in --rw
+        assert!(
+            w.contains(&format!("--rw {}", real_home)),
+            "landlock args should contain real home in --rw when mount_home is set, got: {}",
+            w
+        );
     }
 }
