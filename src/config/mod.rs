@@ -756,75 +756,12 @@ pub fn load() -> anyhow::Result<RuneConfig> {
         policy.mode = "unrestricted".to_string();
     }
 
-    // CLI -H / --mount-home flag sets mount_home policy (default RW)
-    if let Some(ref home_path) = cli.mount_home {
-        let expanded = expand_tilde(home_path);
-        let resolved =
-            std::fs::canonicalize(&expanded).unwrap_or_else(|_| PathBuf::from(&expanded));
-        let resolved_str = resolved.to_string_lossy().to_string();
-        if !policy
-            .allowed_paths_rw
-            .iter()
-            .any(|p| resolved_str.starts_with(p.trim_end_matches('/')))
-        {
-            policy.allowed_paths_rw.push(resolved_str.clone());
-        }
-        policy.mount_home = Some(resolved_str);
-    }
-
-    // CLI -M / --mount-rw flag(s) set mount_pwd and add paths/files to RW allowlist
-    if !cli.mount_rw.is_empty() {
-        policy.mount_pwd = true;
-        for path_str in &cli.mount_rw {
-            let expanded = expand_tilde(path_str);
-            let resolved =
-                std::fs::canonicalize(&expanded).unwrap_or_else(|_| PathBuf::from(&expanded));
-            let abs_path = resolved.to_string_lossy().to_string();
-            if resolved.is_file() {
-                if !policy.allowed_files_rw.contains(&abs_path) {
-                    policy.allowed_files_rw.push(abs_path);
-                }
-            } else if !policy
-                .allowed_paths_rw
-                .iter()
-                .any(|p| abs_path.starts_with(p.trim_end_matches('/')))
-            {
-                policy.allowed_paths_rw.push(abs_path);
-            }
-        }
-    }
-
-    // CLI -m / --mount-ro flag(s) add paths/files to RO allowlist
-    for path_str in &cli.mount_ro {
-        let expanded = expand_tilde(path_str);
-        let resolved =
-            std::fs::canonicalize(&expanded).unwrap_or_else(|_| PathBuf::from(&expanded));
-        let abs_path = resolved.to_string_lossy().to_string();
-        if resolved.is_file() {
-            if !policy.allowed_files_ro.contains(&abs_path) {
-                policy.allowed_files_ro.push(abs_path);
-            }
-        } else if !policy
-            .allowed_paths_ro
-            .iter()
-            .any(|p| abs_path.starts_with(p.trim_end_matches('/')))
-        {
-            policy.allowed_paths_ro.push(abs_path);
-        }
-    }
-
-    if policy.mount_pwd {
-        if let Ok(cwd) = env::current_dir() {
-            let cwd_str = cwd.to_string_lossy().to_string();
-            if !policy
-                .allowed_paths_rw
-                .iter()
-                .any(|p| cwd_str.starts_with(p.trim_end_matches('/')))
-            {
-                policy.allowed_paths_rw.push(cwd_str);
-            }
-        }
-    }
+    apply_mount_flags(
+        &mut policy,
+        cli.mount_home.as_deref(),
+        &cli.mount_rw,
+        &cli.mount_ro,
+    );
     // Env var override for mode (legacy support)
     if let Some(mode) = env::var("RUNE_POLICY_MODE").ok() {
         policy.mode = mode;
@@ -1033,6 +970,84 @@ pub(crate) fn post_process_config(cfg: &mut RuneConfig) {
     expand_tilde_vec(&mut cfg.policy.allowed_files_ro);
     expand_tilde_vec(&mut cfg.policy.allowed_files_rw);
     expand_tilde_vec(&mut cfg.policy.denied_paths);
+}
+
+/// Apply CLI mount flags (-H, -M, -m) to a PolicyConfig.
+pub fn apply_mount_flags(
+    policy: &mut PolicyConfig,
+    mount_home: Option<&str>,
+    mount_rw: &[String],
+    mount_ro: &[String],
+) {
+    // CLI -H / --mount-home flag sets mount_home policy (default RW)
+    if let Some(home_path) = mount_home {
+        let expanded = expand_tilde(home_path);
+        let resolved =
+            std::fs::canonicalize(&expanded).unwrap_or_else(|_| PathBuf::from(&expanded));
+        let resolved_str = resolved.to_string_lossy().to_string();
+        if !policy
+            .allowed_paths_rw
+            .iter()
+            .any(|p| resolved_str.starts_with(p.trim_end_matches('/')))
+        {
+            policy.allowed_paths_rw.push(resolved_str.clone());
+        }
+        policy.mount_home = Some(resolved_str);
+    }
+
+    // CLI -M / --mount-rw flag(s) set mount_pwd and add paths/files to RW allowlist
+    if !mount_rw.is_empty() {
+        policy.mount_pwd = true;
+        for path_str in mount_rw {
+            let expanded = expand_tilde(path_str);
+            let resolved =
+                std::fs::canonicalize(&expanded).unwrap_or_else(|_| PathBuf::from(&expanded));
+            let abs_path = resolved.to_string_lossy().to_string();
+            if resolved.is_file() {
+                if !policy.allowed_files_rw.contains(&abs_path) {
+                    policy.allowed_files_rw.push(abs_path);
+                }
+            } else if !policy
+                .allowed_paths_rw
+                .iter()
+                .any(|p| abs_path.starts_with(p.trim_end_matches('/')))
+            {
+                policy.allowed_paths_rw.push(abs_path);
+            }
+        }
+    }
+
+    // CLI -m / --mount-ro flag(s) add paths/files to RO allowlist
+    for path_str in mount_ro {
+        let expanded = expand_tilde(path_str);
+        let resolved =
+            std::fs::canonicalize(&expanded).unwrap_or_else(|_| PathBuf::from(&expanded));
+        let abs_path = resolved.to_string_lossy().to_string();
+        if resolved.is_file() {
+            if !policy.allowed_files_ro.contains(&abs_path) {
+                policy.allowed_files_ro.push(abs_path);
+            }
+        } else if !policy
+            .allowed_paths_ro
+            .iter()
+            .any(|p| abs_path.starts_with(p.trim_end_matches('/')))
+        {
+            policy.allowed_paths_ro.push(abs_path);
+        }
+    }
+
+    if policy.mount_pwd {
+        if let Ok(cwd) = env::current_dir() {
+            let cwd_str = cwd.to_string_lossy().to_string();
+            if !policy
+                .allowed_paths_rw
+                .iter()
+                .any(|p| cwd_str.starts_with(p.trim_end_matches('/')))
+            {
+                policy.allowed_paths_rw.push(cwd_str);
+            }
+        }
+    }
 }
 
 /// Persist a new domain to the user's ~/.rune/rune.toml allowed_domains list.
@@ -2712,6 +2727,38 @@ userinfo_url = "https://example.com/oauth/userinfo"
 
         let args = CliArgs::try_parse_from(["rune", "-H", "/my/home"]).unwrap();
         assert_eq!(args.mount_home.as_deref(), Some("/my/home"));
+    }
+
+    #[test]
+    fn test_apply_mount_flags() {
+        let mut policy = PolicyConfig::default();
+        let temp_dir = tempfile::tempdir().unwrap();
+        let temp_file = temp_dir.path().join("test_file.txt");
+        std::fs::write(&temp_file, "hello").unwrap();
+
+        apply_mount_flags(
+            &mut policy,
+            Some(temp_dir.path().to_str().unwrap()),
+            &[temp_file.to_str().unwrap().to_string()],
+            &["/usr/include".to_string()],
+        );
+
+        let temp_dir_canon = std::fs::canonicalize(temp_dir.path())
+            .unwrap()
+            .to_string_lossy()
+            .to_string();
+        let temp_file_canon = std::fs::canonicalize(&temp_file)
+            .unwrap()
+            .to_string_lossy()
+            .to_string();
+
+        assert_eq!(policy.mount_home.as_deref(), Some(temp_dir_canon.as_str()));
+        assert!(policy.mount_pwd);
+        assert!(policy.allowed_paths_rw.contains(&temp_dir_canon));
+        assert!(policy.allowed_files_rw.contains(&temp_file_canon));
+        assert!(policy
+            .allowed_paths_ro
+            .contains(&"/usr/include".to_string()));
     }
 
     #[test]

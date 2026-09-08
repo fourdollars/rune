@@ -106,7 +106,7 @@ async fn async_main() {
                     None
                 }
             });
-            let cfg = config::load_without_clap_path(config_path.map(std::path::Path::new))
+            let mut cfg = config::load_without_clap_path(config_path.map(std::path::Path::new))
                 .unwrap_or_else(|e| {
                     eprintln!("warning: config load failed: {}", e);
                     config::RuneConfig::default()
@@ -132,6 +132,10 @@ async fn async_main() {
                     .unwrap_or(IpAddr::V4(Ipv4Addr::LOCALHOST)),
             };
 
+            let mut mount_home: Option<String> = None;
+            let mut mount_rw: Vec<String> = Vec::new();
+            let mut mount_ro: Vec<String> = Vec::new();
+
             // CLI flags override config file
             let mut i = 2;
             while i < args.len() {
@@ -150,10 +154,39 @@ async fn async_main() {
                             i += 1;
                         }
                     }
+                    "-H" | "--mount-home" => {
+                        let path = if i + 1 < args.len() && !args[i + 1].starts_with('-') {
+                            i += 1;
+                            args[i].clone()
+                        } else {
+                            ".".to_string()
+                        };
+                        mount_home = Some(path);
+                    }
+                    "-M" | "--mount-rw" => {
+                        let path = if i + 1 < args.len() && !args[i + 1].starts_with('-') {
+                            i += 1;
+                            args[i].clone()
+                        } else {
+                            ".".to_string()
+                        };
+                        mount_rw.push(path);
+                    }
+                    "-m" | "--mount-ro" => {
+                        let path = if i + 1 < args.len() && !args[i + 1].starts_with('-') {
+                            i += 1;
+                            args[i].clone()
+                        } else {
+                            ".".to_string()
+                        };
+                        mount_ro.push(path);
+                    }
                     _ => {}
                 }
                 i += 1;
             }
+
+            config::apply_mount_flags(&mut cfg.policy, mount_home.as_deref(), &mount_rw, &mount_ro);
 
             serve::run(cfg, opts).await;
             return;
