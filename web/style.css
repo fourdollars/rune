@@ -2867,3 +2867,218 @@ body.tree-open #app-scrim {
     font-size: 13px;
 }
 .model-name[role="button"] { cursor: pointer; }
+
+/* ─── Print Styles ─── */
+@media print {
+    @page {
+        margin: 15mm 20mm;
+        size: auto;
+    }
+
+    *, *::before, *::after {
+        box-shadow: none !important;
+        text-shadow: none !important;
+    }
+
+    html, body {
+        width: 100% !important;
+        height: auto !important;
+        min-height: 0 !important;
+        overflow: visible !important;
+        background: #ffffff !important;
+        color: #111111 !important;
+        font-size: 11pt !important;
+        line-height: 1.5 !important;
+    }
+
+    /* Hide chrome, sidebars, chat, editors, toolbars, pane switcher, popups, and non-printable elements */
+    #panel-left,
+    #panel-right,
+    .panel-left,
+    .panel-right,
+    .panel,
+    #compact-bar,
+    #compact-menu,
+    #split-title-bar,
+    #pane-switcher,
+    .pane-switcher,
+    #pane-btn-editor,
+    #pane-btn-preview,
+    #pane-btn-chat,
+    #editor-container,
+    #editor-toolbar,
+    #editor-toolbar-overflow,
+    #editor-toolbar-menu,
+    #editor-wrapper,
+    .editor-toolbar,
+    .resize-handle,
+    .explorer-toggle,
+    .palette-overlay,
+    #command-palette,
+    .modal-overlay,
+    .toast,
+    .actions,
+    .row-menu-btn,
+    .copy-btn,
+    .search-copy-btn,
+    #row-menu,
+    #emoji-picker-popover,
+    #app-scrim,
+    .back,
+    .meta,
+    footer,
+    #loading {
+        display: none !important;
+    }
+
+    /* Expand center panel and preview container to full document flow regardless of data-pane */
+    #app,
+    #app[data-pane="chat"] #panel-center,
+    #app[data-pane="editor"] #panel-center,
+    #app[data-pane="preview"] #panel-center,
+    #panel-center,
+    #center-body,
+    #split-body,
+    #app[data-pane="chat"] #preview-container,
+    #app[data-pane="editor"] #preview-container,
+    #app[data-pane="preview"] #preview-container,
+    #preview-container,
+    #preview,
+    .public-container {
+        display: block !important;
+        position: static !important;
+        width: 100% !important;
+        max-width: 100% !important;
+        height: auto !important;
+        min-height: 0 !important;
+        overflow: visible !important;
+        margin: 0 !important;
+        padding: 0 !important;
+        background: transparent !important;
+        color: #111111 !important;
+        border: none !important;
+    }
+
+    #app {
+        padding: 0 !important;
+    }
+
+    /* Typography & Headers */
+    #preview h1, #preview h2, #preview h3, #preview h4, #preview h5, #preview h6,
+    .public-container h1, .public-container h2, .public-container h3,
+    .public-container h4, .public-container h5, .public-container h6 {
+        page-break-after: avoid;
+        break-after: avoid;
+        color: #000000 !important;
+    }
+
+    #preview h1, .public-container h1 { font-size: 1.8em; margin-top: 0; }
+    #preview h2, .public-container h2 { font-size: 1.4em; }
+    #preview h3, .public-container h3 { font-size: 1.2em; }
+
+    #preview p, #preview ul, #preview ol, #preview blockquote,
+    .public-container p, .public-container ul, .public-container ol {
+        orphans: 3;
+        widows: 3;
+        color: #111111 !important;
+    }
+
+    #preview a, .public-container a {
+        color: #0969da !important;
+        text-decoration: underline !important;
+    }
+
+    /* Avoid breaking inside important blocks */
+    #preview pre,
+    #preview blockquote,
+    #preview table,
+    #preview figure,
+    #preview img,
+    #preview svg,
+    #preview .mermaid,
+    #preview .math-block,
+    .public-container pre,
+    .public-container blockquote,
+    .public-container table,
+    .public-container figure,
+    .public-container img,
+    .public-container svg,
+    .public-container .mermaid,
+    .public-container .math-block {
+        page-break-inside: avoid;
+        break-inside: avoid;
+    }
+
+    /* Code blocks */
+    #preview pre,
+    #preview pre.hljs-pre,
+    .public-container pre,
+    .public-container pre.hljs-pre {
+        background: #f6f8fa !important;
+        color: #24292e !important;
+        border: 1px solid #d0d7de !important;
+        border-radius: 4px;
+        padding: 10px 14px !important;
+        white-space: pre-wrap !important;
+        word-break: break-word !important;
+    }
+
+    #preview code,
+    .public-container code {
+        background: #f6f8fa !important;
+        color: #24292e !important;
+        border-radius: 3px;
+        font-size: 0.9em;
+    }
+
+    #preview pre code,
+    .public-container pre code {
+        background: transparent !important;
+        padding: 0 !important;
+    }
+
+    /* Blockquotes */
+    #preview blockquote,
+    .public-container blockquote {
+        border-left: 3.5px solid #d0d7de !important;
+        color: #57606a !important;
+        background: transparent !important;
+        padding: 4px 16px !important;
+        margin: 12px 0 !important;
+    }
+
+    /* Tables */
+    #preview table,
+    .public-container table {
+        width: 100% !important;
+        border-collapse: collapse !important;
+        margin: 14px 0 !important;
+    }
+
+    #preview th, #preview td,
+    .public-container th, .public-container td {
+        border: 1px solid #d0d7de !important;
+        padding: 6px 12px !important;
+        color: #111111 !important;
+    }
+
+    #preview th,
+    .public-container th {
+        background: #f6f8fa !important;
+        font-weight: 600;
+    }
+
+    /* Diagrams, Images, Math */
+    #preview img, #preview svg, #preview .mermaid,
+    .public-container img, .public-container svg, .public-container .mermaid {
+        max-width: 100% !important;
+        height: auto !important;
+    }
+
+    #preview .math-block,
+    .public-container .math-block {
+        color: #111111 !important;
+        margin: 12px 0 !important;
+        text-align: center;
+    }
+}

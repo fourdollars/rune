@@ -1914,6 +1914,11 @@ const PUBLIC_PREVIEW_HTML: &str = r##"<!DOCTYPE html>
     font-size: 12px;
   }
   footer a { color: inherit; text-decoration: underline; }
+  @media print {
+    body { padding: 0 !important; background: #fff !important; }
+    .public-container { border: none !important; padding: 0 !important; background: transparent !important; max-width: 100% !important; margin: 0 !important; }
+    .meta, footer, #loading { display: none !important; }
+  }
 </style>
 </head>
 <body>
@@ -2282,6 +2287,13 @@ pub async fn public_notes_list_handler(
   .empty {{ opacity: 0.5; font-style: italic; }}
   footer {{ margin-top: 32px; padding-top: 16px; border-top: 1px solid; opacity: 0.4; text-align: center; font-size: 12px; }}
   footer a {{ color: inherit; text-decoration: underline; }}
+  @media print {{
+    body {{ background: #fff !important; color: #111 !important; padding: 0 !important; }}
+    .container {{ max-width: 100% !important; padding: 0 !important; border: none !important; box-shadow: none !important; }}
+    footer {{ display: none !important; }}
+    a {{ color: #0969da !important; }}
+    .note-section {{ page-break-inside: avoid; break-inside: avoid; }}
+  }}
 </style>
 </head>
 <body>
@@ -2607,6 +2619,12 @@ pub async fn public_note_index_handler(
   .empty {{ opacity: 0.5; font-style: italic; }}
   footer {{ margin-top: 32px; padding-top: 16px; border-top: 1px solid; opacity: 0.4; text-align: center; font-size: 12px; }}
   footer a {{ color: inherit; text-decoration: underline; }}
+  @media print {{
+    body {{ background: #fff !important; color: #111 !important; padding: 0 !important; }}
+    .container {{ max-width: 100% !important; padding: 0 !important; border: none !important; box-shadow: none !important; }}
+    .back, footer {{ display: none !important; }}
+    a {{ color: #0969da !important; }}
+  }}
 </style>
 </head>
 <body>

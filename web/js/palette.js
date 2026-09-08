@@ -26,6 +26,7 @@ const COMMANDS = [
     { label: 'Toggle preview', icon: 'eye', section: 'View & Panels', run: () => togglePreview() },
     { label: 'Swap editor / preview', icon: 'swap', keys: 'Ctrl+Shift+E', section: 'View & Panels', run: () => swapEditorPreview() },
     { label: 'Toggle sync scroll', icon: 'sync-scroll', section: 'View & Panels', run: () => toggleSyncScroll() },
+    { label: 'Print preview', icon: 'printer', section: 'View & Panels', run: () => window.print() },
 
     // AI & Chat
     { label: 'Switch model', icon: 'chip', admin: true, section: 'AI & Chat', run: () => showModelDialog() },
