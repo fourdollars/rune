@@ -129,7 +129,7 @@ is_dangerous_tool(name)?
 
 In Concourse pipelines, override via `source.policy.mode`.
 
-## Sandbox Layers
+## Sandbox Layers & Mount Controls
 
 Up to 5 isolation layers per tool invocation (best-effort; the executor applies available protections in a runtime-dependent order):
 
@@ -138,6 +138,11 @@ Up to 5 isolation layers per tool invocation (best-effort; the executor applies 
 3. **Seccomp BPF** (internal `_seccomp` subcommand) — syscall filtering
 4. **Landlock** (internal `_landlock` subcommand) — filesystem restriction
 5. **DNS/Domain allowlist** — selective network access (represented via net-guard/allowed_domains)
+
+### Sandbox Mount Flags
+- `-H [path]`, `--mount-home`: Mount specified folder over real `$HOME` directory in sandbox (defaults to CWD if omitted).
+- `-M [path]`, `--mount-rw`: Mount path(s) or file(s) as Read-Write in sandbox (defaults to CWD if omitted, repeatable).
+- `-m [path]`, `--mount-ro`: Mount path(s) or file(s) as Read-Only in sandbox (defaults to CWD if omitted, repeatable).
 
 ## Skills
 

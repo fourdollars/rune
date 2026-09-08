@@ -113,6 +113,9 @@ docker run --rm -it \
 | `--base-url <url>` | `RUNE_BASE_URL` | Provider base URL (auto-detected for Copilot/Gemini) |
 | `--unrestricted` | — | Disable all security policy checks (sandbox, allowlists, confirm prompts) |
 | `--yes`, `-y` | — | Auto-approve dangerous tool calls (does NOT bypass policy allowlist) |
+| `--mount-home`, `-H [path]` | — | Mount specified folder over real HOME in sandbox with RW access (defaults to CWD if omitted) |
+| `--mount-rw`, `-M [path]` | — | Mount path(s) or file(s) as Read-Write in sandbox (defaults to CWD if omitted, repeatable) |
+| `--mount-ro`, `-m [path]` | — | Mount path(s) or file(s) as Read-Only in sandbox (defaults to CWD if omitted, repeatable) |
 | `--max-steps <n>` | `RUNE_MAX_STEPS` | Maximum agent loop iterations [default: 50, 0 = unlimited] |
 | `--token-budget <n>` | `RUNE_TOKEN_BUDGET` | Maximum tokens per run [default: 256k, 0 = unlimited] |
 | `--timeout-secs <n>` | `RUNE_TIMEOUT_SECS` | Command timeout in seconds [default: 30, 0 = unlimited] |

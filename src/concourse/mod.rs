@@ -243,6 +243,7 @@ fn build_sandbox_config(source: &ResourceSource) -> SandboxConfig {
             allowed_syscalls: vec!["*".to_string()],
             tmp_size_mb: 0,
             session_tmp_dir: None,
+            mount_home: None,
         };
     }
 
@@ -266,6 +267,7 @@ fn build_sandbox_config(source: &ResourceSource) -> SandboxConfig {
         max_pids: policy.max_pids,
         tmp_size_mb: policy.max_tmp_mb,
         session_tmp_dir: None,
+        mount_home: policy.mount_home.as_ref().map(PathBuf::from),
     }
 }
 

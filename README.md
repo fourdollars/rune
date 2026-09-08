@@ -436,6 +436,21 @@ rune --json
 rune --yes
 # or
 rune -y
+
+# Mount specified folder over real HOME in sandbox (defaults to CWD if omitted)
+rune -H
+# or specify a path
+rune -H /path/to/home
+
+# Mount path(s) or file(s) as Read-Write in sandbox (defaults to CWD if omitted, repeatable)
+rune -M
+# or specify paths
+rune -M ./dist -M ./coverage.json
+
+# Mount path(s) or file(s) as Read-Only in sandbox (defaults to CWD if omitted, repeatable)
+rune -m
+# or specify paths
+rune -m ~/.rustup -m ~/.gitconfig
 ```
 
 ## Pipe / Non-Interactive Mode

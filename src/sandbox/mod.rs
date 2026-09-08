@@ -41,6 +41,8 @@ pub struct SandboxConfig {
     pub tmp_size_mb: u64,
     /// Session-scoped temporary directory to bind-mount over /tmp (None = use isolated per-invocation tmpfs).
     pub session_tmp_dir: Option<PathBuf>,
+    /// Custom directory to bind-mount over real HOME in sandbox.
+    pub mount_home: Option<PathBuf>,
 }
 
 impl Default for SandboxConfig {
@@ -77,6 +79,7 @@ impl Default for SandboxConfig {
             allowed_syscalls: Vec::new(),
             tmp_size_mb: 100,
             session_tmp_dir: None,
+            mount_home: None,
         }
     }
 }
@@ -300,6 +303,21 @@ impl SandboxExecutor {
             )
         };
 
+        let (mount_home_cmd, target_home, target_home_raw) = if let Some(ref custom_home) =
+            self.config.mount_home
+        {
+            let real_home = std::env::var("HOME").unwrap_or_else(|_| "/root".to_string());
+            let escaped_real_home = shell_escape(&real_home);
+            let escaped_custom_home = shell_escape(&custom_home.to_string_lossy());
+            let cmd = format!(
+                    " && {{ mkdir -p {} 2>/dev/null || true; mount --bind {} {} 2>/dev/null || true; }}",
+                    escaped_real_home, escaped_custom_home, escaped_real_home
+                );
+            (cmd, escaped_real_home, real_home)
+        } else {
+            (String::new(), "'/tmp'".to_string(), "/tmp".to_string())
+        };
+
         // If tmpfs isolation is active, mount tmpfs/session_dir + isolate /etc and /proc
         let inner_cmd = if use_tmpfs {
             // Build the full script that runs inside the mount namespace.
@@ -307,6 +325,7 @@ impl SandboxExecutor {
             let mount_setup = format!(
                 concat!(
                     "{mount_tmp}",
+                    "{mount_home_cmd}",
                     // cd re-resolves CWD through the new mount so that Landlock's
                     // inode-based rule matches the process's CWD inode.
                     " && cd {target_cwd}",
@@ -324,10 +343,12 @@ impl SandboxExecutor {
                     " && mount --bind /tmp/.etc /etc",
                     " && mount -t proc proc /proc",
                     " && mount -t tmpfs -o size=0 tmpfs /var/run",
-                    " && unset INVOCATION_ID JOURNAL_STREAM SYSTEMD_EXEC_PID MANAGERPID DBUS_SESSION_BUS_ADDRESS XDG_RUNTIME_DIR PWD && export PWD={target_cwd} HOME=/tmp && exec {cmd}",
+                    " && unset INVOCATION_ID JOURNAL_STREAM SYSTEMD_EXEC_PID MANAGERPID DBUS_SESSION_BUS_ADDRESS XDG_RUNTIME_DIR PWD && export PWD={target_cwd} HOME={target_home} && exec {cmd}",
                 ),
                 mount_tmp = mount_tmp,
+                mount_home_cmd = mount_home_cmd,
                 target_cwd = escaped_target_cwd,
+                target_home = target_home,
                 cmd = inner_cmd,
             );
             // The mount_setup becomes the single arg to "sh -c" under unshare
@@ -356,7 +377,7 @@ impl SandboxExecutor {
         // Only pass minimal safe set + user-provided overrides
         command.env_clear();
         command.env("PATH", "/usr/local/bin:/usr/bin:/bin");
-        command.env("HOME", "/tmp");
+        command.env("HOME", &target_home_raw);
         command.env("LANG", "C.UTF-8");
         command.env("TERM", "dumb");
         // systemd-run --user needs XDG_RUNTIME_DIR and DBUS_SESSION_BUS_ADDRESS
@@ -979,6 +1000,28 @@ mod tests {
             !result.stdout.contains("PWD=/home"),
             "P2 VULN: PWD leaks home dir! env={}",
             result.stdout
+        );
+    }
+
+    #[tokio::test]
+    async fn test_sandbox_mount_home() {
+        let custom_home = tempfile::tempdir_in("/var/tmp").expect("tempdir in var tmp");
+        let mut config = SandboxConfig::default();
+        config.mount_home = Some(custom_home.path().to_path_buf());
+        config
+            .read_write_paths
+            .push(custom_home.path().to_path_buf());
+        let executor = SandboxExecutor::new(config);
+        let result = executor
+            .run_shell_command("echo $HOME", None, None)
+            .await
+            .expect("should succeed");
+        let expected_home = std::env::var("HOME").unwrap_or_else(|_| "/root".to_string());
+        assert!(
+            result.stdout.contains(&expected_home),
+            "HOME should match real home path when mount_home is set, got: stdout={:?} stderr={:?}",
+            result.stdout,
+            result.stderr
         );
     }
 }

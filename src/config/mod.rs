@@ -86,6 +86,9 @@ pub struct PolicyConfig {
     /// Dynamically mount working directory as read-write and set default sandbox pwd to CWD.
     #[serde(default)]
     pub mount_pwd: bool,
+    /// Mount custom directory as HOME in sandbox.
+    #[serde(default)]
+    pub mount_home: Option<String>,
 }
 
 fn default_policy_mode() -> String {
@@ -274,6 +277,7 @@ impl Default for PolicyConfig {
             max_pids: 64,
             max_tmp_mb: 100,
             mount_pwd: false,
+            mount_home: None,
         }
     }
 }
@@ -487,9 +491,41 @@ struct CliArgs {
     #[arg(long, short = 'y', action = clap::ArgAction::SetTrue, help_heading = "Security")]
     yes: bool,
 
-    /// Dynamically mount working directory as read-write and set default sandbox pwd to CWD
-    #[arg(long = "mount-pwd", short = 'M', action = clap::ArgAction::SetTrue, help_heading = "Security")]
-    mount_pwd: bool,
+    /// Mount specified folder over real HOME directory with RW access (defaults to CWD if omitted)
+    #[arg(
+        long = "mount-home",
+        short = 'H',
+        value_name = "PATH",
+        num_args = 0..=1,
+        default_missing_value = ".",
+        help_heading = "Security"
+    )]
+    mount_home: Option<String>,
+
+    /// Mount path(s) or file(s) as Read-Write in sandbox (defaults to CWD if omitted)
+    #[arg(
+        long = "mount-rw",
+        alias = "mount-pwd",
+        short = 'M',
+        value_name = "PATH",
+        num_args = 0..=1,
+        default_missing_value = ".",
+        action = clap::ArgAction::Append,
+        help_heading = "Security"
+    )]
+    mount_rw: Vec<String>,
+
+    /// Mount path(s) or file(s) as Read-Only in sandbox (defaults to CWD if omitted)
+    #[arg(
+        long = "mount-ro",
+        short = 'm',
+        value_name = "PATH",
+        num_args = 0..=1,
+        default_missing_value = ".",
+        action = clap::ArgAction::Append,
+        help_heading = "Security"
+    )]
+    mount_ro: Vec<String>,
 
     /// Maximum agent loop iterations [default: 50, 0 = unlimited]
     #[arg(long, env = "RUNE_MAX_STEPS", help_heading = "Limits")]
@@ -719,10 +755,64 @@ pub fn load() -> anyhow::Result<RuneConfig> {
     if cli.unrestricted {
         policy.mode = "unrestricted".to_string();
     }
-    // CLI --mount-pwd flag sets mount_pwd policy
-    if cli.mount_pwd {
-        policy.mount_pwd = true;
+
+    // CLI -H / --mount-home flag sets mount_home policy (default RW)
+    if let Some(ref home_path) = cli.mount_home {
+        let expanded = expand_tilde(home_path);
+        let resolved =
+            std::fs::canonicalize(&expanded).unwrap_or_else(|_| PathBuf::from(&expanded));
+        let resolved_str = resolved.to_string_lossy().to_string();
+        if !policy
+            .allowed_paths_rw
+            .iter()
+            .any(|p| resolved_str.starts_with(p.trim_end_matches('/')))
+        {
+            policy.allowed_paths_rw.push(resolved_str.clone());
+        }
+        policy.mount_home = Some(resolved_str);
     }
+
+    // CLI -M / --mount-rw flag(s) set mount_pwd and add paths/files to RW allowlist
+    if !cli.mount_rw.is_empty() {
+        policy.mount_pwd = true;
+        for path_str in &cli.mount_rw {
+            let expanded = expand_tilde(path_str);
+            let resolved =
+                std::fs::canonicalize(&expanded).unwrap_or_else(|_| PathBuf::from(&expanded));
+            let abs_path = resolved.to_string_lossy().to_string();
+            if resolved.is_file() {
+                if !policy.allowed_files_rw.contains(&abs_path) {
+                    policy.allowed_files_rw.push(abs_path);
+                }
+            } else if !policy
+                .allowed_paths_rw
+                .iter()
+                .any(|p| abs_path.starts_with(p.trim_end_matches('/')))
+            {
+                policy.allowed_paths_rw.push(abs_path);
+            }
+        }
+    }
+
+    // CLI -m / --mount-ro flag(s) add paths/files to RO allowlist
+    for path_str in &cli.mount_ro {
+        let expanded = expand_tilde(path_str);
+        let resolved =
+            std::fs::canonicalize(&expanded).unwrap_or_else(|_| PathBuf::from(&expanded));
+        let abs_path = resolved.to_string_lossy().to_string();
+        if resolved.is_file() {
+            if !policy.allowed_files_ro.contains(&abs_path) {
+                policy.allowed_files_ro.push(abs_path);
+            }
+        } else if !policy
+            .allowed_paths_ro
+            .iter()
+            .any(|p| abs_path.starts_with(p.trim_end_matches('/')))
+        {
+            policy.allowed_paths_ro.push(abs_path);
+        }
+    }
+
     if policy.mount_pwd {
         if let Ok(cwd) = env::current_dir() {
             let cwd_str = cwd.to_string_lossy().to_string();
@@ -2563,6 +2653,7 @@ userinfo_url = "https://example.com/oauth/userinfo"
     fn test_mount_pwd_policy_defaults_false() {
         let policy = PolicyConfig::default();
         assert!(!policy.mount_pwd);
+        assert!(policy.mount_home.is_none());
     }
 
     #[test]
@@ -2570,16 +2661,33 @@ userinfo_url = "https://example.com/oauth/userinfo"
         let toml_str = r#"
             mode = "confirm"
             mount_pwd = true
+            mount_home = "/custom/home"
         "#;
         let policy: PolicyConfig = toml::from_str(toml_str).unwrap();
         assert!(policy.mount_pwd);
+        assert_eq!(policy.mount_home.as_deref(), Some("/custom/home"));
     }
 
     #[test]
-    fn test_mount_pwd_short_flag_parsing() {
+    fn test_mount_flags_parsing() {
         use clap::Parser;
         let args = CliArgs::try_parse_from(["rune", "-M"]).unwrap();
-        assert!(args.mount_pwd);
+        assert_eq!(args.mount_rw, vec!["."]);
+
+        let args = CliArgs::try_parse_from(["rune", "-M", "/path/a", "-M", "/path/b"]).unwrap();
+        assert_eq!(args.mount_rw, vec!["/path/a", "/path/b"]);
+
+        let args = CliArgs::try_parse_from(["rune", "-m"]).unwrap();
+        assert_eq!(args.mount_ro, vec!["."]);
+
+        let args = CliArgs::try_parse_from(["rune", "-m", "/path/ro1", "-m", "/path/ro2"]).unwrap();
+        assert_eq!(args.mount_ro, vec!["/path/ro1", "/path/ro2"]);
+
+        let args = CliArgs::try_parse_from(["rune", "-H"]).unwrap();
+        assert_eq!(args.mount_home.as_deref(), Some("."));
+
+        let args = CliArgs::try_parse_from(["rune", "-H", "/my/home"]).unwrap();
+        assert_eq!(args.mount_home.as_deref(), Some("/my/home"));
     }
 
     #[test]

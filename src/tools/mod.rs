@@ -92,6 +92,7 @@ pub struct ToolRegistry {
     allowed_domains: Vec<String>,
     tmp_size_mb: u64,
     mount_pwd: bool,
+    policy_mount_home: Option<String>,
     session_tmp: Option<Arc<SessionTmp>>,
 }
 
@@ -111,6 +112,7 @@ impl ToolRegistry {
             policy_allowed_files_rw: Vec::new(),
             tmp_size_mb: 100,
             mount_pwd: false,
+            policy_mount_home: None,
             session_tmp: Some(Arc::new(SessionTmp::new())),
         }
     }
@@ -180,6 +182,7 @@ impl ToolRegistry {
         self.allowed_domains = policy.allowed_domains.clone();
         self.tmp_size_mb = policy.max_tmp_mb;
         self.mount_pwd = policy.mount_pwd;
+        self.policy_mount_home = policy.mount_home.clone();
     }
 
     /// Create a sandbox executor with the registry's config.
@@ -193,6 +196,7 @@ impl ToolRegistry {
                 denied_paths: vec![],
                 allowed_domains: vec!["*".to_string()],
                 tmp_size_mb: 0, // no tmpfs isolation in unrestricted mode
+                mount_home: self.policy_mount_home.as_ref().map(PathBuf::from),
                 ..SandboxConfig::default()
             };
             return SandboxExecutor::new(config);
@@ -242,6 +246,18 @@ impl ToolRegistry {
             let pb = std::fs::canonicalize(p).unwrap_or_else(|_| PathBuf::from(p));
             if !rw_paths.contains(&pb) {
                 rw_paths.push(pb);
+            }
+        }
+        if let Some(ref h) = self.policy_mount_home {
+            let pb = std::fs::canonicalize(h).unwrap_or_else(|_| PathBuf::from(h));
+            if !rw_paths.contains(&pb) {
+                rw_paths.push(pb);
+            }
+            if let Ok(real_home) = std::env::var("HOME") {
+                let real_pb = PathBuf::from(real_home);
+                if !rw_paths.contains(&real_pb) {
+                    rw_paths.push(real_pb);
+                }
             }
         }
         // Essential device nodes that nearly all commands need
@@ -297,6 +313,7 @@ impl ToolRegistry {
             allowed_syscalls: self.policy_allowed_syscalls.clone(),
             tmp_size_mb: self.tmp_size_mb,
             session_tmp_dir,
+            mount_home: self.policy_mount_home.as_ref().map(PathBuf::from),
 
             ..SandboxConfig::default()
         };
@@ -306,13 +323,27 @@ impl ToolRegistry {
     /// Run a command in sandbox and return ToolOutput.
     async fn sandboxed_cmd(&self, cmd: &str, timeout_secs: u64, cwd: Option<&str>) -> ToolOutput {
         let effective_cwd = cwd.map(|s| s.to_string()).or_else(|| {
-            if self.mount_pwd {
-                std::env::current_dir()
-                    .ok()
-                    .map(|p| p.to_string_lossy().to_string())
-            } else {
-                None
+            if let Ok(current) = std::env::current_dir() {
+                let current_str = current.to_string_lossy().to_string();
+                let is_allowed = self.mount_pwd
+                    || self
+                        .policy_allowed_paths_rw
+                        .iter()
+                        .any(|p| current_str.starts_with(p.trim_end_matches('/')))
+                    || self
+                        .policy_allowed_paths_ro
+                        .iter()
+                        .any(|p| current_str.starts_with(p.trim_end_matches('/')))
+                    || self
+                        .policy_mount_home
+                        .as_ref()
+                        .map_or(false, |h| current_str.starts_with(h.trim_end_matches('/')));
+
+                if is_allowed {
+                    return Some(current_str);
+                }
             }
+            None
         });
         let executor = self.sandbox(timeout_secs);
 
@@ -1498,20 +1529,28 @@ mod tests {
     }
 
     #[test]
-    fn test_sandbox_includes_policy_allowed_paths_rw() {
+    fn test_sandbox_includes_policy_mount_home() {
         let mut registry = ToolRegistry::new(vec![]);
         let mut policy = crate::config::PolicyConfig::default();
-        policy.allowed_paths_rw = vec!["/tmp/test_rw_dir".to_string()];
+        policy.mount_home = Some("/tmp/test_home_dir".to_string());
         registry.set_policy(&policy);
 
         let executor = registry.sandbox(10);
         assert!(
             executor
                 .config()
+                .mount_home
+                .as_ref()
+                .map_or(false, |p| p.to_string_lossy().contains("test_home_dir")),
+            "SandboxConfig mount_home should match policy.mount_home"
+        );
+        assert!(
+            executor
+                .config()
                 .read_write_paths
                 .iter()
-                .any(|p| p.to_string_lossy().contains("test_rw_dir")),
-            "Landlock read_write_paths should include policy_allowed_paths_rw"
+                .any(|p| p.to_string_lossy().contains("test_home_dir")),
+            "Landlock read_write_paths should include policy.mount_home"
         );
     }
 
