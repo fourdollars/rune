@@ -303,10 +303,56 @@ impl SandboxExecutor {
             let real_home = std::env::var("HOME").unwrap_or_else(|_| "/root".to_string());
             let escaped_real_home = shell_escape(&real_home);
             let escaped_custom_home = shell_escape(&custom_home.to_string_lossy());
-            let cmd = format!(
-                    " && {{ mkdir -p {} 2>/dev/null || true; mount --bind {} {} 2>/dev/null || true; }}",
-                    escaped_real_home, escaped_custom_home, escaped_real_home
-                );
+
+            // Phase 1: Stash a handle to the real original HOME, then bind custom_home over real_home
+            let mut cmd = format!(
+                " && {{ mkdir -p /tmp/.orig_home 2>/dev/null || true; mount --bind {} /tmp/.orig_home 2>/dev/null || true; }}",
+                escaped_real_home
+            );
+            cmd.push_str(&format!(
+                " && {{ mkdir -p {} 2>/dev/null || true; mount --bind {} {} 2>/dev/null || true; }}",
+                escaped_real_home, escaped_custom_home, escaped_real_home
+            ));
+
+            // Phase 2: Overlay whitelist items (from rune.toml, skills, and -M/-m) that reside under real_home
+            let real_home_path = std::path::Path::new(&real_home);
+            let mut overlay_paths: Vec<PathBuf> = Vec::new();
+            for p in self
+                .config
+                .read_write_paths
+                .iter()
+                .chain(self.config.read_only_paths.iter())
+            {
+                if p.starts_with(real_home_path) && !overlay_paths.contains(p) {
+                    overlay_paths.push(p.clone());
+                }
+            }
+
+            for p in &overlay_paths {
+                if let Ok(rel) = p.strip_prefix(real_home_path) {
+                    if rel.as_os_str().is_empty() {
+                        continue;
+                    }
+                    let rel_str = rel.to_string_lossy();
+                    let orig_source = format!("/tmp/.orig_home/{}", rel_str);
+                    let target_dest = p.to_string_lossy().to_string();
+                    let esc_source = shell_escape(&orig_source);
+                    let esc_dest = shell_escape(&target_dest);
+
+                    if p.is_dir() {
+                        cmd.push_str(&format!(
+                            " && if [ -d {} ]; then mkdir -p {} 2>/dev/null && mount --bind {} {} 2>/dev/null || true; fi",
+                            esc_source, esc_dest, esc_source, esc_dest
+                        ));
+                    } else {
+                        cmd.push_str(&format!(
+                            " && if [ -f {} ]; then mkdir -p $(dirname {}) 2>/dev/null && touch {} 2>/dev/null && mount --bind {} {} 2>/dev/null || true; fi",
+                            esc_source, esc_dest, esc_dest, esc_source, esc_dest
+                        ));
+                    }
+                }
+            }
+
             (cmd, escaped_real_home, real_home)
         } else {
             (String::new(), "'/tmp'".to_string(), "/tmp".to_string())
@@ -1036,6 +1082,40 @@ mod tests {
             "HOME should match real home path when mount_home is set, got: stdout={:?} stderr={:?}",
             result.stdout,
             result.stderr
+        );
+    }
+
+    #[tokio::test]
+    async fn test_sandbox_overlay_mounts_with_mount_home() {
+        let custom_home = tempfile::tempdir_in("/var/tmp").expect("tempdir custom home");
+        let real_home = std::env::var("HOME").unwrap_or_else(|_| "/root".to_string());
+        let real_home_path = PathBuf::from(&real_home);
+
+        // Create a test file in real home (or test directory under HOME if HOME exists)
+        if !real_home_path.exists() {
+            return;
+        }
+
+        let mut config = SandboxConfig::default();
+        config.mount_home = Some(custom_home.path().to_path_buf());
+        config
+            .read_write_paths
+            .push(custom_home.path().to_path_buf());
+
+        // Target an existing file/directory in HOME (e.g. .cargo or .gitconfig or .bashrc if exists)
+        let sample_file = real_home_path.join(".bashrc");
+        if sample_file.exists() {
+            config.read_only_paths.push(sample_file.clone());
+        }
+
+        let executor = SandboxExecutor::new(config);
+        let result = executor
+            .run_shell_command("pwd", None, None)
+            .await
+            .expect("should succeed");
+        assert!(
+            result.stdout.contains(&real_home),
+            "PWD should match real home path when mount_home is set"
         );
     }
 }
