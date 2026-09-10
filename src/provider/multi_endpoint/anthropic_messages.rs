@@ -164,15 +164,27 @@ pub fn build_anthropic_payload(req: &LlmRequest, stream: bool) -> Result<Value> 
     });
 
     if !system_parts.is_empty() {
-        payload
-            .as_object_mut()
-            .unwrap()
-            .insert("system".to_string(), json!(system_parts.join("\n")));
+        let system_text = system_parts.join("\n");
+        payload.as_object_mut().unwrap().insert(
+            "system".to_string(),
+            json!([
+                {
+                    "type": "text",
+                    "text": system_text,
+                    "cache_control": { "type": "ephemeral" }
+                }
+            ]),
+        );
     }
 
     if let Some(ref tools) = req.tools {
         if !tools.is_empty() {
-            let converted: Vec<Value> = tools.iter().map(|t| convert_tool(t)).collect();
+            let mut converted: Vec<Value> = tools.iter().map(|t| convert_tool(t)).collect();
+            if let Some(last_tool) = converted.last_mut() {
+                if let Some(obj) = last_tool.as_object_mut() {
+                    obj.insert("cache_control".to_string(), json!({ "type": "ephemeral" }));
+                }
+            }
             payload
                 .as_object_mut()
                 .unwrap()
@@ -200,12 +212,18 @@ pub fn parse_anthropic_response(v: &Value) -> Result<LlmResponse> {
         .to_string();
 
     let usage = if let Some(u) = v.get("usage") {
+        let input_tokens = u.get("input_tokens").and_then(|x| x.as_u64()).unwrap_or(0)
+            + u.get("cache_read_input_tokens")
+                .and_then(|x| x.as_u64())
+                .unwrap_or(0)
+            + u.get("cache_creation_input_tokens")
+                .and_then(|x| x.as_u64())
+                .unwrap_or(0);
+        let output_tokens = u.get("output_tokens").and_then(|x| x.as_u64()).unwrap_or(0);
         TokenUsage {
-            prompt_tokens: u.get("input_tokens").and_then(|x| x.as_u64()).unwrap_or(0) as u32,
-            completion_tokens: u.get("output_tokens").and_then(|x| x.as_u64()).unwrap_or(0) as u32,
-            total_tokens: (u.get("input_tokens").and_then(|x| x.as_u64()).unwrap_or(0)
-                + u.get("output_tokens").and_then(|x| x.as_u64()).unwrap_or(0))
-                as u32,
+            prompt_tokens: input_tokens as u32,
+            completion_tokens: output_tokens as u32,
+            total_tokens: (input_tokens + output_tokens) as u32,
         }
     } else {
         TokenUsage {
@@ -329,7 +347,13 @@ pub async fn stream_anthropic_messages(
                         }
                         if let Some(u) = msg.get("usage") {
                             input_tokens =
-                                u.get("input_tokens").and_then(|x| x.as_u64()).unwrap_or(0) as u32;
+                                (u.get("input_tokens").and_then(|x| x.as_u64()).unwrap_or(0)
+                                    + u.get("cache_read_input_tokens")
+                                        .and_then(|x| x.as_u64())
+                                        .unwrap_or(0)
+                                    + u.get("cache_creation_input_tokens")
+                                        .and_then(|x| x.as_u64())
+                                        .unwrap_or(0)) as u32;
                         }
                     }
                 }
@@ -433,4 +457,72 @@ pub async fn stream_anthropic_messages(
         },
         model,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_build_anthropic_payload_prompt_caching() {
+        let req = LlmRequest {
+            model: "claude-3-7-sonnet-20250219".to_string(),
+            messages: vec![
+                LlmMessage {
+                    role: "system".to_string(),
+                    name: None,
+                    content: Some("You are a helpful assistant.".to_string()),
+                    tool_calls: None,
+                    tool_call_id: None,
+                    content_parts: None,
+                },
+                LlmMessage {
+                    role: "user".to_string(),
+                    name: None,
+                    content: Some("Hello".to_string()),
+                    tool_calls: None,
+                    tool_call_id: None,
+                    content_parts: None,
+                },
+            ],
+            tools: Some(vec![json!({
+                "type": "function",
+                "function": {
+                    "name": "search",
+                    "description": "search docs",
+                    "parameters": {"type": "object", "properties": {"q": {"type": "string"}}}
+                }
+            })]),
+            max_tokens: None,
+            thinking: None,
+        };
+
+        let payload = build_anthropic_payload(&req, false).unwrap();
+        let sys = payload.get("system").and_then(|s| s.as_array()).unwrap();
+        assert_eq!(sys[0]["type"], "text");
+        assert_eq!(sys[0]["cache_control"]["type"], "ephemeral");
+
+        let tools = payload.get("tools").and_then(|t| t.as_array()).unwrap();
+        assert_eq!(tools[0]["name"], "search");
+        assert_eq!(tools[0]["cache_control"]["type"], "ephemeral");
+    }
+
+    #[test]
+    fn test_parse_anthropic_response_with_cache_tokens() {
+        let resp = json!({
+            "model": "claude-sonnet-4.6",
+            "content": [{"type": "text", "text": "hello"}],
+            "usage": {
+                "input_tokens": 100,
+                "cache_read_input_tokens": 500,
+                "cache_creation_input_tokens": 50,
+                "output_tokens": 40
+            }
+        });
+
+        let parsed = parse_anthropic_response(&resp).unwrap();
+        assert_eq!(parsed.usage.prompt_tokens, 650);
+        assert_eq!(parsed.usage.completion_tokens, 40);
+        assert_eq!(parsed.usage.total_tokens, 690);
+    }
 }

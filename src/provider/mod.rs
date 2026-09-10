@@ -987,6 +987,7 @@ impl Provider for OpenAiProvider {
                         "zdr": true
                     });
                 }
+                inject_openrouter_caching(&mut payload_value);
             } else {
                 if let Some(ref thinking) = request.thinking {
                     if thinking != "none" && thinking != "off" {
@@ -1152,6 +1153,7 @@ impl Provider for OpenAiProvider {
                             }),
                         );
                     }
+                    inject_openrouter_caching(&mut payload);
                 } else {
                     if let Some(ref thinking) = request.thinking {
                         if thinking != "none" && thinking != "off" {
@@ -1181,6 +1183,41 @@ impl Provider for OpenAiProvider {
 
             stream_openai_compatible_response(builder, tx).await
         })
+    }
+}
+
+/// Inject prompt caching (cache_control) into system message and tool definitions for OpenRouter requests.
+fn inject_openrouter_caching(payload: &mut serde_json::Value) {
+    if let Some(messages) = payload.get_mut("messages").and_then(|m| m.as_array_mut()) {
+        for msg in messages.iter_mut() {
+            if msg.get("role").and_then(|r| r.as_str()) == Some("system") {
+                if let Some(content_str) = msg
+                    .get("content")
+                    .and_then(|c| c.as_str())
+                    .map(|s| s.to_string())
+                {
+                    *msg = serde_json::json!({
+                        "role": "system",
+                        "content": [
+                            {
+                                "type": "text",
+                                "text": content_str,
+                                "cache_control": { "type": "ephemeral" }
+                            }
+                        ]
+                    });
+                }
+                break;
+            }
+        }
+    }
+    if let Some(tools) = payload.get_mut("tools").and_then(|t| t.as_array_mut()) {
+        if let Some(last_tool) = tools.last_mut().and_then(|t| t.as_object_mut()) {
+            last_tool.insert(
+                "cache_control".to_string(),
+                serde_json::json!({ "type": "ephemeral" }),
+            );
+        }
     }
 }
 

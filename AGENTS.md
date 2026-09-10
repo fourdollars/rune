@@ -31,6 +31,7 @@ All limits are **optional** — if not set, the agent runs without artificial ca
 | `token_budget` | `Option<u32>` | None (unlimited) | Cumulative token usage cap |
 | `timeout_secs` | `Option<u64>` | None (unlimited) | Global session timeout |
 | `system_prompt` | `Option<String>` | None (use default) | Custom system prompt (replaces default; AGENTS.md still appended) |
+| `compact_token_limit` | `Option<usize>` | None (uses compact_threshold) | Absolute token limit to trigger compaction |
 
 Per-command sandbox timeout (default 30s) is separate and always enforced.
 
@@ -50,7 +51,8 @@ threshold = 0.6                    # cosine similarity threshold
 port = 9527
 bind = "0.0.0.0"
 model = "openrouter/auto,deepseek/deepseek-chat" # single model or comma-separated allowed models
-thinking = "high"
+thinking = "low"
+agent_skills = false # Opt-in: enable read_file, write_file, execute_cmd, fetch_url, inspect_process and skills
 
 # GitHub OAuth 2.0 Login
 [notes.github]

@@ -116,6 +116,11 @@ pub struct NotesConfig {
     #[serde(default)]
     pub oauth: Vec<OAuthProviderConfig>,
 
+    /// Enable general agent tools (read_file, write_file, execute_cmd, inspect_process, fetch_url)
+    /// and skills in serve mode. Default: false (pure markdown notebook mode for lower token cost and security).
+    #[serde(default)]
+    pub agent_skills: bool,
+
     /// Enable "Lenient Legacy Client Mode" for the MCP Streamable HTTP endpoint:
     /// requests with NO MCP-Protocol-Version/Mcp-Method/Mcp-Name headers at all skip
     /// header-body consistency validation (body-only dispatch), to support standard MCP
@@ -138,6 +143,7 @@ impl Default for NotesConfig {
             github: None,
             local: None,
             oauth: Vec::new(),
+            agent_skills: false,
             mcp_lenient_legacy_clients: true,
         }
     }
@@ -311,6 +317,9 @@ pub struct RuneConfig {
     pub context_window: usize,
     /// Trigger automatic compaction once this fraction of context_window is reached.
     pub compact_threshold: f64,
+    /// Absolute token threshold to trigger automatic compaction (None = disabled, uses compact_threshold fraction).
+    #[serde(default)]
+    pub compact_token_limit: Option<usize>,
     /// Keep the last N messages when compacting context.
     pub compact_keep_last: usize,
     #[serde(default)]
@@ -367,6 +376,7 @@ impl Default for RuneConfig {
             no_agents_md: false,
             context_window: 128000,
             compact_threshold: 0.85,
+            compact_token_limit: None,
             compact_keep_last: 6,
             policy: PolicyConfig::default(),
             mcp: Vec::new(),
@@ -383,7 +393,7 @@ impl Default for RuneConfig {
 }
 
 /// Partial config for layered merging.
-#[derive(Debug, Deserialize, Default)]
+#[derive(Debug, Clone, Deserialize, Default)]
 struct PartialConfig {
     model: Option<String>,
     api_key: Option<String>,
@@ -397,6 +407,7 @@ struct PartialConfig {
     trace: Option<String>,
     context_window: Option<usize>,
     compact_threshold: Option<f64>,
+    compact_token_limit: Option<usize>,
     compact_keep_last: Option<usize>,
     policy: Option<PolicyConfig>,
     mcp: Option<Vec<crate::mcp::McpServerConfig>>,
@@ -661,6 +672,9 @@ pub fn load() -> anyhow::Result<RuneConfig> {
         compact_threshold: env::var("RUNE_COMPACT_THRESHOLD")
             .ok()
             .and_then(|v| v.parse().ok()),
+        compact_token_limit: env::var("RUNE_COMPACT_TOKEN_LIMIT")
+            .ok()
+            .and_then(|v| v.parse().ok()),
         compact_keep_last: env::var("RUNE_COMPACT_KEEP_LAST")
             .ok()
             .and_then(|v| v.parse().ok()),
@@ -889,6 +903,13 @@ pub fn load() -> anyhow::Result<RuneConfig> {
             .or(lc.and_then(|c| c.compact_threshold))
             .or(uc.and_then(|c| c.compact_threshold))
             .unwrap_or(defaults.compact_threshold),
+        compact_token_limit: ec
+            .and_then(|c| c.compact_token_limit)
+            .or(env_partial.compact_token_limit)
+            .or(cwdc.and_then(|c| c.compact_token_limit))
+            .or(lc.and_then(|c| c.compact_token_limit))
+            .or(uc.and_then(|c| c.compact_token_limit))
+            .or(defaults.compact_token_limit),
         compact_keep_last: ec
             .and_then(|c| c.compact_keep_last)
             .or(env_partial.compact_keep_last)
@@ -1092,6 +1113,9 @@ pub fn load_without_clap() -> anyhow::Result<RuneConfig> {
         compact_threshold: env::var("RUNE_COMPACT_THRESHOLD")
             .ok()
             .and_then(|v| v.parse().ok()),
+        compact_token_limit: env::var("RUNE_COMPACT_TOKEN_LIMIT")
+            .ok()
+            .and_then(|v| v.parse().ok()),
         compact_keep_last: env::var("RUNE_COMPACT_KEEP_LAST")
             .ok()
             .and_then(|v| v.parse().ok()),
@@ -1236,6 +1260,12 @@ pub fn load_without_clap() -> anyhow::Result<RuneConfig> {
             .or_else(|| lc.and_then(|c| c.compact_threshold))
             .or_else(|| uc.and_then(|c| c.compact_threshold))
             .unwrap_or(defaults.compact_threshold),
+        compact_token_limit: env_partial
+            .compact_token_limit
+            .or_else(|| cwdc.and_then(|c| c.compact_token_limit))
+            .or_else(|| lc.and_then(|c| c.compact_token_limit))
+            .or_else(|| uc.and_then(|c| c.compact_token_limit))
+            .or(defaults.compact_token_limit),
         compact_keep_last: env_partial
             .compact_keep_last
             .or_else(|| cwdc.and_then(|c| c.compact_keep_last))

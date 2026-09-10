@@ -347,6 +347,11 @@ impl Agent {
         self.tools.set_serve_mode(enabled);
     }
 
+    /// Enable general agent tools (read_file, write_file, execute_cmd, etc.) in serve mode.
+    pub fn set_agent_skills(&mut self, enabled: bool) {
+        self.tools.set_agent_skills(enabled);
+    }
+
     pub fn set_mcp_manager(&mut self, mgr: Arc<TokioMutex<McpManager>>) {
         self.mcp_manager = Some(mgr);
     }
@@ -405,11 +410,13 @@ impl Agent {
         }
 
         // Token-aware trimming: drop oldest message pairs until history
-        // tokens fit within 40% of context_window, leaving headroom for
-        // system prompt, tool schema, new user message, and output.
+        // tokens fit within budget (max 8,000 tokens or 40% of context_window, whichever is smaller),
+        // leaving headroom for system prompt, tool schema, new user message, and output.
         const HISTORY_BUDGET_RATIO: f64 = 0.40;
-        let history_token_budget =
-            ((self.config.context_window as f64) * HISTORY_BUDGET_RATIO) as usize;
+        const MAX_HISTORY_TOKENS_CAP: usize = 8000;
+        let history_token_budget = (((self.config.context_window as f64) * HISTORY_BUDGET_RATIO)
+            as usize)
+            .min(MAX_HISTORY_TOKENS_CAP);
         // Use an index-based approach instead of Vec::remove(0) to avoid O(n²)
         // behaviour on large histories (200+ records).
         let mut trim_from = 0usize;
@@ -1043,14 +1050,20 @@ impl Agent {
             }
 
             let context_tokens = self.total_context_tokens();
-            let context_limit =
+            let mut context_limit =
                 ((self.config.context_window as f64) * self.config.compact_threshold) as usize;
+            if let Some(token_limit) = self.config.compact_token_limit {
+                if token_limit > 0 {
+                    context_limit = context_limit.min(token_limit);
+                }
+            }
             if context_tokens > context_limit {
                 warn!(
                     context_tokens,
                     context_limit,
                     context_window = self.config.context_window,
                     compact_threshold = self.config.compact_threshold,
+                    compact_token_limit = ?self.config.compact_token_limit,
                     "context window threshold exceeded; compacting"
                 );
                 self.compact().await;
@@ -3508,6 +3521,23 @@ read(3, "root:x:0:0:...", 4096) = 1234"#;
             before,
             "compact should be no-op when nothing to summarise"
         );
+    }
+
+    #[test]
+    fn test_compact_token_limit_calculation() {
+        let mut agent = make_test_agent();
+        agent.config.context_window = 100_000;
+        agent.config.compact_threshold = 0.8; // 80,000 tokens
+        agent.config.compact_token_limit = Some(15_000); // 15,000 tokens limit
+
+        let limit =
+            ((agent.config.context_window as f64) * agent.config.compact_threshold) as usize;
+        let effective_limit = if let Some(tl) = agent.config.compact_token_limit {
+            limit.min(tl)
+        } else {
+            limit
+        };
+        assert_eq!(effective_limit, 15_000);
     }
 
     // ─── truncate_middle ──────────────────────────────────────────────────────

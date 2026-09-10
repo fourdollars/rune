@@ -3015,6 +3015,7 @@ async fn handle_chat_message(
     }
     let mut agent = Agent::new(cfg, provider, true, embedding);
     agent.set_serve_mode(true);
+    agent.set_agent_skills(config.notes.agent_skills);
     agent.token_callback = Some(token_callback);
     agent.approval_callback = Some(approval_callback);
 
@@ -3093,11 +3094,10 @@ async fn handle_chat_message(
     };
     agent.set_system_prompt(&system_prompt);
 
-    // Load chat history into agent context.
-    // Fetch 200 records so token-aware trimming inside load_history has
-    // enough material; it will drop oldest pairs to fit within 40% of
-    // context_window automatically.
-    let history = state.chat_db.load_recent_async(note_id.clone(), 200).await;
+    // Load recent chat history into agent context (up to 20 records).
+    // Token-aware trimming inside load_history will ensure it fits within
+    // the history token cap.
+    let history = state.chat_db.load_recent_async(note_id.clone(), 20).await;
     let history_without_current: Vec<_> = history
         .into_iter()
         .filter(|r| !(r.role == "user" && r.content == user_msg))

@@ -80,6 +80,7 @@ impl ToolOutput {
 /// Tool registry — all tools execute through the sandbox.
 pub struct ToolRegistry {
     serve_mode: bool,
+    agent_skills: bool,
     policy_mode: String,
     policy_allowed_commands: Vec<String>,
     policy_allowed_syscalls: Vec<String>,
@@ -100,6 +101,7 @@ impl ToolRegistry {
     pub fn new(allowed_dirs: Vec<PathBuf>) -> Self {
         Self {
             serve_mode: false,
+            agent_skills: false,
             allowed_dirs,
             allowed_domains: Vec::new(),
             policy_mode: "allowlist".to_string(),
@@ -120,6 +122,11 @@ impl ToolRegistry {
     /// Enable serve-mode tools (search_chat, list/read/write_markdown).
     pub fn set_serve_mode(&mut self, enabled: bool) {
         self.serve_mode = enabled;
+    }
+
+    /// Enable general agent tools (read_file, write_file, execute_cmd, etc.) in serve mode.
+    pub fn set_agent_skills(&mut self, enabled: bool) {
+        self.agent_skills = enabled;
     }
 
     /// Set allowed network domains (for fetch_url / execute_cmd network access).
@@ -421,6 +428,18 @@ stderr: {}",
     /// Dispatch a tool call by name.
     pub async fn execute(&self, name: &str, args: serde_json::Value) -> ToolOutput {
         info!(tool = name, "executing tool (sandboxed)");
+        if self.serve_mode && !self.agent_skills {
+            match name {
+                "read_file" | "write_file" | "list_dir" | "execute_cmd" | "fetch_url"
+                | "inspect_process" => {
+                    return ToolOutput::err(format!(
+                        "tool '{}' is disabled in notes mode; enable agent_skills = true in [notes] config to use",
+                        name
+                    ));
+                }
+                _ => {}
+            }
+        }
         match name {
             "read_file" => self.read_file(args).await,
             "write_file" => self.write_file(args).await,
@@ -434,8 +453,10 @@ stderr: {}",
 
     /// Return tool definitions as JSON (for LLM function calling schema).
     pub fn tool_definitions(&self) -> Vec<serde_json::Value> {
-        let mut tools = vec![
-            serde_json::json!({
+        let mut tools = Vec::new();
+
+        if !self.serve_mode || self.agent_skills {
+            tools.push(serde_json::json!({
                 "type": "function",
                 "function": {
                     "name": "read_file",
@@ -446,8 +467,8 @@ stderr: {}",
                         "required": ["path"]
                     }
                 }
-            }),
-            serde_json::json!({
+            }));
+            tools.push(serde_json::json!({
                 "type": "function",
                 "function": {
                     "name": "write_file",
@@ -461,8 +482,8 @@ stderr: {}",
                         "required": ["path", "content"]
                     }
                 }
-            }),
-            serde_json::json!({
+            }));
+            tools.push(serde_json::json!({
                 "type": "function",
                 "function": {
                     "name": "list_dir",
@@ -473,8 +494,8 @@ stderr: {}",
                         "required": ["path"]
                     }
                 }
-            }),
-            serde_json::json!({
+            }));
+            tools.push(serde_json::json!({
                 "type": "function",
                 "function": {
                     "name": "execute_cmd",
@@ -489,8 +510,8 @@ stderr: {}",
                         "required": ["cmd"]
                     }
                 }
-            }),
-            serde_json::json!({
+            }));
+            tools.push(serde_json::json!({
                 "type": "function",
                 "function": {
                     "name": "fetch_url",
@@ -501,8 +522,8 @@ stderr: {}",
                         "required": ["url"]
                     }
                 }
-            }),
-            serde_json::json!({
+            }));
+            tools.push(serde_json::json!({
                 "type": "function",
                 "function": {
                     "name": "inspect_process",
@@ -513,8 +534,8 @@ stderr: {}",
                         "required": ["pid"]
                     }
                 }
-            }),
-        ];
+            }));
+        }
 
         // Serve-mode only tools (search_chat, markdown tools)
         if self.serve_mode {
@@ -1516,6 +1537,77 @@ mod tests {
             !schema.contains("write_markdown"),
             "CLI mode should not have write_markdown"
         );
+    }
+
+    #[test]
+    fn test_serve_mode_default_no_cli_tools() {
+        let mut registry = ToolRegistry::new(vec![]);
+        registry.set_serve_mode(true);
+        // agent_skills is false by default
+        let schema = serde_json::to_string(&registry.tool_definitions()).unwrap();
+        assert!(
+            !schema.contains("read_file"),
+            "serve mode should not have read_file by default"
+        );
+        assert!(
+            !schema.contains("write_file"),
+            "serve mode should not have write_file by default"
+        );
+        assert!(
+            !schema.contains("execute_cmd"),
+            "serve mode should not have execute_cmd by default"
+        );
+        assert!(
+            !schema.contains("inspect_process"),
+            "serve mode should not have inspect_process by default"
+        );
+        assert!(
+            !schema.contains("fetch_url"),
+            "serve mode should not have fetch_url by default"
+        );
+        assert!(
+            schema.contains("list_markdown"),
+            "serve mode should have list_markdown"
+        );
+    }
+
+    #[test]
+    fn test_serve_mode_with_agent_skills_has_cli_tools() {
+        let mut registry = ToolRegistry::new(vec![]);
+        registry.set_serve_mode(true);
+        registry.set_agent_skills(true);
+        let schema = serde_json::to_string(&registry.tool_definitions()).unwrap();
+        assert!(
+            schema.contains("read_file"),
+            "agent_skills should enable read_file"
+        );
+        assert!(
+            schema.contains("write_file"),
+            "agent_skills should enable write_file"
+        );
+        assert!(
+            schema.contains("execute_cmd"),
+            "agent_skills should enable execute_cmd"
+        );
+        assert!(
+            schema.contains("fetch_url"),
+            "agent_skills should enable fetch_url"
+        );
+        assert!(
+            schema.contains("list_markdown"),
+            "agent_skills should keep list_markdown"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_serve_mode_rejects_cli_tools_when_agent_skills_disabled() {
+        let mut registry = ToolRegistry::new(vec![]);
+        registry.set_serve_mode(true);
+        let out = registry
+            .execute("execute_cmd", serde_json::json!({"cmd": "echo hi"}))
+            .await;
+        assert!(out.is_error);
+        assert!(out.content.contains("disabled in notes mode"));
     }
 
     #[test]
