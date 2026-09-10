@@ -1515,6 +1515,11 @@ pub async fn dir_browse_handler(
 }
 
 pub async fn skills_handler(State(state): State<ServerState>) -> Json<ApiResponse> {
+    if !state.config.notes.agent_skills {
+        return Json(ApiResponse::with_data(serde_json::json!({
+            "skills": []
+        })));
+    }
     let search_paths = vec![std::path::PathBuf::from(&state.config.skills_dir)];
     let loader = SkillLoader::new(search_paths);
     let skills = loader.list_skills();
@@ -6261,8 +6266,9 @@ mod isolation_tests {
     }
 
     #[tokio::test]
-    async fn test_skills_handler() {
+    async fn test_skills_handler_when_enabled() {
         let (mut state, tmp) = make_state();
+        state.config.notes.agent_skills = true;
         let skills_dir = tmp.path().join("skills");
         std::fs::create_dir_all(skills_dir.join("test-skill")).unwrap();
         std::fs::write(
@@ -6280,5 +6286,28 @@ mod isolation_tests {
             .and_then(|s| s.as_array())
             .expect("skills array");
         assert!(skills.iter().any(|s| s["name"] == "test-skill"));
+    }
+
+    #[tokio::test]
+    async fn test_skills_handler_disabled_when_agent_skills_false() {
+        let (mut state, tmp) = make_state();
+        state.config.notes.agent_skills = false;
+        let skills_dir = tmp.path().join("skills");
+        std::fs::create_dir_all(skills_dir.join("test-skill")).unwrap();
+        std::fs::write(
+            skills_dir.join("test-skill").join("SKILL.md"),
+            "---\nname: test-skill\ndescription: A test skill\n---\nBody",
+        )
+        .unwrap();
+        state.config.skills_dir = skills_dir.to_string_lossy().to_string();
+
+        let resp = super::skills_handler(axum::extract::State(state)).await;
+        assert_eq!(resp.ok, true);
+        let data = resp.0.data.expect("data should exist");
+        let skills = data
+            .get("skills")
+            .and_then(|s| s.as_array())
+            .expect("skills array");
+        assert!(skills.is_empty());
     }
 }

@@ -124,9 +124,19 @@ impl ToolRegistry {
         self.serve_mode = enabled;
     }
 
+    /// Check if serve mode is enabled.
+    pub fn is_serve_mode(&self) -> bool {
+        self.serve_mode
+    }
+
     /// Enable general agent tools (read_file, write_file, execute_cmd, etc.) in serve mode.
     pub fn set_agent_skills(&mut self, enabled: bool) {
         self.agent_skills = enabled;
+    }
+
+    /// Check if agent_skills is enabled in serve mode.
+    pub fn agent_skills(&self) -> bool {
+        self.agent_skills
     }
 
     /// Set allowed network domains (for fetch_url / execute_cmd network access).

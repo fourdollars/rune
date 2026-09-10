@@ -900,6 +900,10 @@ impl Agent {
     /// Resolve +skill references in user input and inject skill content as system context.
     /// If no explicit +skill refs found and embedding is enabled, try semantic search.
     async fn inject_skills(&mut self, user_input: &str) {
+        if self.tools.is_serve_mode() && !self.tools.agent_skills() {
+            return;
+        }
+
         let skill_refs = SkillLoader::extract_skill_refs(user_input);
 
         if !skill_refs.is_empty() {
@@ -968,6 +972,10 @@ impl Agent {
     /// Load a skill by name and inject it as a system message.
     /// Returns true if loaded successfully, false if the skill was not found or failed to load.
     fn load_and_inject_skill(&mut self, name: &str) -> bool {
+        if self.tools.is_serve_mode() && !self.tools.agent_skills() {
+            return false;
+        }
+
         match self.skill_loader.load(name) {
             Ok(skill) => {
                 info!(skill = %name, "loaded skill");
@@ -5805,5 +5813,15 @@ read(3, "root:x:0:0:...", 4096) = 1234"#;
         // Non-system message should remain in its original relative order (now at index 1)
         assert_eq!(req.messages[1].role, "user");
         assert_eq!(req.messages[1].content.as_ref().unwrap(), "User Message");
+    }
+
+    #[tokio::test]
+    async fn test_serve_mode_skips_skill_injection_when_agent_skills_disabled() {
+        let mut agent = make_test_agent();
+        agent.set_serve_mode(true);
+        agent.set_agent_skills(false);
+        agent.inject_skills("+some_skill").await;
+        assert!(agent.messages.is_empty());
+        assert!(!agent.load_and_inject_skill("some_skill"));
     }
 }
