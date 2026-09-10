@@ -1881,7 +1881,7 @@ impl Agent {
 
             // Check if it's a domain block we can interactively resolve
             if let Some(domain) = Self::extract_blocked_domain(&output.content) {
-                if self.interactive && Self::has_tty() {
+                if self.interactive && Self::has_tty() && self.config.policy.mode == "confirm" {
                     eprint!(
                         "\n  {} Add '{}' to allowed_domains? [Y/n] ",
                         "🔓".yellow(),
@@ -2027,7 +2027,7 @@ impl Agent {
 
             // Check if it's a file/binary permission error — use strace probing
             if contains_permission_denied(&output.content) {
-                if self.interactive && Self::has_tty() {
+                if self.interactive && Self::has_tty() && self.config.policy.mode == "confirm" {
                     // Extract the original command from args for strace re-run
                     let cmd_for_strace = mapped_args
                         .get("cmd")
@@ -5823,5 +5823,27 @@ read(3, "root:x:0:0:...", 4096) = 1234"#;
         agent.inject_skills("+some_skill").await;
         assert!(agent.messages.is_empty());
         assert!(!agent.load_and_inject_skill("some_skill"));
+    }
+
+    #[tokio::test]
+    async fn test_allowlist_mode_does_not_prompt_for_blocked_domain() {
+        let mut agent = make_test_agent();
+        agent.config.policy.mode = "allowlist".to_string();
+        agent.config.policy.allowed_domains = vec!["example.com".to_string()];
+        let tc = crate::provider::LlmToolCall {
+            id: "call_1".to_string(),
+            call_type: "function".to_string(),
+            function: crate::provider::LlmFunction {
+                name: "fetch_url".to_string(),
+                arguments: r#"{"url": "https://blocked.com/api"}"#.to_string(),
+            },
+        };
+        let result = agent.execute_tool_call(&tc).await.unwrap();
+        assert!(result.contains("BLOCKED"));
+        assert!(!agent
+            .config
+            .policy
+            .allowed_domains
+            .contains(&"blocked.com".to_string()));
     }
 }
