@@ -772,9 +772,19 @@ function renderNoteDropdown() {
   }
 }
 
+/** Update cachedNoteFiles from cachedNotes for the specified note (or active note). */
+function updateCachedNoteFiles(noteId) {
+  const targetId = noteId || activeNoteId;
+  const note = cachedNotes.find((n) => n.id === targetId);
+  if (note && Array.isArray(note.files)) {
+    cachedNoteFiles = note.files.map((f) => typeof f === 'string' ? f : (f.name || ''));
+  }
+}
+
 /** Update the displayed note name in the header badge. */
 function setActiveNote(noteId, noteName) {
   activeNoteId = noteId;
+  updateCachedNoteFiles(noteId);
   const label = noteName || noteId;
   if ($currentNoteName) {
     $currentNoteName.textContent = label;
@@ -806,6 +816,7 @@ function populateNoteList(notes, activeId) {
   } else {
     renderNoteDropdown();
   }
+  updateCachedNoteFiles(activeNoteId || (active ? active.id : null));
 }
 
 /**
@@ -1417,6 +1428,7 @@ function handleSseEvent(rec) {
           browser.storage.local.set(p).catch(() => {});
         }).catch(() => {});
         populateNoteList(payload.notes, payload.active);
+        updateCachedNoteFiles(activeNoteId || payload.active);
       }
       break;
     case 'note_switched':

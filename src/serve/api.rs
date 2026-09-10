@@ -657,6 +657,40 @@ pub async fn events_handler(
         active: note_id.clone(),
     });
 
+    // File list for this note
+    let md_dir = state.note_markdown_dir(&note_id);
+    let mut file_names = Vec::new();
+    if let Ok(mut rd) = tokio::fs::read_dir(&md_dir).await {
+        while let Ok(Some(entry)) = rd.next_entry().await {
+            let name = entry.file_name().to_string_lossy().to_string();
+            if name.ends_with(".md") {
+                file_names.push(name);
+            }
+        }
+    }
+    file_names.sort();
+    let visibility = state.chat_db.get_file_visibility(&note_id);
+    let files: Vec<FileEntry> = file_names
+        .iter()
+        .filter(|name| !is_guest || visibility.iter().any(|(f, p)| f == *name && *p))
+        .map(|name| {
+            let public = visibility
+                .iter()
+                .find(|(f, _)| f == name)
+                .map(|(_, p)| *p)
+                .unwrap_or(false);
+            FileEntry {
+                name: name.clone(),
+                public,
+            }
+        })
+        .collect();
+    let active_file = files.first().map(|f| f.name.clone()).unwrap_or_default();
+    init_msgs.push(SseMsg::FileList {
+        files,
+        active: active_file,
+    });
+
     // Users update (not sent to guests per spec)
     if !is_guest {
         init_msgs.push(SseMsg::UsersUpdate { count, users });
