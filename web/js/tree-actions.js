@@ -31,8 +31,8 @@ globalThis.toggleNoteVisibility = async function toggleNoteVisibility(control) {
 };
 
 globalThis.createFileForNote = function createFileForNote(button) {
-    if (button.dataset.note !== currentNoteId) switchNote(button.dataset.note);
-    createFile();
+    const noteId = button.dataset.note || currentNoteId;
+    createFile(noteId);
 };
 
 globalThis.toggleFileVisibility = async function toggleFileVisibility(control) {

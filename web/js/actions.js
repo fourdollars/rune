@@ -89,6 +89,11 @@ export function initActions() {
             if (typeof commitEmojiSearch === 'function') commitEmojiSearch(event.target.value);
             return;
         }
+        if (event.target.id === 'new-note-name') {
+            event.preventDefault();
+            createNote();
+            return;
+        }
         if (event.target.matches('[data-action="search-input"]')) doSearch();
         if (event.target.matches('[data-action="dir-path"]')) navigateDir(event.target.value);
     });

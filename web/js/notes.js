@@ -53,6 +53,11 @@ globalThis.switchNote = async function switchNote(sessionId, forceFile = null) {
             const fileData = await api('session', { note: sessionId, file: targetFile }, 'PUT');
             specContent = (fileData && fileData.file_content) || '';
         }
+        if (!showEdit && !showPreview) {
+            showPreview = true;
+            paneFocus = 'preview';
+            applyPanelLayout();
+        }
         updateDocTitle(currentFilename);
         renderPreview();
         setEditorValue(specContent);
@@ -76,9 +81,13 @@ globalThis.hideNewNoteDialog = function hideNewNoteDialog() {
     document.getElementById('new-note-modal').classList.add('hidden');
 };
 
-globalThis.createNote = function createNote() {
-    const name = document.getElementById('new-note-name').value.trim();
+globalThis.createNote = async function createNote() {
+    const input = document.getElementById('new-note-name');
+    const name = input ? input.value.trim() : '';
     if (!name) return;
-    api('notes', { name }).then(() => switchNote(name));
     hideNewNoteDialog();
-}
+    const data = await api('notes', { name });
+    if (data && data.ok) {
+        await switchNote(name);
+    }
+};

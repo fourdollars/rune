@@ -66,7 +66,7 @@ function emptyTree(tree) {
 
 function fileRow(note, fname) {
     const row = document.createElement('div');
-    row.className = 'explorer-row';
+    row.className = 'explorer-row' + (note.id === currentNoteId && fname === currentFilename ? ' active' : '');
     row.style.paddingLeft = '20px';
     const isPublic = !!(note.fileVisibility || {})[fname];
 

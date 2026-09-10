@@ -68,12 +68,20 @@ globalThis.updatePageTitle = function updatePageTitle() {
         : 'Rune - ' + sessionName;
 };
 
-globalThis.createFile = async function createFile() {
+globalThis.createFile = async function createFile(targetNoteId = currentNoteId) {
+    if (!targetNoteId) return;
     const name = await showDialog({ title: 'New File', message: 'Filename must end in .md', input: true, placeholder: 'example.md' });
     if (!name) return;
     if (!name.endsWith('.md')) { addSystemMessage('Error: filename must end in .md'); return; }
     if (!/^[\p{L}\p{N}_\-\.]+\.md$/u.test(name)) { addSystemMessage('Error: invalid filename'); return; }
-    api('notes/' + encodeURIComponent(currentNoteId) + '/files', { name });
+    const res = await api('notes/' + encodeURIComponent(targetNoteId) + '/files', { name });
+    if (res && res.ok) {
+        if (targetNoteId !== currentNoteId) {
+            await switchNote(targetNoteId, name);
+        } else {
+            await switchFile(name);
+        }
+    }
 };
 
 globalThis.deleteCurrentFile = async function deleteCurrentFile() {
