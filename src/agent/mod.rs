@@ -1572,33 +1572,32 @@ impl Agent {
     async fn handle_markdown_tool(&self, name: &str, args: &serde_json::Value) -> Option<String> {
         let md_dir = self.markdown_dir.as_ref()?;
 
-        // If the LLM incorrectly passed 'path', reject it immediately to force it to use 'filename'.
-        if args.get("path").is_some() {
-            return Some(format!(
-                "Error: {} does not support the 'path' parameter. Please specify the target filename using 'filename' instead.",
-                name
-            ));
-        }
-
-        // Resolve filename: use arg if provided, else first .md file in dir
+        // Resolve filename: check "filename", then "path", "file_path", "filepath"
         let fname_arg = args
             .get("filename")
+            .or_else(|| args.get("path"))
+            .or_else(|| args.get("file_path"))
+            .or_else(|| args.get("filepath"))
             .and_then(|v| v.as_str())
-            .map(|s| s.to_string());
+            .map(|s| s.trim().to_string());
+
         let fname = if let Some(f) = fname_arg {
             if f.is_empty() {
                 return Some("Error: filename cannot be empty".to_string());
             }
-            if f.contains('/') || f.contains('\\') {
-                return Some("Error: filename cannot contain path separators".to_string());
-            }
-            if !f.ends_with(".md") {
+            // Extract base filename if path separators were included
+            let base = std::path::Path::new(&f)
+                .file_name()
+                .map(|os| os.to_string_lossy().to_string())
+                .unwrap_or(f);
+
+            if !base.ends_with(".md") {
                 return Some(format!(
                     "Error: '{}' is not a markdown file. Only .md files are supported.",
-                    f
+                    base
                 ));
             }
-            f
+            base
         } else {
             // Find first .md file as default
             let mut default_name = String::new();
@@ -2544,7 +2543,13 @@ impl Agent {
     fn is_already_allowed(&self, tool_name: &str, args: &serde_json::Value) -> bool {
         match tool_name {
             "read_file" => {
-                if let Some(path) = args.get("path").and_then(|v| v.as_str()) {
+                let raw_path = args
+                    .get("path")
+                    .or_else(|| args.get("filename"))
+                    .or_else(|| args.get("file_path"))
+                    .or_else(|| args.get("filepath"))
+                    .and_then(|v| v.as_str());
+                if let Some(path) = raw_path {
                     let p = self.resolve_tool_path(path);
                     return self.is_path_in_list(&p, &self.config.policy.allowed_paths_ro)
                         || self.is_path_in_list(&p, &self.config.policy.allowed_paths_rw);
@@ -2552,7 +2557,13 @@ impl Agent {
                 false
             }
             "write_file" => {
-                if let Some(path) = args.get("path").and_then(|v| v.as_str()) {
+                let raw_path = args
+                    .get("path")
+                    .or_else(|| args.get("filename"))
+                    .or_else(|| args.get("file_path"))
+                    .or_else(|| args.get("filepath"))
+                    .and_then(|v| v.as_str());
+                if let Some(path) = raw_path {
                     let p = self.resolve_tool_path(path);
                     return self.is_path_in_list(&p, &self.config.policy.allowed_paths_rw);
                 }
@@ -4734,12 +4745,25 @@ read(3, "root:x:0:0:...", 4096) = 1234"#;
         let mut agent = Agent::new(config, provider, false, None);
         agent.markdown_dir = Some(md_dir);
 
-        // Test: use "path" key instead of "filename" (should reject and fail)
+        // Test: use "path" key instead of "filename" (should succeed gracefully)
         let args = serde_json::json!({"path": "LCA.md", "content": "LCA analysis"});
         let result = agent.handle_markdown_tool("write_markdown", &args).await;
-        assert!(result
-            .unwrap()
-            .contains("does not support the 'path' parameter"));
+        assert!(result.unwrap().contains("updated"));
+
+        // Test: use both "path" and "filename" keys (should succeed gracefully)
+        let args_both =
+            serde_json::json!({"filename": "LCA.md", "path": "LCA.md", "content": "LCA updated"});
+        let result_both = agent
+            .handle_markdown_tool("write_markdown", &args_both)
+            .await;
+        assert!(result_both.unwrap().contains("updated"));
+
+        // Test: use path with directory prefixes (e.g., ./LCA.md)
+        let args_prefix = serde_json::json!({"path": "./LCA.md", "content": "LCA prefix updated"});
+        let result_prefix = agent
+            .handle_markdown_tool("write_markdown", &args_prefix)
+            .await;
+        assert!(result_prefix.unwrap().contains("updated"));
     }
     #[tokio::test]
     async fn test_markdown_tool_rejects_non_md_extension() {

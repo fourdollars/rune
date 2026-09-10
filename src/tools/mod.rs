@@ -600,7 +600,13 @@ stderr: {}",
     // ── All tools go through sandbox ─────────────────────────────────
 
     async fn read_file(&self, args: serde_json::Value) -> ToolOutput {
-        let path = match args.get("path").and_then(|v| v.as_str()) {
+        let path = match args
+            .get("path")
+            .or_else(|| args.get("filename"))
+            .or_else(|| args.get("file_path"))
+            .or_else(|| args.get("filepath"))
+            .and_then(|v| v.as_str())
+        {
             Some(p) => p,
             None => return ToolOutput::err("missing required argument: path"),
         };
@@ -630,7 +636,13 @@ stderr: {}",
     }
 
     async fn write_file(&self, args: serde_json::Value) -> ToolOutput {
-        let path = match args.get("path").and_then(|v| v.as_str()) {
+        let path = match args
+            .get("path")
+            .or_else(|| args.get("filename"))
+            .or_else(|| args.get("file_path"))
+            .or_else(|| args.get("filepath"))
+            .and_then(|v| v.as_str())
+        {
             Some(p) => p,
             None => return ToolOutput::err("missing required argument: path"),
         };
@@ -675,10 +687,13 @@ stderr: {}",
     }
 
     async fn list_dir(&self, args: serde_json::Value) -> ToolOutput {
-        let path = match args.get("path").and_then(|v| v.as_str()) {
-            Some(p) => p,
-            None => return ToolOutput::err("missing required argument: path"),
-        };
+        let path = args
+            .get("path")
+            .or_else(|| args.get("dir"))
+            .or_else(|| args.get("directory"))
+            .or_else(|| args.get("folder"))
+            .and_then(|v| v.as_str())
+            .unwrap_or(".");
         info!(path = %path, "list_dir (sandboxed)");
         let cmd = format!("ls -1F '{}'", path.replace('\'', "'\\''"));
         self.sandboxed_cmd(&cmd, 10, None).await
@@ -1716,5 +1731,61 @@ mod tests {
             "Expected /tmp content to persist across tool calls within session, got: {}",
             res2.content
         );
+    }
+
+    #[tokio::test]
+    async fn test_tool_parameter_aliases_read_write_list() {
+        use tempfile::TempDir;
+        let tmp = TempDir::new().unwrap();
+        let tmp_path = tmp.path().to_path_buf();
+
+        let mut registry = ToolRegistry::new(vec![tmp_path.clone()]);
+        let mut policy = crate::config::PolicyConfig::default();
+        policy.mode = "unrestricted".to_string();
+        registry.set_policy(&policy);
+
+        let file_path = tmp_path.join("alias_test.txt");
+        let file_str = file_path.to_string_lossy().to_string();
+
+        // write_file using "filename" alias
+        let w_res = registry
+            .execute(
+                "write_file",
+                serde_json::json!({
+                    "filename": file_str,
+                    "content": "hello alias"
+                }),
+            )
+            .await;
+        assert_eq!(
+            w_res.is_error, false,
+            "write_file failed: {}",
+            w_res.content
+        );
+
+        // read_file using "filename" alias and extra "path" key
+        let r_res = registry
+            .execute(
+                "read_file",
+                serde_json::json!({
+                    "filename": file_str,
+                    "path": file_str
+                }),
+            )
+            .await;
+        assert_eq!(r_res.is_error, false, "read_file failed: {}", r_res.content);
+        assert!(r_res.content.contains("hello alias"));
+
+        // list_dir using "dir" alias
+        let l_res = registry
+            .execute(
+                "list_dir",
+                serde_json::json!({
+                    "dir": tmp_path.to_string_lossy().to_string()
+                }),
+            )
+            .await;
+        assert_eq!(l_res.is_error, false, "list_dir failed: {}", l_res.content);
+        assert!(l_res.content.contains("alias_test.txt"));
     }
 }
