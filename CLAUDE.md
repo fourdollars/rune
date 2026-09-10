@@ -65,7 +65,7 @@ Path-based auto-allow: `read_file`/`read_markdown` skip the prompt if the resolv
 
 ## Tools
 
-10 built-in tools live in `src/tools/mod.rs`. Six (`read_file`, `write_file`, `list_dir`, `execute_cmd`, `fetch_url`, `inspect_process`) are always present. Four (`search_chat`, `list_markdown`, `read_markdown`, `write_markdown`) are **only registered in `rune notes` serve mode** — do not assume they exist in CLI flows.
+9 built-in tools live in `src/tools/mod.rs`. Five (`read_file`, `write_file`, `list_dir`, `execute_cmd`, `fetch_url`) are always present. Four (`search_chat`, `list_markdown`, `read_markdown`, `write_markdown`) are **only registered in `rune notes` serve mode** — do not assume they exist in CLI flows.
 
 Adding a tool: implement in `src/tools/mod.rs`, add JSON schema in `tool_definitions()`. The sandbox layer handles execution; no per-tool sandbox plumbing needed.
 

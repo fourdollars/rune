@@ -440,8 +440,7 @@ stderr: {}",
         info!(tool = name, "executing tool (sandboxed)");
         if self.serve_mode && !self.agent_skills {
             match name {
-                "read_file" | "write_file" | "list_dir" | "execute_cmd" | "fetch_url"
-                | "inspect_process" => {
+                "read_file" | "write_file" | "list_dir" | "execute_cmd" | "fetch_url" => {
                     return ToolOutput::err(format!(
                         "tool '{}' is disabled in notes mode; enable agent_skills = true in [notes] config to use",
                         name
@@ -456,7 +455,6 @@ stderr: {}",
             "list_dir" => self.list_dir(args).await,
             "execute_cmd" => self.execute_cmd(args).await,
             "fetch_url" => self.fetch_url(args).await,
-            "inspect_process" => self.inspect_process(args).await,
             other => ToolOutput::err(format!("unknown tool: {}", other)),
         }
     }
@@ -530,18 +528,6 @@ stderr: {}",
                         "type": "object",
                         "properties": { "url": { "type": "string" } },
                         "required": ["url"]
-                    }
-                }
-            }));
-            tools.push(serde_json::json!({
-                "type": "function",
-                "function": {
-                    "name": "inspect_process",
-                    "description": "Inspect a running process by PID (sandboxed).",
-                    "parameters": {
-                        "type": "object",
-                        "properties": { "pid": { "type": "integer" } },
-                        "required": ["pid"]
                     }
                 }
             }));
@@ -768,15 +754,6 @@ stderr: {}",
         } else {
             result
         }
-    }
-
-    async fn inspect_process(&self, args: serde_json::Value) -> ToolOutput {
-        let pid = match args.get("pid").and_then(|v| v.as_u64()) {
-            Some(p) => p,
-            None => return ToolOutput::err("missing required argument: pid"),
-        };
-        let cmd = format!("ps -p {} -o pid,comm,%cpu,%mem,stat,etime --no-headers 2>/dev/null || echo process_not_found", pid);
-        self.sandboxed_cmd(&cmd, 5, None).await
     }
 }
 
@@ -1566,10 +1543,6 @@ mod tests {
         assert!(
             !schema.contains("execute_cmd"),
             "serve mode should not have execute_cmd by default"
-        );
-        assert!(
-            !schema.contains("inspect_process"),
-            "serve mode should not have inspect_process by default"
         );
         assert!(
             !schema.contains("fetch_url"),

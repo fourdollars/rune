@@ -116,7 +116,7 @@ pub struct NotesConfig {
     #[serde(default)]
     pub oauth: Vec<OAuthProviderConfig>,
 
-    /// Enable general agent tools (read_file, write_file, execute_cmd, inspect_process, fetch_url)
+    /// Enable general agent tools (read_file, write_file, execute_cmd, fetch_url)
     /// and skills in serve mode. Default: false (pure markdown notebook mode for lower token cost and security).
     #[serde(default)]
     pub agent_skills: bool,
@@ -458,7 +458,7 @@ CONFIG PRECEDENCE:\n\
   --config file > CLI flags > env vars (RUNE_*) > ./rune.toml > .rune/rune.toml > ~/.rune/rune.toml > defaults\n\
 \n\
 TOOLS (built-in, all sandboxed):\n\
-  read_file, write_file, list_dir, execute_cmd, fetch_url, inspect_process\n\
+  read_file, write_file, list_dir, execute_cmd, fetch_url\n\
 \n\
 SANDBOX LAYERS:\n\
   1. cgroups v2 (memory + process limits)\n\

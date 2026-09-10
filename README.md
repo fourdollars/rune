@@ -10,7 +10,7 @@ A high-performance, zero-trust AI agent built in Rust. Single binary, triple mod
   - Seccomp BPF syscall filter (internal) — syscall filtering
   - Landlock filesystem restriction (internal) — file access limits
   - DNS / Domain allowlist — selective outbound network access (configured via `allowed_domains`)
-- **Tool Calling** — 10 built-in tools (6 standard sandboxed tools + 4 serve-mode notes tools): `read_file`, `write_file`, `list_dir`, `execute_cmd`, `fetch_url`, `inspect_process`, `list_markdown`, `read_markdown`, `write_markdown`, `search_chat`
+- **Tool Calling** — 9 built-in tools (5 standard sandboxed tools + 4 serve-mode notes tools): `read_file`, `write_file`, `list_dir`, `execute_cmd`, `fetch_url`, `list_markdown`, `read_markdown`, `write_markdown`, `search_chat`
 - **Rune Notes (Data Exchange Hub)** — AI-native Markdown hub served from the same single binary. Exposes Web UI, MCP endpoint, and REST API. Connects external agents (OpenClaw, Hermes, Copilot, OpenCode, Antigravity) with first-party browser extensions (Rune Chat) and built-in AI chat over plain Markdown files
 - **Rich Markdown System** — Math notation (KaTeX inline/block), Mermaid diagrams-as-code, syntax highlighting (highlight.js), and raw inline SVG markup
 - **Browser Extension (Rune Chat)** — Chrome and Firefox side-panel extension for contextual AI chat and seamless note sync

@@ -260,7 +260,6 @@ Rune provides 10 built-in tools. The first 6 are always available; the last 4 ar
 | `list_dir` | List directory contents |
 | `execute_cmd` | Execute shell command (sandboxed) |
 | `fetch_url` | Fetch URL content (requires domain in allowlist) |
-| `inspect_process` | Inspect process by PID |
 
 ### Serve-Mode Tools (only available in `rune notes`)
 

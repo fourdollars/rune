@@ -52,7 +52,7 @@ port = 9527
 bind = "0.0.0.0"
 model = "openrouter/auto,deepseek/deepseek-chat" # single model or comma-separated allowed models
 thinking = "low"
-agent_skills = false # Opt-in: enable read_file, write_file, execute_cmd, fetch_url, inspect_process and skills
+agent_skills = false # Opt-in: enable read_file, write_file, execute_cmd, fetch_url and skills
 
 # GitHub OAuth 2.0 Login
 [notes.github]
@@ -87,7 +87,7 @@ guests = []
 - Copilot tokens (`ghu_` / `ghp_`) are auto-refreshed before LLM calls.
 - Sandbox allowlists can be provided in the resource source (`network.allowed_domains`, `filesystem.read_write_paths`, `filesystem.read_only_paths`).
 
-## Built-in Tools (10)
+## Built-in Tools (9)
 
 | Tool | Sandboxed | Dangerous* | Notes |
 |------|-----------|-----------|-------|
@@ -96,7 +96,6 @@ guests = []
 | `list_dir` | ✓ | ✗ | Always auto-approved |
 | `execute_cmd` | ✓ | ✓ | Per-cmd timeout, pipeline-aware policy |
 | `fetch_url` | ✓ | ✓ | Domain allowlist enforced |
-| `inspect_process` | ✓ | ✗ | — |
 | `search_chat` | ✓ | ✗ | Semantic search over conversation history |
 | `list_markdown` | ✓ | ✗ | List notes/files in serve mode |
 | `read_markdown` | ✓ | ✓† | Read a markdown note file |
