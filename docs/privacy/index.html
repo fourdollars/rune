@@ -1,0 +1,426 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Privacy Policy — Rune Notes & Browser Extension</title>
+    <meta name="description" content="Privacy Policy for Rune Notes and the Rune Chat browser extension (Chrome & Firefox). Zero data collection, 100% self-hosted.">
+    <meta property="og:title" content="Privacy Policy — Rune Notes & Browser Extension">
+    <meta property="og:description" content="Zero data collection, 100% self-hosted. Privacy policy for Rune Notes and Rune Chat browser extension.">
+    <meta property="og:url" content="https://fourdollars.github.io/rune/privacy/">
+    <meta property="og:type" content="website">
+    <link rel="icon" type="image/svg+xml" href="../favicon.svg">
+    <link rel="stylesheet" href="../style.css">
+    <style>
+        .privacy-container {
+            max-width: 900px;
+            margin: 0 auto;
+            padding: 3rem 1.5rem 5rem;
+            position: relative;
+            z-index: 1;
+        }
+        .privacy-header {
+            text-align: center;
+            margin-bottom: 3rem;
+        }
+        .privacy-header h1 {
+            font-size: clamp(2rem, 5vw, 3rem);
+            color: var(--cyan);
+            text-shadow: var(--glow-cyan);
+            margin-bottom: 0.5rem;
+        }
+        .privacy-meta {
+            color: var(--gold);
+            font-size: 0.95rem;
+            margin-bottom: 1rem;
+        }
+        .privacy-nav {
+            display: flex;
+            justify-content: center;
+            gap: 1rem;
+            margin-top: 1.5rem;
+        }
+        .privacy-section {
+            background: var(--bg-card);
+            border: 1px solid rgba(155, 89, 182, 0.25);
+            border-radius: 12px;
+            padding: 2rem;
+            margin-bottom: 2rem;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.4);
+        }
+        .privacy-section h2 {
+            color: var(--purple);
+            font-size: 1.4rem;
+            margin-bottom: 1rem;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            border-bottom: 1px solid rgba(155, 89, 182, 0.2);
+            padding-bottom: 0.5rem;
+        }
+        .privacy-section h3 {
+            color: var(--cyan);
+            font-size: 1.1rem;
+            margin: 1.2rem 0 0.5rem;
+        }
+        .privacy-section p, .privacy-section ul {
+            color: var(--text);
+            margin-bottom: 1rem;
+        }
+        .privacy-section ul {
+            padding-left: 1.5rem;
+        }
+        .privacy-section li {
+            margin-bottom: 0.5rem;
+        }
+        .permission-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 1rem 0;
+        }
+        .permission-table th, .permission-table td {
+            padding: 0.75rem 1rem;
+            text-align: left;
+            border: 1px solid rgba(155, 89, 182, 0.25);
+        }
+        .permission-table th {
+            background: rgba(155, 89, 182, 0.15);
+            color: var(--gold);
+            font-weight: 600;
+        }
+        .permission-table td code {
+            color: var(--cyan);
+            background: var(--bg-terminal);
+            padding: 0.2rem 0.4rem;
+            border-radius: 4px;
+            font-size: 0.9em;
+        }
+        .highlight-box {
+            background: rgba(0, 212, 255, 0.08);
+            border-left: 4px solid var(--cyan);
+            padding: 1rem 1.25rem;
+            border-radius: 0 8px 8px 0;
+            margin: 1rem 0;
+        }
+        .highlight-box strong {
+            color: var(--cyan);
+        }
+        .lang-switch {
+            text-align: center;
+            margin: 2rem 0;
+        }
+        .lang-switch a {
+            color: var(--cyan);
+            text-decoration: none;
+            border-bottom: 1px dashed var(--cyan);
+            padding-bottom: 2px;
+        }
+        .lang-switch a:hover {
+            color: var(--gold);
+            border-bottom-color: var(--gold);
+        }
+        hr.divider {
+            border: 0;
+            height: 1px;
+            background: linear-gradient(90deg, transparent, var(--purple), transparent);
+            margin: 3rem 0;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="rune-particles"></canvas>
+
+    <!-- Language Switcher -->
+    <div class="lang-switch-bar">
+        <button class="lang-btn active" data-set-lang="en">EN</button>
+        <button class="lang-btn" data-set-lang="zh">繁體中文</button>
+    </div>
+
+    <div class="privacy-container">
+        <!-- Header (English) -->
+        <header class="privacy-header" data-lang="en">
+            <div class="rune-border">ᛟ ᚺ ᛊ ᛏ ᛒ ᛖ ᚹ ᛗ ᛚ ᛝ ᛟ</div>
+            <h1>Privacy Policy</h1>
+            <p class="tagline">Rune Notes &amp; Rune Chat Extension</p>
+            <p class="privacy-meta">Last Updated: September 11, 2026</p>
+            <div class="privacy-nav">
+                <a href="../" class="btn btn-secondary">← Back to Rune Home</a>
+                <a href="https://github.com/fourdollars/rune" class="btn btn-primary" target="_blank" rel="noopener">⚡ GitHub Repository</a>
+            </div>
+        </header>
+
+        <!-- Header (Chinese) -->
+        <header class="privacy-header" data-lang="zh">
+            <div class="rune-border">ᛟ ᚺ ᛊ ᛏ ᛒ ᛖ ᚹ ᛗ ᛚ ᛝ ᛟ</div>
+            <h1>隱私權政策</h1>
+            <p class="tagline">Rune Notes 與 Rune Chat 擴充功能</p>
+            <p class="privacy-meta">最後更新日期：2026 年 9 月 11 日</p>
+            <div class="privacy-nav">
+                <a href="../" class="btn btn-secondary">← 返回 Rune 首頁</a>
+                <a href="https://github.com/fourdollars/rune" class="btn btn-primary" target="_blank" rel="noopener">⚡ GitHub 儲存庫</a>
+            </div>
+        </header>
+
+        <!-- English Section -->
+        <main id="en" data-lang="en">
+            <!-- 1. Overview -->
+            <section class="privacy-section">
+                <h2>🛡️ 1. Overview &amp; Single Purpose</h2>
+
+                <p>
+                    <strong>Rune Chat</strong> (and the Rune Notes Browser Extension) is a client-side companion for <strong>Rune</strong> — an open-source, zero-trust AI runtime and collaborative note-taking hub.
+                </p>
+                <div class="highlight-box">
+                    <strong>Single Purpose:</strong> The extension enables you to chat with your own self-hosted Rune Notes server about the web page you are currently viewing and save the results directly into your personal notebooks.
+                </div>
+                <p>
+                    All AI interactions, document indexing, and storage operations occur solely between your browser and the Rune Notes server address that <strong>you enter yourself</strong>. The extension developer does not operate any centralized cloud service, proxy, or backend server.
+                </p>
+            </section>
+
+            <!-- 2. Zero Data Collection -->
+            <section class="privacy-section">
+                <h2>🚫 2. Zero Developer Data Collection</h2>
+                <p>
+                    <strong>The developer collects zero (0) data from users.</strong>
+                </p>
+                <ul>
+                    <li><strong>No telemetry or analytics:</strong> There are no tracking scripts, analytics SDKs, error reporting beacons, or advertisement trackers.</li>
+                    <li><strong>No third-party transmissions:</strong> No data is ever sent to the developer, Google, Mozilla, or any third party.</li>
+                    <li><strong>Direct client-to-server connection:</strong> All network traffic consists solely of direct HTTP/WebSocket/SSE requests initiated from your browser directly to your self-hosted server URL.</li>
+                    <li><strong>We guarantee:</strong> We do not sell, rent, trade, or monetize user data under any circumstances.</li>
+                </ul>
+            </section>
+
+            <!-- 3. Permissions & Justifications -->
+            <section class="privacy-section">
+                <h2>🔑 3. Permissions &amp; Technical Justification</h2>
+                <p>
+                    The extension declares only the minimal set of browser permissions strictly necessary to deliver its core functionality:
+                </p>
+
+                <table class="permission-table">
+                    <thead>
+                        <tr>
+                            <th>Permission</th>
+                            <th>Purpose &amp; Scope</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td><code>storage</code></td>
+                            <td>
+                                <ul>
+                                    <li><code>storage.sync</code>: Stores your Rune Notes server URL and UI preferences, synced across your browser profile.</li>
+                                    <li><code>storage.local</code>: Stores the OAuth 2.1 access token obtained from your self-hosted server (isolated to the current device).</li>
+                                </ul>
+                            </td>
+                        </tr>
+                        <tr>
+                            <td><code>activeTab</code></td>
+                            <td>
+                                Reads the title, URL, and user-selected text of the active tab <strong>only when you explicitly trigger</strong> a chat message or context menu action. It never monitors your browsing in the background and collects zero browsing history.
+                            </td>
+                        </tr>
+                        <tr>
+                            <td><code>sidePanel</code> / <code>sidebar_action</code></td>
+                            <td>
+                                Opens the side panel chat interface (Chrome Side Panel &amp; Firefox Sidebar) where you interact with your notes and AI assistant.
+                            </td>
+                        </tr>
+                        <tr>
+                            <td><code>identity</code></td>
+                            <td>
+                                Executes standard OAuth 2.1 Authorization Code flow with PKCE (<code>launchWebAuthFlow</code>) against your self-hosted server. Authentication tokens stay strictly between your browser and your server.
+                            </td>
+                        </tr>
+                        <tr>
+                            <td><code>scripting</code></td>
+                            <td>
+                                Used as an on-demand fallback to extract active page text when content scripts have not yet attached (e.g., tabs opened before extension installation). Runs only upon user submission.
+                            </td>
+                        </tr>
+                        <tr>
+                            <td><code>contextMenus</code></td>
+                            <td>
+                                Adds a "Send to Rune Chat" context menu item to start discussions from selected text on any webpage.
+                            </td>
+                        </tr>
+                        <tr>
+                            <td>Host Permissions</td>
+                            <td>
+                                Allows the extension to send API requests (SSE streams, note CRUD) to your configured Rune Notes server URL and inspect the foreground active tab on user action.
+                            </td>
+                        </tr>
+                    </tbody>
+                </table>
+            </section>
+
+            <!-- 4. Data Storage & Security -->
+            <section class="privacy-section">
+                <h2>💾 4. Data Storage &amp; Security</h2>
+                <ul>
+                    <li><strong>Local-First Storage:</strong> Credentials and configurations reside in your browser's protected extension sandbox.</li>
+                    <li><strong>No Remote Code:</strong> All scripts, stylesheets, and vendored libraries (marked, highlight.js, KaTeX, Mermaid) are packaged locally within the extension bundle. No dynamic <code>eval()</code>, remote script loading, or external CDN dependencies are used.</li>
+                    <li><strong>Token Lifetime:</strong> OAuth tokens are issued by your own server. Revoking access or logging out immediately deletes stored credentials.</li>
+                </ul>
+            </section>
+
+            <!-- 5. User Control & Data Deletion -->
+            <section class="privacy-section">
+                <h2>🗑️ 5. User Control &amp; Data Deletion</h2>
+                <p>You maintain complete control over your data at all times:</p>
+                <ul>
+                    <li><strong>Logout:</strong> Clicking "Log Out" in the extension settings invokes <code>/oauth/revoke</code> on your server and clears all local tokens from <code>storage.local</code>.</li>
+                    <li><strong>Extension Removal:</strong> Uninstalling the extension from your browser instantly and permanently erases all associated settings, server URLs, and cached tokens from your browser profile.</li>
+                    <li><strong>Server-Side Data:</strong> Markdown notes stored on your Rune Notes server can be edited or deleted directly through the Rune Notes web interface or file system. Chat conversation logs are stored in your server's local SQLite database and can be managed or purged directly by the server administrator on the host file system.</li>
+                </ul>
+            </section>
+
+            <!-- 6. Open Source & Contact -->
+            <section class="privacy-section">
+                <h2>📬 6. Open Source &amp; Contact</h2>
+                <p>
+                    Rune is 100% free and open-source software under the MIT License. You can audit every line of source code, verify build reproducibility, or report any privacy concerns:
+                </p>
+                <ul>
+                    <li><strong>GitHub Repository:</strong> <a href="https://github.com/fourdollars/rune" target="_blank" rel="noopener">https://github.com/fourdollars/rune</a></li>
+                    <li><strong>Issue Tracker:</strong> <a href="https://github.com/fourdollars/rune/issues" target="_blank" rel="noopener">https://github.com/fourdollars/rune/issues</a></li>
+                    <li><strong>Project Homepage:</strong> <a href="https://fourdollars.github.io/rune/">https://fourdollars.github.io/rune/</a></li>
+                </ul>
+            </section>
+        </main>
+
+        <!-- Traditional Chinese Section -->
+        <main id="zh" data-lang="zh">
+            <!-- 1. Overview -->
+            <section class="privacy-section">
+                <h2>🛡️ 1. 概述與單一用途說明</h2>
+                <p>
+                    <strong>Rune Chat</strong>（Rune Notes 瀏覽器擴充功能）是 <strong>Rune</strong>（開源零信任 AI 代理運行時與協同筆記中樞）的客戶端輔助工具。
+                </p>
+                <div class="highlight-box">
+                    <strong>單一用途：</strong> 協助使用者在瀏覽網頁時，與自己架設的 Rune Notes 伺服器對話討論當前網頁內容，並將結果直接儲存至個人筆記本中。
+                </div>
+                <p>
+                    所有 AI 互動、文件檢索與儲存操作，完全在您的瀏覽器與<strong>您自行輸入的 Rune Notes 伺服器網址</strong>之間進行。擴充功能開發者不維運任何集中式雲端服務、代理轉發（Proxy）或後端伺服器。
+                </p>
+            </section>
+
+            <!-- 2. Zero Data Collection -->
+            <section class="privacy-section">
+                <h2>🚫 2. 開發者零資料收集宣告</h2>
+                <p>
+                    <strong>開發者不會自使用者處收集任何（0）資料。</strong>
+                </p>
+                <ul>
+                    <li><strong>無遙測或分析統計：</strong> 程式碼中完全不含追蹤腳本、數據分析 SDK、崩潰報告回傳或廣告追蹤器。</li>
+                    <li><strong>無第三方資料傳輸：</strong> 任何使用者資料絕不會傳送給開發者、Google、Mozilla 或任何第三方。</li>
+                    <li><strong>端到端直連：</strong> 所有網路請求僅包含由您的瀏覽器直接發往您自架伺服器網址的 HTTP / WebSocket / SSE 傳輸。</li>
+                    <li><strong>嚴正承諾：</strong> 我們在任何情況下均不會販售、出租、交換或營利使用者的任何資料。</li>
+                </ul>
+            </section>
+
+            <!-- 3. Permissions & Justifications -->
+            <section class="privacy-section">
+                <h2>🔑 3. 權限需求與技術理由</h2>
+                <p>
+                    本擴充功能僅宣告提供核心功能所絕對必需的最小瀏覽器權限集合：
+                </p>
+                <table class="permission-table">
+                    <thead>
+                        <tr>
+                            <th>權限</th>
+                            <th>用途與範圍</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td><code>storage</code></td>
+                            <td>
+                                <ul>
+                                    <li><code>storage.sync</code>：儲存您設定的 Rune Notes 伺服器網址與 UI 偏好設定（隨瀏覽器設定檔同步）。</li>
+                                    <li><code>storage.local</code>：儲存由您自架伺服器核發的 OAuth 2.1 存取憑證（僅保存在目前裝置）。</li>
+                                </ul>
+                            </td>
+                        </tr>
+                        <tr>
+                            <td><code>activeTab</code></td>
+                            <td>僅在您<strong>主動送出對話訊息或點擊右鍵選單</strong>時讀取當前分頁的標題、URL 與選取文字。絕不在背景監控瀏覽行為，亦不收集任何瀏覽歷史紀錄。</td>
+                        </tr>
+                        <tr>
+                            <td><code>sidePanel</code> / <code>sidebar_action</code></td>
+                            <td>用於在瀏覽器側邊欄（Chrome Side Panel 與 Firefox Sidebar）開啟聊天與筆記互動介面。</td>
+                        </tr>
+                        <tr>
+                            <td><code>identity</code></td>
+                            <td>僅用於對您自架的伺服器執行 OAuth 2.1 PKCE 授權碼登入流程（<code>launchWebAuthFlow</code>）。登入認證資訊僅保留在您的瀏覽器與自架伺服器之間。</td>
+                        </tr>
+                        <tr>
+                            <td><code>scripting</code></td>
+                            <td>當 content script 尚未注入時（如安裝前已開啟的分頁），在您主動送出對話時作為備用機制提取當前頁面文字。</td>
+                        </tr>
+                        <tr>
+                            <td><code>contextMenus</code></td>
+                            <td>在網頁右鍵選單新增「Send to Rune Chat」項目，方便從選取文字快速發起討論。</td>
+                        </tr>
+                        <tr>
+                            <td>網站存取權限（Host permissions）</td>
+                            <td>允許擴充功能向您自行設定的 Rune Notes 伺服器發送 API 請求（SSE 串流、筆記 CRUD），並在您操作時讀取前景分頁內容。</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </section>
+
+            <!-- 4. Data Storage & Security -->
+            <section class="privacy-section">
+                <h2>💾 4. 資料儲存與安全性</h2>
+                <ul>
+                    <li><strong>本機優先儲存：</strong> 憑證與設定均保存在瀏覽器隔離的擴充功能沙盒儲存區中。</li>
+                    <li><strong>不使用遠端程式碼：</strong> 所有腳本、樣式與第三方函式庫（marked、highlight.js、KaTeX、Mermaid）均直接打包於擴充功能安裝包中，絕不載入遠端腳本或動態執行 <code>eval()</code>。</li>
+                    <li><strong>憑證生命週期：</strong> OAuth 憑證由您自己的伺服器簽發，登出或撤銷時會立即自本機清除。</li>
+                </ul>
+            </section>
+
+            <!-- 5. User Control & Data Deletion -->
+            <section class="privacy-section">
+                <h2>🗑️ 5. 使用者控制與資料刪除</h2>
+                <p>使用者隨時擁有資料的完整控制權：</p>
+                <ul>
+                    <li><strong>登出：</strong> 於擴充功能設定中點擊「Log Out」，會向您的伺服器呼叫 <code>/oauth/revoke</code> 撤銷授權，並立即清除 <code>storage.local</code> 中的本機憑證。</li>
+                    <li><strong>移除擴充功能：</strong> 自瀏覽器中解除安裝擴充功能將立即且永久刪除本機儲存的所有設定、伺服器網址與快取憑證。</li>
+                    <li><strong>伺服器端資料：</strong> 儲存於 Rune Notes 伺服器中的 Markdown 筆記檔案，可隨時透過 Web 介面或伺服器檔案系統進行編輯與刪除；對話歷史紀錄則儲存在自架伺服器的本機 SQLite 資料庫中，伺服器管理者可隨時直接在主機端管理、備份或清除資料庫。</li>
+                </ul>
+            </section>
+
+            <!-- 6. Open Source & Contact -->
+            <section class="privacy-section">
+                <h2>📬 6. 開源與聯絡方式</h2>
+                <p>
+                    Rune 採用 MIT 開源授權，100% 開放原始碼。歡迎隨時審閱每一行程式碼、驗證建置或提出任何隱私反饋：
+                </p>
+                <ul>
+                    <li><strong>GitHub 儲存庫：</strong> <a href="https://github.com/fourdollars/rune" target="_blank" rel="noopener">https://github.com/fourdollars/rune</a></li>
+                    <li><strong>問題追蹤（Issue Tracker）：</strong> <a href="https://github.com/fourdollars/rune/issues" target="_blank" rel="noopener">https://github.com/fourdollars/rune/issues</a></li>
+                    <li><strong>專案首頁：</strong> <a href="https://fourdollars.github.io/rune/">https://fourdollars.github.io/rune/</a></li>
+                </ul>
+            </section>
+        </main>
+
+
+        <!-- Footer -->
+        <footer>
+            <div class="rune-border dim">ᛟ ᚺ ᛊ ᛏ ᛒ ᛖ ᚹ ᛗ ᛚ ᛝ ᛟ</div>
+            <p>
+                <a href="../">Home</a> ·
+                <a href="https://github.com/fourdollars/rune">GitHub</a> ·
+                <a href="./">Privacy Policy</a> ·
+                MIT License
+            </p>
+            <p class="dim">ᚱ Rune — Zero-Trust AI Agent</p>
+        </footer>
+    </div>
+
+    <script src="../runes.js"></script>
+</body>
+</html>

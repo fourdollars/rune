@@ -102,4 +102,41 @@
     );
 
     document.querySelectorAll('.fade-in').forEach((el) => observer.observe(el));
+
+    // === Language Switcher ===
+    function getInitialLang() {
+        const urlParams = new URLSearchParams(window.location.search);
+        const langParam = urlParams.get('lang');
+        if (langParam === 'zh' || langParam === 'zh-tw' || langParam === 'zh-TW') return 'zh';
+        if (langParam === 'en') return 'en';
+        if (window.location.hash === '#zh' || window.location.hash === '#zh-tw') return 'zh';
+        return localStorage.getItem('rune_lang') || 'en';
+    }
+
+    function setLanguage(lang) {
+        const isZh = lang === 'zh';
+        document.documentElement.lang = isZh ? 'zh-TW' : 'en';
+        document.body.classList.remove('lang-en', 'lang-zh');
+        document.body.classList.add(isZh ? 'lang-zh' : 'lang-en');
+
+        document.querySelectorAll('.lang-btn').forEach((btn) => {
+            if (btn.dataset.setLang === (isZh ? 'zh' : 'en')) {
+                btn.classList.add('active');
+            } else {
+                btn.classList.remove('active');
+            }
+        });
+
+        localStorage.setItem('rune_lang', isZh ? 'zh' : 'en');
+    }
+
+    document.querySelectorAll('.lang-btn').forEach((btn) => {
+        btn.addEventListener('click', () => {
+            setLanguage(btn.dataset.setLang);
+        });
+    });
+
+    // Initialize language (defaults to 'en' unless user chose otherwise)
+    setLanguage(getInitialLang());
 })();
+
