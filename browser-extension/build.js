@@ -13,6 +13,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const { execSync } = require('child_process');
 
 const ROOT = __dirname;
 const TARGETS = {
@@ -28,6 +29,21 @@ const VENDOR_BUNDLE = [
   'vendor/katex.min.js',
   'vendor/mermaid.min.js',
 ];
+
+function getGitInfo() {
+  let gitHash = 'unknown';
+  try {
+    gitHash = execSync('git rev-parse --short HEAD', { cwd: ROOT, stdio: ['ignore', 'pipe', 'ignore'] }).toString().trim();
+  } catch (_) {}
+
+  let buildDate = new Date().toISOString().slice(0, 10);
+  try {
+    const dateStr = execSync('date -u +%Y-%m-%d', { stdio: ['ignore', 'pipe', 'ignore'] }).toString().trim();
+    if (dateStr) buildDate = dateStr;
+  } catch (_) {}
+
+  return { gitHash, buildDate };
+}
 
 function copyRecursive(src, dest) {
   const stat = fs.statSync(src);
@@ -57,7 +73,20 @@ function buildTarget(name) {
   if (fs.existsSync(path.join(ROOT, 'icons'))) {
     copyRecursive(path.join(ROOT, 'icons'), path.join(outDir, 'icons'));
   }
-  fs.copyFileSync(path.join(ROOT, manifestFile), path.join(outDir, 'manifest.json'));
+
+  const rawManifest = JSON.parse(fs.readFileSync(path.join(ROOT, manifestFile), 'utf8'));
+  let manifestContent = rawManifest;
+  if (name === 'chrome') {
+    const { gitHash, buildDate } = getGitInfo();
+    manifestContent = {};
+    for (const [key, value] of Object.entries(rawManifest)) {
+      manifestContent[key] = value;
+      if (key === 'version') {
+        manifestContent.version_name = `0.1.0 (${gitHash} ${buildDate})`;
+      }
+    }
+  }
+  fs.writeFileSync(path.join(outDir, 'manifest.json'), JSON.stringify(manifestContent, null, 2) + '\n', 'utf8');
 
   // Write vendor libs as a single external file in src/ so sidepanel.html can
   // load it with <script src="vendor-bundle.js"> (same directory, no path
