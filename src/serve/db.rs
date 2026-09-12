@@ -66,82 +66,86 @@ pub struct ChatDb {
     deferred_path: Arc<Mutex<Option<std::path::PathBuf>>>,
 }
 
+fn init_schema(conn: &Connection) -> anyhow::Result<()> {
+    conn.execute_batch(
+        "
+        PRAGMA journal_mode=WAL;
+        PRAGMA synchronous=NORMAL;
+        CREATE TABLE IF NOT EXISTS messages (
+            id             INTEGER PRIMARY KEY AUTOINCREMENT,
+            note_id        TEXT    NOT NULL DEFAULT 'default',
+            role           TEXT    NOT NULL,
+            nickname       TEXT    NOT NULL,
+            content        TEXT    NOT NULL,
+            created_at     INTEGER NOT NULL,
+            model          TEXT,
+            tokens_in      INTEGER,
+            tokens_out     INTEGER,
+            steps          INTEGER,
+            tool_calls     INTEGER,
+            thinking       TEXT,
+            context_tokens INTEGER
+        );
+        CREATE INDEX IF NOT EXISTS idx_messages_session
+            ON messages(note_id, id);
+        CREATE TABLE IF NOT EXISTS sessions (
+            id             TEXT PRIMARY KEY,
+            name           TEXT NOT NULL,
+            created_at     INTEGER NOT NULL,
+            created_by     TEXT,
+            public         INTEGER DEFAULT 0,
+            model_override TEXT,
+            icon           TEXT
+        );
+        CREATE TABLE IF NOT EXISTS user_sessions (
+            id         TEXT PRIMARY KEY,
+            login      TEXT NOT NULL,
+            role       TEXT NOT NULL,
+            avatar_url TEXT NOT NULL,
+            expires_at INTEGER NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS oauth_tokens (
+            token      TEXT PRIMARY KEY,
+            role       TEXT NOT NULL,
+            login      TEXT NOT NULL DEFAULT '',
+            expires_at INTEGER NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS file_visibility (
+            note_id  TEXT NOT NULL,
+            filename TEXT NOT NULL,
+            public   INTEGER NOT NULL DEFAULT 0,
+            PRIMARY KEY (note_id, filename)
+        );
+        CREATE TABLE IF NOT EXISTS note_settings (
+            note_id  TEXT PRIMARY KEY,
+            thinking TEXT
+        );
+    ",
+    )?;
+    // Add new columns to existing DBs (idempotent — errors ignored)
+    let _ = conn.execute_batch(
+        "
+        ALTER TABLE messages ADD COLUMN model          TEXT;
+        ALTER TABLE messages ADD COLUMN tokens_in      INTEGER;
+        ALTER TABLE messages ADD COLUMN tokens_out     INTEGER;
+        ALTER TABLE messages ADD COLUMN steps          INTEGER;
+        ALTER TABLE messages ADD COLUMN tool_calls     INTEGER;
+        ALTER TABLE messages ADD COLUMN thinking       TEXT;
+        ALTER TABLE messages ADD COLUMN context_tokens INTEGER;
+        ALTER TABLE sessions ADD COLUMN public         INTEGER DEFAULT 0;
+        ALTER TABLE sessions ADD COLUMN model_override TEXT;
+        ALTER TABLE sessions ADD COLUMN icon           TEXT;
+        ALTER TABLE oauth_tokens ADD COLUMN login      TEXT NOT NULL DEFAULT '';
+    ",
+    );
+    Ok(())
+}
+
 impl ChatDb {
     /// Open (or create) the chat database at the given path.
     pub fn open(path: &Path) -> anyhow::Result<Self> {
         let conn = Connection::open(path)?;
-        conn.execute_batch(
-            "
-            PRAGMA journal_mode=WAL;
-            PRAGMA synchronous=NORMAL;
-            CREATE TABLE IF NOT EXISTS messages (
-                id          INTEGER PRIMARY KEY AUTOINCREMENT,
-                note_id  TEXT    NOT NULL DEFAULT 'default',
-                role        TEXT    NOT NULL,
-                nickname    TEXT    NOT NULL,
-                content     TEXT    NOT NULL,
-                created_at  INTEGER NOT NULL,
-                model       TEXT,
-                tokens_in   INTEGER,
-                tokens_out  INTEGER,
-                steps       INTEGER,
-                tool_calls  INTEGER,
-                thinking    TEXT
-            );
-            CREATE INDEX IF NOT EXISTS idx_messages_session
-                ON messages(note_id, id);
-            CREATE TABLE IF NOT EXISTS sessions (
-                id          TEXT PRIMARY KEY,
-                name        TEXT NOT NULL,
-                created_at  INTEGER NOT NULL,
-                created_by  TEXT
-            );
-            CREATE TABLE IF NOT EXISTS user_sessions (
-                id          TEXT PRIMARY KEY,
-                login       TEXT NOT NULL,
-                role        TEXT NOT NULL,
-                avatar_url  TEXT NOT NULL,
-                expires_at  INTEGER NOT NULL
-            );
-            CREATE TABLE IF NOT EXISTS oauth_tokens (
-                token       TEXT PRIMARY KEY,
-                role        TEXT NOT NULL,
-                login       TEXT NOT NULL DEFAULT '',
-                expires_at  INTEGER NOT NULL
-            );
-        ",
-        )?;
-        // Add new columns to existing DBs (idempotent — errors ignored)
-        let _ = conn.execute_batch(
-            "
-            ALTER TABLE messages ADD COLUMN model      TEXT;
-            ALTER TABLE messages ADD COLUMN tokens_in  INTEGER;
-            ALTER TABLE messages ADD COLUMN tokens_out INTEGER;
-        ",
-        );
-        let _ = conn.execute_batch(
-            "
-            ALTER TABLE messages ADD COLUMN steps      INTEGER;
-            ALTER TABLE messages ADD COLUMN tool_calls INTEGER;
-        ",
-        );
-        let _ = conn.execute_batch("ALTER TABLE messages ADD COLUMN thinking TEXT;");
-        let _ = conn.execute_batch("ALTER TABLE messages ADD COLUMN context_tokens INTEGER;");
-        let _ = conn.execute_batch("ALTER TABLE sessions ADD COLUMN public INTEGER DEFAULT 0;");
-        let _ = conn
-            .execute_batch("ALTER TABLE oauth_tokens ADD COLUMN login TEXT NOT NULL DEFAULT '';");
-        let _ = conn.execute_batch(
-            "
-            CREATE TABLE IF NOT EXISTS file_visibility (
-                note_id  TEXT NOT NULL,
-                filename TEXT NOT NULL,
-                public   INTEGER NOT NULL DEFAULT 0,
-                PRIMARY KEY (note_id, filename)
-            );
-        ",
-        );
-        let _ = conn.execute_batch("ALTER TABLE sessions ADD COLUMN model_override TEXT;");
-        let _ = conn.execute_batch("ALTER TABLE sessions ADD COLUMN icon TEXT;");
+        init_schema(&conn)?;
         Ok(Self {
             conn: Arc::new(Mutex::new(conn)),
             deferred_path: Arc::new(Mutex::new(None)),
@@ -154,43 +158,7 @@ impl ChatDb {
             Self::open(path)
         } else {
             let conn = Connection::open_in_memory()?;
-            conn.execute_batch(
-                "
-                PRAGMA journal_mode=WAL;
-                PRAGMA synchronous=NORMAL;
-                CREATE TABLE IF NOT EXISTS messages (
-                    id          INTEGER PRIMARY KEY AUTOINCREMENT,
-                    note_id  TEXT    NOT NULL DEFAULT 'default',
-                    role        TEXT    NOT NULL,
-                    nickname    TEXT    NOT NULL,
-                    content     TEXT    NOT NULL,
-                    created_at  INTEGER NOT NULL,
-                    model       TEXT,
-                    tokens_in   INTEGER,
-                    tokens_out  INTEGER,
-                    steps       INTEGER,
-                    tool_calls  INTEGER,
-                    thinking    TEXT
-                );
-                CREATE INDEX IF NOT EXISTS idx_messages_session
-                    ON messages(note_id, id);
-                CREATE TABLE IF NOT EXISTS sessions (
-                    id          TEXT PRIMARY KEY,
-                    name        TEXT NOT NULL,
-                    created_at  INTEGER NOT NULL,
-                    created_by  TEXT,
-                    public      INTEGER DEFAULT 0,
-                    model_override TEXT,
-                    icon        TEXT
-                );
-                CREATE TABLE IF NOT EXISTS file_visibility (
-                    note_id  TEXT NOT NULL,
-                    filename TEXT NOT NULL,
-                    public   INTEGER NOT NULL DEFAULT 0,
-                    PRIMARY KEY (note_id, filename)
-                );
-            ",
-            )?;
+            init_schema(&conn)?;
             Ok(ChatDb {
                 conn: Arc::new(Mutex::new(conn)),
                 deferred_path: Arc::new(Mutex::new(Some(path.to_path_buf()))),
@@ -1455,6 +1423,49 @@ mod tests {
         assert!(db
             .list_public_files("note2")
             .contains(&"shared.md".to_string()));
+    }
+
+    #[test]
+    fn test_open_lazy_initial_state_and_context_tokens() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("chat.db");
+        assert!(!db_path.exists());
+
+        let db = ChatDb::open_lazy(&db_path).unwrap();
+        assert!(db.is_memory());
+
+        // Insert message with meta including context_tokens in lazy mode
+        db.insert_with_meta(
+            "default",
+            "assistant",
+            "rune",
+            "hello lazy",
+            Some("gpt-4o"),
+            Some(10),
+            Some(20),
+            Some(1),
+            Some(0),
+            None,
+            Some(500),
+        )
+        .expect("insert_with_meta on lazy db should succeed with context_tokens");
+
+        let recent = db.load_recent("default", 10).unwrap();
+        assert_eq!(recent.len(), 1);
+        assert_eq!(recent[0].content, "hello lazy");
+        assert_eq!(recent[0].context_tokens, Some(500));
+
+        // Persist to disk
+        db.ensure_persistent().unwrap();
+        assert!(!db.is_memory());
+        assert!(db_path.exists());
+
+        // Reopen from disk and check data
+        let disk_db = ChatDb::open(&db_path).unwrap();
+        let disk_recent = disk_db.load_recent("default", 10).unwrap();
+        assert_eq!(disk_recent.len(), 1);
+        assert_eq!(disk_recent[0].content, "hello lazy");
+        assert_eq!(disk_recent[0].context_tokens, Some(500));
     }
 }
 
