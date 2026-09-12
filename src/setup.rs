@@ -801,7 +801,7 @@ pub async fn run_setup(config_path_override: Option<String>) {
             Some("https://generativelanguage.googleapis.com/v1beta".to_string()),
             "Google Gemini",
             "gemini",
-            "Gemini API key (starts with AIza)",
+            "Gemini API key",
         ),
         "3" => (
             Some("https://api.openai.com/v1".to_string()),
