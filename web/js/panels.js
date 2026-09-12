@@ -55,8 +55,25 @@ globalThis.togglePanel = function togglePanel(side) {
     if (side === 'right') setToggleState(btnChat, !panel.classList.contains('collapsed'));
 };
 
+globalThis.toggleNotesPanel = function toggleNotesPanel() {
+    if (typeof isDrawerViewport === 'function' && isDrawerViewport()) {
+        toggleTreeDrawer();
+    } else {
+        togglePanel('left');
+    }
+};
+
 globalThis.toggleChatPanel = function toggleChatPanel() {
     togglePanel('right');
+    const panel = document.getElementById('panel-right');
+    if (panel && !panel.classList.contains('collapsed')) {
+        const input = document.getElementById('chat-input');
+        if (input) input.focus();
+    } else {
+        if (typeof editorInstance !== 'undefined' && editorInstance) {
+            editorInstance.focus();
+        }
+    }
 };
 
 globalThis.updateToggleIcon = function updateToggleIcon(panel, side) {
@@ -98,13 +115,6 @@ chatInput.addEventListener('keydown', (e) => {
     if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
         e.preventDefault();
         sendMessage();
-    }
-});
-
-document.addEventListener('keydown', (e) => {
-    if (e.ctrlKey && e.shiftKey && e.key === 'E') {
-        e.preventDefault();
-        swapEditorPreview();
     }
 });
 

@@ -37,6 +37,21 @@ function inEditor(target) {
     return target instanceof Element && !!target.closest('.CodeMirror');
 }
 
+function isToggleNotesChord(event) {
+    if (event.key !== 'b' && event.key !== 'B') return false;
+    return (event.ctrlKey || event.metaKey) && event.shiftKey && !event.altKey;
+}
+
+function isToggleChatChord(event) {
+    if (event.key !== 'l' && event.key !== 'L') return false;
+    return (event.ctrlKey || event.metaKey) && event.shiftKey && !event.altKey;
+}
+
+function isSwapEditorPreviewChord(event) {
+    if (event.key !== 'e' && event.key !== 'E') return false;
+    return (event.ctrlKey || event.metaKey) && event.shiftKey && !event.altKey;
+}
+
 // CodeMirror owns Ctrl-K inside the editor (insert link); everywhere else
 // Ctrl+K opens the command palette, Ctrl+O opens quick open.
 function isCommandPaletteChord(event) {
@@ -63,6 +78,21 @@ export function initKeyboard() {
     document.addEventListener('keydown', event => {
         if (event.key === 'Escape') {
             if (closeTopmostOverlay()) event.preventDefault();
+            return;
+        }
+        if (isToggleNotesChord(event)) {
+            event.preventDefault();
+            if (typeof toggleNotesPanel === 'function') toggleNotesPanel();
+            return;
+        }
+        if (isToggleChatChord(event)) {
+            event.preventDefault();
+            if (typeof toggleChatPanel === 'function') toggleChatPanel();
+            return;
+        }
+        if (isSwapEditorPreviewChord(event)) {
+            event.preventDefault();
+            if (typeof swapEditorPreview === 'function') swapEditorPreview();
             return;
         }
         if (isCommandPaletteChord(event)) {

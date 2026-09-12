@@ -22,6 +22,8 @@ const COMMANDS = [
     { label: 'Toggle note visibility', icon: 'globe', admin: true, section: 'Files & Notes', run: toggleCurrentNoteVisibility },
 
     // View & Panels
+    { label: 'Toggle notes panel', icon: 'menu', keys: 'Ctrl+Shift+B', section: 'View & Panels', run: () => toggleNotesPanel() },
+    { label: 'Toggle chat panel', icon: 'bot', keys: 'Ctrl+Shift+L', section: 'View & Panels', run: () => toggleChatPanel() },
     { label: 'Toggle editor', icon: 'pencil', section: 'View & Panels', run: () => toggleEdit() },
     { label: 'Toggle preview', icon: 'eye', section: 'View & Panels', run: () => togglePreview() },
     { label: 'Swap editor / preview', icon: 'swap', keys: 'Ctrl+Shift+E', section: 'View & Panels', run: () => swapEditorPreview() },
