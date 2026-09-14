@@ -128,6 +128,12 @@ pub struct NotesConfig {
     /// Default: true (enabled; standard MCP client compatibility).
     #[serde(default = "default_mcp_lenient_true")]
     pub mcp_lenient_legacy_clients: bool,
+
+    /// Custom title for Rune Notes web UI / pages.
+    pub title: Option<String>,
+    /// Custom description for Rune Notes web UI / pages.
+    #[serde(alias = "description")]
+    pub desc: Option<String>,
 }
 
 fn default_mcp_lenient_true() -> bool {
@@ -145,6 +151,8 @@ impl Default for NotesConfig {
             oauth: Vec::new(),
             agent_skills: false,
             mcp_lenient_legacy_clients: true,
+            title: None,
+            desc: None,
         }
     }
 }
@@ -2652,6 +2660,32 @@ userinfo_url = "https://example.com/oauth/userinfo"
         let provider = &notes.oauth[0];
         assert_eq!(provider.scopes, vec!["openid", "profile"]);
         assert_eq!(provider.groups_claim, "groups");
+    }
+
+    #[test]
+    fn test_notes_config_title_and_desc() {
+        let toml_str = r#"
+[notes]
+title = "My Team Notes"
+desc = "Knowledge base and documentation"
+"#;
+        let cfg: crate::config::PartialConfig = toml::from_str(toml_str).unwrap();
+        let notes = cfg.notes.expect("notes must be present");
+        assert_eq!(notes.title.as_deref(), Some("My Team Notes"));
+        assert_eq!(
+            notes.desc.as_deref(),
+            Some("Knowledge base and documentation")
+        );
+
+        // Test with 'description' alias
+        let toml_alias = r#"
+[notes]
+title = "My Team Notes"
+description = "Aliased description"
+"#;
+        let cfg2: crate::config::PartialConfig = toml::from_str(toml_alias).unwrap();
+        let notes2 = cfg2.notes.expect("notes must be present");
+        assert_eq!(notes2.desc.as_deref(), Some("Aliased description"));
     }
 
     #[test]

@@ -18,7 +18,7 @@ use crate::config::RuneConfig;
 use crate::provider::ModelInfo;
 use crate::serve::api::NoteRoom;
 use axum::{
-    extract::ConnectInfo,
+    extract::{ConnectInfo, State},
     http::{header, StatusCode},
     middleware as axum_mw,
     response::{Html, IntoResponse},
@@ -750,6 +750,7 @@ pub async fn run(config: RuneConfig, opts: NotesOptions) {
         .route("/edit/{note}/", get(index_handler))
         .route("/edit/{note}/{file}", get(index_handler))
         // Public (no-auth) routes
+        .route("/notes", get(api::public_notes_list_handler))
         .route("/notes/", get(api::public_notes_list_handler))
         .route("/notes/{note}", get(api::public_note_index_handler))
         .route("/notes/{note}/", get(api::public_note_index_handler))
@@ -833,12 +834,27 @@ pub async fn run(config: RuneConfig, opts: NotesOptions) {
     }
 }
 
-/// Serve the main index.html.
 /// Serve the login page (/).
-async fn login_handler() -> impl IntoResponse {
+async fn login_handler(State(state): State<ServerState>) -> impl IntoResponse {
     match static_files::get("login.html") {
         Some(content) => {
-            let mut resp = Html(content).into_response();
+            let mut html = content;
+            if let Some(ref title) = state.config.notes.title {
+                html = html.replace(
+                    "<title>ᚱᚢᚾᛖ — Sign In</title>",
+                    &format!("<title>{}</title>", api::html_escape(title)),
+                );
+            }
+            if let Some(ref desc) = state.config.notes.desc {
+                html = html.replace(
+                    r#"<meta name="description" content="Sign in to Rune Notes">"#,
+                    &format!(
+                        r#"<meta name="description" content="{}">"#,
+                        api::html_escape(desc)
+                    ),
+                );
+            }
+            let mut resp = Html(html).into_response();
             resp.headers_mut().insert(
                 header::CACHE_CONTROL,
                 header::HeaderValue::from_static("no-store, max-age=0"),
@@ -1182,6 +1198,34 @@ mod tests {
     // HTTP handler integration tests (via tower)
     // ──────────────────────────────────────────────
 
+    fn test_server_state(config: RuneConfig) -> ServerState {
+        use std::sync::Arc;
+        use tokio::sync::{broadcast, RwLock};
+
+        let (admin_broadcast_tx, _) = broadcast::channel(64);
+        let db = ChatDb::open(std::path::Path::new(":memory:")).expect("in-memory db");
+
+        ServerState {
+            config,
+            sessions: oauth::SessionStore::new(),
+            files: Arc::new(RwLock::new(std::collections::HashMap::new())),
+            active_file: Arc::new(RwLock::new(String::new())),
+            models: Arc::new(RwLock::new(vec![])),
+            rooms: Arc::new(RwLock::new(HashMap::new())),
+            global_default_model: Arc::new(RwLock::new(String::new())),
+            admin_broadcast_tx,
+            chat_db: db,
+            data_dir: std::path::PathBuf::from("/tmp/rune-test"),
+            oauth_codes: crate::serve::oauth_pkce::AuthCodeStore::new(),
+            oauth_tokens: crate::serve::oauth_pkce::OAuthTokenStore::new(),
+            oauth_providers: Arc::new(RwLock::new(HashMap::new())),
+            mcp_sessions: crate::mcp::mcp_session::McpSessionStore::new(),
+            provider_registry: Arc::new(tokio::sync::RwLock::new(
+                crate::provider::ProviderRegistry::new(),
+            )),
+        }
+    }
+
     #[tokio::test]
     async fn test_index_handler_returns_html_or_500() {
         use axum::http::{Request, StatusCode};
@@ -1214,9 +1258,11 @@ mod tests {
         }
 
         // Test login_handler (/) and index_handler (/edit/) separately
+        let state = test_server_state(RuneConfig::default());
         let app = Router::new()
             .route("/", get(login_handler))
-            .route("/edit/", get(index_handler));
+            .route("/edit/", get(index_handler))
+            .with_state(state);
         let req = Request::builder()
             .uri("/")
             .body(axum::body::Body::empty())
@@ -1237,6 +1283,41 @@ mod tests {
             resp2.status() == StatusCode::OK || resp2.status() == StatusCode::INTERNAL_SERVER_ERROR,
             "unexpected status for index_handler: {}",
             resp2.status()
+        );
+    }
+
+    #[tokio::test]
+    async fn test_login_handler_custom_title_and_desc() {
+        use axum::http::{Request, StatusCode};
+        use axum::{routing::get, Router};
+        use http_body_util::BodyExt;
+        use tower::ServiceExt;
+
+        let mut config = RuneConfig::default();
+        config.notes.title = Some("Custom Portal".to_string());
+        config.notes.desc = Some("Custom Login Portal Description".to_string());
+        let state = test_server_state(config);
+
+        let app = Router::new()
+            .route("/", get(login_handler))
+            .with_state(state);
+
+        let req = Request::builder()
+            .uri("/")
+            .body(axum::body::Body::empty())
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body = String::from_utf8_lossy(&resp.into_body().collect().await.unwrap().to_bytes())
+            .to_string();
+
+        assert!(
+            body.contains("<title>Custom Portal</title>"),
+            "login.html should have custom title"
+        );
+        assert!(
+            body.contains(r#"<meta name="description" content="Custom Login Portal Description">"#),
+            "login.html should have custom meta description"
         );
     }
 

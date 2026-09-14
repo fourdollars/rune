@@ -2287,13 +2287,38 @@ pub async fn public_notes_list_handler(
         items.push_str("<p class='empty'>No public notes available.</p>");
     }
 
+    let title = state
+        .config
+        .notes
+        .title
+        .as_deref()
+        .unwrap_or("Public Notes");
+    let desc = state.config.notes.desc.as_deref();
+
+    let title_escaped = html_escape(title);
+    let desc_meta = match desc {
+        Some(d) if !d.trim().is_empty() => {
+            format!(
+                "<meta name=\"description\" content=\"{}\">\n",
+                html_escape(d)
+            )
+        }
+        _ => String::new(),
+    };
+    let desc_body = match desc {
+        Some(d) if !d.trim().is_empty() => {
+            format!("<p class=\"desc\">{}</p>\n", html_escape(d))
+        }
+        _ => String::new(),
+    };
+
     let html = format!(
         r#"<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Public Notes</title>
+{desc_meta}<title>{title}</title>
 <style>
   :root {{ color-scheme: light dark; }}
   @media (prefers-color-scheme: dark) {{
@@ -2301,6 +2326,7 @@ pub async fn public_notes_list_handler(
     .container {{ background: #181825; border: 1px solid #313244; }}
     a {{ color: #89b4fa; }}
     h1,h3 {{ color: #cba6f7; }}
+    .desc {{ color: #a6adc8; }}
     .note-section {{ border-bottom-color: #313244; }}
     footer {{ border-top-color: #313244; }}
   }}
@@ -2309,6 +2335,7 @@ pub async fn public_notes_list_handler(
     .container {{ background: #fff; border: 1px solid #e1e4e8; }}
     a {{ color: #0366d6; }}
     h1,h3 {{ color: #24292e; }}
+    .desc {{ color: #57606a; }}
     .note-section {{ border-bottom-color: #eaecef; }}
     footer {{ border-top-color: #eaecef; }}
   }}
@@ -2316,6 +2343,7 @@ pub async fn public_notes_list_handler(
   body {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif; margin: 0; padding: 20px; }}
   .container {{ max-width: 860px; margin: 0 auto; padding: 32px 40px; border-radius: 8px; }}
   h1 {{ font-size: 2em; margin-top: 0; margin-bottom: 24px; font-weight: 600; line-height: 1.25; padding-bottom: .3em; border-bottom: 1px solid; }}
+  .desc {{ font-size: 15px; margin: -12px 0 24px; opacity: 0.8; line-height: 1.5; }}
   h3 {{ font-size: 1.25em; margin: 0 0 8px; font-weight: 600; }}
   .note-section {{ margin-bottom: 20px; padding-bottom: 16px; border-bottom: 1px solid; }}
   .note-section:last-of-type {{ border-bottom: none; padding-bottom: 0; margin-bottom: 0; }}
@@ -2337,13 +2365,16 @@ pub async fn public_notes_list_handler(
 </head>
 <body>
 <div class="container">
-  <h1>Public Notes</h1>
-  {}
+  <h1>{title}</h1>
+  {desc_body}{items}
   <footer><a href="/">Sign In</a> · Wrought by <a href="https://fourdollars.github.io/rune/">ᚱᚢᚾᛖ</a></footer>
 </div>
 </body>
 </html>"#,
-        items
+        desc_meta = desc_meta,
+        title = title_escaped,
+        desc_body = desc_body,
+        items = items
     );
     axum::response::Html(html)
 }
@@ -2774,7 +2805,7 @@ async fn first_heading_from_file(file_path: &std::path::Path) -> Option<String> 
     None
 }
 
-fn html_escape(s: &str) -> String {
+pub(crate) fn html_escape(s: &str) -> String {
     s.replace('&', "&amp;")
         .replace('<', "&lt;")
         .replace('>', "&gt;")
@@ -5547,6 +5578,75 @@ mod isolation_tests {
         assert!(!body.contains("priv-note"), "Should NOT list private note");
         // Links must use /notes/ prefix
         assert!(body.contains("/notes/"), "Links must use /notes/ prefix");
+    }
+
+    #[tokio::test]
+    async fn test_public_notes_list_handler_custom_title_and_desc() {
+        use axum::body::Body;
+        use axum::{routing::get, Router};
+        use http_body_util::BodyExt;
+        use tower::ServiceExt;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let (admin_broadcast_tx, _) = broadcast::channel(256);
+        let db = crate::serve::db::ChatDb::open(&tmp.path().join("t.db")).unwrap();
+        let mut config = crate::config::RuneConfig::default();
+        config.notes.title = Some("Awesome Knowledge Base".to_string());
+        config.notes.desc = Some("Collection of public research & notes".to_string());
+
+        let state = crate::serve::ServerState {
+            config,
+            sessions: crate::serve::oauth::SessionStore::new(),
+            files: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
+            active_file: Arc::new(tokio::sync::RwLock::new(String::new())),
+            models: Arc::new(tokio::sync::RwLock::new(vec![])),
+            rooms: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
+            global_default_model: Arc::new(tokio::sync::RwLock::new("m1".into())),
+            admin_broadcast_tx,
+            chat_db: db,
+            data_dir: tmp.path().join(".rune"),
+            oauth_codes: crate::serve::oauth_pkce::AuthCodeStore::new(),
+            oauth_tokens: crate::serve::oauth_pkce::OAuthTokenStore::new(),
+            oauth_providers: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
+            mcp_sessions: crate::mcp::mcp_session::McpSessionStore::new(),
+            provider_registry: Arc::new(tokio::sync::RwLock::new(
+                crate::provider::ProviderRegistry::new(),
+            )),
+        };
+
+        let app = Router::new()
+            .route("/notes", get(crate::serve::api::public_notes_list_handler))
+            .route("/notes/", get(crate::serve::api::public_notes_list_handler))
+            .with_state(state);
+
+        let req = axum::http::Request::builder()
+            .method("GET")
+            .uri("/notes")
+            .body(Body::empty())
+            .unwrap();
+        let resp = app.clone().oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), axum::http::StatusCode::OK);
+        let body = String::from_utf8_lossy(&resp.into_body().collect().await.unwrap().to_bytes())
+            .to_string();
+
+        assert!(
+            body.contains("<title>Awesome Knowledge Base</title>"),
+            "Title tag should be customized"
+        );
+        assert!(
+            body.contains(
+                r#"<meta name="description" content="Collection of public research &amp; notes">"#
+            ),
+            "Meta description should be customized"
+        );
+        assert!(
+            body.contains("<h1>Awesome Knowledge Base</h1>"),
+            "h1 should be customized"
+        );
+        assert!(
+            body.contains(r#"<p class="desc">Collection of public research &amp; notes</p>"#),
+            "Description paragraph should be displayed after title"
+        );
     }
 
     #[tokio::test]

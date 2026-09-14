@@ -53,6 +53,8 @@ bind = "0.0.0.0"
 model = "openrouter/auto,deepseek/deepseek-chat" # single model or comma-separated allowed models
 thinking = "low"
 agent_skills = false # Opt-in: enable read_file, write_file, execute_cmd, fetch_url and skills
+title = "My Team Notes" # Optional custom page title
+desc = "My Notes Description" # Optional custom page description
 
 # GitHub OAuth 2.0 Login
 [notes.github]

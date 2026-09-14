@@ -28,6 +28,8 @@ struct ExistingConfig {
     notes_local_users: Option<String>,
     notes_local_guests: Option<String>,
     notes_model: Option<String>,
+    notes_title: Option<String>,
+    notes_desc: Option<String>,
     openrouter_zdr: Option<bool>,
 }
 
@@ -85,6 +87,8 @@ fn load_existing_config(path: &std::path::Path) -> ExistingConfig {
             notes_local_users: None,
             notes_local_guests: None,
             notes_model: None,
+            notes_title: None,
+            notes_desc: None,
             openrouter_zdr: None,
         };
     }
@@ -233,6 +237,14 @@ fn load_existing_config(path: &std::path::Path) -> ExistingConfig {
             }),
         notes_model: notes_table
             .and_then(|t| t.get("model"))
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string()),
+        notes_title: notes_table
+            .and_then(|t| t.get("title"))
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string()),
+        notes_desc: notes_table
+            .and_then(|t| t.get("desc").or_else(|| t.get("description")))
             .and_then(|v| v.as_str())
             .map(|s| s.to_string()),
         openrouter_zdr: table.get("openrouter_zdr").and_then(|v| v.as_bool()),
@@ -1483,6 +1495,8 @@ pub async fn run_setup(config_path_override: Option<String>) {
     let mut notes_local_users = "".to_string();
     let mut notes_local_guests = "".to_string();
     let mut notes_model = "".to_string();
+    let mut notes_title = "".to_string();
+    let mut notes_desc = "".to_string();
     let mut enable_github = false;
     let mut enable_local = false;
 
@@ -1506,6 +1520,32 @@ pub async fn run_setup(config_path_override: Option<String>) {
             bind_default.to_string()
         } else {
             bind_input.trim().to_string()
+        };
+
+        let title_default = existing.notes_title.as_deref().unwrap_or("");
+        let title_prompt = if title_default.is_empty() {
+            "  Page title (optional, Enter to skip): ".to_string()
+        } else {
+            format!("  Page title [{}]: ", title_default)
+        };
+        let title_input = prompt(&title_prompt).unwrap_or_default();
+        notes_title = if title_input.trim().is_empty() {
+            title_default.to_string()
+        } else {
+            title_input.trim().to_string()
+        };
+
+        let desc_default = existing.notes_desc.as_deref().unwrap_or("");
+        let desc_prompt = if desc_default.is_empty() {
+            "  Page description (optional, Enter to skip): ".to_string()
+        } else {
+            format!("  Page description [{}]: ", desc_default)
+        };
+        let desc_input = prompt(&desc_prompt).unwrap_or_default();
+        notes_desc = if desc_input.trim().is_empty() {
+            desc_default.to_string()
+        } else {
+            desc_input.trim().to_string()
         };
 
         println!("  Select authentication methods for Notes:");
@@ -1820,6 +1860,12 @@ pub async fn run_setup(config_path_override: Option<String>) {
         toml_content.push_str("[notes]\n");
         toml_content.push_str(&format!("port = {}\n", notes_port));
         toml_content.push_str(&format!("bind = \"{}\"\n", notes_bind));
+        if !notes_title.is_empty() {
+            toml_content.push_str(&format!("title = \"{}\"\n", notes_title));
+        }
+        if !notes_desc.is_empty() {
+            toml_content.push_str(&format!("desc = \"{}\"\n", notes_desc));
+        }
         if !notes_model.is_empty() {
             toml_content.push_str(&format!("model = \"{}\"\n", notes_model));
         }
@@ -2499,5 +2545,29 @@ allowed_domains = ["example.com"]"#;
         // Since both "another/free-model" and "nvidia/llama-nemotron-embed-vl-1b-v2:free" have sum = 0.0,
         // "another/free-model" should be chosen because it comes first alphabetically.
         assert_eq!(default_model.unwrap(), "another/free-model");
+    }
+
+    #[test]
+    fn test_load_existing_config_notes_title_and_desc() {
+        let tmp = tempfile::tempdir().unwrap();
+        let config_path = tmp.path().join("rune.toml");
+        std::fs::write(
+            &config_path,
+            r#"
+[notes]
+port = 9527
+bind = "0.0.0.0"
+title = "Team Knowledge Base"
+desc = "Shared project documentation"
+"#,
+        )
+        .unwrap();
+
+        let loaded = load_existing_config(&config_path);
+        assert_eq!(loaded.notes_title.as_deref(), Some("Team Knowledge Base"));
+        assert_eq!(
+            loaded.notes_desc.as_deref(),
+            Some("Shared project documentation")
+        );
     }
 }
