@@ -522,6 +522,127 @@ impl ProviderUsageStats {
         Self::from_copilot_token_json(json, session_tokens, session_requests)
     }
 
+    pub fn from_openrouter_json(
+        key_json: Option<&serde_json::Value>,
+        credits_json: Option<&serde_json::Value>,
+        session_tokens: u64,
+        session_requests: u64,
+    ) -> Self {
+        let label = key_json
+            .and_then(|j| j.pointer("/data/label"))
+            .and_then(|v| v.as_str())
+            .filter(|s| !s.is_empty())
+            .map(|s| s.to_string());
+        let is_free_tier = key_json
+            .and_then(|j| j.pointer("/data/is_free_tier"))
+            .and_then(|v| v.as_bool());
+        let key_usage = key_json
+            .and_then(|j| j.pointer("/data/usage"))
+            .and_then(|v| v.as_f64());
+        let key_limit = key_json
+            .and_then(|j| j.pointer("/data/limit"))
+            .and_then(|v| v.as_f64());
+        let rate_limit = key_json
+            .and_then(|j| j.pointer("/data/rate_limit"))
+            .cloned();
+
+        let total_credits = credits_json
+            .and_then(|j| j.pointer("/data/total_credits"))
+            .and_then(|v| v.as_f64());
+        let total_usage = credits_json
+            .and_then(|j| j.pointer("/data/total_usage"))
+            .and_then(|v| v.as_f64());
+
+        let plan_name = if let Some(ref l) = label {
+            format!("OpenRouter ({})", l)
+        } else if is_free_tier == Some(true) {
+            "OpenRouter (Free)".to_string()
+        } else {
+            "OpenRouter API".to_string()
+        };
+
+        let sku = if is_free_tier == Some(true) {
+            Some("free".to_string())
+        } else {
+            None
+        };
+
+        // Determine balance and entitlement in USD
+        let account_balance = match (total_credits, total_usage) {
+            (Some(c), Some(u)) => Some((c - u).max(0.0)),
+            _ => None,
+        };
+        let key_balance = match (key_limit, key_usage) {
+            (Some(l), Some(u)) => Some((l - u).max(0.0)),
+            _ => None,
+        };
+
+        let effective_balance = match (key_balance, account_balance) {
+            (Some(kb), Some(ab)) => Some(kb.min(ab)),
+            (Some(kb), None) => Some(kb),
+            (None, Some(ab)) => Some(ab),
+            (None, None) => None,
+        };
+
+        let effective_entitlement = match (key_limit, total_credits) {
+            (Some(kl), Some(tc)) => Some(kl.min(tc)),
+            (Some(kl), None) => Some(kl),
+            (None, Some(tc)) => Some(tc),
+            (None, None) => None,
+        };
+
+        let quota_percent_remaining = match (effective_balance, effective_entitlement) {
+            (Some(bal), Some(ent)) if ent > 0.0 => Some(((bal / ent) * 100.0).clamp(0.0, 100.0)),
+            _ => None,
+        };
+
+        // Store cents (u64) in quota_remaining / quota_entitlement for integer compatibility
+        let quota_remaining = effective_balance.map(|b| (b * 100.0).round().max(0.0) as u64);
+        let quota_entitlement = effective_entitlement.map(|e| (e * 100.0).round().max(0.0) as u64);
+
+        let mut details = serde_json::Map::new();
+        if let Some(bal) = effective_balance {
+            details.insert("balance".to_string(), serde_json::json!(bal));
+        }
+        if let Some(u) = key_usage.or(total_usage) {
+            details.insert("usage".to_string(), serde_json::json!(u));
+        }
+        if let Some(l) = key_limit {
+            details.insert("limit".to_string(), serde_json::json!(l));
+        }
+        if let Some(tc) = total_credits {
+            details.insert("total_credits".to_string(), serde_json::json!(tc));
+        }
+        if let Some(tu) = total_usage {
+            details.insert("total_usage".to_string(), serde_json::json!(tu));
+        }
+        if let Some(l) = label {
+            details.insert("label".to_string(), serde_json::Value::String(l));
+        }
+        if let Some(free) = is_free_tier {
+            details.insert("is_free_tier".to_string(), serde_json::Value::Bool(free));
+        }
+        if let Some(rl) = rate_limit {
+            details.insert("rate_limit".to_string(), rl);
+        }
+
+        Self {
+            provider: "openrouter".to_string(),
+            plan_name,
+            sku,
+            session_tokens,
+            session_requests,
+            quota_percent_remaining,
+            quota_remaining,
+            quota_entitlement,
+            details: if details.is_empty() {
+                None
+            } else {
+                Some(serde_json::Value::Object(details))
+            },
+        }
+    }
+
     /// Formatted single-line summary for CLI output.
     pub fn summary_line(&self) -> String {
         let formatted_tokens = if self.session_tokens >= 1000 {
@@ -535,9 +656,35 @@ impl ProviderUsageStats {
             self.quota_entitlement,
         ) {
             (Some(pct), Some(rem), Some(ent)) => {
-                format!(" | Quota: {:.1}% ({}/{})", pct, rem, ent)
+                if self.provider == "openrouter" {
+                    format!(
+                        " | Balance: ${:.2}/${:.2} ({:.1}%)",
+                        rem as f64 / 100.0,
+                        ent as f64 / 100.0,
+                        pct
+                    )
+                } else {
+                    format!(" | Quota: {:.1}% ({}/{})", pct, rem, ent)
+                }
             }
-            _ => String::new(),
+            (Some(pct), _, _) => {
+                format!(" | Quota: {:.1}%", pct)
+            }
+            _ => {
+                if self.provider == "openrouter" {
+                    if let Some(ref details) = self.details {
+                        if let Some(usage) = details.get("usage").and_then(|v| v.as_f64()) {
+                            format!(" | Usage: ${:.2}", usage)
+                        } else {
+                            String::new()
+                        }
+                    } else {
+                        String::new()
+                    }
+                } else {
+                    String::new()
+                }
+            }
         };
         format!(
             "Provider: {} ({}) | Session Tokens: {} | Requests: {}{}",
@@ -613,6 +760,9 @@ pub struct OpenAiProvider {
     pub provider_name: String,
     pub openrouter_zdr: bool,
     pub reasoning_models: std::sync::Mutex<std::collections::HashSet<String>>,
+    pub usage_stats: std::sync::Mutex<Option<ProviderUsageStats>>,
+    pub request_count: std::sync::atomic::AtomicU64,
+    pub session_tokens: std::sync::atomic::AtomicU64,
 }
 
 impl OpenAiProvider {
@@ -635,7 +785,78 @@ impl OpenAiProvider {
             provider_name: name,
             openrouter_zdr,
             reasoning_models: std::sync::Mutex::new(std::collections::HashSet::new()),
+            usage_stats: std::sync::Mutex::new(None),
+            request_count: std::sync::atomic::AtomicU64::new(0),
+            session_tokens: std::sync::atomic::AtomicU64::new(0),
         }
+    }
+
+    pub fn record_usage(&self, usage: &TokenUsage) {
+        self.request_count
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        if usage.total_tokens > 0 {
+            self.session_tokens.fetch_add(
+                usage.total_tokens as u64,
+                std::sync::atomic::Ordering::Relaxed,
+            );
+        }
+    }
+
+    pub async fn fetch_openrouter_usage(
+        api_key: &str,
+        base_url: &str,
+        client: &Client,
+    ) -> Option<ProviderUsageStats> {
+        let root_url = base_url.trim_end_matches('/');
+
+        // 1. Fetch /auth/key
+        let key_url = format!("{}/auth/key", root_url);
+        let key_json: Option<serde_json::Value> = async {
+            let resp = client
+                .get(&key_url)
+                .bearer_auth(api_key)
+                .header("HTTP-Referer", "https://fourdollars.github.io/rune/")
+                .header("X-Title", "Rune AI Agent")
+                .timeout(std::time::Duration::from_secs(10))
+                .send()
+                .await
+                .ok()?;
+            if !resp.status().is_success() {
+                return None;
+            }
+            resp.json::<serde_json::Value>().await.ok()
+        }
+        .await;
+
+        // 2. Fetch /credits
+        let credits_url = format!("{}/credits", root_url);
+        let credits_json: Option<serde_json::Value> = async {
+            let resp = client
+                .get(&credits_url)
+                .bearer_auth(api_key)
+                .header("HTTP-Referer", "https://fourdollars.github.io/rune/")
+                .header("X-Title", "Rune AI Agent")
+                .timeout(std::time::Duration::from_secs(10))
+                .send()
+                .await
+                .ok()?;
+            if !resp.status().is_success() {
+                return None;
+            }
+            resp.json::<serde_json::Value>().await.ok()
+        }
+        .await;
+
+        if key_json.is_none() && credits_json.is_none() {
+            return None;
+        }
+
+        Some(ProviderUsageStats::from_openrouter_json(
+            key_json.as_ref(),
+            credits_json.as_ref(),
+            0,
+            0,
+        ))
     }
 
     fn supports_reasoning(&self, model: &str) -> bool {
@@ -677,6 +898,38 @@ impl OpenAiProvider {
 impl Provider for OpenAiProvider {
     fn name(&self) -> &str {
         &self.provider_name
+    }
+
+    fn usage(&self) -> Option<ProviderUsageStats> {
+        let is_openrouter =
+            self.provider_name == "openrouter" || self.base_url.contains("openrouter.ai");
+        if is_openrouter {
+            let mut stats =
+                self.usage_stats
+                    .lock()
+                    .ok()?
+                    .clone()
+                    .unwrap_or_else(|| ProviderUsageStats {
+                        provider: "openrouter".to_string(),
+                        plan_name: "OpenRouter API".to_string(),
+                        sku: None,
+                        session_tokens: 0,
+                        session_requests: 0,
+                        quota_percent_remaining: None,
+                        quota_remaining: None,
+                        quota_entitlement: None,
+                        details: None,
+                    });
+            stats.session_requests = self
+                .request_count
+                .load(std::sync::atomic::Ordering::Relaxed);
+            stats.session_tokens = self
+                .session_tokens
+                .load(std::sync::atomic::Ordering::Relaxed);
+            Some(stats)
+        } else {
+            None
+        }
     }
 
     fn list_models(&self) -> Pin<Box<dyn Future<Output = Result<Vec<ModelInfo>>> + Send + '_>> {
@@ -959,6 +1212,16 @@ impl Provider for OpenAiProvider {
                 *cache = reasoning_set;
             }
 
+            if is_openrouter {
+                if let Some(stats) =
+                    Self::fetch_openrouter_usage(&api_key, &base_url, &client).await
+                {
+                    if let Ok(mut lock) = self.usage_stats.lock() {
+                        *lock = Some(stats);
+                    }
+                }
+            }
+
             Ok(models)
         })
     }
@@ -1111,12 +1374,14 @@ impl Provider for OpenAiProvider {
             debug!(model = %model, content_len = content.as_ref().map(|s| s.len()).unwrap_or(0),
                    tool_calls = tool_calls.len(), tokens = usage.total_tokens, "LLM response received");
 
-            Ok(LlmResponse {
+            let res = LlmResponse {
                 content,
                 tool_calls,
                 usage,
                 model,
-            })
+            };
+            self.record_usage(&res.usage);
+            Ok(res)
         })
     }
 
@@ -1220,7 +1485,9 @@ impl Provider for OpenAiProvider {
 
             let builder = builder.json(&payload);
 
-            stream_openai_compatible_response(builder, tx).await
+            let res = stream_openai_compatible_response(builder, tx).await?;
+            self.record_usage(&res.usage);
+            Ok(res)
         })
     }
 }
@@ -5418,6 +5685,125 @@ mod copilot_usage_tests {
         reg2.register(Box::new(copilot_provider));
         let reg_usage = reg2.copilot_usage().unwrap();
         assert_eq!(reg_usage.plan_name, "Copilot Pro");
+    }
+
+    #[test]
+    fn test_openrouter_usage_stats_parsing_with_limit_and_credits() {
+        let key_json = serde_json::json!({
+            "data": {
+                "label": "Team Key",
+                "usage": 2.0,
+                "limit": 10.0,
+                "is_free_tier": false,
+                "rate_limit": {
+                    "requests": 50,
+                    "interval": "10s"
+                }
+            }
+        });
+        let credits_json = serde_json::json!({
+            "data": {
+                "total_credits": 50.0,
+                "total_usage": 10.0
+            }
+        });
+
+        let stats =
+            ProviderUsageStats::from_openrouter_json(Some(&key_json), Some(&credits_json), 1500, 2);
+        assert_eq!(stats.provider, "openrouter");
+        assert_eq!(stats.plan_name, "OpenRouter (Team Key)");
+        assert_eq!(stats.sku, None);
+        assert_eq!(stats.session_tokens, 1500);
+        assert_eq!(stats.session_requests, 2);
+        assert_eq!(stats.quota_percent_remaining, Some(80.0));
+        assert_eq!(stats.quota_remaining, Some(800)); // 8.00 USD in cents
+        assert_eq!(stats.quota_entitlement, Some(1000)); // 10.00 USD in cents
+        assert_eq!(
+            stats.summary_line(),
+            "Provider: openrouter (OpenRouter (Team Key)) | Session Tokens: 1.5k | Requests: 2 | Balance: $8.00/$10.00 (80.0%)"
+        );
+    }
+
+    #[test]
+    fn test_openrouter_usage_stats_parsing_credits_only() {
+        let credits_json = serde_json::json!({
+            "data": {
+                "total_credits": 100.0,
+                "total_usage": 25.0
+            }
+        });
+
+        let stats = ProviderUsageStats::from_openrouter_json(None, Some(&credits_json), 0, 0);
+        assert_eq!(stats.provider, "openrouter");
+        assert_eq!(stats.plan_name, "OpenRouter API");
+        assert_eq!(stats.quota_percent_remaining, Some(75.0));
+        assert_eq!(stats.quota_remaining, Some(7500)); // 75.00 USD in cents
+        assert_eq!(stats.quota_entitlement, Some(10000)); // 100.00 USD in cents
+    }
+
+    #[test]
+    fn test_openrouter_usage_stats_free_tier_or_usage_only() {
+        let key_json = serde_json::json!({
+            "data": {
+                "label": "",
+                "usage": 0.42,
+                "limit": serde_json::Value::Null,
+                "is_free_tier": true
+            }
+        });
+
+        let stats = ProviderUsageStats::from_openrouter_json(Some(&key_json), None, 50, 1);
+        assert_eq!(stats.provider, "openrouter");
+        assert_eq!(stats.plan_name, "OpenRouter (Free)");
+        assert_eq!(stats.sku.as_deref(), Some("free"));
+        assert_eq!(stats.quota_percent_remaining, None);
+        assert_eq!(stats.quota_remaining, None);
+        assert_eq!(
+            stats.summary_line(),
+            "Provider: openrouter (OpenRouter (Free)) | Session Tokens: 50 | Requests: 1 | Usage: $0.42"
+        );
+    }
+
+    #[test]
+    fn test_openrouter_provider_usage_tracking() {
+        let provider = OpenAiProvider::new(
+            "openrouter".to_string(),
+            "sk-or-test".to_string(),
+            None,
+            false,
+        );
+        let usage = provider.usage().unwrap();
+        assert_eq!(usage.provider, "openrouter");
+        assert_eq!(usage.plan_name, "OpenRouter API");
+        assert_eq!(usage.session_tokens, 0);
+        assert_eq!(usage.session_requests, 0);
+
+        provider.record_usage(&TokenUsage {
+            prompt_tokens: 150,
+            completion_tokens: 50,
+            total_tokens: 200,
+        });
+
+        let usage_after = provider.usage().unwrap();
+        assert_eq!(usage_after.session_tokens, 200);
+        assert_eq!(usage_after.session_requests, 1);
+
+        let key_json = serde_json::json!({
+            "data": {
+                "label": "Demo Key",
+                "usage": 1.0,
+                "limit": 5.0,
+                "is_free_tier": false
+            }
+        });
+        let parsed_stats = ProviderUsageStats::from_openrouter_json(Some(&key_json), None, 0, 0);
+        *provider.usage_stats.lock().unwrap() = Some(parsed_stats);
+
+        let usage_with_stats = provider.usage().unwrap();
+        assert_eq!(usage_with_stats.plan_name, "OpenRouter (Demo Key)");
+        assert_eq!(usage_with_stats.session_tokens, 200);
+        assert_eq!(usage_with_stats.session_requests, 1);
+        assert_eq!(usage_with_stats.quota_percent_remaining, Some(80.0));
     }
 }
 

@@ -170,8 +170,11 @@ globalThis.updateUsageIndicator = function updateUsageIndicator() {
         return;
     }
 
+    const isOpenRouter = providerUsage.provider === 'openrouter';
     const hasRemaining = typeof providerUsage.quota_remaining === 'number';
     const hasPercent = typeof providerUsage.quota_percent_remaining === 'number';
+    const details = providerUsage.details || {};
+    const hasUsdBalance = typeof details.balance === 'number';
 
     let percent = hasPercent ? providerUsage.quota_percent_remaining : null;
     if (percent === null && hasRemaining && providerUsage.quota_entitlement) {
@@ -181,7 +184,13 @@ globalThis.updateUsageIndicator = function updateUsageIndicator() {
     let tooltip = 'AI Credits';
     let iconName = 'battery';
 
-    if (hasRemaining && percent !== null) {
+    if (isOpenRouter && hasUsdBalance && percent !== null) {
+        tooltip = `OpenRouter Balance: $${details.balance.toFixed(2)} (${Math.round(percent)}%)`;
+    } else if (isOpenRouter && hasUsdBalance) {
+        tooltip = `OpenRouter Balance: $${details.balance.toFixed(2)}`;
+    } else if (isOpenRouter && typeof details.usage === 'number') {
+        tooltip = `OpenRouter Usage: $${details.usage.toFixed(2)}`;
+    } else if (hasRemaining && percent !== null) {
         tooltip = `AI Credits: ${formatCredits(providerUsage.quota_remaining)} (${Math.round(percent)}%)`;
     } else if (hasRemaining) {
         tooltip = `AI Credits: ${formatCredits(providerUsage.quota_remaining)}`;
@@ -221,17 +230,31 @@ globalThis.updateUsageIndicator = function updateUsageIndicator() {
     }
 
     // Update Popover content
+    const popoverTitle = document.querySelector('.quota-popover-title');
     const popoverRemaining = document.getElementById('quota-popover-remaining');
     const popoverPlan = document.getElementById('quota-popover-plan');
     const popoverTokens = document.getElementById('quota-popover-tokens');
     const popoverPercent = document.getElementById('quota-popover-percent');
     const progressFill = document.getElementById('quota-progress-fill');
 
+    if (popoverTitle) {
+        popoverTitle.textContent = isOpenRouter ? 'OpenRouter Credits' : 'AI Credits';
+    }
+
     if (popoverRemaining) {
-        if (hasRemaining && providerUsage.quota_entitlement) {
+        if (isOpenRouter && hasUsdBalance) {
+            const entitlementUsd = typeof details.limit === 'number' ? details.limit : (typeof details.total_credits === 'number' ? details.total_credits : null);
+            if (entitlementUsd !== null) {
+                popoverRemaining.textContent = `$${details.balance.toFixed(2)} / $${entitlementUsd.toFixed(2)}`;
+            } else {
+                popoverRemaining.textContent = `$${details.balance.toFixed(2)}`;
+            }
+        } else if (hasRemaining && providerUsage.quota_entitlement) {
             popoverRemaining.textContent = `${providerUsage.quota_remaining.toLocaleString()} / ${providerUsage.quota_entitlement.toLocaleString()}`;
         } else if (hasRemaining) {
             popoverRemaining.textContent = providerUsage.quota_remaining.toLocaleString();
+        } else if (isOpenRouter && typeof details.usage === 'number') {
+            popoverRemaining.textContent = `Used $${details.usage.toFixed(2)}`;
         } else {
             popoverRemaining.textContent = 'Active';
         }

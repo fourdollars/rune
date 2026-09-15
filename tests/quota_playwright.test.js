@@ -200,6 +200,44 @@ mode = "unrestricted"
     await page.click('#quota-indicator');
     await page.waitForTimeout(200);
 
+    // 5b. Test simulating OpenRouter providerUsage with USD balance and limit
+    console.log('Simulating OpenRouter providerUsage with $8.50 / $10.00 balance...');
+    await page.evaluate(() => {
+      window.providerUsage = {
+        provider: 'openrouter',
+        plan_name: 'OpenRouter (Team Key)',
+        quota_remaining: 850,
+        quota_entitlement: 1000,
+        quota_percent_remaining: 85.0,
+        session_tokens: 2500,
+        session_requests: 6,
+        details: {
+          balance: 8.5,
+          limit: 10.0,
+          usage: 1.5,
+          total_credits: 50.0,
+          total_usage: 10.0
+        }
+      };
+      window.updateUsageIndicator();
+    });
+    await page.waitForTimeout(300);
+
+    const openrouterTitle = await page.$eval('#quota-indicator', el => el.getAttribute('title') || '');
+    console.log('OpenRouter tooltip:', openrouterTitle);
+    assert(openrouterTitle.includes('$8.50') && openrouterTitle.includes('85%'), `OpenRouter tooltip must show $8.50 and 85%: ${openrouterTitle}`);
+
+    await page.click('#quota-indicator');
+    await page.waitForTimeout(300);
+    const orRemaining = await page.$eval('#quota-popover-remaining', el => el.textContent);
+    const orPlan = await page.$eval('#quota-popover-plan', el => el.textContent);
+    console.log('OpenRouter popover remaining:', orRemaining, 'Plan:', orPlan);
+    assert(orRemaining.includes('$8.50 / $10.00'), `Popover remaining must show $8.50 / $10.00: ${orRemaining}`);
+    assert(orPlan.includes('OpenRouter (Team Key)'), `Popover plan must show OpenRouter (Team Key): ${orPlan}`);
+
+    await page.click('#quota-indicator');
+    await page.waitForTimeout(200);
+
     // 6. Test opening #model-modal (Model Switch Modal)
     console.log('Testing #model-modal...');
     await page.evaluate(() => {
