@@ -146,6 +146,8 @@ pub enum SseMsg {
         context_window: u32,
         steps: u32,
         tool_calls: u32,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        usage: Option<crate::provider::ProviderUsageStats>,
     },
     #[serde(rename = "chat_message")]
     ChatMessage { nickname: String, content: String },
@@ -199,6 +201,8 @@ pub enum SseMsg {
         models: Vec<ModelListEntry>,
         active: String,
         thinking: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        usage: Option<crate::provider::ProviderUsageStats>,
     },
     #[serde(rename = "model_changed")]
     ModelChanged {
@@ -640,10 +644,12 @@ pub async fn events_handler(
             reasoning_efforts: m.reasoning_efforts.clone(),
         })
         .collect();
+    let usage = state.provider_registry.read().await.usage();
     init_msgs.push(SseMsg::ModelList {
         models: model_entries,
         active: effective,
         thinking,
+        usage,
     });
 
     // Note list — guests only see public notes
@@ -3155,6 +3161,7 @@ async fn handle_chat_message(
     // Broadcast run statistics
     let meta_model = active_model.clone();
     let meta_thinking = effective_thinking_level.clone().filter(|t| t != "off");
+    let usage = state.provider_registry.read().await.usage();
     let meta = SseMsg::ChatMeta {
         model: active_model,
         thinking: meta_thinking.clone(),
@@ -3171,6 +3178,7 @@ async fn handle_chat_message(
             .unwrap_or(agent.config.context_window as u64) as u32,
         steps: agent.step_count() as u32,
         tool_calls: agent.tool_call_count() as u32,
+        usage,
     };
     broadcast_to_room(&room, &meta);
 
@@ -3705,6 +3713,7 @@ mod tests {
             context_window: 128000,
             steps: 3,
             tool_calls: 2,
+            usage: None,
         };
         let json = serde_json::to_string(&msg).unwrap();
         assert!(json.contains(r#""type":"chat_meta""#));
@@ -3840,6 +3849,7 @@ mod tests {
             ],
             active: "gpt-4".into(),
             thinking: "off".into(),
+            usage: None,
         };
         let json = serde_json::to_string(&msg).unwrap();
         assert!(json.contains(r#""type":"model_list""#));

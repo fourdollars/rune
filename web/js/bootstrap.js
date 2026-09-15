@@ -61,6 +61,16 @@ globalThis.getSessionId = function getSessionId() {
             } else {
                 fetchNoteListAndConnect();
             }
+            // Fetch initial provider usage/credits
+            fetch('/api/usage', { credentials: 'include' })
+                .then(r => r.ok ? r.json() : null)
+                .then(u => {
+                    if (u && (u.provider || u.quota_remaining !== undefined || u.plan_name)) {
+                        providerUsage = u;
+                        updateUsageIndicator();
+                    }
+                })
+                .catch(() => {});
         } else {
             localStorage.removeItem('rune_session_id');
             window.location.href = '/?next=' + encodeURIComponent(window.location.pathname);

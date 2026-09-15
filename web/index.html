@@ -123,6 +123,15 @@
     <div id="model-modal" class="modal-overlay hidden">
         <div class="modal" role="dialog" aria-modal="true" aria-labelledby="model-modal-title">
             <h2 id="model-modal-title">Switch Model</h2>
+            <div id="model-modal-quota" class="model-modal-quota hidden">
+                <div class="model-modal-quota-header">
+                    <span class="model-modal-quota-label"><span class="quota-icon" data-icon="credit-card"></span> AI Credits</span>
+                    <span id="model-modal-quota-text" class="model-modal-quota-text"></span>
+                </div>
+                <div class="quota-progress-bar">
+                    <div id="model-modal-quota-fill" class="quota-progress-fill"></div>
+                </div>
+            </div>
             <input type="text" id="model-search-input" class="model-search-input" placeholder="Search models..." autocomplete="off" aria-label="Search models">
             <div id="model-list" class="model-list"></div>
             <div class="modal-actions">
@@ -228,6 +237,33 @@
                          <select id="thinking-select" class="thinking-select" data-action="switch-thinking" title="Thinking level" aria-label="Thinking level" style="display:none">
                             <option value="off">off</option>
                         </select>
+                        <div id="quota-indicator" class="quota-indicator hidden" role="button" tabindex="0" data-action="toggle-quota-popover" title="AI Credits Quota" aria-label="AI Credits Quota" aria-haspopup="dialog" aria-expanded="false">
+                            <span class="quota-icon" data-icon="zap"></span>
+                            <span id="quota-text" class="quota-text"></span>
+                            <div id="quota-popover" class="quota-popover hidden" role="dialog" aria-modal="false" aria-label="Quota details">
+                                <div class="quota-popover-header">
+                                    <span class="quota-popover-title">AI Credits</span>
+                                    <span id="quota-popover-percent" class="quota-popover-percent"></span>
+                                </div>
+                                <div class="quota-progress-bar">
+                                    <div id="quota-progress-fill" class="quota-progress-fill"></div>
+                                </div>
+                                <div class="quota-popover-details">
+                                    <div class="quota-popover-row">
+                                        <span class="quota-label">Remaining:</span>
+                                        <span id="quota-popover-remaining" class="quota-val"></span>
+                                    </div>
+                                    <div class="quota-popover-row">
+                                        <span class="quota-label">Plan:</span>
+                                        <span id="quota-popover-plan" class="quota-val"></span>
+                                    </div>
+                                    <div class="quota-popover-row">
+                                        <span class="quota-label">Session Tokens:</span>
+                                        <span id="quota-popover-tokens" class="quota-val"></span>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
                     </div>
                     <div class="chat-header-actions">
                          <div class="online-users-wrapper">

@@ -310,11 +310,11 @@ pub async fn run(config: RuneConfig, opts: NotesOptions) {
     // Always query the provider for model metadata (reasoning_efforts, context_window).
     // If models were explicitly configured, use discovery only to enrich their metadata.
     // If no models were configured, use the discovered list or fall back to the default.
-    {
-        let mut config_for_discovery = config.clone();
-        config_for_discovery.model = serve_model.clone();
-        match crate::serve::api::build_provider_pub(&config_for_discovery) {
-            Ok(registry) => match registry.list_models().await {
+    let mut config_for_discovery = config.clone();
+    config_for_discovery.model = serve_model.clone();
+    let initial_registry = match crate::serve::api::build_provider_pub(&config_for_discovery) {
+        Ok(registry) => {
+            match registry.list_models().await {
                 Ok(discovered) if !discovered.is_empty() => {
                     if models.is_empty() {
                         eprintln!("  ✓ Discovered {} models from provider", discovered.len());
@@ -388,40 +388,41 @@ pub async fn run(config: RuneConfig, opts: NotesOptions) {
                         }];
                     }
                 }
-            },
-            Err(e) => {
-                if models.is_empty() {
-                    eprintln!("  ⚠ Cannot build provider for model discovery: {}", e);
-                    let fallback_efforts = if serve_model.starts_with("openrouter/auto") {
-                        vec![
-                            "low".to_string(),
-                            "medium".to_string(),
-                            "high".to_string(),
-                            "xhigh".to_string(),
-                            "max".to_string(),
-                        ]
-                    } else {
-                        vec![]
-                    };
-                    models = vec![ModelInfo {
-                        id: serve_model.clone(),
-                        provider: None,
-                        context_window: None,
-                        reasoning_efforts: fallback_efforts,
-                        supported_endpoints: vec![],
-                    }];
-                }
             }
+            registry
         }
-    }
+        Err(e) => {
+            if models.is_empty() {
+                eprintln!("  ⚠ Cannot build provider for model discovery: {}", e);
+                let fallback_efforts = if serve_model.starts_with("openrouter/auto") {
+                    vec![
+                        "low".to_string(),
+                        "medium".to_string(),
+                        "high".to_string(),
+                        "xhigh".to_string(),
+                        "max".to_string(),
+                    ]
+                } else {
+                    vec![]
+                };
+                models = vec![ModelInfo {
+                    id: serve_model.clone(),
+                    provider: None,
+                    context_window: None,
+                    reasoning_efforts: fallback_efforts,
+                    supported_endpoints: vec![],
+                }];
+            }
+            crate::serve::api::build_provider_pub(&config)
+                .unwrap_or_else(|_| crate::provider::ProviderRegistry::new())
+        }
+    };
 
     let first_model = models
         .first()
         .map(|m| m.id.clone())
         .unwrap_or_else(|| serve_model.clone());
 
-    let initial_registry = crate::serve::api::build_provider_pub(&config)
-        .unwrap_or_else(|_| crate::provider::ProviderRegistry::new());
     let provider_registry = Arc::new(tokio::sync::RwLock::new(initial_registry));
     let resolved_oauth = oauth::resolve_oauth_providers(&config.notes.oauth).await;
     let oauth_providers = resolved_oauth
@@ -525,10 +526,12 @@ pub async fn run(config: RuneConfig, opts: NotesOptions) {
                                     .effective_thinking(&room.note_id)
                                     .await
                                     .unwrap_or_else(|| "off".to_string());
+                                let usage = state_clone.provider_registry.read().await.usage();
                                 let msg = crate::serve::api::SseMsg::ModelList {
                                     models: model_entries,
                                     active,
                                     thinking,
+                                    usage,
                                 };
                                 crate::serve::api::broadcast_to_room(room, &msg);
                             }

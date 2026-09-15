@@ -461,12 +461,39 @@ impl ProviderUsageStats {
                 .get("premium_interactions")
                 .or_else(|| qs.as_object().and_then(|m| m.values().next()));
             if let Some(s) = snap {
-                quota_percent_remaining = s.get("percent_remaining").and_then(|v| v.as_f64());
+                quota_percent_remaining = s
+                    .get("percent_remaining")
+                    .and_then(|v| v.as_f64().or_else(|| v.as_u64().map(|u| u as f64)))
+                    .or_else(|| {
+                        s.get("quota_percent_remaining")
+                            .and_then(|v| v.as_f64().or_else(|| v.as_u64().map(|u| u as f64)))
+                    });
                 quota_remaining = s
                     .get("remaining")
-                    .and_then(|v| v.as_u64())
-                    .or_else(|| s.get("quota_remaining").and_then(|v| v.as_u64()));
-                quota_entitlement = s.get("entitlement").and_then(|v| v.as_u64());
+                    .and_then(|v| v.as_u64().or_else(|| v.as_f64().map(|f| f.round() as u64)))
+                    .or_else(|| {
+                        s.get("quota_remaining").and_then(|v| {
+                            v.as_u64().or_else(|| v.as_f64().map(|f| f.round() as u64))
+                        })
+                    })
+                    .or_else(|| {
+                        s.get("credits_remaining").and_then(|v| {
+                            v.as_u64().or_else(|| v.as_f64().map(|f| f.round() as u64))
+                        })
+                    });
+                quota_entitlement = s
+                    .get("entitlement")
+                    .and_then(|v| v.as_u64().or_else(|| v.as_f64().map(|f| f.round() as u64)))
+                    .or_else(|| {
+                        s.get("quota_entitlement").and_then(|v| {
+                            v.as_u64().or_else(|| v.as_f64().map(|f| f.round() as u64))
+                        })
+                    })
+                    .or_else(|| {
+                        s.get("total").and_then(|v| {
+                            v.as_u64().or_else(|| v.as_f64().map(|f| f.round() as u64))
+                        })
+                    });
             }
         }
 
@@ -1463,19 +1490,59 @@ impl CopilotProvider {
         }
 
         let v: serde_json::Value = response.json().await.ok()?;
-        let snapshots = v.get("quota_snapshots")?;
+        let snapshots = v
+            .get("quota_snapshots")
+            .or_else(|| v.get("quotas"))
+            .or_else(|| v.get("quota"))
+            .or_else(|| v.get("credits"))
+            .or_else(|| v.get("monthly_quota"))
+            .cloned()
+            .unwrap_or_else(|| v.clone());
+
         let snap = snapshots
             .get("premium_interactions")
-            .or_else(|| snapshots.as_object().and_then(|m| m.values().next()))?;
+            .or_else(|| snapshots.get("ai_credits"))
+            .or_else(|| snapshots.get("credits"))
+            .or_else(|| snapshots.as_object().and_then(|m| m.values().next()));
 
-        let percent_remaining = snap.get("percent_remaining").and_then(|v| v.as_f64())?;
-        let remaining = snap
-            .get("remaining")
-            .and_then(|v| v.as_u64())
-            .or_else(|| snap.get("quota_remaining").and_then(|v| v.as_u64()))?;
-        let entitlement = snap.get("entitlement").and_then(|v| v.as_u64())?;
+        let snap_ref = snap.unwrap_or(&snapshots);
+        let parse_num = |val: Option<&serde_json::Value>| -> Option<u64> {
+            val.and_then(|v| v.as_u64().or_else(|| v.as_f64().map(|f| f.round() as u64)))
+        };
+        let parse_float = |val: Option<&serde_json::Value>| -> Option<f64> {
+            val.and_then(|v| v.as_f64().or_else(|| v.as_u64().map(|u| u as f64)))
+        };
 
-        Some((percent_remaining, remaining, entitlement, snapshots.clone()))
+        let remaining = parse_num(snap_ref.get("remaining"))
+            .or_else(|| parse_num(snap_ref.get("quota_remaining")))
+            .or_else(|| parse_num(snap_ref.get("credits_remaining")));
+        let entitlement = parse_num(snap_ref.get("entitlement"))
+            .or_else(|| parse_num(snap_ref.get("quota_entitlement")))
+            .or_else(|| parse_num(snap_ref.get("total")));
+        let percent_remaining = parse_float(snap_ref.get("percent_remaining"))
+            .or_else(|| parse_float(snap_ref.get("quota_percent_remaining")))
+            .or_else(|| {
+                if let (Some(r), Some(e)) = (remaining, entitlement) {
+                    if e > 0 {
+                        Some((r as f64 / e as f64) * 100.0)
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
+            });
+
+        if remaining.is_some() || percent_remaining.is_some() {
+            Some((
+                percent_remaining.unwrap_or(100.0),
+                remaining.unwrap_or(0),
+                entitlement.unwrap_or(0),
+                snapshots,
+            ))
+        } else {
+            None
+        }
     }
 
     fn record_usage(&self, usage: &TokenUsage) {

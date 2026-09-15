@@ -74,6 +74,122 @@ globalThis.switchThinking = function switchThinking(level) {
     }
 };
 
+globalThis.formatCredits = function formatCredits(num) {
+    if (typeof num !== 'number') return '';
+    if (num >= 1000000) return (num / 1000000).toFixed(1).replace(/\.0$/, '') + 'M';
+    if (num >= 1000) return (num / 1000).toFixed(1).replace(/\.0$/, '') + 'k';
+    return num.toLocaleString();
+};
+
+globalThis.updateUsageIndicator = function updateUsageIndicator() {
+    const indicator = document.getElementById('quota-indicator');
+    const textEl = document.getElementById('quota-text');
+    if (!indicator || !textEl) return;
+
+    if (!providerUsage) {
+        indicator.classList.add('hidden');
+        return;
+    }
+
+    const hasRemaining = typeof providerUsage.quota_remaining === 'number';
+    const hasPercent = typeof providerUsage.quota_percent_remaining === 'number';
+
+    let percent = hasPercent ? providerUsage.quota_percent_remaining : null;
+    if (percent === null && hasRemaining && providerUsage.quota_entitlement) {
+        percent = (providerUsage.quota_remaining / providerUsage.quota_entitlement) * 100;
+    }
+
+    let label = '';
+    if (hasRemaining) {
+        label = formatCredits(providerUsage.quota_remaining);
+        if (percent !== null) {
+            label += ` (${Math.round(percent)}%)`;
+        }
+    } else if (percent !== null) {
+        label = `${Math.round(percent)}%`;
+    } else if (providerUsage.plan_name) {
+        label = providerUsage.plan_name.replace(/^GitHub /, '');
+    } else if (providerUsage.provider === 'github-copilot') {
+        label = 'Copilot';
+    } else {
+        indicator.classList.add('hidden');
+        return;
+    }
+
+    textEl.textContent = label;
+    indicator.classList.remove('hidden');
+
+    // Warning styling based on remaining percentage
+    indicator.classList.remove('warn', 'danger');
+    if (percent !== null) {
+        if (percent <= 20) {
+            indicator.classList.add('danger');
+        } else if (percent <= 50) {
+            indicator.classList.add('warn');
+        }
+    }
+
+    // Update Popover content
+    const popoverRemaining = document.getElementById('quota-popover-remaining');
+    const popoverPlan = document.getElementById('quota-popover-plan');
+    const popoverTokens = document.getElementById('quota-popover-tokens');
+    const popoverPercent = document.getElementById('quota-popover-percent');
+    const progressFill = document.getElementById('quota-progress-fill');
+
+    if (popoverRemaining) {
+        if (hasRemaining && providerUsage.quota_entitlement) {
+            popoverRemaining.textContent = `${providerUsage.quota_remaining.toLocaleString()} / ${providerUsage.quota_entitlement.toLocaleString()}`;
+        } else if (hasRemaining) {
+            popoverRemaining.textContent = providerUsage.quota_remaining.toLocaleString();
+        } else {
+            popoverRemaining.textContent = 'Active';
+        }
+    }
+
+    if (popoverPercent) {
+        popoverPercent.textContent = percent !== null ? `${Math.round(percent)}%` : '';
+    }
+
+    if (popoverPlan) {
+        popoverPlan.textContent = providerUsage.plan_name || providerUsage.provider || '—';
+    }
+
+    if (popoverTokens) {
+        popoverTokens.textContent = (providerUsage.session_tokens || 0).toLocaleString();
+    }
+
+    if (progressFill) {
+        if (percent !== null) {
+            progressFill.style.width = `${Math.min(Math.max(percent, 0), 100)}%`;
+            progressFill.className = 'quota-progress-fill' + (percent <= 20 ? ' danger' : (percent <= 50 ? ' warn' : ''));
+            progressFill.parentElement.style.display = 'block';
+        } else {
+            progressFill.parentElement.style.display = 'none';
+        }
+    }
+};
+
+globalThis.toggleQuotaPopover = function toggleQuotaPopover() {
+    const popover = document.getElementById('quota-popover');
+    const indicator = document.getElementById('quota-indicator');
+    if (!popover || !indicator) return;
+    const isHidden = popover.classList.contains('hidden');
+    if (isHidden) {
+        popover.classList.remove('hidden');
+        indicator.setAttribute('aria-expanded', 'true');
+    } else {
+        popover.classList.add('hidden');
+        indicator.setAttribute('aria-expanded', 'false');
+    }
+};
+
+globalThis.closeQuotaPopover = function closeQuotaPopover() {
+    const popover = document.getElementById('quota-popover');
+    const indicator = document.getElementById('quota-indicator');
+    if (popover) popover.classList.add('hidden');
+    if (indicator) indicator.setAttribute('aria-expanded', 'false');
+};
+
 globalThis.showModelDialog = function showModelDialog() {
     if (!isAdmin || availableModels.length <= 1) return;
 
@@ -103,6 +219,42 @@ globalThis.showModelDialog = function showModelDialog() {
             titleEl.textContent = `Switch Model (${friendlyProvider})`;
         } else {
             titleEl.textContent = 'Switch Model';
+        }
+    }
+
+    // Update Quota banner in modal
+    const modalQuota = document.getElementById('model-modal-quota');
+    const modalQuotaText = document.getElementById('model-modal-quota-text');
+    const modalQuotaFill = document.getElementById('model-modal-quota-fill');
+    if (modalQuota && modalQuotaText && modalQuotaFill) {
+        if (providerUsage && (typeof providerUsage.quota_remaining === 'number' || typeof providerUsage.quota_percent_remaining === 'number' || providerUsage.plan_name || providerUsage.provider === 'github-copilot')) {
+            const hasRemaining = typeof providerUsage.quota_remaining === 'number';
+            const hasPercent = typeof providerUsage.quota_percent_remaining === 'number';
+            let percent = hasPercent ? providerUsage.quota_percent_remaining : null;
+            if (percent === null && hasRemaining && providerUsage.quota_entitlement) {
+                percent = (providerUsage.quota_remaining / providerUsage.quota_entitlement) * 100;
+            }
+
+            if (hasRemaining && providerUsage.quota_entitlement) {
+                modalQuotaText.textContent = `${providerUsage.quota_remaining.toLocaleString()} / ${providerUsage.quota_entitlement.toLocaleString()}${percent !== null ? ` (${Math.round(percent)}%)` : ''}`;
+            } else if (hasRemaining) {
+                modalQuotaText.textContent = `${providerUsage.quota_remaining.toLocaleString()}${percent !== null ? ` (${Math.round(percent)}%)` : ''}`;
+            } else if (percent !== null) {
+                modalQuotaText.textContent = `${Math.round(percent)}% remaining`;
+            } else {
+                modalQuotaText.textContent = providerUsage.plan_name || 'Active';
+            }
+
+            if (percent !== null) {
+                modalQuotaFill.style.width = `${Math.min(Math.max(percent, 0), 100)}%`;
+                modalQuotaFill.className = 'quota-progress-fill' + (percent <= 20 ? ' danger' : (percent <= 50 ? ' warn' : ''));
+                modalQuotaFill.parentElement.style.display = 'block';
+            } else {
+                modalQuotaFill.parentElement.style.display = 'none';
+            }
+            modalQuota.classList.remove('hidden');
+        } else {
+            modalQuota.classList.add('hidden');
         }
     }
 

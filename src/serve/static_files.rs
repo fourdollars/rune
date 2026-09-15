@@ -789,4 +789,29 @@ mod tests {
             "insertFormat must handle table"
         );
     }
+
+    #[test]
+    fn test_index_html_has_quota_ui() {
+        let html = get("index.html").unwrap();
+        assert!(html.contains("quota-indicator"), "missing quota-indicator");
+        assert!(html.contains("quota-popover"), "missing quota-popover");
+        assert!(
+            html.contains("model-modal-quota"),
+            "missing model-modal-quota"
+        );
+    }
+
+    #[test]
+    fn test_models_js_has_quota_logic() {
+        let js = get("js/models.js").unwrap();
+        assert!(
+            js.contains("updateUsageIndicator"),
+            "missing updateUsageIndicator"
+        );
+        assert!(
+            js.contains("toggleQuotaPopover"),
+            "missing toggleQuotaPopover"
+        );
+        assert!(js.contains("formatCredits"), "missing formatCredits");
+    }
 }

@@ -26,6 +26,10 @@ globalThis.handleMessage = function handleMessage(msg) {
             break;
         case 'chat_meta':
             attachMetaToLastAssistant(msg.model, msg.tokens_in, msg.tokens_out, msg.context_tokens, msg.context_window, msg.steps, msg.tool_calls, msg.thinking);
+            if (msg.usage) {
+                providerUsage = msg.usage;
+                updateUsageIndicator();
+            }
             break;
         case 'chat_done':
             finalizeAssistantMessage();
@@ -124,14 +128,22 @@ globalThis.handleMessage = function handleMessage(msg) {
             availableModels = msg.models || [];  // [{id, context_window, reasoning_efforts}, ...]
             activeModel = msg.active || '';
             currentThinking = msg.thinking || ((activeModel && activeModel.startsWith('openrouter/auto')) ? 'low' : 'off');
+            if (msg.usage) {
+                providerUsage = msg.usage;
+            }
             updateModelIndicator();
             updateThinkingSelect();
+            updateUsageIndicator();
             break;
         case 'model_changed':
             activeModel = msg.model || '';
             currentThinking = msg.thinking || ((activeModel && activeModel.startsWith('openrouter/auto')) ? 'low' : 'off');
+            if (msg.usage !== undefined) {
+                providerUsage = msg.usage;
+            }
             updateModelIndicator();
             updateThinkingSelect();
+            updateUsageIndicator();
             addSystemMessage('Model switched to: ' + activeModel + ' ' + currentThinking);
             if (lastContextTokens !== null) {
                 const newModel = availableModels.find(m => m.id === activeModel);

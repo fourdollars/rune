@@ -49,6 +49,7 @@ const actions = {
     'show-pane': element => showPane(element.dataset.pane),
     'toggle-online-users': () => toggleOnlineUsers(),
     'close-online-users': () => closeOnlineUsers(),
+    'toggle-quota-popover': () => toggleQuotaPopover(),
     'row-menu': element => toggleRowMenu(element),
     'open-command-palette': () => openCommandPalette(),
     'run-command': element => runCommand(element),
@@ -69,6 +70,9 @@ export function initActions() {
         if (!event.target.closest('#btn-online-users, #online-users-popover')) {
             if (typeof closeOnlineUsers === 'function') closeOnlineUsers();
         }
+        if (!event.target.closest('#quota-indicator, #quota-popover')) {
+            if (typeof closeQuotaPopover === 'function') closeQuotaPopover();
+        }
     });
     document.addEventListener('change', event => {
         const target = event.target.closest('[data-action]');
@@ -82,6 +86,7 @@ export function initActions() {
     document.addEventListener('keydown', event => {
         if (event.key === 'Escape') {
             if (typeof closeOnlineUsers === 'function') closeOnlineUsers();
+            if (typeof closeQuotaPopover === 'function') closeQuotaPopover();
         }
         if (event.key !== 'Enter') return;
         if (event.target.id === 'emoji-search-input') {

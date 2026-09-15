@@ -1637,6 +1637,170 @@ pre.hljs-pre:hover .copy-btn {
     white-space: nowrap;
 }
 
+/* --- Quota indicator (next to model) --- */
+.quota-indicator {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 2px 7px;
+    border-radius: 12px;
+    font-size: 11px;
+    font-weight: 500;
+    color: var(--text-muted, #888);
+    background: var(--bg-surface, rgba(255, 255, 255, 0.05));
+    border: 1px solid var(--border);
+    cursor: pointer;
+    user-select: none;
+    transition: all 0.15s ease;
+    margin-left: 4px;
+}
+.quota-indicator:hover {
+    color: var(--text);
+    border-color: var(--accent);
+    background: var(--bg-hover, rgba(255, 255, 255, 0.1));
+}
+.quota-indicator.hidden {
+    display: none !important;
+}
+.quota-indicator .quota-icon {
+    display: inline-flex;
+    align-items: center;
+}
+.quota-indicator .quota-icon svg {
+    width: 12px;
+    height: 12px;
+    color: var(--accent);
+}
+.quota-indicator.warn {
+    color: #e5a50a;
+    border-color: rgba(229, 165, 10, 0.4);
+    background: rgba(229, 165, 10, 0.08);
+}
+.quota-indicator.warn .quota-icon svg {
+    color: #e5a50a;
+}
+.quota-indicator.danger {
+    color: #e06c75;
+    border-color: rgba(224, 108, 117, 0.4);
+    background: rgba(224, 108, 117, 0.08);
+}
+.quota-indicator.danger .quota-icon svg {
+    color: #e06c75;
+}
+
+/* --- Quota Popover --- */
+.quota-popover {
+    position: absolute;
+    top: calc(100% + 6px);
+    right: 0;
+    z-index: 1050;
+    background: var(--bg-primary);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.28);
+    width: 220px;
+    max-width: calc(100vw - 24px);
+    box-sizing: border-box;
+    padding: 10px 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    cursor: default;
+}
+.quota-popover.hidden {
+    display: none !important;
+}
+.quota-popover-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text);
+}
+.quota-popover-percent {
+    font-size: 12px;
+    font-weight: 700;
+    color: var(--accent);
+}
+.quota-progress-bar {
+    width: 100%;
+    height: 6px;
+    background: var(--bg-secondary, rgba(255, 255, 255, 0.1));
+    border-radius: 3px;
+    overflow: hidden;
+}
+.quota-progress-fill {
+    height: 100%;
+    background: var(--accent);
+    border-radius: 3px;
+    transition: width 0.3s ease;
+}
+.quota-progress-fill.warn {
+    background: #e5a50a;
+}
+.quota-progress-fill.danger {
+    background: #e06c75;
+}
+.quota-popover-details {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    font-size: 11px;
+    margin-top: 2px;
+}
+.quota-popover-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+.quota-label {
+    color: var(--text-muted);
+}
+.quota-val {
+    font-weight: 500;
+    color: var(--text);
+}
+
+/* --- Modal Quota Banner --- */
+.model-modal-quota {
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 8px 12px;
+    margin-bottom: 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+.model-modal-quota.hidden {
+    display: none !important;
+}
+.model-modal-quota-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 12px;
+}
+.model-modal-quota-label {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-weight: 600;
+    color: var(--text);
+}
+.model-modal-quota-label .quota-icon svg {
+    width: 14px;
+    height: 14px;
+    color: var(--accent);
+}
+.model-modal-quota-text {
+    font-size: 11px;
+    color: var(--text-muted);
+    font-weight: 500;
+}
+
 /* --- Model list in modal --- */
 .model-list {
     display: flex;

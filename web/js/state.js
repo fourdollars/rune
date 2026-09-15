@@ -35,6 +35,7 @@ const initial = {
     activeScrollSource: null,
     scrollTimeout: null,
     emojiPickerInitialized: false,
+    providerUsage: null,
 };
 
 const listeners = new Set();
