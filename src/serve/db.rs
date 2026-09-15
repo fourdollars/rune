@@ -854,6 +854,12 @@ impl ChatDb {
             })
             .collect();
         results.extend(live);
+        // Sort newest first (most recent on top, oldest at the bottom)
+        results.sort_by(|a, b| {
+            b.created_at
+                .cmp(&a.created_at)
+                .then_with(|| b.id.cmp(&a.id))
+        });
 
         Ok(results)
     }
@@ -1026,6 +1032,8 @@ mod tests {
         let results = db.search("default", "hello", &arc_dir).unwrap();
         assert_eq!(results.len(), 2);
         assert!(results.iter().all(|r| r.content.contains("hello")));
+        assert_eq!(results[0].content, "hello again");
+        assert_eq!(results[1].content, "hello world");
     }
 
     #[test]
@@ -1065,6 +1073,11 @@ mod tests {
 
         let results = db.search("default", "search me", &arc_dir).unwrap();
         assert_eq!(results.len(), 2, "Should find 1 archive + 1 live result");
+        assert_eq!(
+            results[0].content, "search me too",
+            "Newer live result first"
+        );
+        assert_eq!(results[1].content, "search me", "Older archive result last");
     }
 
     #[tokio::test]

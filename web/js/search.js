@@ -26,13 +26,15 @@ globalThis.doSearch = function doSearch() {
 globalThis.renderSearchResults = function renderSearchResults(query, results) {
     const el = document.getElementById('search-results');
     el.replaceChildren();
-    if (!results.length) {
+    if (!results || !results.length) {
         const empty = document.createElement('div');
         empty.className = 'search-empty';
         empty.textContent = `No results for "${query}"`;
         el.appendChild(empty);
         return;
     }
+    // Sort results newest first (most recent on top, oldest at the bottom)
+    results.sort((a, b) => (b.created_at || 0) - (a.created_at || 0) || (b.id || 0) - (a.id || 0));
     const count = document.createElement('div');
     count.className = 'search-count';
     count.textContent = `${results.length} result(s)`;
