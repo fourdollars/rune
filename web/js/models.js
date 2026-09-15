@@ -186,21 +186,25 @@ globalThis.updateUsageIndicator = function updateUsageIndicator() {
 
     if (isOpenRouter) {
         if (hasUsdBalance && percent !== null) {
-            tooltip = `OpenRouter Budgets: $${details.balance.toFixed(2)} / $${details.limit.toFixed(2)} (${Math.round(percent)}%)`;
+            tooltip = `Budgets: $${details.balance.toFixed(2)} (${Math.round(percent)}%)`;
         } else if (hasRemaining && providerUsage.quota_entitlement && percent !== null) {
-            tooltip = `OpenRouter Budgets: $${(providerUsage.quota_remaining / 100).toFixed(2)} / $${(providerUsage.quota_entitlement / 100).toFixed(2)} (${Math.round(percent)}%)`;
+            tooltip = `Budgets: $${(providerUsage.quota_remaining / 100).toFixed(2)} (${Math.round(percent)}%)`;
         } else if (hasRemaining && percent !== null) {
-            tooltip = `OpenRouter Budgets: $${(providerUsage.quota_remaining / 100).toFixed(2)} (${Math.round(percent)}%)`;
+            tooltip = `Budgets: $${(providerUsage.quota_remaining / 100).toFixed(2)} (${Math.round(percent)}%)`;
+        } else if (hasUsdBalance) {
+            tooltip = `Budgets: $${details.balance.toFixed(2)}`;
+        } else if (hasRemaining) {
+            tooltip = `Budgets: $${(providerUsage.quota_remaining / 100).toFixed(2)}`;
         } else if (typeof details.usage === 'number') {
             if (typeof details.usage_monthly === 'number') {
-                tooltip = `OpenRouter Usage: $${details.usage.toFixed(2)} (Month: $${details.usage_monthly.toFixed(2)})`;
+                tooltip = `Budgets: Used $${details.usage.toFixed(2)} (Month: $${details.usage_monthly.toFixed(2)})`;
             } else {
-                tooltip = `OpenRouter Usage: $${details.usage.toFixed(2)}`;
+                tooltip = `Budgets: Used $${details.usage.toFixed(2)}`;
             }
         } else if (providerUsage.plan_name) {
-            tooltip = `OpenRouter: ${providerUsage.plan_name}`;
+            tooltip = `Budgets: ${providerUsage.plan_name}`;
         } else {
-            tooltip = 'OpenRouter Budgets';
+            tooltip = 'Budgets';
         }
     } else if (hasRemaining && percent !== null) {
         tooltip = `AI Credits: ${formatCredits(providerUsage.quota_remaining)} (${Math.round(percent)}%)`;
