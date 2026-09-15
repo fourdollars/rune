@@ -795,10 +795,8 @@ mod tests {
         let html = get("index.html").unwrap();
         assert!(html.contains("quota-indicator"), "missing quota-indicator");
         assert!(html.contains("quota-popover"), "missing quota-popover");
-        assert!(
-            html.contains("model-modal-quota"),
-            "missing model-modal-quota"
-        );
+        assert!(html.contains("thinking-modal"), "missing thinking-modal");
+        assert!(html.contains("thinking-btn"), "missing thinking-btn");
     }
 
     #[test]

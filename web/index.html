@@ -123,19 +123,21 @@
     <div id="model-modal" class="modal-overlay hidden">
         <div class="modal" role="dialog" aria-modal="true" aria-labelledby="model-modal-title">
             <h2 id="model-modal-title">Switch Model</h2>
-            <div id="model-modal-quota" class="model-modal-quota hidden">
-                <div class="model-modal-quota-header">
-                    <span class="model-modal-quota-label"><span class="quota-icon" data-icon="credit-card"></span> AI Credits</span>
-                    <span id="model-modal-quota-text" class="model-modal-quota-text"></span>
-                </div>
-                <div class="quota-progress-bar">
-                    <div id="model-modal-quota-fill" class="quota-progress-fill"></div>
-                </div>
-            </div>
             <input type="text" id="model-search-input" class="model-search-input" placeholder="Search models..." autocomplete="off" aria-label="Search models">
             <div id="model-list" class="model-list"></div>
             <div class="modal-actions">
                 <button class="btn-secondary" data-action="hide-model-dialog">Cancel</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="thinking-modal" class="modal-overlay hidden">
+        <div class="modal" role="dialog" aria-modal="true" aria-labelledby="thinking-modal-title">
+            <h2 id="thinking-modal-title">Adjust Thinking Level</h2>
+            <div id="thinking-modal-desc" class="modal-description">Configure reasoning effort for AI responses.</div>
+            <div id="thinking-list" class="thinking-list"></div>
+            <div class="modal-actions">
+                <button class="btn-secondary" data-action="hide-thinking-dialog">Cancel</button>
             </div>
         </div>
     </div>
@@ -155,6 +157,7 @@
             <button type="button" role="menuitem" data-action="show-search-dialog" data-icon="search">Search chat</button>
             <button type="button" role="menuitem" data-action="show-archive-dialog" data-icon="archive">Archive chat</button>
             <button type="button" role="menuitem" data-action="show-model-dialog" data-icon="chip">Switch model</button>
+            <button type="button" role="menuitem" data-action="show-thinking-dialog" data-icon="brain">Thinking level</button>
             <button type="button" role="menuitem" data-action="toggle-sync-scroll" data-icon="sync-scroll">Sync scroll</button>
             <button type="button" role="menuitem" data-action="open-command-palette" data-icon="command">Command palette</button>
             <button type="button" role="menuitem" data-action="show-new-note-dialog" data-icon="plus">New note</button>
@@ -233,13 +236,13 @@
                 <div class="chat-header">
                     <h3><a href="/notes/" target="_blank" rel="noopener" class="title-link" id="rune-title"><span class="rune-char">ᚱ</span><span class="rune-char">ᚢ</span><span class="rune-char">ᚾ</span><span class="rune-char">ᛖ</span></a><span id="status-indicator" class="status disconnected" role="status" title="disconnected" aria-label="Connection status" data-icon="dot"></span></h3>
                     <div id="model-indicator" class="model-indicator" style="display:none">
-                         <span id="model-name" class="model-name" data-action="show-model-dialog" role="button" tabindex="0" title="Switch model"></span>
-                         <select id="thinking-select" class="thinking-select" data-action="switch-thinking" title="Thinking level" aria-label="Thinking level" style="display:none">
-                            <option value="off">off</option>
-                        </select>
-                        <div id="quota-indicator" class="quota-indicator hidden" role="button" tabindex="0" data-action="toggle-quota-popover" title="AI Credits Quota" aria-label="AI Credits Quota" aria-haspopup="dialog" aria-expanded="false">
-                            <span class="quota-icon" data-icon="zap"></span>
-                            <span id="quota-text" class="quota-text"></span>
+                        <button id="model-name" class="model-name" data-action="show-model-dialog" title="Switch model" aria-label="Switch model"></button>
+                        <button id="thinking-btn" class="thinking-btn" data-action="show-thinking-dialog" title="Thinking level" aria-label="Thinking level" style="display:none">
+                            <span class="thinking-icon" data-icon="brain"></span>
+                            <span id="thinking-btn-label" class="thinking-btn-label">off</span>
+                        </button>
+                        <div id="quota-indicator" class="quota-indicator quota-battery-btn hidden" role="button" tabindex="0" data-action="toggle-quota-popover" title="AI Credits" aria-label="AI Credits" aria-haspopup="dialog" aria-expanded="false">
+                            <span id="quota-battery-icon" class="quota-icon" data-icon="battery"></span>
                             <div id="quota-popover" class="quota-popover hidden" role="dialog" aria-modal="false" aria-label="Quota details">
                                 <div class="quota-popover-header">
                                     <span class="quota-popover-title">AI Credits</span>
@@ -292,12 +295,12 @@
                     <div id="chat-autocomplete" class="chat-autocomplete hidden" role="listbox" aria-label="Suggestions"></div>
                     <div class="chat-input-resizer" id="chat-input-resizer" title="Drag to resize input"></div>
                     <textarea id="chat-input" placeholder="Message ᚱᚢᚾᛖ..." rows="2" aria-label="Message"></textarea>
+                    <button id="chat-send" data-action="send-message" data-icon="send" title="Send message (Ctrl+Enter)" aria-label="Send message"></button>
                     <div id="context-overlay" class="context-overlay hidden">
                         <span id="context-pct">0%</span>
                         <span class="context-sep">·</span>
                         <span id="context-counts">0 / 0</span>
                     </div>
-                     <button id="chat-send" data-action="send-message" data-icon="send" title="Send message (Ctrl+Enter)" aria-label="Send message"></button>
                 </div>
             </div>
         </aside>

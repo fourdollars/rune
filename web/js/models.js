@@ -15,12 +15,10 @@ globalThis.updateModelIndicator = function updateModelIndicator() {
     nameEl.style.cursor = (isAdmin && availableModels.length > 1) ? 'pointer' : 'default';
 };
 
-globalThis.updateThinkingSelect = function updateThinkingSelect() {
-    const selects = [
-        document.getElementById('thinking-select'),
-        document.getElementById('mobile-thinking-select')
-    ].filter(Boolean);
-    if (selects.length === 0) return;
+globalThis.updateThinkingButton = function updateThinkingButton() {
+    const btn = document.getElementById('thinking-btn');
+    const label = document.getElementById('thinking-btn-label');
+    if (!btn) return;
 
     // Find current model's reasoning_efforts
     const currentModelObj = availableModels.find(m => (m.id || m) === activeModel);
@@ -33,44 +31,125 @@ globalThis.updateThinkingSelect = function updateThinkingSelect() {
     }
 
     if (!isAdmin || efforts.length === 0) {
-        selects.forEach(s => s.style.display = 'none');
+        btn.style.display = 'none';
         return;
     }
 
     const isGemini3 = activeModel && activeModel.startsWith('gemini-3.');
-    const label = isOpenRouterAuto ? 'Cost tier' : 'Thinking level';
+    let val = currentThinking || (isOpenRouterAuto ? 'low' : 'off');
+    if (isGemini3 && (val === 'off' || val === 'none')) {
+        val = efforts[0] || 'medium';
+    }
 
-    // Build options: prepend "off" only when "none" is not already in the list, and not Gemini 3.x
-    selects.forEach(select => {
-        select.title = label;
-        select.setAttribute('aria-label', label);
-        select.innerHTML = '';
-        if (!efforts.includes('none') && !isGemini3) {
-            const offOpt = document.createElement('option');
-            offOpt.value = 'off';
-            offOpt.textContent = 'off';
-            select.appendChild(offOpt);
-        }
+    if (label) {
+        label.textContent = val;
+    }
+    const titlePrefix = isOpenRouterAuto ? 'Cost tier' : 'Thinking level';
+    btn.title = `${titlePrefix}: ${val}`;
+    btn.setAttribute('aria-label', `${titlePrefix}: ${val}`);
+    btn.style.display = 'inline-flex';
+};
 
-        efforts.forEach(level => {
-            const opt = document.createElement('option');
-            opt.value = level;
-            opt.textContent = level;
-            select.appendChild(opt);
-        });
+globalThis.updateThinkingSelect = globalThis.updateThinkingButton;
 
-        let val = currentThinking || (isOpenRouterAuto ? 'low' : 'off');
-        if (isGemini3 && (val === 'off' || val === 'none')) {
-            val = efforts[0] || 'medium';
-        }
-        select.value = val;
-        select.style.display = '';
+globalThis.showThinkingDialog = function showThinkingDialog() {
+    if (!isAdmin) return;
+
+    const currentModelObj = availableModels.find(m => (m.id || m) === activeModel);
+    let efforts = (currentModelObj && currentModelObj.reasoning_efforts) || [];
+    const isOpenRouterAuto = activeModel && activeModel.startsWith('openrouter/auto');
+    if (isOpenRouterAuto && efforts.length === 0) {
+        efforts = ['low', 'medium', 'high', 'xhigh', 'max'];
+    }
+    if (efforts.length === 0) return;
+
+    const isGemini3 = activeModel && activeModel.startsWith('gemini-3.');
+    const titleEl = document.getElementById('thinking-modal-title');
+    const descEl = document.getElementById('thinking-modal-desc');
+    if (titleEl) {
+        titleEl.textContent = isOpenRouterAuto ? 'Select Cost Tier' : 'Adjust Thinking Level';
+    }
+    if (descEl) {
+        descEl.textContent = isOpenRouterAuto
+            ? 'Select reasoning effort and cost tier for OpenRouter Auto.'
+            : 'Configure reasoning effort for AI responses.';
+    }
+
+    const listEl = document.getElementById('thinking-list');
+    if (!listEl) return;
+    listEl.innerHTML = '';
+
+    const levels = [];
+    if (!efforts.includes('none') && !isGemini3) {
+        levels.push('off');
+    }
+    efforts.forEach(lvl => {
+        if (!levels.includes(lvl)) levels.push(lvl);
     });
+
+    let activeVal = currentThinking || (isOpenRouterAuto ? 'low' : 'off');
+    if (isGemini3 && (activeVal === 'off' || activeVal === 'none')) {
+        activeVal = efforts[0] || 'medium';
+    }
+
+    const descriptions = {
+        off: 'No reasoning tokens; fastest responses and lowest latency',
+        none: 'Reasoning disabled; standard responses',
+        low: 'Light reasoning; fast responses with basic chain-of-thought',
+        medium: 'Balanced thinking; recommended for general problem solving',
+        high: 'Deep reasoning; comprehensive reasoning for complex tasks',
+        xhigh: 'Extended reasoning; intensive multi-step problem solving',
+        max: 'Maximum thinking; largest reasoning budget available'
+    };
+
+    levels.forEach(lvl => {
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'thinking-option' + (lvl === activeVal ? ' active' : '');
+        btn.dataset.action = 'select-thinking-level';
+        btn.dataset.level = lvl;
+
+        const leftDiv = document.createElement('div');
+        leftDiv.className = 'thinking-option-info';
+
+        const nameSpan = document.createElement('span');
+        nameSpan.className = 'thinking-option-name';
+        nameSpan.textContent = lvl;
+        leftDiv.appendChild(nameSpan);
+
+        if (descriptions[lvl]) {
+            const descSpan = document.createElement('span');
+            descSpan.className = 'thinking-option-desc';
+            descSpan.textContent = descriptions[lvl];
+            leftDiv.appendChild(descSpan);
+        }
+
+        btn.appendChild(leftDiv);
+
+        if (lvl === activeVal) {
+            const checkSpan = document.createElement('span');
+            checkSpan.className = 'thinking-option-badge';
+            checkSpan.textContent = 'Active';
+            btn.appendChild(checkSpan);
+        }
+
+        listEl.appendChild(btn);
+    });
+
+    document.getElementById('thinking-modal')?.classList.remove('hidden');
+};
+
+globalThis.hideThinkingDialog = function hideThinkingDialog() {
+    document.getElementById('thinking-modal')?.classList.add('hidden');
 };
 
 globalThis.switchThinking = function switchThinking(level) {
     if (isConnected) {
         api('notes/' + encodeURIComponent(currentNoteId), { thinking: level }, 'PATCH');
+    }
+    if (typeof updateThinkingButton === 'function') {
+        currentThinking = level;
+        updateThinkingButton();
     }
 };
 
@@ -83,8 +162,8 @@ globalThis.formatCredits = function formatCredits(num) {
 
 globalThis.updateUsageIndicator = function updateUsageIndicator() {
     const indicator = document.getElementById('quota-indicator');
-    const textEl = document.getElementById('quota-text');
-    if (!indicator || !textEl) return;
+    const batteryIcon = document.getElementById('quota-battery-icon');
+    if (!indicator) return;
 
     if (!providerUsage) {
         indicator.classList.add('hidden');
@@ -99,24 +178,36 @@ globalThis.updateUsageIndicator = function updateUsageIndicator() {
         percent = (providerUsage.quota_remaining / providerUsage.quota_entitlement) * 100;
     }
 
-    let label = '';
-    if (hasRemaining) {
-        label = formatCredits(providerUsage.quota_remaining);
-        if (percent !== null) {
-            label += ` (${Math.round(percent)}%)`;
-        }
+    let tooltip = 'AI Credits';
+    let iconName = 'battery';
+
+    if (hasRemaining && percent !== null) {
+        tooltip = `AI Credits: ${formatCredits(providerUsage.quota_remaining)} (${Math.round(percent)}%)`;
+    } else if (hasRemaining) {
+        tooltip = `AI Credits: ${formatCredits(providerUsage.quota_remaining)}`;
     } else if (percent !== null) {
-        label = `${Math.round(percent)}%`;
+        tooltip = `AI Credits: ${Math.round(percent)}% remaining`;
     } else if (providerUsage.plan_name) {
-        label = providerUsage.plan_name.replace(/^GitHub /, '');
-    } else if (providerUsage.provider === 'github-copilot') {
-        label = 'Copilot';
-    } else {
-        indicator.classList.add('hidden');
-        return;
+        tooltip = `AI Credits: ${providerUsage.plan_name}`;
     }
 
-    textEl.textContent = label;
+    if (percent !== null) {
+        if (percent <= 20) {
+            iconName = 'battery-low';
+        } else if (percent <= 60) {
+            iconName = 'battery-medium';
+        } else {
+            iconName = 'battery-full';
+        }
+    }
+
+    indicator.title = tooltip;
+    indicator.setAttribute('aria-label', tooltip);
+
+    if (batteryIcon && typeof setRuneIcon === 'function') {
+        setRuneIcon(batteryIcon, iconName);
+    }
+
     indicator.classList.remove('hidden');
 
     // Warning styling based on remaining percentage
@@ -219,42 +310,6 @@ globalThis.showModelDialog = function showModelDialog() {
             titleEl.textContent = `Switch Model (${friendlyProvider})`;
         } else {
             titleEl.textContent = 'Switch Model';
-        }
-    }
-
-    // Update Quota banner in modal
-    const modalQuota = document.getElementById('model-modal-quota');
-    const modalQuotaText = document.getElementById('model-modal-quota-text');
-    const modalQuotaFill = document.getElementById('model-modal-quota-fill');
-    if (modalQuota && modalQuotaText && modalQuotaFill) {
-        if (providerUsage && (typeof providerUsage.quota_remaining === 'number' || typeof providerUsage.quota_percent_remaining === 'number' || providerUsage.plan_name || providerUsage.provider === 'github-copilot')) {
-            const hasRemaining = typeof providerUsage.quota_remaining === 'number';
-            const hasPercent = typeof providerUsage.quota_percent_remaining === 'number';
-            let percent = hasPercent ? providerUsage.quota_percent_remaining : null;
-            if (percent === null && hasRemaining && providerUsage.quota_entitlement) {
-                percent = (providerUsage.quota_remaining / providerUsage.quota_entitlement) * 100;
-            }
-
-            if (hasRemaining && providerUsage.quota_entitlement) {
-                modalQuotaText.textContent = `${providerUsage.quota_remaining.toLocaleString()} / ${providerUsage.quota_entitlement.toLocaleString()}${percent !== null ? ` (${Math.round(percent)}%)` : ''}`;
-            } else if (hasRemaining) {
-                modalQuotaText.textContent = `${providerUsage.quota_remaining.toLocaleString()}${percent !== null ? ` (${Math.round(percent)}%)` : ''}`;
-            } else if (percent !== null) {
-                modalQuotaText.textContent = `${Math.round(percent)}% remaining`;
-            } else {
-                modalQuotaText.textContent = providerUsage.plan_name || 'Active';
-            }
-
-            if (percent !== null) {
-                modalQuotaFill.style.width = `${Math.min(Math.max(percent, 0), 100)}%`;
-                modalQuotaFill.className = 'quota-progress-fill' + (percent <= 20 ? ' danger' : (percent <= 50 ? ' warn' : ''));
-                modalQuotaFill.parentElement.style.display = 'block';
-            } else {
-                modalQuotaFill.parentElement.style.display = 'none';
-            }
-            modalQuota.classList.remove('hidden');
-        } else {
-            modalQuota.classList.add('hidden');
         }
     }
 

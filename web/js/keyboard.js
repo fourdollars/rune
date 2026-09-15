@@ -10,6 +10,7 @@ const LAYERS = [
     ['#dir-browser-modal', () => hideDirBrowser()],
     ['#note-settings-modal', () => hideNoteSettings()],
     ['#model-modal', () => hideModelDialog()],
+    ['#thinking-modal', () => hideThinkingDialog()],
     ['#search-modal', () => hideSearchDialog()],
     ['#archive-modal', () => hideArchiveDialog()],
     ['#new-note-modal', () => hideNewNoteDialog()],

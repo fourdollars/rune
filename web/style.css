@@ -506,10 +506,10 @@ body {
 
 .chat-input-area {
     display: flex;
+    align-items: flex-end;
     padding-top: 8px;
     border-top: 1px solid var(--border);
     position: relative;
-    align-items: flex-end;
 }
 
 .chat-input-resizer {
@@ -573,6 +573,7 @@ body {
     transition: opacity 0.15s, transform 0.1s;
 }
 
+#chat-input:not(:placeholder-shown) + #chat-send,
 #chat-input:not(:placeholder-shown) ~ #chat-send {
     display: flex;
 }
@@ -1259,32 +1260,42 @@ pre.hljs-pre:hover .copy-btn {
     order: 2;
 }
 
-/* --- Chat header with toggle buttons --- */
+/* --- Chat header with single-row strict height --- */
 .chat-header {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    gap: 4px;
+    flex-wrap: nowrap;
+    height: 38px;
+    min-height: 38px;
+    max-height: 38px;
+    gap: 6px;
+    padding: 0 4px;
+    margin-bottom: 8px;
+    overflow: visible;
+    box-sizing: border-box;
 }
 .chat-header h3 {
     display: flex;
     align-items: center;
-    gap: 4px;
+    gap: 5px;
     margin: 0;
+    font-size: 13px;
+    font-weight: 600;
     white-space: nowrap;
+    flex-shrink: 0;
 }
 .chat-header-right {
     display: flex;
     align-items: center;
     gap: 4px;
 }
-.chat-header-right 
-}
 
 .chat-header-actions {
     display: flex;
     align-items: center;
     gap: 2px;
+    flex-shrink: 0;
     margin-left: auto;
 }
 
@@ -1293,17 +1304,22 @@ pre.hljs-pre:hover .copy-btn {
     border: none;
     cursor: pointer;
     font-size: 13px;
-    padding: 3px 6px;
-    border-radius: 4px;
+    width: 26px;
+    height: 26px;
+    padding: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 6px;
     color: var(--text-muted);
-    opacity: 0.7;
-    transition: background 0.1s, opacity 0.1s;
+    opacity: 0.75;
+    transition: background 0.12s ease, opacity 0.12s ease, color 0.12s ease;
 }
 
 .chat-action-btn:hover {
     background: var(--bg-hover, rgba(255,255,255,0.08));
-    opacity: 1;
     color: var(--text-primary);
+    opacity: 1;
 }
 
 /* --- Online users indicator & popover --- */
@@ -1621,85 +1637,148 @@ pre.hljs-pre:hover .copy-btn {
     vertical-align: middle;
 }
 
-/* --- Model indicator (next to title) --- */
+/* --- Model indicator (in header) --- */
 .model-indicator {
     display: flex;
     align-items: center;
-    gap: 2px;
-    margin-left: 8px;
-}
-.model-name {
-    font-size: 11px;
-    color: var(--text-muted, #888);
-    max-width: 160px;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+    gap: 3px;
+    flex: 0 1 auto;
+    min-width: 0;
+    overflow: visible;
 }
 
-/* --- Quota indicator (next to model) --- */
-.quota-indicator {
-    position: relative;
+.model-name {
     display: inline-flex;
     align-items: center;
-    gap: 4px;
-    padding: 2px 7px;
-    border-radius: 12px;
     font-size: 11px;
     font-weight: 500;
     color: var(--text-muted, #888);
     background: var(--bg-surface, rgba(255, 255, 255, 0.05));
     border: 1px solid var(--border);
+    padding: 0 6px;
+    height: 24px;
+    border-radius: 5px;
+    max-width: 90px;
+    min-width: 0;
+    flex: 0 1 auto;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
     cursor: pointer;
     user-select: none;
     transition: all 0.15s ease;
-    margin-left: 4px;
 }
-.quota-indicator:hover {
+.model-name:hover {
     color: var(--text);
     border-color: var(--accent);
-    background: var(--bg-hover, rgba(255, 255, 255, 0.1));
+    background: var(--bg-hover, rgba(255, 255, 255, 0.08));
 }
-.quota-indicator.hidden {
-    display: none !important;
+
+.thinking-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    font-size: 11px;
+    font-weight: 500;
+    height: 24px;
+    padding: 0 6px;
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    background: var(--bg-surface, rgba(255, 255, 255, 0.05));
+    color: var(--text-muted);
+    cursor: pointer;
+    user-select: none;
+    transition: all 0.15s ease;
+    flex-shrink: 0;
 }
-.quota-indicator .quota-icon {
+.thinking-btn:hover {
+    color: var(--text);
+    border-color: var(--accent);
+    background: var(--bg-hover, rgba(255, 255, 255, 0.08));
+}
+.thinking-icon {
     display: inline-flex;
     align-items: center;
 }
-.quota-indicator .quota-icon svg {
+.thinking-icon svg {
     width: 12px;
     height: 12px;
-    color: var(--accent);
+    display: block;
 }
-.quota-indicator.warn {
+.thinking-btn-label {
+    text-transform: capitalize;
+    white-space: nowrap;
+}
+
+/* --- Quota indicator (Battery button in header) --- */
+.quota-battery-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 24px;
+    height: 24px;
+    padding: 0;
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    background: var(--bg-surface, rgba(255, 255, 255, 0.04));
+    color: var(--text-muted, #888);
+    cursor: pointer;
+    user-select: none;
+    flex-shrink: 0;
+    position: relative;
+    transition: all 0.15s ease;
+}
+.quota-battery-btn:hover {
+    color: var(--text);
+    border-color: var(--accent);
+    background: var(--bg-hover, rgba(255, 255, 255, 0.08));
+}
+.quota-battery-btn.hidden {
+    display: none !important;
+}
+.quota-battery-btn .quota-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+}
+.quota-battery-btn .quota-icon svg {
+    width: 15px;
+    height: 15px;
+    color: var(--text-muted, #888);
+    display: block;
+}
+.quota-battery-btn:hover .quota-icon svg {
+    color: var(--text);
+}
+.quota-battery-btn.warn {
     color: #e5a50a;
-    border-color: rgba(229, 165, 10, 0.4);
-    background: rgba(229, 165, 10, 0.08);
+    border-color: rgba(229, 165, 10, 0.35);
+    background: rgba(229, 165, 10, 0.06);
 }
-.quota-indicator.warn .quota-icon svg {
+.quota-battery-btn.warn .quota-icon svg {
     color: #e5a50a;
 }
-.quota-indicator.danger {
+.quota-battery-btn.danger {
     color: #e06c75;
-    border-color: rgba(224, 108, 117, 0.4);
-    background: rgba(224, 108, 117, 0.08);
+    border-color: rgba(224, 108, 117, 0.35);
+    background: rgba(224, 108, 117, 0.06);
 }
-.quota-indicator.danger .quota-icon svg {
+.quota-battery-btn.danger .quota-icon svg {
     color: #e06c75;
 }
 
-/* --- Quota Popover --- */
+/* --- Quota Popover (opens downwards from battery button) --- */
 .quota-popover {
     position: absolute;
     top: calc(100% + 6px);
-    right: 0;
+    left: 50%;
+    transform: translateX(-50%);
     z-index: 1050;
     background: var(--bg-primary);
     border: 1px solid var(--border);
     border-radius: 8px;
-    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.28);
-    width: 220px;
+    box-shadow: 0 4px 24px rgba(0, 0, 0, 0.35);
+    width: 230px;
     max-width: calc(100vw - 24px);
     box-sizing: border-box;
     padding: 10px 12px;
@@ -1707,6 +1786,7 @@ pre.hljs-pre:hover .copy-btn {
     flex-direction: column;
     gap: 8px;
     cursor: default;
+    text-align: left;
 }
 .quota-popover.hidden {
     display: none !important;
@@ -1763,43 +1843,6 @@ pre.hljs-pre:hover .copy-btn {
     color: var(--text);
 }
 
-/* --- Modal Quota Banner --- */
-.model-modal-quota {
-    background: var(--bg-secondary);
-    border: 1px solid var(--border);
-    border-radius: 6px;
-    padding: 8px 12px;
-    margin-bottom: 12px;
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
-}
-.model-modal-quota.hidden {
-    display: none !important;
-}
-.model-modal-quota-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    font-size: 12px;
-}
-.model-modal-quota-label {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    font-weight: 600;
-    color: var(--text);
-}
-.model-modal-quota-label .quota-icon svg {
-    width: 14px;
-    height: 14px;
-    color: var(--accent);
-}
-.model-modal-quota-text {
-    font-size: 11px;
-    color: var(--text-muted);
-    font-weight: 500;
-}
 
 /* --- Model list in modal --- */
 .model-list {
@@ -2470,6 +2513,7 @@ body.tree-open #app-scrim {
     body.center-hidden #compact-menu:not(.hidden) { display: flex; }
 
     .split-title-chat { display: flex; }
+    .model-name { max-width: 110px; }
 }
 
 /* ─── Tier: medium, portrait — chat docks under the document instead of
@@ -2554,6 +2598,9 @@ body.tree-open #app-scrim {
     #chat-input { font-size: 16px; }
     .toolbar-overflow-menu { top: 42px; }
     .modal { padding: 22px 18px; }
+    .chat-header { height: 36px; min-height: 36px; max-height: 36px; }
+    .model-name { max-width: 100px; }
+    .chat-action-btn { width: 24px; height: 24px; }
 }
 
 /* Task 5: Model dialog metadata badges */
@@ -2591,30 +2638,60 @@ body.tree-open #app-scrim {
     text-transform: capitalize;
 }
 
-.thinking-select {
-    font-size: 0.75rem;
-    padding: 2px 6px;
-    border: 1px solid var(--border, #444);
-    border-radius: 4px;
-    background: var(--bg-secondary, #2a2a2a);
-    color: var(--text-primary, #e0e0e0);
-    cursor: pointer;
-    margin-left: 8px;
-    outline: none;
+.thinking-list {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin-top: 12px;
+    max-height: 360px;
+    overflow-y: auto;
 }
-.thinking-select:hover {
-    border-color: var(--accent, #007acc);
-}
-
-/* Mobile thinking select */
-.mobile-thinking-select {
-    font-size: 11px;
-    padding: 2px 4px;
-    margin-left: 0;
-}
-.mobile-thinking-wrapper {
+.thinking-option {
     display: flex;
     align-items: center;
+    justify-content: space-between;
+    padding: 10px 12px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--bg-secondary);
+    color: var(--text);
+    cursor: pointer;
+    text-align: left;
+    transition: all 0.15s ease;
+    width: 100%;
+    box-sizing: border-box;
+}
+.thinking-option:hover {
+    background: var(--bg-hover);
+    border-color: var(--accent);
+}
+.thinking-option.active {
+    border-color: var(--accent);
+    background: var(--accent-subtle, rgba(0, 122, 204, 0.12));
+}
+.thinking-option-info {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+.thinking-option-name {
+    font-size: 13px;
+    font-weight: 600;
+    text-transform: capitalize;
+    color: var(--text-primary);
+}
+.thinking-option-desc {
+    font-size: 11px;
+    color: var(--text-muted);
+}
+.thinking-option-badge {
+    font-size: 10px;
+    font-weight: 600;
+    padding: 2px 6px;
+    border-radius: 4px;
+    background: var(--accent);
+    color: #fff;
+    flex-shrink: 0;
 }
 
 /* Model search/filter input */
