@@ -97,7 +97,7 @@ mode = "unrestricted"
 
     // Verify live provider usage if network available
     try {
-      await page.waitForFunction(() => window.providerUsage && window.providerUsage.quota_remaining !== undefined, { timeout: 3000 });
+      await page.waitForFunction(() => window.providerUsage && (window.providerUsage.quota_remaining !== undefined || window.providerUsage.details !== undefined || window.providerUsage.provider !== undefined), { timeout: 3000 });
       const liveUsage = await page.evaluate(() => window.providerUsage);
       console.log('Live backend providerUsage:', JSON.stringify(liveUsage));
     } catch {

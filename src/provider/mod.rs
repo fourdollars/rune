@@ -536,12 +536,28 @@ impl ProviderUsageStats {
         let is_free_tier = key_json
             .and_then(|j| j.pointer("/data/is_free_tier"))
             .and_then(|v| v.as_bool());
-        let key_usage = key_json
-            .and_then(|j| j.pointer("/data/usage"))
-            .and_then(|v| v.as_f64());
-        let key_limit = key_json
+        let limit = key_json
             .and_then(|j| j.pointer("/data/limit"))
             .and_then(|v| v.as_f64());
+        let limit_remaining = key_json
+            .and_then(|j| j.pointer("/data/limit_remaining"))
+            .and_then(|v| v.as_f64());
+        let usage = key_json
+            .and_then(|j| j.pointer("/data/usage"))
+            .and_then(|v| v.as_f64());
+        let usage_monthly = key_json
+            .and_then(|j| j.pointer("/data/usage_monthly"))
+            .and_then(|v| v.as_f64());
+        let usage_daily = key_json
+            .and_then(|j| j.pointer("/data/usage_daily"))
+            .and_then(|v| v.as_f64());
+        let usage_weekly = key_json
+            .and_then(|j| j.pointer("/data/usage_weekly"))
+            .and_then(|v| v.as_f64());
+        let limit_reset = key_json
+            .and_then(|j| j.pointer("/data/limit_reset"))
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
         let rate_limit = key_json
             .and_then(|j| j.pointer("/data/rate_limit"))
             .cloned();
@@ -567,28 +583,25 @@ impl ProviderUsageStats {
             None
         };
 
-        // Determine balance and entitlement in USD
-        let account_balance = match (total_credits, total_usage) {
-            (Some(c), Some(u)) => Some((c - u).max(0.0)),
-            _ => None,
-        };
-        let key_balance = match (key_limit, key_usage) {
-            (Some(l), Some(u)) => Some((l - u).max(0.0)),
-            _ => None,
-        };
-
-        let effective_balance = match (key_balance, account_balance) {
-            (Some(kb), Some(ab)) => Some(kb.min(ab)),
-            (Some(kb), None) => Some(kb),
-            (None, Some(ab)) => Some(ab),
-            (None, None) => None,
-        };
-
-        let effective_entitlement = match (key_limit, total_credits) {
-            (Some(kl), Some(tc)) => Some(kl.min(tc)),
-            (Some(kl), None) => Some(kl),
-            (None, Some(tc)) => Some(tc),
-            (None, None) => None,
+        // Determine key-specific balance and entitlement in USD
+        // Priority: key limit & limit_remaining from /auth/key
+        let (effective_balance, effective_entitlement) = match (limit, limit_remaining) {
+            (Some(l), Some(lr)) => (Some(lr.max(0.0)), Some(l)),
+            (Some(l), None) => {
+                let u = usage_monthly.or(usage).unwrap_or(0.0);
+                (Some((l - u).max(0.0)), Some(l))
+            }
+            (None, _) => {
+                // If key has no limit and credits_json was explicitly passed (e.g. management key), use account credits
+                if key_json.is_none() {
+                    match (total_credits, total_usage) {
+                        (Some(c), Some(u)) => (Some((c - u).max(0.0)), Some(c)),
+                        _ => (None, None),
+                    }
+                } else {
+                    (None, None)
+                }
+            }
         };
 
         let quota_percent_remaining = match (effective_balance, effective_entitlement) {
@@ -604,11 +617,26 @@ impl ProviderUsageStats {
         if let Some(bal) = effective_balance {
             details.insert("balance".to_string(), serde_json::json!(bal));
         }
-        if let Some(u) = key_usage.or(total_usage) {
+        if let Some(l) = limit {
+            details.insert("limit".to_string(), serde_json::json!(l));
+        }
+        if let Some(lr) = limit_remaining {
+            details.insert("limit_remaining".to_string(), serde_json::json!(lr));
+        }
+        if let Some(u) = usage {
             details.insert("usage".to_string(), serde_json::json!(u));
         }
-        if let Some(l) = key_limit {
-            details.insert("limit".to_string(), serde_json::json!(l));
+        if let Some(um) = usage_monthly {
+            details.insert("usage_monthly".to_string(), serde_json::json!(um));
+        }
+        if let Some(ud) = usage_daily {
+            details.insert("usage_daily".to_string(), serde_json::json!(ud));
+        }
+        if let Some(uw) = usage_weekly {
+            details.insert("usage_weekly".to_string(), serde_json::json!(uw));
+        }
+        if let Some(lr) = limit_reset {
+            details.insert("limit_reset".to_string(), serde_json::Value::String(lr));
         }
         if let Some(tc) = total_credits {
             details.insert("total_credits".to_string(), serde_json::json!(tc));
@@ -673,7 +701,12 @@ impl ProviderUsageStats {
             _ => {
                 if self.provider == "openrouter" {
                     if let Some(ref details) = self.details {
-                        if let Some(usage) = details.get("usage").and_then(|v| v.as_f64()) {
+                        if let (Some(u), Some(um)) = (
+                            details.get("usage").and_then(|v| v.as_f64()),
+                            details.get("usage_monthly").and_then(|v| v.as_f64()),
+                        ) {
+                            format!(" | Usage: ${:.2} (Month: ${:.2})", u, um)
+                        } else if let Some(usage) = details.get("usage").and_then(|v| v.as_f64()) {
                             format!(" | Usage: ${:.2}", usage)
                         } else {
                             String::new()
@@ -809,51 +842,24 @@ impl OpenAiProvider {
     ) -> Option<ProviderUsageStats> {
         let root_url = base_url.trim_end_matches('/');
 
-        // 1. Fetch /auth/key
         let key_url = format!("{}/auth/key", root_url);
-        let key_json: Option<serde_json::Value> = async {
-            let resp = client
-                .get(&key_url)
-                .bearer_auth(api_key)
-                .header("HTTP-Referer", "https://fourdollars.github.io/rune/")
-                .header("X-Title", "Rune AI Agent")
-                .timeout(std::time::Duration::from_secs(10))
-                .send()
-                .await
-                .ok()?;
-            if !resp.status().is_success() {
-                return None;
-            }
-            resp.json::<serde_json::Value>().await.ok()
-        }
-        .await;
-
-        // 2. Fetch /credits
-        let credits_url = format!("{}/credits", root_url);
-        let credits_json: Option<serde_json::Value> = async {
-            let resp = client
-                .get(&credits_url)
-                .bearer_auth(api_key)
-                .header("HTTP-Referer", "https://fourdollars.github.io/rune/")
-                .header("X-Title", "Rune AI Agent")
-                .timeout(std::time::Duration::from_secs(10))
-                .send()
-                .await
-                .ok()?;
-            if !resp.status().is_success() {
-                return None;
-            }
-            resp.json::<serde_json::Value>().await.ok()
-        }
-        .await;
-
-        if key_json.is_none() && credits_json.is_none() {
+        let resp = client
+            .get(&key_url)
+            .bearer_auth(api_key)
+            .header("HTTP-Referer", "https://fourdollars.github.io/rune/")
+            .header("X-Title", "Rune AI Agent")
+            .timeout(std::time::Duration::from_secs(10))
+            .send()
+            .await
+            .ok()?;
+        if !resp.status().is_success() {
             return None;
         }
+        let key_json: serde_json::Value = resp.json().await.ok()?;
 
         Some(ProviderUsageStats::from_openrouter_json(
-            key_json.as_ref(),
-            credits_json.as_ref(),
+            Some(&key_json),
+            None,
             0,
             0,
         ))
@@ -5804,6 +5810,31 @@ mod copilot_usage_tests {
         assert_eq!(usage_with_stats.session_tokens, 200);
         assert_eq!(usage_with_stats.session_requests, 1);
         assert_eq!(usage_with_stats.quota_percent_remaining, Some(80.0));
+    }
+
+    #[test]
+    fn test_openrouter_usage_stats_unlimited_key() {
+        let key_json = serde_json::json!({
+            "data": {
+                "label": "sk-or-v1-team",
+                "limit": serde_json::Value::Null,
+                "limit_remaining": serde_json::Value::Null,
+                "usage": 107.14,
+                "usage_monthly": 44.48,
+                "is_free_tier": false
+            }
+        });
+
+        let stats = ProviderUsageStats::from_openrouter_json(Some(&key_json), None, 0, 0);
+        assert_eq!(stats.provider, "openrouter");
+        assert_eq!(stats.plan_name, "OpenRouter (sk-or-v1-team)");
+        assert_eq!(stats.quota_percent_remaining, None);
+        assert_eq!(stats.quota_remaining, None);
+        assert_eq!(stats.quota_entitlement, None);
+        assert_eq!(
+            stats.summary_line(),
+            "Provider: openrouter (OpenRouter (sk-or-v1-team)) | Session Tokens: 0 | Requests: 0 | Usage: $107.14 (Month: $44.48)"
+        );
     }
 }
 
