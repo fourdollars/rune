@@ -297,6 +297,7 @@ pub async fn stream_anthropic_messages(
     }
 
     let mut stream = response.bytes_stream();
+    let mut byte_buf: Vec<u8> = Vec::new();
     let mut buffer = String::new();
 
     let mut model = String::new();
@@ -310,7 +311,16 @@ pub async fn stream_anthropic_messages(
 
     while let Some(chunk) = stream.next().await {
         let chunk = chunk?;
-        buffer.push_str(&String::from_utf8_lossy(&chunk));
+        byte_buf.extend_from_slice(&chunk);
+        // Only convert bytes to String at line boundaries to avoid corrupting
+        // multi-byte UTF-8 characters (e.g. Chinese) split across HTTP chunks.
+        while let Some(pos) = byte_buf.iter().position(|&b| b == b'\n') {
+            let line_bytes = byte_buf.drain(..=pos).collect::<Vec<u8>>();
+            match String::from_utf8(line_bytes) {
+                Ok(s) => buffer.push_str(&s),
+                Err(e) => buffer.push_str(&String::from_utf8_lossy(e.as_bytes())),
+            }
+        }
 
         // Process complete SSE events (terminated by \n\n)
         while let Some(end) = buffer.find("\n\n") {
@@ -524,5 +534,69 @@ mod tests {
         assert_eq!(parsed.usage.prompt_tokens, 650);
         assert_eq!(parsed.usage.completion_tokens, 40);
         assert_eq!(parsed.usage.total_tokens, 690);
+    }
+
+    #[tokio::test]
+    async fn test_stream_anthropic_messages_utf8_split_across_chunks() {
+        use std::io::{Read, Write};
+        use std::net::TcpListener;
+        use std::thread;
+
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let url = format!("http://{}/v1/messages", addr);
+
+        let test_text = "Anthropic 繁體中文與 Emoji 🦀 測試";
+
+        let event_block = format!(
+            "event: content_block_delta\ndata: {{\"type\":\"content_block_delta\",\"index\":0,\"delta\":{{\"type\":\"text_delta\",\"text\":\"{}\"}}}}\n\nevent: message_stop\ndata: {{\"type\":\"message_stop\"}}\n\n",
+            test_text
+        );
+        let sse_bytes = event_block.into_bytes();
+
+        thread::spawn(move || {
+            if let Ok((mut stream, _)) = listener.accept() {
+                let mut buf = [0; 1024];
+                let _ = stream.read(&mut buf);
+
+                let header = "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n";
+                let _ = stream.write_all(header.as_bytes());
+
+                let mut offset = 0;
+                let mut chunk_size = 1;
+                while offset < sse_bytes.len() {
+                    let end = (offset + chunk_size).min(sse_bytes.len());
+                    let slice = &sse_bytes[offset..end];
+                    let chunk_hdr = format!("{:X}\r\n", slice.len());
+                    let _ = stream.write_all(chunk_hdr.as_bytes());
+                    let _ = stream.write_all(slice);
+                    let _ = stream.write_all(b"\r\n");
+                    let _ = stream.flush();
+                    offset = end;
+                    chunk_size = (chunk_size % 3) + 1;
+                }
+                let _ = stream.write_all(b"0\r\n\r\n");
+                let _ = stream.flush();
+            }
+        });
+
+        let client = reqwest::Client::new();
+        let builder = client.post(&url);
+        let (tx, mut rx) = tokio::sync::mpsc::channel::<String>(100);
+
+        let res = stream_anthropic_messages(builder, tx)
+            .await
+            .expect("stream should succeed");
+        assert_eq!(res.content.as_deref(), Some(test_text));
+        assert!(
+            !res.content.as_ref().unwrap().contains('\u{FFFD}'),
+            "output must not contain U+FFFD"
+        );
+
+        let mut streamed = String::new();
+        while let Some(tok) = rx.recv().await {
+            streamed.push_str(&tok);
+        }
+        assert_eq!(streamed, test_text);
     }
 }

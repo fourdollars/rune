@@ -222,6 +222,7 @@ async fn stream_openai_compatible_response(
     }
 
     let mut stream = response.bytes_stream();
+    let mut byte_buf: Vec<u8> = Vec::new();
     let mut buffer = String::new();
     let mut content = String::new();
     let mut model = String::new();
@@ -231,7 +232,18 @@ async fn stream_openai_compatible_response(
 
     while let Some(chunk) = stream.next().await {
         let chunk = chunk.map_err(|e| anyhow!("stream read error: {}", e))?;
-        buffer.push_str(&String::from_utf8_lossy(&chunk));
+        byte_buf.extend_from_slice(&chunk);
+        // Drain complete lines from the byte buffer before converting to String so
+        // that multi-byte UTF-8 characters (e.g. Chinese/Japanese) that are split
+        // across HTTP streaming chunks are never decoded prematurely.
+        // from_utf8_lossy would replace incomplete byte sequences with U+FFFD (mojibake).
+        while let Some(pos) = byte_buf.iter().position(|&b| b == b'\n') {
+            let line_bytes = byte_buf.drain(..=pos).collect::<Vec<u8>>();
+            match String::from_utf8(line_bytes) {
+                Ok(s) => buffer.push_str(&s),
+                Err(e) => buffer.push_str(&String::from_utf8_lossy(e.as_bytes())),
+            }
+        }
 
         while let Some(pos) = buffer.find('\n') {
             let mut line = buffer.drain(..=pos).collect::<String>();
@@ -2410,6 +2422,7 @@ impl Provider for GeminiProvider {
             }
 
             let mut stream = response.bytes_stream();
+            let mut byte_buf: Vec<u8> = Vec::new();
             let mut buffer = String::new();
             let mut content_text = String::new();
             let mut tool_calls: Vec<LlmToolCall> = Vec::new();
@@ -2419,7 +2432,16 @@ impl Provider for GeminiProvider {
 
             while let Some(chunk) = stream.next().await {
                 let chunk = chunk.map_err(|e| anyhow!("Gemini stream read error: {}", e))?;
-                buffer.push_str(&String::from_utf8_lossy(&chunk));
+                byte_buf.extend_from_slice(&chunk);
+                // Decode only complete lines to avoid corrupting multi-byte UTF-8 characters
+                // (e.g. Chinese) that may be split across HTTP streaming chunk boundaries.
+                while let Some(pos) = byte_buf.iter().position(|&b| b == b'\n') {
+                    let line_bytes = byte_buf.drain(..=pos).collect::<Vec<u8>>();
+                    match String::from_utf8(line_bytes) {
+                        Ok(s) => buffer.push_str(&s),
+                        Err(e) => buffer.push_str(&String::from_utf8_lossy(e.as_bytes())),
+                    }
+                }
 
                 while let Some(pos) = buffer.find('\n') {
                     let mut line = buffer.drain(..=pos).collect::<String>();
@@ -5329,5 +5351,204 @@ mod copilot_usage_tests {
         reg2.register(Box::new(copilot_provider));
         let reg_usage = reg2.copilot_usage().unwrap();
         assert_eq!(reg_usage.plan_name, "Copilot Pro");
+    }
+}
+
+#[cfg(test)]
+mod utf8_streaming_tests {
+    use super::*;
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
+    use std::thread;
+    use tokio::sync::mpsc;
+
+    #[tokio::test]
+    async fn test_streaming_openai_compatible_utf8_split_across_chunks() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let base_url = format!("http://{}", addr);
+
+        let test_text =
+            "你好世界！這是一段包含中文、日本語（こんにちは）、Emoji（🦀🚀🎉）的測試文字。";
+
+        let event1 = serde_json::json!({
+            "id": "chatcmpl-test",
+            "object": "chat.completion.chunk",
+            "model": "openrouter/auto",
+            "choices": [{"index": 0, "delta": {"content": test_text}, "finish_reason": null}]
+        });
+        let sse_payload = format!(
+            "data: {}\n\ndata: [DONE]\n\n",
+            serde_json::to_string(&event1).unwrap()
+        );
+        let sse_bytes = sse_payload.into_bytes();
+
+        thread::spawn(move || {
+            if let Ok((mut stream, _)) = listener.accept() {
+                let mut buf = [0; 1024];
+                let _ = stream.read(&mut buf);
+
+                let header = "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n";
+                let _ = stream.write_all(header.as_bytes());
+
+                // Send the payload in tiny 1, 2, 3 byte chunks to intentionally slice
+                // 3-byte Chinese characters and 4-byte emoji sequences across chunk boundaries.
+                let mut offset = 0;
+                let mut chunk_size = 1;
+                while offset < sse_bytes.len() {
+                    let end = (offset + chunk_size).min(sse_bytes.len());
+                    let slice = &sse_bytes[offset..end];
+                    let chunk_hdr = format!("{:X}\r\n", slice.len());
+                    let _ = stream.write_all(chunk_hdr.as_bytes());
+                    let _ = stream.write_all(slice);
+                    let _ = stream.write_all(b"\r\n");
+                    let _ = stream.flush();
+                    offset = end;
+                    chunk_size = (chunk_size % 3) + 1;
+                }
+                let _ = stream.write_all(b"0\r\n\r\n");
+                let _ = stream.flush();
+            }
+        });
+
+        let provider = OpenAiProvider::new(
+            "openrouter".to_string(),
+            "sk-fake".to_string(),
+            Some(base_url),
+            false,
+        );
+
+        let (tx, mut rx) = mpsc::channel::<String>(100);
+        let req = LlmRequest {
+            model: "openrouter/auto".to_string(),
+            messages: vec![LlmMessage {
+                role: "user".to_string(),
+                name: None,
+                content: Some("test".to_string()),
+                tool_calls: None,
+                tool_call_id: None,
+                content_parts: None,
+            }],
+            tools: None,
+            max_tokens: None,
+            thinking: None,
+        };
+
+        let res = provider
+            .call_streaming(&req, tx)
+            .await
+            .expect("streaming should succeed");
+        assert_eq!(res.content.as_deref(), Some(test_text));
+        assert!(
+            !res.content.as_ref().unwrap().contains('\u{FFFD}'),
+            "output must not contain U+FFFD replacement character"
+        );
+
+        let mut streamed_tokens = String::new();
+        while let Some(tok) = rx.recv().await {
+            streamed_tokens.push_str(&tok);
+        }
+        assert_eq!(streamed_tokens, test_text);
+    }
+
+    #[tokio::test]
+    async fn test_gemini_streaming_utf8_split_across_chunks() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let base_url = format!("http://{}", addr);
+
+        let test_text = "Gemini 中文繁體、日本語、Emoji 🦀 串流邊界測試。";
+
+        let gemini_event = serde_json::json!({
+            "candidates": [{
+                "content": {
+                    "parts": [{"text": test_text}],
+                    "role": "model"
+                },
+                "finishReason": "STOP",
+                "index": 0
+            }],
+            "usageMetadata": {
+                "promptTokenCount": 10,
+                "candidatesTokenCount": 20,
+                "totalTokenCount": 30
+            }
+        });
+        let sse_payload = format!(
+            "data: {}\n\n",
+            serde_json::to_string(&gemini_event).unwrap()
+        );
+        let sse_bytes = sse_payload.into_bytes();
+
+        thread::spawn(move || {
+            if let Ok((mut stream, _)) = listener.accept() {
+                let mut buf = [0; 1024];
+                let _ = stream.read(&mut buf);
+
+                let header = "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n";
+                let _ = stream.write_all(header.as_bytes());
+
+                let mut offset = 0;
+                let mut chunk_size = 1;
+                while offset < sse_bytes.len() {
+                    let end = (offset + chunk_size).min(sse_bytes.len());
+                    let slice = &sse_bytes[offset..end];
+                    let chunk_hdr = format!("{:X}\r\n", slice.len());
+                    let _ = stream.write_all(chunk_hdr.as_bytes());
+                    let _ = stream.write_all(slice);
+                    let _ = stream.write_all(b"\r\n");
+                    let _ = stream.flush();
+                    offset = end;
+                    chunk_size = (chunk_size % 3) + 1;
+                }
+                let _ = stream.write_all(b"0\r\n\r\n");
+                let _ = stream.flush();
+            }
+        });
+
+        let provider = GeminiProvider::new(
+            "AIza_fake_key".to_string(),
+            Some("gemini-2.0-flash".to_string()),
+            Some(base_url),
+        );
+
+        let (tx, mut rx) = mpsc::channel::<String>(100);
+        let tx_clone = tx.clone();
+        let req = LlmRequest {
+            model: "gemini-2.0-flash".to_string(),
+            messages: vec![LlmMessage {
+                role: "user".to_string(),
+                name: None,
+                content: Some("test".to_string()),
+                tool_calls: None,
+                tool_call_id: None,
+                content_parts: None,
+            }],
+            tools: None,
+            max_tokens: None,
+            thinking: None,
+        };
+
+        let res = provider
+            .chat_streaming(
+                req,
+                Box::new(move |tok| {
+                    let _ = tx_clone.try_send(tok.to_string());
+                }),
+            )
+            .await
+            .expect("gemini streaming should succeed");
+        assert_eq!(res.content.as_deref(), Some(test_text));
+        assert!(
+            !res.content.as_ref().unwrap().contains('\u{FFFD}'),
+            "output must not contain U+FFFD replacement character"
+        );
+
+        drop(tx);
+        let mut streamed_tokens = String::new();
+        while let Some(tok) = rx.recv().await {
+            streamed_tokens.push_str(&tok);
+        }
+        assert_eq!(streamed_tokens, test_text);
     }
 }

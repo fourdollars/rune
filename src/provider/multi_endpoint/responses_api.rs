@@ -208,6 +208,7 @@ pub async fn stream_responses_api(
     }
 
     let mut stream = response.bytes_stream();
+    let mut byte_buf: Vec<u8> = Vec::new();
     let mut buffer = String::new();
 
     let mut content_text = String::new();
@@ -219,7 +220,16 @@ pub async fn stream_responses_api(
 
     while let Some(chunk_result) = stream.next().await {
         let chunk = chunk_result?;
-        buffer.push_str(&String::from_utf8_lossy(&chunk));
+        byte_buf.extend_from_slice(&chunk);
+        // Decode only at newline boundaries to avoid corrupting multi-byte UTF-8
+        // characters (e.g. Chinese) that may be split across HTTP streaming chunks.
+        while let Some(pos) = byte_buf.iter().position(|&b| b == b'\n') {
+            let line_bytes = byte_buf.drain(..=pos).collect::<Vec<u8>>();
+            match String::from_utf8(line_bytes) {
+                Ok(s) => buffer.push_str(&s),
+                Err(e) => buffer.push_str(&String::from_utf8_lossy(e.as_bytes())),
+            }
+        }
 
         // Process complete lines
         while let Some(newline_pos) = buffer.find('\n') {
@@ -367,4 +377,72 @@ pub async fn stream_responses_api(
         usage,
         model,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
+    use std::thread;
+
+    #[tokio::test]
+    async fn test_stream_responses_api_utf8_split_across_chunks() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let url = format!("http://{}/responses", addr);
+
+        let test_text = "Responses API 繁體中文與 Emoji 🦀 測試";
+
+        let event_block = format!(
+            "event: response.output_item.added\ndata: {{\"type\":\"response.output_item.added\",\"output_index\":0,\"item\":{{\"type\":\"message\",\"id\":\"msg_1\",\"role\":\"assistant\"}}}}\n\nevent: response.output_text.delta\ndata: {{\"type\":\"response.output_text.delta\",\"output_index\":0,\"delta\":\"{}\"}}\n\nevent: response.completed\ndata: {{\"type\":\"response.completed\",\"response\":{{\"model\":\"gpt-4o\",\"usage\":{{\"input_tokens\":10,\"output_tokens\":20,\"total_tokens\":30}}}}}}\n\n",
+            test_text
+        );
+        let sse_bytes = event_block.into_bytes();
+
+        thread::spawn(move || {
+            if let Ok((mut stream, _)) = listener.accept() {
+                let mut buf = [0; 1024];
+                let _ = stream.read(&mut buf);
+
+                let header = "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n";
+                let _ = stream.write_all(header.as_bytes());
+
+                let mut offset = 0;
+                let mut chunk_size = 1;
+                while offset < sse_bytes.len() {
+                    let end = (offset + chunk_size).min(sse_bytes.len());
+                    let slice = &sse_bytes[offset..end];
+                    let chunk_hdr = format!("{:X}\r\n", slice.len());
+                    let _ = stream.write_all(chunk_hdr.as_bytes());
+                    let _ = stream.write_all(slice);
+                    let _ = stream.write_all(b"\r\n");
+                    let _ = stream.flush();
+                    offset = end;
+                    chunk_size = (chunk_size % 3) + 1;
+                }
+                let _ = stream.write_all(b"0\r\n\r\n");
+                let _ = stream.flush();
+            }
+        });
+
+        let client = reqwest::Client::new();
+        let builder = client.post(&url);
+        let (tx, mut rx) = tokio::sync::mpsc::channel::<String>(100);
+
+        let res = stream_responses_api(builder, tx)
+            .await
+            .expect("stream should succeed");
+        assert_eq!(res.content.as_deref(), Some(test_text));
+        assert!(
+            !res.content.as_ref().unwrap().contains('\u{FFFD}'),
+            "output must not contain U+FFFD"
+        );
+
+        let mut streamed = String::new();
+        while let Some(tok) = rx.recv().await {
+            streamed.push_str(&tok);
+        }
+        assert_eq!(streamed, test_text);
+    }
 }
