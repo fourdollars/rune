@@ -1267,11 +1267,12 @@ pub fn init_provider(cfg: &config::RuneConfig) -> ProviderRegistry {
             }
             // Default: OpenAI-compatible provider (OpenAI, OpenRouter, Anthropic proxy, Ollama)
             other => {
-                registry.register(Box::new(OpenAiProvider::new(
+                registry.register(Box::new(OpenAiProvider::with_budget(
                     other.to_string(),
                     key.clone(),
                     cfg.base_url.clone(),
                     cfg.openrouter_zdr,
+                    cfg.monthly_budget.or(cfg.notes.monthly_budget),
                 )));
             }
         }

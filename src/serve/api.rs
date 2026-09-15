@@ -3351,11 +3351,13 @@ fn build_provider(config: &RuneConfig) -> anyhow::Result<ProviderRegistry> {
             )));
         }
         other => {
-            registry.register(Box::new(OpenAiProvider::new(
+            let budget = config.monthly_budget.or(config.notes.monthly_budget);
+            registry.register(Box::new(OpenAiProvider::with_budget(
                 other.to_string(),
                 key,
                 config.base_url.clone(),
                 config.openrouter_zdr,
+                budget,
             )));
         }
     }

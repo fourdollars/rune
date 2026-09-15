@@ -184,13 +184,23 @@ globalThis.updateUsageIndicator = function updateUsageIndicator() {
     let tooltip = 'AI Credits';
     let iconName = 'battery';
 
-    if (isOpenRouter && hasUsdBalance && percent !== null) {
-        tooltip = `OpenRouter Balance: $${details.balance.toFixed(2)} / $${details.limit.toFixed(2)} (${Math.round(percent)}%)`;
-    } else if (isOpenRouter && typeof details.usage === 'number') {
-        if (typeof details.usage_monthly === 'number') {
-            tooltip = `OpenRouter Usage: $${details.usage.toFixed(2)} (Month: $${details.usage_monthly.toFixed(2)})`;
+    if (isOpenRouter) {
+        if (hasUsdBalance && percent !== null) {
+            tooltip = `OpenRouter Budget: $${details.balance.toFixed(2)} / $${details.limit.toFixed(2)} (${Math.round(percent)}%)`;
+        } else if (hasRemaining && providerUsage.quota_entitlement && percent !== null) {
+            tooltip = `OpenRouter Budget: $${(providerUsage.quota_remaining / 100).toFixed(2)} / $${(providerUsage.quota_entitlement / 100).toFixed(2)} (${Math.round(percent)}%)`;
+        } else if (hasRemaining && percent !== null) {
+            tooltip = `OpenRouter Budget: $${(providerUsage.quota_remaining / 100).toFixed(2)} (${Math.round(percent)}%)`;
+        } else if (typeof details.usage === 'number') {
+            if (typeof details.usage_monthly === 'number') {
+                tooltip = `OpenRouter Usage: $${details.usage.toFixed(2)} (Month: $${details.usage_monthly.toFixed(2)})`;
+            } else {
+                tooltip = `OpenRouter Usage: $${details.usage.toFixed(2)}`;
+            }
+        } else if (providerUsage.plan_name) {
+            tooltip = `OpenRouter: ${providerUsage.plan_name}`;
         } else {
-            tooltip = `OpenRouter Usage: $${details.usage.toFixed(2)}`;
+            tooltip = 'OpenRouter Budgets';
         }
     } else if (hasRemaining && percent !== null) {
         tooltip = `AI Credits: ${formatCredits(providerUsage.quota_remaining)} (${Math.round(percent)}%)`;
@@ -240,22 +250,30 @@ globalThis.updateUsageIndicator = function updateUsageIndicator() {
     const progressFill = document.getElementById('quota-progress-fill');
 
     if (popoverTitle) {
-        popoverTitle.textContent = isOpenRouter ? 'OpenRouter Credits' : 'AI Credits';
+        popoverTitle.textContent = isOpenRouter ? 'OpenRouter Budgets' : 'AI Credits';
     }
 
     if (popoverRemaining) {
-        if (isOpenRouter && hasUsdBalance) {
-            popoverRemaining.textContent = `$${details.balance.toFixed(2)} / $${details.limit.toFixed(2)}`;
+        if (isOpenRouter) {
+            if (hasUsdBalance) {
+                popoverRemaining.textContent = `$${details.balance.toFixed(2)} / $${details.limit.toFixed(2)}`;
+            } else if (hasRemaining && providerUsage.quota_entitlement) {
+                popoverRemaining.textContent = `$${(providerUsage.quota_remaining / 100).toFixed(2)} / $${(providerUsage.quota_entitlement / 100).toFixed(2)}`;
+            } else if (hasRemaining) {
+                popoverRemaining.textContent = `$${(providerUsage.quota_remaining / 100).toFixed(2)}`;
+            } else if (typeof details.usage === 'number') {
+                if (typeof details.usage_monthly === 'number') {
+                    popoverRemaining.textContent = `Used $${details.usage.toFixed(2)} (Month: $${details.usage_monthly.toFixed(2)})`;
+                } else {
+                    popoverRemaining.textContent = `Used $${details.usage.toFixed(2)}`;
+                }
+            } else {
+                popoverRemaining.textContent = 'Active';
+            }
         } else if (hasRemaining && providerUsage.quota_entitlement) {
             popoverRemaining.textContent = `${providerUsage.quota_remaining.toLocaleString()} / ${providerUsage.quota_entitlement.toLocaleString()}`;
         } else if (hasRemaining) {
             popoverRemaining.textContent = providerUsage.quota_remaining.toLocaleString();
-        } else if (isOpenRouter && typeof details.usage === 'number') {
-            if (typeof details.usage_monthly === 'number') {
-                popoverRemaining.textContent = `Used $${details.usage.toFixed(2)} (Month: $${details.usage_monthly.toFixed(2)})`;
-            } else {
-                popoverRemaining.textContent = `Used $${details.usage.toFixed(2)}`;
-            }
         } else {
             popoverRemaining.textContent = 'Active';
         }

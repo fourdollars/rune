@@ -134,6 +134,9 @@ pub struct NotesConfig {
     /// Custom description for Rune Notes web UI / pages.
     #[serde(alias = "description")]
     pub desc: Option<String>,
+    /// Optional monthly spending budget in USD (e.g. 50.0).
+    #[serde(default)]
+    pub monthly_budget: Option<f64>,
 }
 
 fn default_mcp_lenient_true() -> bool {
@@ -153,6 +156,7 @@ impl Default for NotesConfig {
             mcp_lenient_legacy_clients: true,
             title: None,
             desc: None,
+            monthly_budget: None,
         }
     }
 }
@@ -343,6 +347,9 @@ pub struct RuneConfig {
     /// AGENTS.md is still appended if present.
     #[serde(default)]
     pub system_prompt: Option<String>,
+    /// Optional monthly spending budget/limit in USD (e.g. 50.0).
+    #[serde(default)]
+    pub monthly_budget: Option<f64>,
     /// Skills to preload at startup (comma-separated names from --skills flag).
     /// When set, only these skills are available; semantic/@ discovery is skipped.
     #[serde(skip)]
@@ -391,6 +398,7 @@ impl Default for RuneConfig {
             embedding: crate::embedding::EmbeddingConfig::default(),
             thinking: None,
             system_prompt: None,
+            monthly_budget: None,
             preload_skills: Vec::new(),
             notes: NotesConfig::default(),
             agents: std::collections::HashMap::new(),
@@ -424,6 +432,7 @@ struct PartialConfig {
     thinking: Option<String>,
     openrouter_zdr: Option<bool>,
     no_agents_md: Option<bool>,
+    monthly_budget: Option<f64>,
     notes: Option<NotesConfig>,
     #[serde(default)]
     agents: Option<std::collections::HashMap<String, AgentProfile>>,
@@ -691,6 +700,9 @@ pub fn load() -> anyhow::Result<RuneConfig> {
         embedding: None,
         thinking: env::var("RUNE_THINKING").ok(),
         system_prompt: env::var("RUNE_SYSTEM_PROMPT").ok(),
+        monthly_budget: env::var("RUNE_MONTHLY_BUDGET")
+            .ok()
+            .and_then(|v| v.parse().ok()),
         openrouter_zdr: env::var("RUNE_OPENROUTER_ZDR")
             .ok()
             .and_then(|v| parse_boolish(&v)),
@@ -954,6 +966,11 @@ pub fn load() -> anyhow::Result<RuneConfig> {
             &lc.and_then(|c| c.system_prompt.clone()),
             &uc.and_then(|c| c.system_prompt.clone()),
         ]),
+        monthly_budget: ec
+            .and_then(|c| c.monthly_budget)
+            .or(cwdc.and_then(|c| c.monthly_budget))
+            .or(lc.and_then(|c| c.monthly_budget))
+            .or(uc.and_then(|c| c.monthly_budget)),
         preload_skills: cli
             .skills
             .iter()
@@ -1132,6 +1149,9 @@ pub fn load_without_clap() -> anyhow::Result<RuneConfig> {
         embedding: None,
         thinking: env::var("RUNE_THINKING").ok(),
         system_prompt: env::var("RUNE_SYSTEM_PROMPT").ok(),
+        monthly_budget: env::var("RUNE_MONTHLY_BUDGET")
+            .ok()
+            .and_then(|v| v.parse().ok()),
         openrouter_zdr: env::var("RUNE_OPENROUTER_ZDR")
             .ok()
             .and_then(|v| parse_boolish(&v)),
@@ -1301,6 +1321,11 @@ pub fn load_without_clap() -> anyhow::Result<RuneConfig> {
             .or_else(|| cwdc.and_then(|c| c.system_prompt.clone()))
             .or_else(|| lc.and_then(|c| c.system_prompt.clone()))
             .or_else(|| uc.and_then(|c| c.system_prompt.clone())),
+        monthly_budget: env_partial
+            .monthly_budget
+            .or_else(|| cwdc.and_then(|c| c.monthly_budget))
+            .or_else(|| lc.and_then(|c| c.monthly_budget))
+            .or_else(|| uc.and_then(|c| c.monthly_budget)),
         preload_skills: Vec::new(),
         notes: cwdc
             .and_then(|c| c.notes.clone())

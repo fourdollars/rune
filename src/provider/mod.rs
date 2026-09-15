@@ -525,6 +525,7 @@ impl ProviderUsageStats {
     pub fn from_openrouter_json(
         key_json: Option<&serde_json::Value>,
         credits_json: Option<&serde_json::Value>,
+        monthly_budget: Option<f64>,
         session_tokens: u64,
         session_requests: u64,
     ) -> Self {
@@ -584,7 +585,10 @@ impl ProviderUsageStats {
         };
 
         // Determine key-specific balance and entitlement in USD
-        // Priority: key limit & limit_remaining from /auth/key
+        // Priority:
+        // 1. Explicit key limit & limit_remaining from OpenRouter /auth/key API
+        // 2. Configured monthly_budget (e.g. Member Guardrail budget)
+        // 3. Account-wide total credits if key_json was not provided
         let (effective_balance, effective_entitlement) = match (limit, limit_remaining) {
             (Some(l), Some(lr)) => (Some(lr.max(0.0)), Some(l)),
             (Some(l), None) => {
@@ -592,8 +596,10 @@ impl ProviderUsageStats {
                 (Some((l - u).max(0.0)), Some(l))
             }
             (None, _) => {
-                // If key has no limit and credits_json was explicitly passed (e.g. management key), use account credits
-                if key_json.is_none() {
+                if let Some(b) = monthly_budget {
+                    let u = usage_monthly.or(usage).unwrap_or(0.0);
+                    (Some((b - u).max(0.0)), Some(b))
+                } else if key_json.is_none() {
                     match (total_credits, total_usage) {
                         (Some(c), Some(u)) => (Some((c - u).max(0.0)), Some(c)),
                         _ => (None, None),
@@ -617,8 +623,8 @@ impl ProviderUsageStats {
         if let Some(bal) = effective_balance {
             details.insert("balance".to_string(), serde_json::json!(bal));
         }
-        if let Some(l) = limit {
-            details.insert("limit".to_string(), serde_json::json!(l));
+        if let Some(ent) = effective_entitlement {
+            details.insert("limit".to_string(), serde_json::json!(ent));
         }
         if let Some(lr) = limit_remaining {
             details.insert("limit_remaining".to_string(), serde_json::json!(lr));
@@ -792,6 +798,7 @@ pub struct OpenAiProvider {
     pub base_url: String,
     pub provider_name: String,
     pub openrouter_zdr: bool,
+    pub monthly_budget: Option<f64>,
     pub reasoning_models: std::sync::Mutex<std::collections::HashSet<String>>,
     pub usage_stats: std::sync::Mutex<Option<ProviderUsageStats>>,
     pub request_count: std::sync::atomic::AtomicU64,
@@ -805,6 +812,16 @@ impl OpenAiProvider {
         base_url: Option<String>,
         openrouter_zdr: bool,
     ) -> Self {
+        Self::with_budget(name, api_key, base_url, openrouter_zdr, None)
+    }
+
+    pub fn with_budget(
+        name: String,
+        api_key: String,
+        base_url: Option<String>,
+        openrouter_zdr: bool,
+        monthly_budget: Option<f64>,
+    ) -> Self {
         let base = base_url.unwrap_or_else(|| {
             if name == "openrouter" {
                 "https://openrouter.ai/api/v1".to_string()
@@ -817,6 +834,7 @@ impl OpenAiProvider {
             base_url: base,
             provider_name: name,
             openrouter_zdr,
+            monthly_budget,
             reasoning_models: std::sync::Mutex::new(std::collections::HashSet::new()),
             usage_stats: std::sync::Mutex::new(None),
             request_count: std::sync::atomic::AtomicU64::new(0),
@@ -839,6 +857,7 @@ impl OpenAiProvider {
         api_key: &str,
         base_url: &str,
         client: &Client,
+        monthly_budget: Option<f64>,
     ) -> Option<ProviderUsageStats> {
         let root_url = base_url.trim_end_matches('/');
 
@@ -860,6 +879,7 @@ impl OpenAiProvider {
         Some(ProviderUsageStats::from_openrouter_json(
             Some(&key_json),
             None,
+            monthly_budget,
             0,
             0,
         ))
@@ -1220,7 +1240,8 @@ impl Provider for OpenAiProvider {
 
             if is_openrouter {
                 if let Some(stats) =
-                    Self::fetch_openrouter_usage(&api_key, &base_url, &client).await
+                    Self::fetch_openrouter_usage(&api_key, &base_url, &client, self.monthly_budget)
+                        .await
                 {
                     if let Ok(mut lock) = self.usage_stats.lock() {
                         *lock = Some(stats);
@@ -2985,11 +3006,13 @@ impl ProviderRegistry {
                 )));
             }
             other => {
-                registry.register(Box::new(OpenAiProvider::new(
+                let budget = config.monthly_budget.or(config.notes.monthly_budget);
+                registry.register(Box::new(OpenAiProvider::with_budget(
                     other.to_string(),
                     key,
                     config.base_url.clone(),
                     config.openrouter_zdr,
+                    budget,
                 )));
             }
         }
@@ -5714,8 +5737,13 @@ mod copilot_usage_tests {
             }
         });
 
-        let stats =
-            ProviderUsageStats::from_openrouter_json(Some(&key_json), Some(&credits_json), 1500, 2);
+        let stats = ProviderUsageStats::from_openrouter_json(
+            Some(&key_json),
+            Some(&credits_json),
+            None,
+            1500,
+            2,
+        );
         assert_eq!(stats.provider, "openrouter");
         assert_eq!(stats.plan_name, "OpenRouter (Team Key)");
         assert_eq!(stats.sku, None);
@@ -5739,7 +5767,7 @@ mod copilot_usage_tests {
             }
         });
 
-        let stats = ProviderUsageStats::from_openrouter_json(None, Some(&credits_json), 0, 0);
+        let stats = ProviderUsageStats::from_openrouter_json(None, Some(&credits_json), None, 0, 0);
         assert_eq!(stats.provider, "openrouter");
         assert_eq!(stats.plan_name, "OpenRouter API");
         assert_eq!(stats.quota_percent_remaining, Some(75.0));
@@ -5758,7 +5786,7 @@ mod copilot_usage_tests {
             }
         });
 
-        let stats = ProviderUsageStats::from_openrouter_json(Some(&key_json), None, 50, 1);
+        let stats = ProviderUsageStats::from_openrouter_json(Some(&key_json), None, None, 50, 1);
         assert_eq!(stats.provider, "openrouter");
         assert_eq!(stats.plan_name, "OpenRouter (Free)");
         assert_eq!(stats.sku.as_deref(), Some("free"));
@@ -5802,7 +5830,8 @@ mod copilot_usage_tests {
                 "is_free_tier": false
             }
         });
-        let parsed_stats = ProviderUsageStats::from_openrouter_json(Some(&key_json), None, 0, 0);
+        let parsed_stats =
+            ProviderUsageStats::from_openrouter_json(Some(&key_json), None, None, 0, 0);
         *provider.usage_stats.lock().unwrap() = Some(parsed_stats);
 
         let usage_with_stats = provider.usage().unwrap();
@@ -5825,7 +5854,7 @@ mod copilot_usage_tests {
             }
         });
 
-        let stats = ProviderUsageStats::from_openrouter_json(Some(&key_json), None, 0, 0);
+        let stats = ProviderUsageStats::from_openrouter_json(Some(&key_json), None, None, 0, 0);
         assert_eq!(stats.provider, "openrouter");
         assert_eq!(stats.plan_name, "OpenRouter (sk-or-v1-team)");
         assert_eq!(stats.quota_percent_remaining, None);
@@ -5834,6 +5863,33 @@ mod copilot_usage_tests {
         assert_eq!(
             stats.summary_line(),
             "Provider: openrouter (OpenRouter (sk-or-v1-team)) | Session Tokens: 0 | Requests: 0 | Usage: $107.14 (Month: $44.48)"
+        );
+    }
+
+    #[test]
+    fn test_openrouter_usage_stats_with_configured_monthly_budget() {
+        let key_json = serde_json::json!({
+            "data": {
+                "label": "sk-or-v1-team",
+                "limit": serde_json::Value::Null,
+                "limit_remaining": serde_json::Value::Null,
+                "usage": 107.14,
+                "usage_monthly": 44.484,
+                "is_free_tier": false
+            }
+        });
+
+        let stats =
+            ProviderUsageStats::from_openrouter_json(Some(&key_json), None, Some(50.0), 0, 0);
+        assert_eq!(stats.provider, "openrouter");
+        assert_eq!(stats.plan_name, "OpenRouter (sk-or-v1-team)");
+        // 50.0 - 44.484 = 5.516 -> ~11.032%
+        assert!((stats.quota_percent_remaining.unwrap() - 11.032).abs() < 0.01);
+        assert_eq!(stats.quota_remaining, Some(552)); // 5.516 -> 552 cents ($5.52)
+        assert_eq!(stats.quota_entitlement, Some(5000)); // 50.00 USD in cents ($50.00)
+        assert_eq!(
+            stats.summary_line(),
+            "Provider: openrouter (OpenRouter (sk-or-v1-team)) | Session Tokens: 0 | Requests: 0 | Balance: $5.52/$50.00 (11.0%)"
         );
     }
 }

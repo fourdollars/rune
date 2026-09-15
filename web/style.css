@@ -1778,7 +1778,8 @@ pre.hljs-pre:hover .copy-btn {
     border: 1px solid var(--border);
     border-radius: 8px;
     box-shadow: 0 4px 24px rgba(0, 0, 0, 0.35);
-    width: 230px;
+    min-width: 250px;
+    width: max-content;
     max-width: calc(100vw - 24px);
     box-sizing: border-box;
     padding: 10px 12px;
@@ -1834,13 +1835,18 @@ pre.hljs-pre:hover .copy-btn {
     display: flex;
     justify-content: space-between;
     align-items: center;
+    gap: 12px;
 }
 .quota-label {
     color: var(--text-muted);
+    white-space: nowrap;
+    flex-shrink: 0;
 }
 .quota-val {
     font-weight: 500;
     color: var(--text);
+    white-space: nowrap;
+    text-align: right;
 }
 
 

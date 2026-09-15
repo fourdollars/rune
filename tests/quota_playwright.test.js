@@ -229,9 +229,11 @@ mode = "unrestricted"
 
     await page.click('#quota-indicator');
     await page.waitForTimeout(300);
+    const orTitle = await page.$eval('.quota-popover-title', el => el.textContent);
     const orRemaining = await page.$eval('#quota-popover-remaining', el => el.textContent);
     const orPlan = await page.$eval('#quota-popover-plan', el => el.textContent);
-    console.log('OpenRouter popover remaining:', orRemaining, 'Plan:', orPlan);
+    console.log('OpenRouter popover title:', orTitle, 'remaining:', orRemaining, 'Plan:', orPlan);
+    assert.strictEqual(orTitle, 'OpenRouter Budgets', `Popover title must be OpenRouter Budgets: ${orTitle}`);
     assert(orRemaining.includes('$8.50 / $10.00'), `Popover remaining must show $8.50 / $10.00: ${orRemaining}`);
     assert(orPlan.includes('OpenRouter (Team Key)'), `Popover plan must show OpenRouter (Team Key): ${orPlan}`);
 
