@@ -225,7 +225,7 @@ mode = "unrestricted"
 
     const openrouterTitle = await page.$eval('#quota-indicator', el => el.getAttribute('title') || '');
     console.log('OpenRouter tooltip:', openrouterTitle);
-    assert(openrouterTitle.includes('$8.50') && openrouterTitle.includes('85%'), `OpenRouter tooltip must show $8.50 and 85%: ${openrouterTitle}`);
+    assert(openrouterTitle.startsWith('OpenRouter Budgets:') && openrouterTitle.includes('$8.50') && openrouterTitle.includes('85%'), `OpenRouter tooltip must show OpenRouter Budgets: $8.50 and 85%: ${openrouterTitle}`);
 
     await page.click('#quota-indicator');
     await page.waitForTimeout(300);
