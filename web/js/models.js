@@ -7,9 +7,13 @@ globalThis.updateModelIndicator = function updateModelIndicator() {
     if (!indicator || !nameEl) return;
     if (!activeModel) { indicator.style.display = 'none'; return; }
     nameEl.textContent = activeModel;
+    nameEl.title = `Current model: ${activeModel}${(isAdmin && availableModels.length > 1) ? ' (Click to switch)' : ''}`;
     // Sync mobile model name
     const mobileModelEl = document.getElementById("mobile-model-name");
-    if (mobileModelEl) mobileModelEl.textContent = activeModel;
+    if (mobileModelEl) {
+        mobileModelEl.textContent = activeModel;
+        mobileModelEl.title = `Current model: ${activeModel}`;
+    }
     indicator.style.display = 'flex';
     // Admin can click the name to switch; show pointer cursor
     nameEl.style.cursor = (isAdmin && availableModels.length > 1) ? 'pointer' : 'default';

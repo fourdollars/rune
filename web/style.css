@@ -1658,7 +1658,7 @@ pre.hljs-pre:hover .copy-btn {
     padding: 0 6px;
     height: 24px;
     border-radius: 5px;
-    max-width: 90px;
+    max-width: 260px;
     min-width: 0;
     flex: 0 1 auto;
     overflow: hidden;
@@ -2519,7 +2519,7 @@ body.tree-open #app-scrim {
     body.center-hidden #compact-menu:not(.hidden) { display: flex; }
 
     .split-title-chat { display: flex; }
-    .model-name { max-width: 110px; }
+    .model-name { max-width: 180px; }
 }
 
 /* ─── Tier: medium, portrait — chat docks under the document instead of
@@ -2605,7 +2605,7 @@ body.tree-open #app-scrim {
     .toolbar-overflow-menu { top: 42px; }
     .modal { padding: 22px 18px; }
     .chat-header { height: 36px; min-height: 36px; max-height: 36px; }
-    .model-name { max-width: 100px; }
+    .model-name { max-width: 150px; }
     .chat-action-btn { width: 24px; height: 24px; }
 }
 
