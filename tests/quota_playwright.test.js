@@ -231,11 +231,11 @@ mode = "unrestricted"
     await page.waitForTimeout(300);
     const orTitle = await page.$eval('.quota-popover-title', el => el.textContent);
     const orRemaining = await page.$eval('#quota-popover-remaining', el => el.textContent);
-    const orPlan = await page.$eval('#quota-popover-plan', el => el.textContent);
-    console.log('OpenRouter popover title:', orTitle, 'remaining:', orRemaining, 'Plan:', orPlan);
+    const isPlanRowHidden = await page.$eval('#quota-popover-plan-row', el => el.style.display === 'none' || window.getComputedStyle(el).display === 'none');
+    console.log('OpenRouter popover title:', orTitle, 'remaining:', orRemaining, 'Plan row hidden:', isPlanRowHidden);
     assert.strictEqual(orTitle, 'OpenRouter Budgets', `Popover title must be OpenRouter Budgets: ${orTitle}`);
     assert(orRemaining.includes('$8.50 / $10.00'), `Popover remaining must show $8.50 / $10.00: ${orRemaining}`);
-    assert(orPlan.includes('OpenRouter (Team Key)'), `Popover plan must show OpenRouter (Team Key): ${orPlan}`);
+    assert(isPlanRowHidden, 'Plan row must be hidden for OpenRouter');
 
     await page.click('#quota-indicator');
     await page.waitForTimeout(200);

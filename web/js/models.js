@@ -283,6 +283,11 @@ globalThis.updateUsageIndicator = function updateUsageIndicator() {
         popoverPercent.textContent = percent !== null ? `${Math.round(percent)}%` : '';
     }
 
+    const popoverPlanRow = document.getElementById('quota-popover-plan-row') || (popoverPlan ? popoverPlan.closest('.quota-popover-row') : null);
+    if (popoverPlanRow) {
+        popoverPlanRow.style.display = isOpenRouter ? 'none' : 'flex';
+    }
+
     if (popoverPlan) {
         popoverPlan.textContent = providerUsage.plan_name || providerUsage.provider || '—';
     }
