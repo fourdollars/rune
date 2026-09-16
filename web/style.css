@@ -1658,7 +1658,7 @@ pre.hljs-pre:hover .copy-btn {
     padding: 0 6px;
     height: 24px;
     border-radius: 5px;
-    max-width: 260px;
+    max-width: none;
     min-width: 0;
     flex: 0 1 auto;
     overflow: hidden;
@@ -1689,8 +1689,9 @@ pre.hljs-pre:hover .copy-btn {
     cursor: pointer;
     user-select: none;
     transition: all 0.15s ease;
-    flex: 0 5 auto;
-    min-width: 0;
+    flex-shrink: 0;
+    overflow: hidden;
+    box-sizing: border-box;
 }
 .thinking-btn:hover {
     color: var(--text);
@@ -1711,11 +1712,6 @@ pre.hljs-pre:hover .copy-btn {
     display: inline-block;
     text-transform: capitalize;
     white-space: nowrap;
-    overflow: hidden;
-    text-overflow: clip;
-    min-width: 2ch;
-    max-width: 60px;
-    flex: 0 5 auto;
 }
 
 /* --- Quota indicator (Battery button in header) --- */
@@ -2527,8 +2523,6 @@ body.tree-open #app-scrim {
     body.center-hidden #compact-menu:not(.hidden) { display: flex; }
 
     .split-title-chat { display: flex; }
-    .model-name { max-width: 180px; }
-    .thinking-btn-label { max-width: 2ch; }
 }
 
 /* ─── Tier: medium, portrait — chat docks under the document instead of
@@ -2614,8 +2608,6 @@ body.tree-open #app-scrim {
     .toolbar-overflow-menu { top: 42px; }
     .modal { padding: 22px 18px; }
     .chat-header { height: 36px; min-height: 36px; max-height: 36px; }
-    .model-name { max-width: 150px; }
-    .thinking-btn-label { max-width: 2ch; }
     .chat-action-btn { width: 24px; height: 24px; }
 }
 
