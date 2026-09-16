@@ -195,6 +195,62 @@ if (typeof marked !== 'undefined') {
                 };
             }
         },
+        // CJK and punctuation-aware emphasis/strong tokenizer
+        emStrong(src, maskedSrc, prevChar = "") {
+            let match = this.rules.inline.emStrongLDelim.exec(src);
+            if (!match || (match[3] && prevChar.match(this.rules.other.unicodeAlphaNumeric))) return;
+
+            let isAst = match[0][0] === "*";
+            if (isAst || !(match[1] || match[2] || "") || !prevChar || this.rules.inline.punctuation.exec(prevChar)) {
+                let lDelimLen = [...match[0]].length - 1;
+                let rDelimMatch, rDelimLen, remainingLDelim = lDelimLen, p = 0;
+                let rDelimRegex = isAst ? this.rules.inline.emStrongRDelimAst : this.rules.inline.emStrongRDelimUnd;
+                rDelimRegex.lastIndex = 0;
+                maskedSrc = maskedSrc.slice(-1 * src.length + lDelimLen);
+                while ((match = rDelimRegex.exec(maskedSrc)) != null) {
+                    rDelimMatch = match[1] || match[2] || match[3] || match[4] || match[5] || match[6];
+                    if (!rDelimMatch) continue;
+                    rDelimLen = [...rDelimMatch].length;
+
+                    if (match[4]) {
+                        remainingLDelim += rDelimLen;
+                        continue;
+                    } else if (match[3]) {
+                        const charBefore = match[0][0];
+                        if (/^\s$/.test(charBefore)) {
+                            remainingLDelim += rDelimLen;
+                            continue;
+                        }
+                    }
+
+                    if ((match[5] || match[6]) && (lDelimLen % 3) && !((lDelimLen + rDelimLen) % 3)) {
+                        p += rDelimLen;
+                        continue;
+                    }
+                    remainingLDelim -= rDelimLen;
+                    if (remainingLDelim > 0) continue;
+                    rDelimLen = Math.min(rDelimLen, rDelimLen + remainingLDelim + p);
+                    let d = [...match[0]][0].length;
+                    let raw = src.slice(0, lDelimLen + match.index + d + rDelimLen);
+                    if (Math.min(lDelimLen, rDelimLen) % 2) {
+                        let text = raw.slice(1, -1);
+                        return {
+                            type: "em",
+                            raw,
+                            text,
+                            tokens: this.lexer.inlineTokens(text),
+                        };
+                    }
+                    let text = raw.slice(2, -2);
+                    return {
+                        type: "strong",
+                        raw,
+                        text,
+                        tokens: this.lexer.inlineTokens(text),
+                    };
+                }
+            }
+        },
     };
 
     marked.use({ renderer, tokenizer, hooks, breaks: true, gfm: true, extensions: [blockMathExtension, inlineMathExtension] });

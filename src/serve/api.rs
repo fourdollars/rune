@@ -2127,6 +2127,61 @@ const PUBLIC_PREVIEW_HTML: &str = r##"<!DOCTYPE html>
             };
           }
         },
+        emStrong(src, maskedSrc, prevChar = "") {
+          let match = this.rules.inline.emStrongLDelim.exec(src);
+          if (!match || (match[3] && prevChar.match(this.rules.other.unicodeAlphaNumeric))) return;
+
+          let isAst = match[0][0] === "*";
+          if (isAst || !(match[1] || match[2] || "") || !prevChar || this.rules.inline.punctuation.exec(prevChar)) {
+            let lDelimLen = [...match[0]].length - 1;
+            let rDelimMatch, rDelimLen, remainingLDelim = lDelimLen, p = 0;
+            let rDelimRegex = isAst ? this.rules.inline.emStrongRDelimAst : this.rules.inline.emStrongRDelimUnd;
+            rDelimRegex.lastIndex = 0;
+            maskedSrc = maskedSrc.slice(-1 * src.length + lDelimLen);
+            while ((match = rDelimRegex.exec(maskedSrc)) != null) {
+              rDelimMatch = match[1] || match[2] || match[3] || match[4] || match[5] || match[6];
+              if (!rDelimMatch) continue;
+              rDelimLen = [...rDelimMatch].length;
+
+              if (match[4]) {
+                remainingLDelim += rDelimLen;
+                continue;
+              } else if (match[3]) {
+                const charBefore = match[0][0];
+                if (/^\s$/.test(charBefore)) {
+                  remainingLDelim += rDelimLen;
+                  continue;
+                }
+              }
+
+              if ((match[5] || match[6]) && (lDelimLen % 3) && !((lDelimLen + rDelimLen) % 3)) {
+                p += rDelimLen;
+                continue;
+              }
+              remainingLDelim -= rDelimLen;
+              if (remainingLDelim > 0) continue;
+              rDelimLen = Math.min(rDelimLen, rDelimLen + remainingLDelim + p);
+              let d = [...match[0]][0].length;
+              let raw = src.slice(0, lDelimLen + match.index + d + rDelimLen);
+              if (Math.min(lDelimLen, rDelimLen) % 2) {
+                let text = raw.slice(1, -1);
+                return {
+                  type: "em",
+                  raw,
+                  text,
+                  tokens: this.lexer.inlineTokens(text),
+                };
+              }
+              let text = raw.slice(2, -2);
+              return {
+                type: "strong",
+                raw,
+                text,
+                tokens: this.lexer.inlineTokens(text),
+              };
+            }
+          }
+        },
       },
       extensions: [blockMathExtension, inlineMathExtension],
     });
@@ -3458,13 +3513,7 @@ When creating Mermaid diagrams, always wrap text descriptions and node labels in
 
 ## SVG
 
-Unless explicitly requested otherwise, always use a light background for SVGs. When embedding SVG inline in markdown, write the entire `<svg>...</svg>` on a **single line with no whitespace or newlines** between tags. Inline SVG with line breaks or indentation will not render correctly.
-
-## Markdown Formatting
-
-When applying bold (`**`) or italic (`*`) formatting to text with quotes, brackets, or mixed CJK/English terms:
-- **Quotes and brackets outside**: Always place quotation marks and brackets *outside* the bold/italic delimiters (e.g. write `「**術語**」`, `（**術語**）`, `《**書名**》` instead of `**「術語」**` or `**（術語）**`) to ensure correct CommonMark rendering.
-- **Spacing**: Ensure proper spacing between alphanumeric words and bold delimiters (e.g. write `Why **重點**` or `Why 「**重點**」` instead of `Why**「重點」**`)."#
+Unless explicitly requested otherwise, always use a light background for SVGs. When embedding SVG inline in markdown, write the entire `<svg>...</svg>` on a **single line with no whitespace or newlines** between tags. Inline SVG with line breaks or indentation will not render correctly."#
     )
 }
 
@@ -3514,8 +3563,6 @@ mod tests {
         assert!(prompt.contains("always wrap text descriptions and node labels in double quotes"));
         assert!(prompt.contains("## SVG"));
         assert!(prompt.contains("always use a light background for SVGs"));
-        assert!(prompt.contains("## Markdown Formatting"));
-        assert!(prompt.contains("Quotes and brackets outside"));
 
         let mut custom_config = RuneConfig::default();
         custom_config.system_prompt = Some("Custom prompt".to_string());
