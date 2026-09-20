@@ -118,14 +118,35 @@ pub async fn process_webhook_payload(
             .and_then(|s| s.user_id.as_deref())
             .unwrap_or("unknown");
 
-        // User lookup in configuration
-        let user_cfg = line_cfg.users.iter().find(|u| u.user_id == user_id);
+        // Strict User Authorization (Zero-Trust Allowlist)
+        let user_cfg = match line_cfg.users.iter().find(|u| u.user_id == user_id) {
+            Some(cfg) => cfg,
+            None => {
+                warn!("Unauthorized LINE message from user_id: {}", user_id);
+                if let Some(ref reply_token) = event.reply_token {
+                    let deny_msg = format!(
+                        "⛔ Access Denied: Unauthorized LINE User ID.\n\nYour User ID: {}\nPlease contact the administrator to add your User ID to [[notes.line.users]] in ~/.rune/rune.toml to enable access.",
+                        user_id
+                    );
+                    let _ = client.reply_message(reply_token, &deny_msg).await;
+                }
+                continue;
+            }
+        };
+
+        let is_guest = user_cfg.role.to_lowercase() == "guest";
         let note_id = user_cfg
-            .and_then(|u| u.note.clone())
+            .note
+            .clone()
             .or_else(|| line_cfg.default_note.clone())
             .unwrap_or_else(|| "Default".to_string());
 
-        let interactive_chat = user_cfg.map(|u| u.interactive_chat).unwrap_or(true);
+        // Guests cannot execute interactive AI chat (read-only / log collector)
+        let interactive_chat = if is_guest {
+            false
+        } else {
+            user_cfg.interactive_chat
+        };
 
         // Ensure notebook exists in DB
         let _ = state.chat_db.create_note(&note_id, &note_id, None);
@@ -157,6 +178,18 @@ pub async fn process_webhook_payload(
 
         // Check if slash command
         if is_slash_command(&text) {
+            if is_guest && (text.starts_with("/archive") || text.starts_with("/clear")) {
+                if let Some(ref reply_token) = event.reply_token {
+                    let _ = client
+                        .reply_message(
+                            reply_token,
+                            "⛔ Guest access is read-only. Cannot archive notebooks.",
+                        )
+                        .await;
+                }
+                continue;
+            }
+
             if let Some(reply_text) = handle_slash_command(&text, &state, &note_id, user_id).await {
                 if let Some(ref reply_token) = event.reply_token {
                     if let Err(e) = client.reply_message(reply_token, &reply_text).await {
@@ -539,5 +572,44 @@ mod tests {
 
         let resp = line_webhook_handler(State(state), headers, body).await;
         assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn test_process_webhook_unauthorized_user_blocked() {
+        use crate::serve::line::types::{EventMessage, EventSource, WebhookEvent};
+
+        let state = create_test_state_with_line(true, "secret123");
+        let payload = WebhookPayload {
+            destination: Some("U_BOT".to_string()),
+            events: vec![WebhookEvent {
+                event_type: "message".to_string(),
+                mode: None,
+                timestamp: 123456789,
+                source: Some(EventSource {
+                    source_type: "user".to_string(),
+                    user_id: Some("U_STRANGER_999".to_string()),
+                    group_id: None,
+                    room_id: None,
+                }),
+                reply_token: Some("dummy_token".to_string()),
+                message: Some(EventMessage {
+                    id: "msg_1".to_string(),
+                    message_type: "text".to_string(),
+                    text: Some("Hello".to_string()),
+                    quote_token: None,
+                }),
+                delivery_context: None,
+            }],
+        };
+
+        let cache = ProfileCache::default();
+        process_webhook_payload(state.clone(), payload, cache).await;
+
+        // Verify no message was stored in DB because stranger was blocked
+        let history = state
+            .chat_db
+            .load_recent_async("Default".to_string(), 10)
+            .await;
+        assert!(history.is_empty());
     }
 }
