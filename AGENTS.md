@@ -82,6 +82,20 @@ groups_claim = "groups"
 admins = ["alice", "grp:platform-admins"]
 users = ["grp:employees"]
 guests = []
+
+# LINE Bot Webhook & Interactive Chat (`--features line` or `notes-line`)
+[notes.line]
+enabled = true
+channel_secret = "your_channel_secret_here"
+channel_access_token = "your_channel_access_token_here"
+default_note = "LintBot" # Fallback notebook for unmapped users or Lint Bots
+
+# User mappings (system automatically resolves displayName as line:<displayName> via LINE Profile API)
+[[notes.line.users]]
+user_id = "U12345678"
+note = "AI"
+role = "user"
+interactive_chat = true # Two-way AI chat with stats and slash commands (/usage, /context, /archive)
 ```
 
 ### Concourse Resource Type
@@ -239,6 +253,7 @@ rune notes --bind 0.0.0.0
 | `/notes/` | Lists all public notes |
 | `/notes/{note}/` | Lists public files in a note |
 | `/notes/{note}/{file}` | Rendered markdown preview (client-side with marked.js) |
+| `/webhook/line` | LINE Messaging API webhook (HMAC-SHA256 signature verified) |
 
 ### SSE Events
 
