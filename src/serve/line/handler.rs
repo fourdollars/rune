@@ -94,23 +94,43 @@ pub async fn process_webhook_payload(
     let client = LineClient::new(line_cfg.channel_access_token.clone());
 
     for event in payload.events {
-        if event.event_type != "message" {
-            debug!("Ignoring non-message LINE event: {}", event.event_type);
-            continue;
-        }
-
-        let message = match event.message {
-            Some(ref msg) if msg.message_type == "text" => msg,
-            _ => {
-                debug!("Ignoring non-text LINE message event");
+        let text = if event.event_type == "message" {
+            if let Some(ref msg) = event.message {
+                if let Some(ref t) = msg.text {
+                    t.trim().to_string()
+                } else if let Some(ref file_name) = msg.file_name {
+                    format!(
+                        "[LINE File: {} ({:?} bytes)]",
+                        file_name,
+                        msg.file_size.unwrap_or(0)
+                    )
+                } else {
+                    debug!(
+                        "Ignoring unsupported LINE message type: {}",
+                        msg.message_type
+                    );
+                    continue;
+                }
+            } else {
                 continue;
             }
+        } else if event.event_type == "postback" {
+            if let Some(ref pb) = event.postback {
+                pb.data.trim().to_string()
+            } else {
+                continue;
+            }
+        } else {
+            debug!(
+                "Ignoring non-message/postback LINE event: {}",
+                event.event_type
+            );
+            continue;
         };
 
-        let text = match message.text {
-            Some(ref t) if !t.trim().is_empty() => t.trim().to_string(),
-            _ => continue,
-        };
+        if text.is_empty() {
+            continue;
+        }
 
         let user_id = event
             .source
@@ -118,34 +138,32 @@ pub async fn process_webhook_payload(
             .and_then(|s| s.user_id.as_deref())
             .unwrap_or("unknown");
 
-        // Strict User Authorization (Zero-Trust Allowlist)
-        let user_cfg = match line_cfg.users.iter().find(|u| u.user_id == user_id) {
-            Some(cfg) => cfg,
-            None => {
-                warn!("Unauthorized LINE message from user_id: {}", user_id);
-                if let Some(ref reply_token) = event.reply_token {
-                    let deny_msg = format!(
-                        "⛔ Access Denied: Unauthorized LINE User ID.\n\nYour User ID: {}\nPlease contact the administrator to add your User ID to [[notes.line.users]] in ~/.rune/rune.toml to enable access.",
-                        user_id
-                    );
-                    let _ = client.reply_message(reply_token, &deny_msg).await;
-                }
-                continue;
+        // Determine permissions and target note:
+        // - Mapped users: follow their configured role and interactive_chat setting.
+        // - Unmapped users / bots: routed to default_note ("LineBot") as read-only data collectors (no AI chat).
+        let user_cfg = line_cfg.users.iter().find(|u| u.user_id == user_id);
+        let (note_id, interactive_chat, is_guest) = match user_cfg {
+            Some(cfg) => {
+                let is_guest = cfg.role.to_lowercase() == "guest";
+                let note = cfg
+                    .note
+                    .clone()
+                    .or_else(|| line_cfg.default_note.clone())
+                    .unwrap_or_else(|| "LineBot".to_string());
+                let interactive = if is_guest {
+                    false
+                } else {
+                    cfg.interactive_chat
+                };
+                (note, interactive, is_guest)
             }
-        };
-
-        let is_guest = user_cfg.role.to_lowercase() == "guest";
-        let note_id = user_cfg
-            .note
-            .clone()
-            .or_else(|| line_cfg.default_note.clone())
-            .unwrap_or_else(|| "LineBot".to_string());
-
-        // Guests cannot execute interactive AI chat (read-only / log collector)
-        let interactive_chat = if is_guest {
-            false
-        } else {
-            user_cfg.interactive_chat
+            None => {
+                let note = line_cfg
+                    .default_note
+                    .clone()
+                    .unwrap_or_else(|| "LineBot".to_string());
+                (note, false, true)
+            }
         };
 
         // Ensure notebook exists in DB and notify frontend WebUI if newly created
@@ -576,7 +594,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_process_webhook_unauthorized_user_blocked() {
+    async fn test_process_webhook_unmapped_user_collected_to_default_note_no_ai() {
         use crate::serve::line::types::{EventMessage, EventSource, WebhookEvent};
 
         let state = create_test_state_with_line(true, "secret123");
@@ -584,33 +602,67 @@ mod tests {
             destination: Some("U_BOT".to_string()),
             events: vec![WebhookEvent {
                 event_type: "message".to_string(),
-                mode: None,
-                timestamp: 123456789,
                 source: Some(EventSource {
                     source_type: "user".to_string(),
                     user_id: Some("U_STRANGER_999".to_string()),
-                    group_id: None,
-                    room_id: None,
+                    ..Default::default()
                 }),
                 reply_token: Some("dummy_token".to_string()),
                 message: Some(EventMessage {
                     id: "msg_1".to_string(),
                     message_type: "text".to_string(),
-                    text: Some("Hello".to_string()),
-                    quote_token: None,
+                    text: Some("Build succeeded with 0 warnings".to_string()),
+                    ..Default::default()
                 }),
-                delivery_context: None,
+                ..Default::default()
             }],
         };
 
         let cache = ProfileCache::default();
         process_webhook_payload(state.clone(), payload, cache).await;
 
-        // Verify no message was stored in DB because stranger was blocked
+        // Verify message was stored in "LineBot" (or configured default_note) for data collection
         let history = state
             .chat_db
             .load_recent_async("Default".to_string(), 10)
             .await;
-        assert!(history.is_empty());
+        assert_eq!(history.len(), 1);
+        assert_eq!(history[0].content, "Build succeeded with 0 warnings");
+        // Verify only user message is recorded, no assistant response was triggered
+        assert_eq!(history[0].role, "user");
+    }
+
+    #[tokio::test]
+    async fn test_process_webhook_postback_collected() {
+        use crate::serve::line::types::{EventPostback, EventSource, WebhookEvent};
+
+        let state = create_test_state_with_line(true, "secret123");
+        let payload = WebhookPayload {
+            destination: Some("U_BOT".to_string()),
+            events: vec![WebhookEvent {
+                event_type: "postback".to_string(),
+                source: Some(EventSource {
+                    source_type: "user".to_string(),
+                    user_id: Some("U_BOT_CLIENT".to_string()),
+                    ..Default::default()
+                }),
+                reply_token: Some("dummy_token".to_string()),
+                postback: Some(EventPostback {
+                    data: r#"{"action":"ci_result","status":"passed"}"#.to_string(),
+                    params: None,
+                }),
+                ..Default::default()
+            }],
+        };
+
+        let cache = ProfileCache::default();
+        process_webhook_payload(state.clone(), payload, cache).await;
+
+        let history = state
+            .chat_db
+            .load_recent_async("Default".to_string(), 10)
+            .await;
+        assert_eq!(history.len(), 1);
+        assert!(history[0].content.contains(r#"{"action":"ci_result""#));
     }
 }

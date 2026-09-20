@@ -32,9 +32,21 @@ pub struct WebhookEvent {
     /// Message object if event_type is "message".
     #[serde(default)]
     pub message: Option<EventMessage>,
+    /// Postback object if event_type is "postback".
+    #[serde(default)]
+    pub postback: Option<EventPostback>,
     /// Delivery context info (e.g. redelivery).
     #[serde(rename = "deliveryContext", default)]
     pub delivery_context: Option<DeliveryContext>,
+}
+
+/// Postback data payload.
+#[derive(Debug, Clone, Deserialize, Serialize, Default)]
+pub struct EventPostback {
+    #[serde(default)]
+    pub data: String,
+    #[serde(default)]
+    pub params: Option<serde_json::Value>,
 }
 
 /// Source of an event.
@@ -76,6 +88,12 @@ pub struct EventMessage {
     /// Message text if message_type is "text".
     #[serde(default)]
     pub text: Option<String>,
+    /// File name if message_type is "file".
+    #[serde(rename = "fileName", default)]
+    pub file_name: Option<String>,
+    /// File size if message_type is "file".
+    #[serde(rename = "fileSize", default)]
+    pub file_size: Option<u64>,
     /// Quote token for replying to this specific message.
     #[serde(rename = "quoteToken", default)]
     pub quote_token: Option<String>,
