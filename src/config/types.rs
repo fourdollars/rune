@@ -182,7 +182,7 @@ pub struct LineNotesConfig {
     /// LINE Messaging API Channel Access Token (for Reply, Push, and Profile APIs).
     #[serde(default)]
     pub channel_access_token: String,
-    /// Fallback/default Note ID for unmapped users or Lint Bots.
+    /// Fallback/default Note ID for unmapped users or Line Bots.
     #[serde(default)]
     pub default_note: Option<String>,
     /// Per-user bindings and permissions.

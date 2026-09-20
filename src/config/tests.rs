@@ -1454,7 +1454,7 @@ port = 9527
 enabled = true
 channel_secret = "secret123"
 channel_access_token = "token456"
-default_note = "LintBot"
+default_note = "LineBot"
 
 [[notes.line.users]]
 user_id = "U12345678"
@@ -1475,7 +1475,7 @@ interactive_chat = false
     assert!(line.enabled);
     assert_eq!(line.channel_secret, "secret123");
     assert_eq!(line.channel_access_token, "token456");
-    assert_eq!(line.default_note.as_deref(), Some("LintBot"));
+    assert_eq!(line.default_note.as_deref(), Some("LineBot"));
     assert_eq!(line.users.len(), 2);
     assert_eq!(line.users[0].user_id, "U12345678");
     assert_eq!(line.users[0].note.as_deref(), Some("AI"));

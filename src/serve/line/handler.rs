@@ -5,8 +5,8 @@ use super::signature::verify_signature;
 use super::types::WebhookPayload;
 use crate::agent::{Agent, StopReason};
 use crate::serve::api::{
-    broadcast_file_list, broadcast_to_room, build_embedding, build_provider, build_system_prompt,
-    SseMsg,
+    broadcast_file_list, broadcast_note_list, broadcast_to_room, build_embedding, build_provider,
+    build_system_prompt, SseMsg,
 };
 use crate::serve::ServerState;
 use axum::body::Bytes;
@@ -139,7 +139,7 @@ pub async fn process_webhook_payload(
             .note
             .clone()
             .or_else(|| line_cfg.default_note.clone())
-            .unwrap_or_else(|| "Default".to_string());
+            .unwrap_or_else(|| "LineBot".to_string());
 
         // Guests cannot execute interactive AI chat (read-only / log collector)
         let interactive_chat = if is_guest {
@@ -148,8 +148,12 @@ pub async fn process_webhook_payload(
             user_cfg.interactive_chat
         };
 
-        // Ensure notebook exists in DB
-        let _ = state.chat_db.create_note(&note_id, &note_id, None);
+        // Ensure notebook exists in DB and notify frontend WebUI if newly created
+        if state.chat_db.create_note(&note_id, &note_id, None).is_ok() {
+            let md_dir = state.note_markdown_dir(&note_id);
+            let _ = tokio::fs::create_dir_all(&md_dir).await;
+            broadcast_note_list(&state).await;
+        }
 
         // Resolve display name via Cache / Profile API
         let display_name = match cache.get(user_id).await {
@@ -254,11 +258,8 @@ pub async fn process_webhook_payload(
                 .await;
             });
         } else {
-            // Lint Bot / CI logger mode: persist to Chat DB and save/append to Notebook Markdown file
-            info!(
-                "LINE Lint Bot message received for note [{}]: {}",
-                note_id, text
-            );
+            // Line Bot logger mode: persist to Chat DB and save/append to Notebook Markdown file
+            info!("LINE Bot message received for note [{}]: {}", note_id, text);
             state
                 .chat_db
                 .insert_async(
@@ -276,11 +277,11 @@ pub async fn process_webhook_payload(
             };
             broadcast_to_room(&room, &user_msg);
 
-            // Append to lint markdown file
+            // Append to bot markdown report file
             let md_dir = state.note_markdown_dir(&note_id);
             let _ = std::fs::create_dir_all(&md_dir);
             let today = chrono_now_date();
-            let filename = format!("{}-lint-report.md", today);
+            let filename = format!("{}-line-report.md", today);
             let file_path = md_dir.join(&filename);
 
             let append_text = format!(

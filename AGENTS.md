@@ -88,7 +88,7 @@ guests = []
 enabled = true
 channel_secret = "your_channel_secret_here"
 channel_access_token = "your_channel_access_token_here"
-default_note = "LintBot" # Fallback notebook for unmapped users or Lint Bots
+default_note = "LineBot" # Fallback notebook for unmapped users or Line Bots
 
 # User mappings (system automatically resolves displayName as line:<displayName> via LINE Profile API)
 [[notes.line.users]]
