@@ -1443,3 +1443,46 @@ fn test_load_without_clap_expands_tilde() {
         );
     }
 }
+
+#[test]
+fn test_line_notes_config_deserialization() {
+    let toml_str = r#"
+[notes]
+port = 9527
+
+[notes.line]
+enabled = true
+channel_secret = "secret123"
+channel_access_token = "token456"
+default_note = "LintBot"
+
+[[notes.line.users]]
+user_id = "U12345678"
+note = "AI"
+role = "admin"
+interactive_chat = true
+
+[[notes.line.users]]
+user_id = "U87654321"
+note = "Logs"
+role = "guest"
+interactive_chat = false
+"#;
+
+    let partial: PartialConfig = toml::from_str(toml_str).unwrap();
+    let notes = partial.notes.unwrap();
+    let line = notes.line.unwrap();
+    assert!(line.enabled);
+    assert_eq!(line.channel_secret, "secret123");
+    assert_eq!(line.channel_access_token, "token456");
+    assert_eq!(line.default_note.as_deref(), Some("LintBot"));
+    assert_eq!(line.users.len(), 2);
+    assert_eq!(line.users[0].user_id, "U12345678");
+    assert_eq!(line.users[0].note.as_deref(), Some("AI"));
+    assert_eq!(line.users[0].role, "admin");
+    assert!(line.users[0].interactive_chat);
+    assert_eq!(line.users[1].user_id, "U87654321");
+    assert_eq!(line.users[1].note.as_deref(), Some("Logs"));
+    assert_eq!(line.users[1].role, "guest");
+    assert!(!line.users[1].interactive_chat);
+}

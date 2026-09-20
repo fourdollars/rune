@@ -122,6 +122,9 @@ pub struct NotesConfig {
     /// Optional monthly spending budget in USD (e.g. 50.0).
     #[serde(default)]
     pub monthly_budget: Option<f64>,
+    /// LINE Bot Webhook integration configuration.
+    #[serde(default)]
+    pub line: Option<LineNotesConfig>,
 }
 
 impl Default for NotesConfig {
@@ -138,8 +141,53 @@ impl Default for NotesConfig {
             title: None,
             desc: None,
             monthly_budget: None,
+            line: None,
         }
     }
+}
+
+fn default_user_role() -> String {
+    "user".to_string()
+}
+
+fn default_interactive_chat() -> bool {
+    true
+}
+
+/// User mapping configuration for LINE Bot Webhook.
+#[derive(Debug, Clone, Deserialize, Default, PartialEq)]
+pub struct LineUserConfig {
+    /// LINE User ID (e.g. "U12345678...").
+    pub user_id: String,
+    /// Default Note ID bound to this user.
+    #[serde(default)]
+    pub note: Option<String>,
+    /// User role in Rune ("admin", "user", "guest").
+    #[serde(default = "default_user_role")]
+    pub role: String,
+    /// Whether two-way interactive LLM chat is enabled for this user.
+    #[serde(default = "default_interactive_chat")]
+    pub interactive_chat: bool,
+}
+
+/// Configuration for LINE Bot Webhook integration (`[notes.line]`).
+#[derive(Debug, Clone, Deserialize, Default, PartialEq)]
+pub struct LineNotesConfig {
+    /// Whether LINE Webhook integration is enabled.
+    #[serde(default)]
+    pub enabled: bool,
+    /// LINE Messaging API Channel Secret (for HMAC-SHA256 signature verification).
+    #[serde(default)]
+    pub channel_secret: String,
+    /// LINE Messaging API Channel Access Token (for Reply, Push, and Profile APIs).
+    #[serde(default)]
+    pub channel_access_token: String,
+    /// Fallback/default Note ID for unmapped users or Lint Bots.
+    #[serde(default)]
+    pub default_note: Option<String>,
+    /// Per-user bindings and permissions.
+    #[serde(default)]
+    pub users: Vec<LineUserConfig>,
 }
 
 /// Local credentials configuration for Rune Notes.

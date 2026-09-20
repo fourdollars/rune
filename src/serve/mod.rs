@@ -8,6 +8,8 @@
 
 pub mod api;
 pub mod db;
+#[cfg(feature = "line")]
+pub mod line;
 pub mod oauth;
 pub mod oauth_pkce;
 mod static_files;
@@ -776,7 +778,12 @@ pub async fn run(config: RuneConfig, opts: NotesOptions) {
         .route("/oauth/authorize", get(oauth_pkce::oauth_authorize_handler))
         .route("/oauth/token", post(oauth_pkce::oauth_token_handler))
         .route("/oauth/register", post(oauth_pkce::oauth_register_handler))
-        .route("/oauth/revoke", post(oauth_pkce::oauth_revoke_handler))
+        .route("/oauth/revoke", post(oauth_pkce::oauth_revoke_handler));
+
+    #[cfg(feature = "line")]
+    let app = app.route("/webhook/line", post(line::line_webhook_handler));
+
+    let app = app
         .merge(api_routes)
         .layer(axum_mw::from_fn(cors_middleware))
         .with_state(state.clone());
@@ -785,6 +792,15 @@ pub async fn run(config: RuneConfig, opts: NotesOptions) {
     info!("Rune notes starting on http://{}", addr);
 
     println!("  ᚱ Rune Notes → http://{}", addr);
+    #[cfg(feature = "line")]
+    if let Some(ref line_cfg) = config.notes.line {
+        if line_cfg.enabled || !line_cfg.channel_secret.is_empty() {
+            println!(
+                "  📱 LINE Webhook configured → /webhook/line ({} user(s) mapped)",
+                line_cfg.users.len()
+            );
+        }
+    }
     if let Some(ref oauth) = config.notes.github {
         if oauth.client_id.is_empty() || oauth.client_secret.is_empty() {
             println!("  ⚠ GitHub OAuth not fully configured (missing Client ID or Client Secret)");

@@ -13,7 +13,7 @@ pub use persist::{
     persist_policy_array_at,
 };
 pub use types::{
-    AgentProfile, GitHubOAuthConfig, LocalConfig, LoopConfig, NotesConfig, OAuthProviderConfig,
-    PolicyConfig, RuneConfig,
+    AgentProfile, GitHubOAuthConfig, LineNotesConfig, LineUserConfig, LocalConfig, LoopConfig,
+    NotesConfig, OAuthProviderConfig, PolicyConfig, RuneConfig,
 };
 pub use util::{data_dir, expand_tilde, safe_truncate};

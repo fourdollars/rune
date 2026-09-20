@@ -3361,7 +3361,7 @@ pub fn build_provider_pub(config: &RuneConfig) -> anyhow::Result<ProviderRegistr
     build_provider(config)
 }
 
-fn build_provider(config: &RuneConfig) -> anyhow::Result<ProviderRegistry> {
+pub(crate) fn build_provider(config: &RuneConfig) -> anyhow::Result<ProviderRegistry> {
     let mut registry = ProviderRegistry::new();
 
     let key = config
@@ -3422,7 +3422,7 @@ fn build_provider(config: &RuneConfig) -> anyhow::Result<ProviderRegistry> {
     }
     Ok(registry)
 }
-async fn build_embedding(config: &RuneConfig) -> Option<EmbeddingEngine> {
+pub(crate) async fn build_embedding(config: &RuneConfig) -> Option<EmbeddingEngine> {
     let api_key = config.api_key.clone().unwrap_or_default();
     if api_key.is_empty() {
         return None;
@@ -3471,7 +3471,7 @@ async fn build_embedding(config: &RuneConfig) -> Option<EmbeddingEngine> {
     }
 }
 
-async fn build_system_prompt(config: &RuneConfig) -> String {
+pub(crate) async fn build_system_prompt(config: &RuneConfig) -> String {
     if let Some(ref prompt) = config.system_prompt {
         if !prompt.is_empty() {
             return prompt.clone();
