@@ -2003,6 +2003,39 @@ async function initOrReconnect() {
     $messages.innerHTML = '';
     setStatus('disconnected');
   }
+
+  // Check for any pending input passed from context menu while sidepanel was opening
+  try {
+    const data = await browser.storage.local.get(['rune_pending_chat_input']);
+    if (data?.rune_pending_chat_input) {
+      await browser.storage.local.remove('rune_pending_chat_input');
+      const pending = data.rune_pending_chat_input;
+      if (pending && pending.text && $input) {
+        $input.value = pending.text;
+        $input.focus();
+        $input.setSelectionRange?.(pending.text.length, pending.text.length);
+      }
+    }
+  } catch (_) {}
 }
 
+// Listen for direct messages from background.js (e.g. context menu while sidepanel is already open)
+browser.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message?.type === 'rune:fillChatInput') {
+    if ($input) {
+      if (message.text) {
+        $input.value = message.text;
+        $input.focus();
+        $input.setSelectionRange?.(message.text.length, message.text.length);
+      } else {
+        $input.focus();
+      }
+    }
+    sendResponse({ ok: true });
+    return true;
+  }
+  return false;
+});
+
 initOrReconnect();
+

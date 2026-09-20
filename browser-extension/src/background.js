@@ -76,11 +76,40 @@ browser.runtime.onInstalled.addListener(() => {
 
 browser.contextMenus.onClicked.addListener(async (info, tab) => {
   if (info.menuItemId !== CONTEXT_MENU_ID) return;
-  // TODO: not yet wired up — should open the side panel (it currently only
-  // opens via the toolbar-icon click behavior below) and forward
-  // info.selectionText / a content-script extraction request into the chat
-  // composer.
-  console.log('[rune-chat] context menu clicked', info, tab);
+
+  const targetText = (info.selectionText || '').trim();
+  const targetTabId = tab?.id;
+  const targetWindowId = tab?.windowId;
+
+  // 1. Try to open side panel / sidebar
+  try {
+    if (browser.sidePanel?.open && targetWindowId) {
+      await browser.sidePanel.open({ windowId: targetWindowId });
+    } else if (browser.sidebarAction?.open) {
+      await browser.sidebarAction.open();
+    }
+  } catch (e) {
+    console.warn('[rune-chat] Failed to open side panel:', e);
+  }
+
+  // 2. Dispatch to side panel via runtime message; fallback to storage if panel was just opened
+  const payload = {
+    type: 'rune:fillChatInput',
+    text: targetText,
+    tabId: targetTabId,
+    url: tab?.url,
+    title: tab?.title,
+    timestamp: Date.now(),
+  };
+
+  try {
+    const res = await browser.runtime.sendMessage(payload);
+    if (!res || !res.ok) {
+      await browser.storage.local.set({ rune_pending_chat_input: payload });
+    }
+  } catch (_) {
+    await browser.storage.local.set({ rune_pending_chat_input: payload });
+  }
 });
 
 /**
