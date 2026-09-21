@@ -108,6 +108,7 @@ function setupSidepanelContext() {
   const storageData = {};
   const syncStorageData = { serverUrl: 'http://localhost:9527' };
   const storageListeners = [];
+  const runtimeMessageListeners = [];
   const sentMessages = [];
   let sseStreams = [];
 
@@ -168,6 +169,13 @@ function setupSidepanelContext() {
       },
     },
     runtime: {
+      onMessage: {
+        addListener: (fn) => runtimeMessageListeners.push(fn),
+        removeListener: (fn) => {
+          const idx = runtimeMessageListeners.indexOf(fn);
+          if (idx !== -1) runtimeMessageListeners.splice(idx, 1);
+        },
+      },
       sendMessage: async (msg) => {
         sentMessages.push(msg);
         if (msg.type === 'rune:loadSession') {
@@ -300,6 +308,7 @@ function setupSidepanelContext() {
     storageData,
     syncStorageData,
     storageListeners,
+    runtimeMessageListeners,
     sentMessages,
     fetchCalls,
     exec: (code) => vm.runInContext(code, context),
@@ -826,6 +835,28 @@ async function runTests() {
     assert.strictEqual($input.value, '@welcome.md ');
 
     console.log('✓ Test 14 passed: autocomplete popup for +skills and @files');
+  }
+
+  // ── Test 15: runtime.onMessage rune:fillChatInput fills chat input ─────────
+  {
+    const fixture = setupSidepanelContext();
+    const { elements, runtimeMessageListeners } = fixture;
+    const $input = elements['input'];
+    assert($input, '#input should exist');
+
+    assert.strictEqual(runtimeMessageListeners.length >= 1, true, 'Should register at least one runtime message listener');
+    const listener = runtimeMessageListeners[0];
+
+    let responseData = null;
+    const res = listener({ type: 'rune:fillChatInput', text: 'Hello from context menu' }, {}, (resp) => {
+      responseData = resp;
+    });
+
+    assert.strictEqual(res, true, 'Listener should return true for handled message');
+    assert.strictEqual($input.value, 'Hello from context menu', 'Chat input should be populated with message text');
+    assert.strictEqual(responseData?.ok, true);
+
+    console.log('✓ Test 15 passed: runtime.onMessage rune:fillChatInput fills chat input');
   }
 
   console.log("All extension sidepanel tests passed successfully! 🎉");
