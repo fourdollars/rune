@@ -3577,61 +3577,7 @@ pub async fn build_effective_note_system_prompt(
     (final_prompt, loaded_files)
 }
 
-/// Atomically writes bytes or string content to a file by writing to a sibling temporary file first
-/// and then renaming it over the destination path. This guarantees atomic, torn-read-free file updates.
-pub async fn atomic_write_file<P: AsRef<std::path::Path>, C: AsRef<[u8]>>(
-    file_path: P,
-    content: C,
-) -> std::io::Result<()> {
-    use tokio::io::AsyncWriteExt;
-    let file_path = file_path.as_ref();
-    let parent = file_path
-        .parent()
-        .unwrap_or_else(|| std::path::Path::new("."));
-    tokio::fs::create_dir_all(parent).await?;
-
-    let filename = file_path
-        .file_name()
-        .and_then(|n| n.to_str())
-        .unwrap_or("file");
-
-    let nanos = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_nanos();
-    let pid = std::process::id();
-    let tmp_path = parent.join(format!(".{}.{}_{}.tmp", filename, nanos, pid));
-
-    let mut file = match tokio::fs::OpenOptions::new()
-        .write(true)
-        .create(true)
-        .truncate(true)
-        .open(&tmp_path)
-        .await
-    {
-        Ok(f) => f,
-        Err(e) => return Err(e),
-    };
-
-    if let Err(e) = file.write_all(content.as_ref()).await {
-        let _ = tokio::fs::remove_file(&tmp_path).await;
-        return Err(e);
-    }
-
-    if let Err(e) = file.flush().await {
-        let _ = tokio::fs::remove_file(&tmp_path).await;
-        return Err(e);
-    }
-
-    drop(file);
-
-    if let Err(e) = tokio::fs::rename(&tmp_path, file_path).await {
-        let _ = tokio::fs::remove_file(&tmp_path).await;
-        return Err(e);
-    }
-
-    Ok(())
-}
+pub use crate::tools::atomic_write_file;
 
 // ─── Tests ─────────────────────────────────────────────────────────────────
 

@@ -1649,8 +1649,7 @@ impl Agent {
                 let file_path = md_dir.join(&fname);
 
                 if let Some(full_content) = new_content {
-                    if let Err(e) =
-                        crate::serve::api::atomic_write_file(&file_path, full_content).await
+                    if let Err(e) = crate::tools::atomic_write_file(&file_path, full_content).await
                     {
                         return Some(format!("Error writing {}: {}", fname, e));
                     }
@@ -1667,7 +1666,7 @@ impl Agent {
                             if current.contains(search_str) {
                                 let updated = current.replacen(search_str, replace_str, 1);
                                 if let Err(e) =
-                                    crate::serve::api::atomic_write_file(&file_path, &updated).await
+                                    crate::tools::atomic_write_file(&file_path, &updated).await
                                 {
                                     return Some(format!("Error writing {}: {}", fname, e));
                                 }
