@@ -1450,24 +1450,38 @@ fn test_line_notes_config_deserialization() {
 [notes]
 port = 9527
 
-[notes.line]
+[[notes.line]]
+nickname = "LineBot"
 channel_secret = "secret123"
 channel_access_token = "token456"
-default_note_prefix = "LineBot"
 groups = ["C12345678", "C87654321"]
 admins = ["U12345678", "U_ADMIN_2"]
 users = ["U87654321"]
 guests = ["U99999999"]
+
+[[notes.line]]
+nickname = "CIBot"
+channel_secret = "secret_ci"
+channel_access_token = "token_ci"
+groups = ["C99999999"]
 "#;
 
     let partial: PartialConfig = toml::from_str(toml_str).unwrap();
     let notes = partial.notes.unwrap();
-    let line = notes.line.unwrap();
-    assert_eq!(line.channel_secret, "secret123");
-    assert_eq!(line.channel_access_token, "token456");
-    assert_eq!(line.default_note_prefix.as_deref(), Some("LineBot"));
-    assert_eq!(line.groups, vec!["C12345678", "C87654321"]);
-    assert_eq!(line.admins, vec!["U12345678", "U_ADMIN_2"]);
-    assert_eq!(line.users, vec!["U87654321"]);
-    assert_eq!(line.guests, vec!["U99999999"]);
+    assert_eq!(notes.line.len(), 2);
+    let line1 = &notes.line[0];
+    assert_eq!(line1.nickname, "LineBot");
+    assert_eq!(line1.channel_secret, "secret123");
+    assert_eq!(line1.channel_access_token, "token456");
+    assert_eq!(line1.groups, vec!["C12345678", "C87654321"]);
+    assert_eq!(line1.admins, vec!["U12345678", "U_ADMIN_2"]);
+    assert_eq!(line1.users, vec!["U87654321"]);
+    assert_eq!(line1.guests, vec!["U99999999"]);
+
+    let line2 = &notes.line[1];
+    assert_eq!(line2.nickname, "CIBot");
+    assert_eq!(line2.channel_secret, "secret_ci");
+    assert_eq!(line2.channel_access_token, "token_ci");
+    assert_eq!(line2.groups, vec!["C99999999"]);
+    assert!(line2.admins.is_empty());
 }

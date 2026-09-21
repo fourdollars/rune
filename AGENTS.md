@@ -84,10 +84,10 @@ users = ["grp:employees"]
 guests = []
 
 # LINE Bot Webhook & Interactive Chat (`--features line` or `notes-line`)
-[notes.line]
+[[notes.line]]
+nickname = "LineBot" # Unique bot identifier (routes to LineBot-{GROUP/USER ID})
 channel_secret = "your_channel_secret_here"
 channel_access_token = "your_channel_access_token_here"
-default_note_prefix = "LineBot" # Prefix for dynamic notebook routing (e.g. LineBot-{GROUP/USER ID})
 
 # Group allowlist (LINE Group/Room IDs)
 groups = ["C12345678"]

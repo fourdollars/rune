@@ -122,9 +122,9 @@ pub struct NotesConfig {
     /// Optional monthly spending budget in USD (e.g. 50.0).
     #[serde(default)]
     pub monthly_budget: Option<f64>,
-    /// LINE Bot Webhook integration configuration.
+    /// LINE Bot Webhook integration configurations (`[[notes.line]]`).
     #[serde(default)]
-    pub line: Option<LineNotesConfig>,
+    pub line: Vec<LineNotesConfig>,
 }
 
 impl Default for NotesConfig {
@@ -141,23 +141,23 @@ impl Default for NotesConfig {
             title: None,
             desc: None,
             monthly_budget: None,
-            line: None,
+            line: Vec::new(),
         }
     }
 }
 
-/// Configuration for LINE Bot Webhook integration (`[notes.line]`).
+/// Configuration for LINE Bot Webhook integration (`[[notes.line]]`).
 #[derive(Debug, Clone, Deserialize, Default, PartialEq)]
 pub struct LineNotesConfig {
+    /// Unique nickname for the LINE bot (used for notebook routing and endpoint `/webhook/line/{nickname}`).
+    #[serde(default)]
+    pub nickname: String,
     /// LINE Messaging API Channel Secret (for HMAC-SHA256 signature verification).
     #[serde(default)]
     pub channel_secret: String,
     /// LINE Messaging API Channel Access Token (for Reply, Push, and Profile APIs).
     #[serde(default)]
     pub channel_access_token: String,
-    /// Optional notebook ID prefix (e.g. "LineBot" -> "LineBot-{GROUP ID}" / "LineBot-{USER ID}").
-    #[serde(default, alias = "default_note")]
-    pub default_note_prefix: Option<String>,
     /// Allowed LINE Group or Room IDs.
     #[serde(default)]
     pub groups: Vec<String>,

@@ -784,10 +784,14 @@ pub async fn run(config: RuneConfig, opts: NotesOptions) {
     let app = if config
         .notes
         .line
-        .as_ref()
-        .is_some_and(|c| !c.channel_secret.is_empty())
+        .iter()
+        .any(|c| !c.channel_secret.is_empty())
     {
         app.route("/webhook/line", post(line::line_webhook_handler))
+            .route(
+                "/webhook/line/{nickname}",
+                post(line::line_webhook_named_handler),
+            )
     } else {
         app
     };
@@ -802,15 +806,29 @@ pub async fn run(config: RuneConfig, opts: NotesOptions) {
 
     println!("  ᚱ Rune Notes → http://{}", addr);
     #[cfg(feature = "line")]
-    if let Some(ref line_cfg) = config.notes.line {
-        if !line_cfg.channel_secret.is_empty() {
+    if !config.notes.line.is_empty() {
+        let active_bots: Vec<_> = config
+            .notes
+            .line
+            .iter()
+            .filter(|b| !b.channel_secret.is_empty())
+            .collect();
+        if !active_bots.is_empty() {
             println!(
-                "  📱 LINE Webhook configured → /webhook/line ({} groups, {} admins, {} users, {} guests)",
-                line_cfg.groups.len(),
-                line_cfg.admins.len(),
-                line_cfg.users.len(),
-                line_cfg.guests.len()
+                "  📱 LINE Webhook configured ({} bot(s)) → /webhook/line[/:nickname]",
+                active_bots.len()
             );
+            for bot in &active_bots {
+                println!(
+                    "     • {} → /webhook/line/{} ({} groups, {} admins, {} users, {} guests)",
+                    bot.nickname,
+                    bot.nickname,
+                    bot.groups.len(),
+                    bot.admins.len(),
+                    bot.users.len(),
+                    bot.guests.len()
+                );
+            }
         }
     }
     if let Some(ref oauth) = config.notes.github {

@@ -4,13 +4,14 @@ use super::commands::{handle_slash_command, is_slash_command};
 use super::signature::verify_signature;
 use super::types::WebhookPayload;
 use crate::agent::{Agent, StopReason};
+use crate::config::LineNotesConfig;
 use crate::serve::api::{
     broadcast_file_list, broadcast_note_list, broadcast_to_room, build_embedding, build_provider,
     build_system_prompt, SseMsg,
 };
 use crate::serve::ServerState;
 use axum::body::Bytes;
-use axum::extract::State;
+use axum::extract::{Path, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use std::sync::Arc;
@@ -23,21 +24,40 @@ fn get_profile_cache() -> &'static ProfileCache {
     PROFILE_CACHE.get_or_init(ProfileCache::default)
 }
 
-/// HTTP handler for `POST /webhook/line`.
+/// HTTP handler for named bot endpoint `POST /webhook/line/{nickname}`.
+pub async fn line_webhook_named_handler(
+    State(state): State<ServerState>,
+    Path(nickname): Path<String>,
+    headers: HeaderMap,
+    raw_body: Bytes,
+) -> Response {
+    let bot_cfg = state
+        .config
+        .notes
+        .line
+        .iter()
+        .find(|b| b.nickname == nickname && !b.channel_secret.is_empty());
+
+    let bot_cfg = match bot_cfg {
+        Some(cfg) => cfg.clone(),
+        None => {
+            warn!(
+                "LINE Webhook received for unknown or unconfigured bot nickname: {}",
+                nickname
+            );
+            return (StatusCode::NOT_FOUND, "Bot not found").into_response();
+        }
+    };
+
+    handle_webhook_for_bot(state, bot_cfg, headers, raw_body).await
+}
+
+/// HTTP handler for generic `POST /webhook/line` (matches first bot passing signature verification).
 pub async fn line_webhook_handler(
     State(state): State<ServerState>,
     headers: HeaderMap,
     raw_body: Bytes,
 ) -> Response {
-    let line_cfg = match state.config.notes.line {
-        Some(ref cfg) if !cfg.channel_secret.is_empty() => cfg,
-        _ => {
-            warn!("LINE Webhook received but [notes.line] is not configured");
-            return (StatusCode::BAD_REQUEST, "LINE webhook not configured").into_response();
-        }
-    };
-
-    // Extract `x-line-signature` header
     let signature = match headers
         .get("x-line-signature")
         .and_then(|v| v.to_str().ok())
@@ -49,13 +69,68 @@ pub async fn line_webhook_handler(
         }
     };
 
-    // Verify HMAC-SHA256 signature
-    if !verify_signature(&line_cfg.channel_secret, &raw_body, signature) {
-        warn!("LINE Webhook HMAC-SHA256 signature verification failed");
+    let active_bots: Vec<_> = state
+        .config
+        .notes
+        .line
+        .iter()
+        .filter(|b| !b.channel_secret.is_empty())
+        .collect();
+
+    if active_bots.is_empty() {
+        warn!("LINE Webhook received but no [[notes.line]] bots configured");
+        return (StatusCode::BAD_REQUEST, "LINE webhook not configured").into_response();
+    }
+
+    // Try finding a matching bot by signature verification
+    let matching_bot = active_bots
+        .iter()
+        .find(|b| verify_signature(&b.channel_secret, &raw_body, signature));
+
+    let bot_cfg = match matching_bot {
+        Some(b) => (*b).clone(),
+        None => {
+            warn!("LINE Webhook signature verification failed for all configured bots");
+            return (StatusCode::UNAUTHORIZED, "Invalid signature").into_response();
+        }
+    };
+
+    handle_webhook_payload_with_bot(state, bot_cfg, raw_body).await
+}
+
+async fn handle_webhook_for_bot(
+    state: ServerState,
+    bot_cfg: LineNotesConfig,
+    headers: HeaderMap,
+    raw_body: Bytes,
+) -> Response {
+    let signature = match headers
+        .get("x-line-signature")
+        .and_then(|v| v.to_str().ok())
+    {
+        Some(sig) => sig,
+        None => {
+            warn!("LINE Webhook missing x-line-signature header");
+            return (StatusCode::UNAUTHORIZED, "Missing x-line-signature header").into_response();
+        }
+    };
+
+    if !verify_signature(&bot_cfg.channel_secret, &raw_body, signature) {
+        warn!(
+            "LINE Webhook signature verification failed for bot [{}]",
+            bot_cfg.nickname
+        );
         return (StatusCode::UNAUTHORIZED, "Invalid signature").into_response();
     }
 
-    // Parse payload
+    handle_webhook_payload_with_bot(state, bot_cfg, raw_body).await
+}
+
+async fn handle_webhook_payload_with_bot(
+    state: ServerState,
+    bot_cfg: LineNotesConfig,
+    raw_body: Bytes,
+) -> Response {
     let payload: WebhookPayload = match serde_json::from_slice(&raw_body) {
         Ok(p) => p,
         Err(e) => {
@@ -65,32 +140,46 @@ pub async fn line_webhook_handler(
     };
 
     info!(
-        "Received LINE Webhook payload with {} events",
+        "Received LINE Webhook payload for bot [{}] with {} events",
+        bot_cfg.nickname,
         payload.events.len()
     );
 
-    // Process events asynchronously
     let state_clone = state.clone();
     let cache = get_profile_cache().clone();
     tokio::spawn(async move {
-        process_webhook_payload(state_clone, payload, cache).await;
+        process_webhook_payload_for_bot(state_clone, bot_cfg, payload, cache).await;
     });
 
-    // Acknowledge LINE platform immediately
     (StatusCode::OK, "OK").into_response()
 }
 
-/// Background processor for LINE Webhook events.
+/// Helper background processor for LINE Webhook events (uses the first active bot).
 pub async fn process_webhook_payload(
     state: ServerState,
     payload: WebhookPayload,
     cache: ProfileCache,
 ) {
-    let line_cfg = match state.config.notes.line {
-        Some(ref cfg) => cfg.clone(),
-        None => return,
-    };
+    let bot_cfg = state
+        .config
+        .notes
+        .line
+        .iter()
+        .find(|b| !b.channel_secret.is_empty())
+        .cloned();
 
+    if let Some(bot_cfg) = bot_cfg {
+        process_webhook_payload_for_bot(state, bot_cfg, payload, cache).await;
+    }
+}
+
+/// Background processor for LINE Webhook events for a specific bot.
+pub async fn process_webhook_payload_for_bot(
+    state: ServerState,
+    line_cfg: LineNotesConfig,
+    payload: WebhookPayload,
+    cache: ProfileCache,
+) {
     let client = LineClient::new(line_cfg.channel_access_token.clone());
 
     for event in payload.events {
@@ -162,8 +251,7 @@ pub async fn process_webhook_payload(
         let is_user = line_cfg.users.iter().any(|id| id == user_id);
         let is_guest = line_cfg.guests.iter().any(|id| id == user_id);
 
-        let note_id =
-            resolve_line_note_id(line_cfg.default_note_prefix.as_deref(), group_id, user_id);
+        let note_id = resolve_line_note_id(&line_cfg.nickname, group_id, user_id);
 
         let (interactive_chat, is_read_only_guest) = if is_admin || is_user {
             (true, false)
@@ -201,7 +289,11 @@ pub async fn process_webhook_payload(
             }
         };
 
-        let nickname = ProfileCache::format_nickname(display_name.as_deref(), user_id);
+        let nickname = ProfileCache::format_nickname_for_bot(
+            &line_cfg.nickname,
+            display_name.as_deref(),
+            user_id,
+        );
 
         // Check if slash command
         if is_slash_command(&text) {
@@ -579,20 +671,18 @@ fn chrono_now_datetime() -> String {
     )
 }
 
-/// Resolve the target Notebook ID for an incoming LINE event based on `default_note_prefix`
+/// Resolve the target Notebook ID for an incoming LINE event based on `nickname`
 /// and the event source (group ID or user ID).
 ///
-/// - If message has a group/room ID:
-///   - Prefix present: `{prefix}-{GROUP ID}`
-///   - Prefix absent/empty: `{GROUP ID}`
-/// - If message is 1-on-1 (user ID):
-///   - Prefix present: `{prefix}-{USER ID}`
-///   - Prefix absent/empty: `{USER ID}`
-pub fn resolve_line_note_id(prefix: Option<&str>, group_id: Option<&str>, user_id: &str) -> String {
+/// - If message has a group/room ID: `{nickname}-{GROUP ID}` (or `{GROUP ID}` if nickname is empty)
+/// - If message is 1-on-1 (user ID): `{nickname}-{USER ID}` (or `{USER ID}` if nickname is empty)
+pub fn resolve_line_note_id(nickname: &str, group_id: Option<&str>, user_id: &str) -> String {
     let target_id = group_id.unwrap_or(user_id);
-    match prefix {
-        Some(p) if !p.trim().is_empty() => format!("{}-{}", p.trim(), target_id),
-        _ => target_id.to_string(),
+    let trimmed = nickname.trim();
+    if trimmed.is_empty() {
+        target_id.to_string()
+    } else {
+        format!("{}-{}", trimmed, target_id)
     }
 }
 
@@ -604,6 +694,7 @@ mod tests {
     use crate::serve::line::signature::compute_signature;
     use crate::serve::oauth;
     use axum::body::Bytes;
+    use axum::extract::Path;
     use axum::http::HeaderMap;
     use std::collections::HashMap;
     use std::sync::Arc;
@@ -614,15 +705,15 @@ mod tests {
         let db = ChatDb::open(std::path::Path::new(":memory:")).expect("in-memory db");
         let mut config = RuneConfig::default();
         if !secret.is_empty() {
-            config.notes.line = Some(LineNotesConfig {
+            config.notes.line = vec![LineNotesConfig {
+                nickname: "LineBot".to_string(),
                 channel_secret: secret.to_string(),
                 channel_access_token: "test_token".to_string(),
-                default_note_prefix: Some("LineBot".to_string()),
                 groups: vec![],
                 admins: vec!["U12345678".to_string()],
                 users: vec![],
                 guests: vec![],
-            });
+            }];
         }
 
         ServerState {
@@ -648,34 +739,67 @@ mod tests {
 
     #[test]
     fn test_resolve_line_note_id_combinations() {
-        // 1. Prefix configured
+        // 1. Nickname provided
         assert_eq!(
-            resolve_line_note_id(Some("LineBot"), Some("C12345678"), "U12345678"),
+            resolve_line_note_id("LineBot", Some("C12345678"), "U12345678"),
             "LineBot-C12345678"
         );
         assert_eq!(
-            resolve_line_note_id(Some("LineBot"), None, "U12345678"),
+            resolve_line_note_id("LineBot", None, "U12345678"),
             "LineBot-U12345678"
         );
         assert_eq!(
-            resolve_line_note_id(Some(" Team "), Some("C999"), "U111"),
+            resolve_line_note_id(" Team ", Some("C999"), "U111"),
             "Team-C999"
         );
 
-        // 2. Prefix not configured (None or empty/whitespace)
+        // 2. Empty nickname
         assert_eq!(
-            resolve_line_note_id(None, Some("C12345678"), "U12345678"),
+            resolve_line_note_id("", Some("C12345678"), "U12345678"),
             "C12345678"
         );
-        assert_eq!(resolve_line_note_id(None, None, "U12345678"), "U12345678");
-        assert_eq!(
-            resolve_line_note_id(Some(""), Some("C12345678"), "U12345678"),
-            "C12345678"
-        );
-        assert_eq!(
-            resolve_line_note_id(Some("   "), None, "U12345678"),
-            "U12345678"
-        );
+        assert_eq!(resolve_line_note_id("", None, "U12345678"), "U12345678");
+        assert_eq!(resolve_line_note_id("   ", None, "U12345678"), "U12345678");
+    }
+
+    #[tokio::test]
+    async fn test_line_webhook_named_handler_success() {
+        let secret = "my_named_secret";
+        let mut state = create_test_state_with_line(secret);
+        state.config.notes.line.push(LineNotesConfig {
+            nickname: "CIBot".to_string(),
+            channel_secret: "ci_secret".to_string(),
+            channel_access_token: "ci_token".to_string(),
+            ..Default::default()
+        });
+
+        let body_bytes = br#"{"destination":"U_CI_BOT","events":[]}"#;
+        let sig = compute_signature("ci_secret", body_bytes);
+
+        let mut headers = HeaderMap::new();
+        headers.insert("x-line-signature", sig.parse().unwrap());
+        let body = Bytes::from_static(body_bytes);
+
+        let resp =
+            line_webhook_named_handler(State(state), Path("CIBot".to_string()), headers, body)
+                .await;
+        assert_eq!(resp.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn test_line_webhook_named_handler_unknown_bot() {
+        let state = create_test_state_with_line("secret123");
+        let headers = HeaderMap::new();
+        let body = Bytes::from(r#"{"destination":"U123","events":[]}"#);
+
+        let resp = line_webhook_named_handler(
+            State(state),
+            Path("NonExistentBot".to_string()),
+            headers,
+            body,
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
     }
 
     #[tokio::test]
@@ -717,7 +841,8 @@ mod tests {
     #[tokio::test]
     async fn test_line_webhook_not_configured() {
         let state = create_test_state_with_line("");
-        let headers = HeaderMap::new();
+        let mut headers = HeaderMap::new();
+        headers.insert("x-line-signature", "dummy_sig".parse().unwrap());
         let body = Bytes::from(r#"{"destination":"U123","events":[]}"#);
 
         let resp = line_webhook_handler(State(state), headers, body).await;
@@ -871,7 +996,7 @@ mod tests {
         use crate::serve::line::types::{EventMessage, EventSource, WebhookEvent};
 
         let mut state = create_test_state_with_line("secret123");
-        if let Some(ref mut line_cfg) = state.config.notes.line {
+        if let Some(ref mut line_cfg) = state.config.notes.line.first_mut() {
             line_cfg.groups = vec!["C_ALLOWED_GROUP".to_string()];
         }
 
