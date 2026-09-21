@@ -1360,6 +1360,27 @@ fn test_mcp_lenient_legacy_clients_toml_absent_defaults_true() {
 }
 
 #[test]
+fn test_persona_files_defaults_false() {
+    let notes_cfg = NotesConfig::default();
+    assert!(!notes_cfg.persona_files);
+}
+
+#[test]
+fn test_persona_files_toml_true() {
+    let toml_str = r#"
+            [notes]
+            port = 9527
+            persona_files = true
+        "#;
+    #[derive(Deserialize)]
+    struct Wrapper {
+        notes: NotesConfig,
+    }
+    let w: Wrapper = toml::from_str(toml_str).unwrap();
+    assert!(w.notes.persona_files);
+}
+
+#[test]
 fn test_mount_pwd_policy_defaults_false() {
     let policy = PolicyConfig::default();
     assert!(!policy.mount_pwd);

@@ -181,9 +181,17 @@ pub async fn format_context_command(state: &ServerState, note_id: &str) -> Strin
     let est_k = (estimated_tokens as f64) / 1000.0;
     let win_k = (context_window as f64) / 1000.0;
 
+    let (_prompt, active_personas) =
+        crate::serve::api::build_effective_note_system_prompt(state, note_id).await;
+    let persona_suffix = if !active_personas.is_empty() {
+        format!("\n🎭 Persona: {}", active_personas.join(", "))
+    } else {
+        String::new()
+    };
+
     format!(
-        "📊 {:.1}% context used · {:.1}k / {:.1}k (model: {})",
-        pct, est_k, win_k, active_model
+        "📊 {:.1}% context used · {:.1}k / {:.1}k (model: {}){}",
+        pct, est_k, win_k, active_model, persona_suffix
     )
 }
 

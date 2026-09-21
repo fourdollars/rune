@@ -1467,20 +1467,19 @@ pub async fn system_prompt_get_handler(
             "note_id": null,
             "system_prompt": global,
             "is_override": false,
+            "active_persona_files": Vec::<String>::new(),
         }));
     }
     let room = state.get_or_create_room(&note_id).await;
     let override_prompt = room.system_prompt.read().await.clone();
-    let effective = if let Some(ref p) = override_prompt {
-        p.clone()
-    } else {
-        build_system_prompt(&state.config).await
-    };
+    let (effective, active_persona_files) =
+        build_effective_note_system_prompt(&state, &note_id).await;
     Json(serde_json::json!({
         "ok": true,
         "note_id": note_id,
         "system_prompt": effective,
         "is_override": override_prompt.is_some(),
+        "active_persona_files": active_persona_files,
     }))
 }
 
@@ -3180,15 +3179,9 @@ async fn handle_chat_message(
         });
     }));
 
-    // Set system prompt: per-note override > global config > default
-    let system_prompt = {
-        let room_prompt = room.system_prompt.read().await;
-        if let Some(ref p) = *room_prompt {
-            p.clone()
-        } else {
-            build_system_prompt(&config).await
-        }
-    };
+    // Set system prompt: per-note override + optional persona files > global config > default
+    let (system_prompt, _loaded_personas) =
+        build_effective_note_system_prompt(&state, &note_id).await;
     agent.set_system_prompt(&system_prompt);
 
     // Load recent chat history into agent context (up to 20 records).
@@ -3515,6 +3508,73 @@ When creating Mermaid diagrams, always wrap text descriptions and node labels in
 
 Unless explicitly requested otherwise, always use a light background for SVGs. When embedding SVG inline in markdown, write the entire `<svg>...</svg>` on a **single line with no whitespace or newlines** between tags. Inline SVG with line breaks or indentation will not render correctly."#
     )
+}
+
+/// Ordered list of notebook persona/context files appended to the system prompt.
+pub const NOTEBOOK_PERSONA_FILES: &[&str] = &[
+    "AGENTS.md",
+    "BOOTSTRAP.md",
+    "IDENTITY.md",
+    "SOUL.md",
+    "TOOLS.md",
+    "USER.md",
+];
+
+/// Maximum allowed size (in bytes) for a single persona file before truncation (64 KB).
+pub const MAX_PERSONA_FILE_SIZE: usize = 64 * 1024;
+
+/// Builds the effective system prompt for a notebook by starting with the base prompt
+/// (either room override or global default) and, if `config.notes.persona_files` is enabled,
+/// appending existing persona files (`AGENTS.md`, `BOOTSTRAP.md`, `IDENTITY.md`, `SOUL.md`, `TOOLS.md`, `USER.md`)
+/// in deterministic order.
+pub async fn build_effective_note_system_prompt(
+    state: &ServerState,
+    note_id: &str,
+) -> (String, Vec<String>) {
+    let room = state.get_or_create_room(note_id).await;
+    let base_prompt = {
+        let room_prompt = room.system_prompt.read().await;
+        if let Some(ref p) = *room_prompt {
+            p.clone()
+        } else {
+            build_system_prompt(&state.config).await
+        }
+    };
+
+    if !state.config.notes.persona_files {
+        return (base_prompt, Vec::new());
+    }
+
+    let md_dir = state.note_markdown_dir(note_id);
+    let mut final_prompt = base_prompt;
+    let mut loaded_files = Vec::new();
+
+    for filename in NOTEBOOK_PERSONA_FILES {
+        let file_path = md_dir.join(filename);
+        if let Ok(content) = tokio::fs::read_to_string(&file_path).await {
+            let trimmed = content.trim();
+            if !trimmed.is_empty() {
+                let sanitized_content = if trimmed.len() > MAX_PERSONA_FILE_SIZE {
+                    tracing::warn!(
+                        "Notebook [{}] persona file [{}] exceeds 64KB ({} bytes); truncating",
+                        note_id,
+                        filename,
+                        trimmed.len()
+                    );
+                    &trimmed[..MAX_PERSONA_FILE_SIZE]
+                } else {
+                    trimmed
+                };
+                final_prompt.push_str(&format!(
+                    "\n\n---\n\n[Notebook Context: {}]\n{}\n[End {}]",
+                    filename, sanitized_content, filename
+                ));
+                loaded_files.push(filename.to_string());
+            }
+        }
+    }
+
+    (final_prompt, loaded_files)
 }
 
 // ─── Tests ─────────────────────────────────────────────────────────────────
@@ -4759,7 +4819,9 @@ mod integration_tests {
 #[cfg(test)]
 mod isolation_tests {
     use crate::config::RuneConfig;
-    use crate::serve::api::NoteRoom;
+    use crate::serve::api::{
+        build_effective_note_system_prompt, NoteRoom, MAX_PERSONA_FILE_SIZE, NOTEBOOK_PERSONA_FILES,
+    };
     use crate::serve::db::ChatDb;
     use crate::serve::ModelInfo;
     use crate::serve::ServerState;
@@ -6468,5 +6530,111 @@ mod isolation_tests {
             .and_then(|s| s.as_array())
             .expect("skills array");
         assert!(skills.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_build_effective_note_system_prompt_disabled_by_default() {
+        let (state, _tmp) = make_state();
+        let note_id = "test-note-disabled";
+        let note_dir = state.note_markdown_dir(note_id);
+        std::fs::create_dir_all(&note_dir).unwrap();
+        std::fs::write(note_dir.join("AGENTS.md"), "Agents content").unwrap();
+        std::fs::write(note_dir.join("SOUL.md"), "Soul content").unwrap();
+
+        let (prompt, loaded) = build_effective_note_system_prompt(&state, note_id).await;
+        assert!(loaded.is_empty());
+        assert!(!prompt.contains("[Notebook Context: AGENTS.md]"));
+        assert!(!prompt.contains("[Notebook Context: SOUL.md]"));
+    }
+
+    #[tokio::test]
+    async fn test_build_effective_note_system_prompt_enabled_all_files_order() {
+        let (mut state, _tmp) = make_state();
+        state.config.notes.persona_files = true;
+        let note_id = "test-note-all";
+        let note_dir = state.note_markdown_dir(note_id);
+        std::fs::create_dir_all(&note_dir).unwrap();
+
+        std::fs::write(note_dir.join("AGENTS.md"), "Agents Guideline").unwrap();
+        std::fs::write(note_dir.join("BOOTSTRAP.md"), "Bootstrap Steps").unwrap();
+        std::fs::write(note_dir.join("IDENTITY.md"), "Identity Persona").unwrap();
+        std::fs::write(note_dir.join("SOUL.md"), "Soul Philosophy").unwrap();
+        std::fs::write(note_dir.join("TOOLS.md"), "Tools Manual").unwrap();
+        std::fs::write(note_dir.join("USER.md"), "User Preferences").unwrap();
+
+        let (prompt, loaded) = build_effective_note_system_prompt(&state, note_id).await;
+        assert_eq!(
+            loaded,
+            vec![
+                "AGENTS.md",
+                "BOOTSTRAP.md",
+                "IDENTITY.md",
+                "SOUL.md",
+                "TOOLS.md",
+                "USER.md"
+            ]
+        );
+
+        // Verify ordering in prompt
+        let pos_agents = prompt.find("[Notebook Context: AGENTS.md]").unwrap();
+        let pos_bootstrap = prompt.find("[Notebook Context: BOOTSTRAP.md]").unwrap();
+        let pos_identity = prompt.find("[Notebook Context: IDENTITY.md]").unwrap();
+        let pos_soul = prompt.find("[Notebook Context: SOUL.md]").unwrap();
+        let pos_tools = prompt.find("[Notebook Context: TOOLS.md]").unwrap();
+        let pos_user = prompt.find("[Notebook Context: USER.md]").unwrap();
+
+        assert!(pos_agents < pos_bootstrap);
+        assert!(pos_bootstrap < pos_identity);
+        assert!(pos_identity < pos_soul);
+        assert!(pos_soul < pos_tools);
+        assert!(pos_tools < pos_user);
+
+        assert!(prompt.contains("Agents Guideline"));
+        assert!(prompt.contains("[End USER.md]"));
+    }
+
+    #[tokio::test]
+    async fn test_build_effective_note_system_prompt_partial_and_empty_skipped() {
+        let (mut state, _tmp) = make_state();
+        state.config.notes.persona_files = true;
+        let note_id = "test-note-partial";
+        let note_dir = state.note_markdown_dir(note_id);
+        std::fs::create_dir_all(&note_dir).unwrap();
+
+        std::fs::write(note_dir.join("IDENTITY.md"), "Identity Only").unwrap();
+        std::fs::write(note_dir.join("BOOTSTRAP.md"), "   \n\t  ").unwrap(); // Whitespace only
+        std::fs::write(note_dir.join("USER.md"), "User Profile").unwrap();
+
+        let (prompt, loaded) = build_effective_note_system_prompt(&state, note_id).await;
+        assert_eq!(loaded, vec!["IDENTITY.md", "USER.md"]);
+        assert!(
+            prompt.contains("[Notebook Context: IDENTITY.md]\nIdentity Only\n[End IDENTITY.md]")
+        );
+        assert!(!prompt.contains("[Notebook Context: BOOTSTRAP.md]"));
+        assert!(prompt.contains("[Notebook Context: USER.md]\nUser Profile\n[End USER.md]"));
+    }
+
+    #[tokio::test]
+    async fn test_build_effective_note_system_prompt_truncation() {
+        let (mut state, _tmp) = make_state();
+        state.config.notes.persona_files = true;
+        let note_id = "test-note-truncation";
+        let note_dir = state.note_markdown_dir(note_id);
+        std::fs::create_dir_all(&note_dir).unwrap();
+
+        // 70 KB of content
+        let large_content = "A".repeat(70 * 1024);
+        std::fs::write(note_dir.join("SOUL.md"), &large_content).unwrap();
+
+        let (prompt, loaded) = build_effective_note_system_prompt(&state, note_id).await;
+        assert_eq!(loaded, vec!["SOUL.md"]);
+        assert!(prompt.contains("[Notebook Context: SOUL.md]"));
+
+        // Content in prompt should be truncated to MAX_PERSONA_FILE_SIZE (64KB)
+        let expected_block = format!(
+            "[Notebook Context: SOUL.md]\n{}\n[End SOUL.md]",
+            "A".repeat(MAX_PERSONA_FILE_SIZE)
+        );
+        assert!(prompt.contains(&expected_block));
     }
 }

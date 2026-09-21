@@ -6,8 +6,9 @@ use super::types::WebhookPayload;
 use crate::agent::{Agent, StopReason};
 use crate::config::LineNotesConfig;
 use crate::serve::api::{
-    broadcast_file_list, broadcast_note_list, broadcast_to_room, build_embedding, build_provider,
-    build_system_prompt, SseMsg,
+    broadcast_file_list, broadcast_note_list, broadcast_to_room,
+    build_effective_note_system_prompt, build_embedding, build_provider, build_system_prompt,
+    SseMsg,
 };
 use crate::serve::ServerState;
 use axum::body::Bytes;
@@ -542,15 +543,9 @@ async fn execute_line_agent_and_reply(
             .join("archives"),
     );
 
-    // Set system prompt
-    let system_prompt = {
-        let room_prompt = room.system_prompt.read().await;
-        if let Some(ref p) = *room_prompt {
-            p.clone()
-        } else {
-            build_system_prompt(&config).await
-        }
-    };
+    // Set system prompt: per-note override + optional persona files > global config > default
+    let (system_prompt, _loaded_personas) =
+        build_effective_note_system_prompt(&state, &note_id).await;
     agent.set_system_prompt(&system_prompt);
 
     // Load recent history (up to 20 records)

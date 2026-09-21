@@ -114,6 +114,11 @@ pub struct NotesConfig {
     #[serde(default = "default_mcp_lenient_true")]
     pub mcp_lenient_legacy_clients: bool,
 
+    /// Enable automatic loading of notebook persona files (AGENTS.md, BOOTSTRAP.md, IDENTITY.md, SOUL.md, TOOLS.md, USER.md)
+    /// into the notebook system prompt. Default: false.
+    #[serde(default)]
+    pub persona_files: bool,
+
     /// Custom title for Rune Notes web UI / pages.
     pub title: Option<String>,
     /// Custom description for Rune Notes web UI / pages.
@@ -137,6 +142,7 @@ impl Default for NotesConfig {
             local: None,
             oauth: Vec::new(),
             agent_skills: false,
+            persona_files: false,
             mcp_lenient_legacy_clients: true,
             title: None,
             desc: None,
