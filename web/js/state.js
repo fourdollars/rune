@@ -36,6 +36,8 @@ const initial = {
     scrollTimeout: null,
     emojiPickerInitialized: false,
     providerUsage: null,
+    personaFilesEnabled: false,
+    cronJobsEnabled: false,
 };
 
 const listeners = new Set();

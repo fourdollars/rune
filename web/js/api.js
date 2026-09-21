@@ -10,12 +10,30 @@ export async function api(endpoint, body, method) {
     }
     try {
         const response = await fetch('/api/' + endpoint, options);
-        const data = await response.json();
-        if (!data.ok && data.error) globalThis.addSystemMessage('Error: ' + data.error);
+        const text = await response.text();
+        let data = {};
+        if (text && text.trim().length > 0) {
+            try {
+                data = JSON.parse(text);
+            } catch (e) {
+                data = { ok: false, error: text };
+            }
+        }
+        if (!response.ok) {
+            data.ok = false;
+            if (!data.error) {
+                data.error = `HTTP ${response.status} ${response.statusText || 'Error'}`;
+            }
+        }
+        if (!data.ok && data.error && typeof globalThis.addSystemMessage === 'function') {
+            globalThis.addSystemMessage('Error: ' + data.error);
+        }
         return data;
     } catch (error) {
         console.error('API error:', error);
-        globalThis.addSystemMessage('Error: ' + error.message);
+        if (typeof globalThis.addSystemMessage === 'function') {
+            globalThis.addSystemMessage('Error: ' + error.message);
+        }
         return { ok: false, error: error.message };
     }
 };

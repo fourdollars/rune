@@ -1381,6 +1381,27 @@ fn test_persona_files_toml_true() {
 }
 
 #[test]
+fn test_cron_jobs_defaults_false() {
+    let notes_cfg = NotesConfig::default();
+    assert!(!notes_cfg.cron_jobs);
+}
+
+#[test]
+fn test_cron_jobs_toml_true() {
+    let toml_str = r#"
+            [notes]
+            port = 9527
+            cron_jobs = true
+        "#;
+    #[derive(Deserialize)]
+    struct Wrapper {
+        notes: NotesConfig,
+    }
+    let w: Wrapper = toml::from_str(toml_str).unwrap();
+    assert!(w.notes.cron_jobs);
+}
+
+#[test]
 fn test_mount_pwd_policy_defaults_false() {
     let policy = PolicyConfig::default();
     assert!(!policy.mount_pwd);

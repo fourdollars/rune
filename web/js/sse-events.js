@@ -97,6 +97,8 @@ globalThis.handleMessage = function handleMessage(msg) {
         case 'auth_result':
             isAdmin = msg.is_admin;
             isGuest = !!msg.is_guest;
+            personaFilesEnabled = !!msg.persona_files_enabled;
+            cronJobsEnabled = !!msg.cron_jobs_enabled;
             // Set nickname from GitHub login
             if (msg.login) myNickname = msg.login;
             // If auth failed and not intentionally logged out, redirect to login

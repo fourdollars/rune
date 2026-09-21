@@ -58,6 +58,27 @@ pub struct NoteRecord {
     pub icon: Option<String>,
 }
 
+/// A stored scheduled cron / interval job entry for a note.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct NoteCronJobRecord {
+    pub id: String,
+    pub note_id: String,
+    pub name: String,
+    pub schedule_type: String,  // "cron" | "interval"
+    pub schedule_value: String, // e.g. "*/30 * * * *" or "30m"
+    pub prompt: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    pub silent_if_no_action: bool,
+    pub enabled: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_run_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_status: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
 /// Thread-safe SQLite connection wrapper.
 #[derive(Clone)]
 pub struct ChatDb {
@@ -120,6 +141,23 @@ fn init_schema(conn: &Connection) -> anyhow::Result<()> {
             note_id  TEXT PRIMARY KEY,
             thinking TEXT
         );
+        CREATE TABLE IF NOT EXISTS note_cron_jobs (
+            id                  TEXT PRIMARY KEY,
+            note_id             TEXT NOT NULL,
+            name                TEXT NOT NULL,
+            schedule_type       TEXT NOT NULL,
+            schedule_value      TEXT NOT NULL,
+            prompt              TEXT NOT NULL,
+            model               TEXT,
+            silent_if_no_action INTEGER NOT NULL DEFAULT 1,
+            enabled             INTEGER NOT NULL DEFAULT 1,
+            last_run_at         TEXT,
+            last_status         TEXT,
+            created_at          TEXT NOT NULL,
+            updated_at          TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_note_cron_jobs_note_enabled
+            ON note_cron_jobs(note_id, enabled);
     ",
     )?;
     // Add new columns to existing DBs (idempotent — errors ignored)
@@ -736,6 +774,217 @@ impl ChatDb {
         })
         .map(|rows| rows.filter_map(|r| r.ok()).collect())
         .unwrap_or_default()
+    }
+
+    /// Create a new cron job record in the database.
+    pub fn create_cron_job(&self, job: &NoteCronJobRecord) -> anyhow::Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "INSERT INTO note_cron_jobs (id, note_id, name, schedule_type, schedule_value, prompt, model, silent_if_no_action, enabled, last_run_at, last_status, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+            params![
+                job.id,
+                job.note_id,
+                job.name,
+                job.schedule_type,
+                job.schedule_value,
+                job.prompt,
+                job.model,
+                job.silent_if_no_action as i32,
+                job.enabled as i32,
+                job.last_run_at,
+                job.last_status,
+                job.created_at,
+                job.updated_at
+            ],
+        )?;
+        Ok(())
+    }
+
+    /// Retrieve a single cron job by ID.
+    pub fn get_cron_job(&self, job_id: &str) -> anyhow::Result<Option<NoteCronJobRecord>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT id, note_id, name, schedule_type, schedule_value, prompt, model, silent_if_no_action, enabled, last_run_at, last_status, created_at, updated_at
+             FROM note_cron_jobs WHERE id = ?1",
+        )?;
+        let mut rows = stmt.query(params![job_id])?;
+        if let Some(row) = rows.next()? {
+            Ok(Some(NoteCronJobRecord {
+                id: row.get(0)?,
+                note_id: row.get(1)?,
+                name: row.get(2)?,
+                schedule_type: row.get(3)?,
+                schedule_value: row.get(4)?,
+                prompt: row.get(5)?,
+                model: row.get(6)?,
+                silent_if_no_action: row.get::<_, i32>(7)? != 0,
+                enabled: row.get::<_, i32>(8)? != 0,
+                last_run_at: row.get(9)?,
+                last_status: row.get(10)?,
+                created_at: row.get(11)?,
+                updated_at: row.get(12)?,
+            }))
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// List all cron jobs for a specific note.
+    pub fn list_cron_jobs_for_note(&self, note_id: &str) -> anyhow::Result<Vec<NoteCronJobRecord>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT id, note_id, name, schedule_type, schedule_value, prompt, model, silent_if_no_action, enabled, last_run_at, last_status, created_at, updated_at
+             FROM note_cron_jobs WHERE note_id = ?1 ORDER BY created_at ASC",
+        )?;
+        let rows = stmt.query_map(params![note_id], |row| {
+            Ok(NoteCronJobRecord {
+                id: row.get(0)?,
+                note_id: row.get(1)?,
+                name: row.get(2)?,
+                schedule_type: row.get(3)?,
+                schedule_value: row.get(4)?,
+                prompt: row.get(5)?,
+                model: row.get(6)?,
+                silent_if_no_action: row.get::<_, i32>(7)? != 0,
+                enabled: row.get::<_, i32>(8)? != 0,
+                last_run_at: row.get(9)?,
+                last_status: row.get(10)?,
+                created_at: row.get(11)?,
+                updated_at: row.get(12)?,
+            })
+        })?;
+        let mut jobs = Vec::new();
+        for job in rows {
+            jobs.push(job?);
+        }
+        Ok(jobs)
+    }
+
+    /// List all enabled cron jobs across all notes.
+    pub fn list_all_enabled_cron_jobs(&self) -> anyhow::Result<Vec<NoteCronJobRecord>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT id, note_id, name, schedule_type, schedule_value, prompt, model, silent_if_no_action, enabled, last_run_at, last_status, created_at, updated_at
+             FROM note_cron_jobs WHERE enabled = 1 ORDER BY created_at ASC",
+        )?;
+        let rows = stmt.query_map([], |row| {
+            Ok(NoteCronJobRecord {
+                id: row.get(0)?,
+                note_id: row.get(1)?,
+                name: row.get(2)?,
+                schedule_type: row.get(3)?,
+                schedule_value: row.get(4)?,
+                prompt: row.get(5)?,
+                model: row.get(6)?,
+                silent_if_no_action: row.get::<_, i32>(7)? != 0,
+                enabled: row.get::<_, i32>(8)? != 0,
+                last_run_at: row.get(9)?,
+                last_status: row.get(10)?,
+                created_at: row.get(11)?,
+                updated_at: row.get(12)?,
+            })
+        })?;
+        let mut jobs = Vec::new();
+        for job in rows {
+            jobs.push(job?);
+        }
+        Ok(jobs)
+    }
+
+    /// Update an existing cron job. Returns true if a row was updated.
+    pub fn update_cron_job(&self, job: &NoteCronJobRecord) -> anyhow::Result<bool> {
+        let conn = self.conn.lock().unwrap();
+        let count = conn.execute(
+            "UPDATE note_cron_jobs
+             SET name = ?1, schedule_type = ?2, schedule_value = ?3, prompt = ?4, model = ?5,
+                 silent_if_no_action = ?6, enabled = ?7, updated_at = ?8
+             WHERE id = ?9",
+            params![
+                job.name,
+                job.schedule_type,
+                job.schedule_value,
+                job.prompt,
+                job.model,
+                job.silent_if_no_action as i32,
+                job.enabled as i32,
+                job.updated_at,
+                job.id
+            ],
+        )?;
+        Ok(count > 0)
+    }
+
+    /// Delete a cron job by ID. Returns true if deleted.
+    pub fn delete_cron_job(&self, job_id: &str) -> anyhow::Result<bool> {
+        let conn = self.conn.lock().unwrap();
+        let count = conn.execute("DELETE FROM note_cron_jobs WHERE id = ?1", params![job_id])?;
+        Ok(count > 0)
+    }
+
+    /// Update the last execution status and timestamp of a cron job.
+    pub fn update_cron_job_status(
+        &self,
+        job_id: &str,
+        last_run_at: &str,
+        last_status: &str,
+    ) -> anyhow::Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE note_cron_jobs SET last_run_at = ?1, last_status = ?2 WHERE id = ?3",
+            params![last_run_at, last_status, job_id],
+        )?;
+        Ok(())
+    }
+
+    // Async wrappers
+    pub async fn create_cron_job_async(&self, job: NoteCronJobRecord) -> anyhow::Result<()> {
+        let db = self.clone();
+        tokio::task::spawn_blocking(move || db.create_cron_job(&job)).await?
+    }
+
+    pub async fn get_cron_job_async(
+        &self,
+        job_id: String,
+    ) -> anyhow::Result<Option<NoteCronJobRecord>> {
+        let db = self.clone();
+        tokio::task::spawn_blocking(move || db.get_cron_job(&job_id)).await?
+    }
+
+    pub async fn list_cron_jobs_for_note_async(
+        &self,
+        note_id: String,
+    ) -> anyhow::Result<Vec<NoteCronJobRecord>> {
+        let db = self.clone();
+        tokio::task::spawn_blocking(move || db.list_cron_jobs_for_note(&note_id)).await?
+    }
+
+    pub async fn list_all_enabled_cron_jobs_async(&self) -> anyhow::Result<Vec<NoteCronJobRecord>> {
+        let db = self.clone();
+        tokio::task::spawn_blocking(move || db.list_all_enabled_cron_jobs()).await?
+    }
+
+    pub async fn update_cron_job_async(&self, job: NoteCronJobRecord) -> anyhow::Result<bool> {
+        let db = self.clone();
+        tokio::task::spawn_blocking(move || db.update_cron_job(&job)).await?
+    }
+
+    pub async fn delete_cron_job_async(&self, job_id: String) -> anyhow::Result<bool> {
+        let db = self.clone();
+        tokio::task::spawn_blocking(move || db.delete_cron_job(&job_id)).await?
+    }
+
+    pub async fn update_cron_job_status_async(
+        &self,
+        job_id: String,
+        last_run_at: String,
+        last_status: String,
+    ) -> anyhow::Result<()> {
+        let db = self.clone();
+        tokio::task::spawn_blocking(move || {
+            db.update_cron_job_status(&job_id, &last_run_at, &last_status)
+        })
+        .await?
     }
 
     /// Dump all messages for a session to JSONL, then delete them from the DB.
@@ -1479,6 +1728,88 @@ mod tests {
         assert_eq!(disk_recent.len(), 1);
         assert_eq!(disk_recent[0].content, "hello lazy");
         assert_eq!(disk_recent[0].context_tokens, Some(500));
+    }
+
+    #[tokio::test]
+    async fn test_note_cron_jobs_crud() {
+        let db = in_memory_db();
+        let job = NoteCronJobRecord {
+            id: "job_123".to_string(),
+            note_id: "test-note".to_string(),
+            name: "Heartbeat Periodic Check".to_string(),
+            schedule_type: "interval".to_string(),
+            schedule_value: "30m".to_string(),
+            prompt: "Check HEARTBEAT.md".to_string(),
+            model: Some("deepseek-chat".to_string()),
+            silent_if_no_action: true,
+            enabled: true,
+            last_run_at: None,
+            last_status: None,
+            created_at: "2026-09-21T14:00:00Z".to_string(),
+            updated_at: "2026-09-21T14:00:00Z".to_string(),
+        };
+
+        // Create
+        db.create_cron_job_async(job.clone()).await.unwrap();
+
+        // Get
+        let fetched = db.get_cron_job_async("job_123".to_string()).await.unwrap();
+        assert!(fetched.is_some());
+        let fetched = fetched.unwrap();
+        assert_eq!(fetched.name, "Heartbeat Periodic Check");
+        assert_eq!(fetched.schedule_type, "interval");
+        assert_eq!(fetched.schedule_value, "30m");
+        assert!(fetched.silent_if_no_action);
+        assert!(fetched.enabled);
+
+        // List for note
+        let note_jobs = db
+            .list_cron_jobs_for_note_async("test-note".to_string())
+            .await
+            .unwrap();
+        assert_eq!(note_jobs.len(), 1);
+
+        // List all enabled
+        let all_enabled = db.list_all_enabled_cron_jobs_async().await.unwrap();
+        assert_eq!(all_enabled.len(), 1);
+
+        // Update status
+        db.update_cron_job_status_async(
+            "job_123".to_string(),
+            "2026-09-21T14:30:00Z".to_string(),
+            "silent_ok".to_string(),
+        )
+        .await
+        .unwrap();
+        let updated_status = db
+            .get_cron_job_async("job_123".to_string())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            updated_status.last_run_at,
+            Some("2026-09-21T14:30:00Z".to_string())
+        );
+        assert_eq!(updated_status.last_status, Some("silent_ok".to_string()));
+
+        // Update job fields
+        let mut modified = job.clone();
+        modified.name = "Renamed Heartbeat".to_string();
+        modified.enabled = false;
+        let ok = db.update_cron_job_async(modified).await.unwrap();
+        assert!(ok);
+
+        let enabled_after_disable = db.list_all_enabled_cron_jobs_async().await.unwrap();
+        assert_eq!(enabled_after_disable.len(), 0);
+
+        // Delete
+        let deleted = db
+            .delete_cron_job_async("job_123".to_string())
+            .await
+            .unwrap();
+        assert!(deleted);
+        let fetched_after_delete = db.get_cron_job_async("job_123".to_string()).await.unwrap();
+        assert!(fetched_after_delete.is_none());
     }
 }
 

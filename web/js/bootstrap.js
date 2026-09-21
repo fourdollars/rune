@@ -45,6 +45,8 @@ globalThis.getSessionId = function getSessionId() {
             myNickname = data.login || '';
             isAdmin = data.role === 'admin';
             isGuest = data.role === 'guest';
+            personaFilesEnabled = !!data.persona_files_enabled;
+            cronJobsEnabled = !!data.cron_jobs_enabled;
             // If URL contains a specific note/file, use it as the initial target
             let initialTargetNote = _pendingNoteId;
             let initialTargetFile = _pendingFile ? (_pendingFile.endsWith('.md') ? _pendingFile : _pendingFile + '.md') : null;

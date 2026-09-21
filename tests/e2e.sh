@@ -223,6 +223,13 @@ if command -v node >/dev/null 2>&1; then
         red "  ✗ online users counter and popover list tests failed"
         FAIL=$((FAIL + 1))
     fi
+    if node tests/settings_cron_persona.test.js >/dev/null 2>&1; then
+        green "  ✓ settings persona and cron jobs tests passed"
+        PASS=$((PASS + 1))
+    else
+        red "  ✗ settings persona and cron jobs tests failed"
+        FAIL=$((FAIL + 1))
+    fi
 else
     dim "  (skipped: node not available)"
 fi

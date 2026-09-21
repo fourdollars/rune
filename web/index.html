@@ -89,33 +89,158 @@
 
     <!-- Note Settings dialog -->
     <div id="note-settings-modal" class="modal-overlay hidden">
-        <div class="modal" role="dialog" aria-modal="true" aria-labelledby="note-settings-title">
-            <h2 id="note-settings-title">Note Settings</h2>
-            <div class="form-group">
-                <label for="note-settings-name">Name</label>
-                <input type="text" id="note-settings-name" maxlength="50" />
+        <div class="modal modal-wide" role="dialog" aria-modal="true" aria-labelledby="note-settings-title">
+            <div class="modal-header-with-tabs">
+                <h2 id="note-settings-title">Note Settings</h2>
+                <div class="settings-tabs" role="tablist">
+                    <button type="button" class="settings-tab active" data-action="switch-settings-tab" data-tab="general" role="tab" aria-selected="true">General</button>
+                    <button type="button" class="settings-tab" data-action="switch-settings-tab" data-tab="persona" role="tab" aria-selected="false">Persona Files</button>
+                    <button type="button" class="settings-tab" data-action="switch-settings-tab" data-tab="cron" role="tab" aria-selected="false">Scheduled Jobs (Cron)</button>
+                </div>
             </div>
-            <div class="form-group emoji-picker-group">
-                <label id="emoji-picker-label">Icon (Emoji)</label>
-                <div class="emoji-picker-wrapper">
-                    <span id="emoji-picker-trigger" class="emoji-picker-trigger" role="button" tabindex="0"
-                          data-action="toggle-emoji-picker" data-icon="folder" aria-haspopup="dialog"
-                          aria-expanded="false" aria-label="Choose note icon"></span>
-                    <div id="emoji-picker-popover" class="emoji-picker-popover hidden" role="dialog" aria-modal="false" aria-labelledby="emoji-picker-label">
-                        <input type="text" id="emoji-search-input" class="emoji-search-input" placeholder="Search or input emoji..." autocomplete="off" aria-label="Search or input emoji" />
-                        <div class="emoji-tabs" id="emoji-picker-tabs" role="tablist" aria-label="Emoji categories"></div>
-                        <div class="emoji-scroll-area" id="emoji-picker-scroll-area">
-                            <button type="button" class="emoji-clear-btn" id="emoji-clear-btn">Reset to Default</button>
-                            <div id="emoji-categories-container"></div>
+
+            <!-- Tab 1: General -->
+            <div id="settings-tab-general" class="settings-tab-panel">
+                <div class="form-group">
+                    <label for="note-settings-name">Name</label>
+                    <input type="text" id="note-settings-name" maxlength="50" />
+                </div>
+                <div class="form-group emoji-picker-group">
+                    <label id="emoji-picker-label">Icon (Emoji)</label>
+                    <div class="emoji-picker-wrapper">
+                        <span id="emoji-picker-trigger" class="emoji-picker-trigger" role="button" tabindex="0"
+                              data-action="toggle-emoji-picker" data-icon="folder" aria-haspopup="dialog"
+                              aria-expanded="false" aria-label="Choose note icon"></span>
+                        <div id="emoji-picker-popover" class="emoji-picker-popover hidden" role="dialog" aria-modal="false" aria-labelledby="emoji-picker-label">
+                            <input type="text" id="emoji-search-input" class="emoji-search-input" placeholder="Search or input emoji..." autocomplete="off" aria-label="Search or input emoji" />
+                            <div class="emoji-tabs" id="emoji-picker-tabs" role="tablist" aria-label="Emoji categories"></div>
+                            <div class="emoji-scroll-area" id="emoji-picker-scroll-area">
+                                <button type="button" class="emoji-clear-btn" id="emoji-clear-btn">Reset to Default</button>
+                                <div id="emoji-categories-container"></div>
+                            </div>
                         </div>
                     </div>
                 </div>
             </div>
+
+            <!-- Tab 2: Persona Files -->
+            <div id="settings-tab-persona" class="settings-tab-panel hidden">
+                <div class="persona-banner">
+                    <div class="persona-banner-text">
+                        <strong>Modular Notebook Persona Files (7 Files Total)</strong>
+                        <p>Auto-loaded into system prompt to define agent identity, principles, tools, and autonomous checklist.</p>
+                    </div>
+                    <button type="button" class="btn-primary" data-action="init-persona-files" id="btn-init-persona">✨ Initialize Persona Files</button>
+                </div>
+                <div id="persona-files-grid" class="persona-grid">
+                    <!-- 7 Persona file cards rendered dynamically -->
+                </div>
+            </div>
+
+            <!-- Tab 3: Scheduled Jobs (Cron) -->
+            <div id="settings-tab-cron" class="settings-tab-panel hidden">
+                <div class="cron-action-bar">
+                    <button type="button" class="btn-primary" data-action="new-cron-job">＋ New Scheduled Job</button>
+                    <div id="cron-presets-container" class="cron-presets">
+                        <span class="preset-label">Quick Presets:</span>
+                        <button type="button" class="btn-secondary btn-chip" data-action="apply-cron-preset" data-preset="heartbeat" data-require-persona="true">💓 Heartbeat Preset</button>
+                        <button type="button" class="btn-secondary btn-chip" data-action="apply-cron-preset" data-preset="memory" data-require-persona="true">🌅 Memory Digest</button>
+                        <button type="button" class="btn-secondary btn-chip" data-action="apply-cron-preset" data-preset="weekly">📋 Weekly Report</button>
+                    </div>
+                </div>
+                <div id="cron-jobs-list" class="cron-jobs-list">
+                    <!-- Scheduled jobs rendered dynamically -->
+                </div>
+            </div>
+
             <div class="modal-actions">
                 <button class="btn-danger" id="btn-delete-note" data-action="delete-note">Delete</button>
                 <span style="flex:1"></span>
                 <button class="btn-secondary" data-action="hide-note-settings">Cancel</button>
-                <button class="btn-primary" data-action="save-note-settings">Save</button>
+                <button class="btn-primary" id="btn-save-note-settings" data-action="save-note-settings">Save</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Add / Edit Cron Job Dialog -->
+    <div id="cron-job-modal" class="modal-overlay hidden">
+        <div class="modal modal-wide" role="dialog" aria-modal="true" aria-labelledby="cron-job-modal-title">
+            <h2 id="cron-job-modal-title">Configure Scheduled Job</h2>
+            <input type="hidden" id="cron-job-id" value="" />
+            
+            <div class="form-group">
+                <label for="cron-job-name">Job Name *</label>
+                <input type="text" id="cron-job-name" placeholder="e.g. Heartbeat Periodic Check" maxlength="100" />
+            </div>
+
+            <div class="form-group">
+                <label>Schedule Type & Frequency *</label>
+                <div class="schedule-type-toggle">
+                    <label class="radio-chip"><input type="radio" name="cron-schedule-type" value="interval" data-action="change-cron-schedule-type" checked /> Interval</label>
+                    <label class="radio-chip"><input type="radio" name="cron-schedule-type" value="cron" data-action="change-cron-schedule-type" /> Cron Syntax</label>
+                </div>
+                <div id="cron-interval-chips" class="interval-chips">
+                    <button type="button" class="chip-btn" data-action="select-interval-chip" data-val="15m">15m</button>
+                    <button type="button" class="chip-btn active" data-action="select-interval-chip" data-val="30m">30m</button>
+                    <button type="button" class="chip-btn" data-action="select-interval-chip" data-val="1h">1h</button>
+                    <button type="button" class="chip-btn" data-action="select-interval-chip" data-val="6h">6h</button>
+                    <button type="button" class="chip-btn" data-action="select-interval-chip" data-val="1d">1d</button>
+                </div>
+                <input type="text" id="cron-schedule-value" value="30m" placeholder="e.g. 30m, 1h, 1d" />
+            </div>
+
+            <div class="form-group">
+                <label for="cron-job-prompt">Instruction Prompt * <span class="label-hint">(Supports @filename references)</span></label>
+                <textarea id="cron-job-prompt" rows="4" placeholder="e.g. Please follow HEARTBEAT.md to inspect pending tasks. If all normal, reply HEARTBEAT_OK."></textarea>
+            </div>
+
+            <div class="form-group">
+                <label for="cron-job-model">Model Override</label>
+                <select id="cron-job-model">
+                    <option value="">Inherit Note Default</option>
+                </select>
+            </div>
+
+            <div class="form-group checkbox-group">
+                <label class="checkbox-label">
+                    <input type="checkbox" id="cron-job-silent" checked />
+                    <span><strong>Smart Silence Filter</strong> — If agent replies HEARTBEAT_OK / NO_ACTION and makes no file modifications, suppress chatroom broadcast and log silently.</span>
+                </label>
+                <label class="checkbox-label">
+                    <input type="checkbox" id="cron-job-enabled" checked />
+                    <span><strong>Enabled</strong> — Active and scheduled by background worker.</span>
+                </label>
+            </div>
+
+            <div class="modal-actions">
+                <button class="btn-secondary" data-action="hide-cron-job-modal">Cancel</button>
+                <button class="btn-primary" data-action="save-cron-job">Save Scheduled Job</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Cron Job Execution Logs Modal -->
+    <div id="cron-logs-modal" class="modal-overlay hidden">
+        <div class="modal modal-wide modal-extra-wide" role="dialog" aria-modal="true" aria-labelledby="cron-logs-modal-title">
+            <h2 id="cron-logs-modal-title">Job Execution History & Run Logs</h2>
+            <div id="cron-logs-stats" class="logs-stats-bar"></div>
+            <div class="logs-table-container">
+                <table class="logs-table">
+                    <thead>
+                        <tr>
+                            <th>Timestamp (UTC)</th>
+                            <th>Trigger</th>
+                            <th>Status</th>
+                            <th>Duration</th>
+                            <th>Files Changed</th>
+                            <th>Output / Summary</th>
+                        </tr>
+                    </thead>
+                    <tbody id="cron-logs-tbody"></tbody>
+                </table>
+            </div>
+            <div class="modal-actions">
+                <button class="btn-secondary" data-action="hide-cron-logs-modal">Close</button>
             </div>
         </div>
     </div>

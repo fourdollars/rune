@@ -7,11 +7,13 @@
 //!   - Token auth required for non-localhost connections
 
 pub mod api;
+pub mod cron;
 pub mod db;
 #[cfg(feature = "line")]
 pub mod line;
 pub mod oauth;
 pub mod oauth_pkce;
+pub mod persona;
 mod static_files;
 pub use db::ChatDb;
 pub use oauth::AuthenticatedUser;
@@ -36,9 +38,14 @@ use tracing::{info, warn};
 
 pub use crate::config::data_dir;
 
-/// Get the markdown directory for a session: ~/.rune/sessions/<session>/markdown/
+/// Get the markdown directory for a session: ~/.rune/notes/<session>/markdown/
 pub fn note_markdown_dir(session: &str) -> PathBuf {
     data_dir().join("notes").join(session).join("markdown")
+}
+
+/// Get the cron directory for a session: ~/.rune/notes/<session>/cron/
+pub fn note_cron_dir(session: &str) -> PathBuf {
+    data_dir().join("notes").join(session).join("cron")
 }
 
 /// Shared server state.
@@ -78,6 +85,11 @@ impl ServerState {
     /// Returns the markdown directory for a given note session.
     pub fn note_markdown_dir(&self, session: &str) -> PathBuf {
         self.data_dir.join("notes").join(session).join("markdown")
+    }
+
+    /// Returns the cron logs directory for a given note session.
+    pub fn note_cron_dir(&self, session: &str) -> PathBuf {
+        self.data_dir.join("notes").join(session).join("cron")
     }
 
     /// Get existing room or lazy-create one for the given note_id.
@@ -623,7 +635,7 @@ pub async fn run(config: RuneConfig, opts: NotesOptions) {
             }
         }
 
-        // Admin-only endpoints: note create/delete, note patch (rename/model/visibility), file patch (visibility/rename), system prompt PUT
+        // Admin-only endpoints: note create/delete, note patch (rename/model/visibility), file patch (visibility/rename), system prompt PUT, persona init, cron jobs
         if !is_admin {
             let path = req.uri().path().to_string();
             let method = req.method();
@@ -631,15 +643,21 @@ pub async fn run(config: RuneConfig, opts: NotesOptions) {
                 || (path.starts_with("/api/notes/")
                     && !path.contains("/files")
                     && !path.contains("/system-prompt")
+                    && !path.contains("/persona")
+                    && !path.contains("/jobs")
                     && method == axum::http::Method::DELETE)
                 || (path.starts_with("/api/notes/")
                     && !path.contains("/files")
                     && !path.contains("/system-prompt")
+                    && !path.contains("/persona")
+                    && !path.contains("/jobs")
                     && method == axum::http::Method::PATCH)
                 || (path.starts_with("/api/notes/")
                     && path.contains("/files/")
                     && method == axum::http::Method::PATCH)
-                || (path.ends_with("/system-prompt") && method == axum::http::Method::PUT);
+                || (path.ends_with("/system-prompt") && method == axum::http::Method::PUT)
+                || (path.contains("/persona/init") && method == axum::http::Method::POST)
+                || (path.contains("/jobs") && method != axum::http::Method::GET);
             if is_admin_only {
                 let body = axum::Json(
                     serde_json::json!({"ok": false, "error": "Admin privileges required"}),
@@ -671,6 +689,34 @@ pub async fn run(config: RuneConfig, opts: NotesOptions) {
         .route(
             "/api/notes/{note}/system-prompt",
             get(api::system_prompt_get_handler).put(api::system_prompt_handler),
+        )
+        // Persona Files
+        .route(
+            "/api/notes/{note}/persona/init",
+            post(api::persona_init_handler),
+        )
+        .route(
+            "/api/notes/{note}/persona/status",
+            get(api::persona_status_handler),
+        )
+        // Scheduled Jobs (Cron)
+        .route(
+            "/api/notes/{note}/jobs",
+            get(api::cron_jobs_list_handler).post(api::cron_job_create_handler),
+        )
+        .route(
+            "/api/notes/{note}/jobs/{job_id}",
+            get(api::cron_job_get_handler)
+                .put(api::cron_job_update_handler)
+                .delete(api::cron_job_delete_handler),
+        )
+        .route(
+            "/api/notes/{note}/jobs/{job_id}/logs",
+            get(api::cron_job_logs_handler),
+        )
+        .route(
+            "/api/notes/{note}/jobs/{job_id}/run",
+            post(api::cron_job_run_handler),
         )
         // Session (active note/file for SSE stream)
         .route("/api/session", put(api::session_handler))
@@ -869,6 +915,10 @@ pub async fn run(config: RuneConfig, opts: NotesOptions) {
             }
         });
     }
+
+    // Start background scheduled cron jobs worker (if enabled)
+    let cancel_token = tokio_util::sync::CancellationToken::new();
+    cron::start_cron_scheduler(state.clone(), cancel_token);
 
     let listener = tokio::net::TcpListener::bind(addr)
         .await

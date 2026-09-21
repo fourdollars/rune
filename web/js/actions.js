@@ -13,6 +13,20 @@ const actions = {
     'delete-note': () => deleteCurrentNote(),
     'hide-note-settings': () => hideNoteSettings(),
     'save-note-settings': () => saveNoteSettings(),
+    'switch-settings-tab': element => switchSettingsTab(element.dataset.tab),
+    'init-persona-files': () => initPersonaFiles(),
+    'new-cron-job': () => showCronJobModal(),
+    'hide-cron-job-modal': () => hideCronJobModal(),
+    'save-cron-job': () => saveCronJob(),
+    'change-cron-schedule-type': element => setCronScheduleType(element.value),
+    'apply-cron-preset': element => applyCronPreset(element.dataset.preset),
+    'select-interval-chip': element => selectIntervalChip(element.dataset.val),
+    'run-cron-job': element => runCronJob(element.dataset.id),
+    'edit-cron-job': element => editCronJob(element.dataset.id),
+    'toggle-cron-job': (element, event) => toggleCronJob(element.dataset.id, element.checked),
+    'delete-cron-job': element => deleteCronJob(element.dataset.id),
+    'view-cron-logs': element => viewCronLogs(element.dataset.id),
+    'hide-cron-logs-modal': () => hideCronLogsModal(),
     'hide-model-dialog': () => hideModelDialog(),
     'show-thinking-dialog': () => showThinkingDialog(),
     'hide-thinking-dialog': () => hideThinkingDialog(),
@@ -61,7 +75,7 @@ const actions = {
 export function initActions() {
     document.addEventListener('click', event => {
         const target = event.target.closest('[data-action]');
-        if (target && target.tagName !== 'SELECT') {
+        if (target && target.tagName !== 'SELECT' && target.type !== 'radio' && target.type !== 'checkbox') {
             const handler = actions[target.dataset.action];
             if (handler) {
                 event.preventDefault();

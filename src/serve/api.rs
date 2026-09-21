@@ -14,7 +14,7 @@ use crate::provider::{
 use crate::serve::ServerState;
 use crate::skills::SkillLoader;
 use axum::{
-    extract::{Query, State},
+    extract::{Path, Query, State},
     http::StatusCode,
     response::{
         sse::{Event, KeepAlive, Sse},
@@ -175,6 +175,10 @@ pub enum SseMsg {
         is_admin: bool,
         is_guest: bool,
         login: String,
+        #[serde(default)]
+        persona_files_enabled: bool,
+        #[serde(default)]
+        cron_jobs_enabled: bool,
     },
     #[serde(rename = "file_list")]
     FileList {
@@ -624,6 +628,8 @@ pub async fn events_handler(
         is_admin,
         is_guest,
         login: login.clone(),
+        persona_files_enabled: state.config.notes.persona_files,
+        cron_jobs_enabled: state.config.notes.cron_jobs,
     });
 
     // Model list — show effective model and metadata for this note
@@ -2976,6 +2982,8 @@ pub async fn me_handler(
             "login": s.login,
             "role": s.role.as_str(),
             "avatar_url": s.avatar_url,
+            "persona_files_enabled": state.config.notes.persona_files,
+            "cron_jobs_enabled": state.config.notes.cron_jobs,
         }))
         .into_response();
     }
@@ -2992,6 +3000,8 @@ pub async fn me_handler(
                 "login": token_info.login,
                 "role": token_info.role.as_str(),
                 "avatar_url": "",
+                "persona_files_enabled": state.config.notes.persona_files,
+                "cron_jobs_enabled": state.config.notes.cron_jobs,
             }))
             .into_response();
         }
@@ -3518,6 +3528,7 @@ pub const NOTEBOOK_PERSONA_FILES: &[&str] = &[
     "SOUL.md",
     "TOOLS.md",
     "USER.md",
+    "HEARTBEAT.md",
 ];
 
 /// Maximum allowed size (in bytes) for a single persona file before truncation (64 KB).
@@ -3525,7 +3536,7 @@ pub const MAX_PERSONA_FILE_SIZE: usize = 64 * 1024;
 
 /// Builds the effective system prompt for a notebook by starting with the base prompt
 /// (either room override or global default) and, if `config.notes.persona_files` is enabled,
-/// appending existing persona files (`AGENTS.md`, `BOOTSTRAP.md`, `IDENTITY.md`, `SOUL.md`, `TOOLS.md`, `USER.md`)
+/// appending existing persona files (`AGENTS.md`, `SOUL.md`, `IDENTITY.md`, `USER.md`, `TOOLS.md`, `BOOTSTRAP.md`, `HEARTBEAT.md`)
 /// in deterministic order.
 pub async fn build_effective_note_system_prompt(
     state: &ServerState,
@@ -3575,6 +3586,382 @@ pub async fn build_effective_note_system_prompt(
     }
 
     (final_prompt, loaded_files)
+}
+
+// ─── Persona Files API Handlers ────────────────────────────────────────────
+
+#[derive(Debug, Deserialize, Default)]
+pub struct PersonaInitReq {
+    #[serde(default)]
+    pub overwrite: bool,
+}
+
+/// POST /api/notes/{note}/persona/init — Initialize the 7 canonical persona files in the notebook.
+pub async fn persona_init_handler(
+    State(state): State<ServerState>,
+    Path(note_id): Path<String>,
+    req_json: Option<Json<PersonaInitReq>>,
+) -> Json<serde_json::Value> {
+    let overwrite = req_json.map(|j| j.overwrite).unwrap_or(false);
+    let md_dir = state.note_markdown_dir(&note_id);
+    match crate::serve::persona::initialize_persona_files(&md_dir, overwrite).await {
+        Ok((created, skipped)) => {
+            // Broadcast file list update
+            broadcast_file_list(&state, &note_id).await;
+            Json(serde_json::json!({
+                "ok": true,
+                "created": created,
+                "skipped": skipped,
+            }))
+        }
+        Err(e) => Json(serde_json::json!({
+            "ok": false,
+            "error": e.to_string(),
+        })),
+    }
+}
+
+/// GET /api/notes/{note}/persona/status — Check presence status of the 7 persona files.
+pub async fn persona_status_handler(
+    State(state): State<ServerState>,
+    Path(note_id): Path<String>,
+) -> Json<serde_json::Value> {
+    let md_dir = state.note_markdown_dir(&note_id);
+    let mut files = Vec::new();
+    for (name, _) in crate::serve::persona::CANONICAL_PERSONA_FILES {
+        let exists = md_dir.join(name).exists();
+        files.push(serde_json::json!({
+            "name": name,
+            "present": exists,
+        }));
+    }
+    Json(serde_json::json!({
+        "ok": true,
+        "persona_files_enabled": state.config.notes.persona_files,
+        "cron_jobs_enabled": state.config.notes.cron_jobs,
+        "files": files,
+    }))
+}
+
+// ─── Scheduled Cron Jobs API Handlers ──────────────────────────────────────
+
+/// GET /api/notes/{note}/jobs — List all scheduled cron jobs for this note.
+pub async fn cron_jobs_list_handler(
+    State(state): State<ServerState>,
+    Path(note_id): Path<String>,
+) -> Json<serde_json::Value> {
+    match state.chat_db.list_cron_jobs_for_note_async(note_id).await {
+        Ok(jobs) => Json(serde_json::json!({
+            "ok": true,
+            "jobs": jobs,
+            "cron_jobs_enabled": state.config.notes.cron_jobs,
+            "persona_files_enabled": state.config.notes.persona_files,
+        })),
+        Err(e) => Json(serde_json::json!({
+            "ok": false,
+            "error": e.to_string(),
+        })),
+    }
+}
+
+#[derive(Debug, Deserialize)]
+pub struct CronJobCreateReq {
+    pub name: String,
+    pub schedule_type: String,  // "cron" | "interval"
+    pub schedule_value: String, // "30m", "1h", "0 0 * * *"
+    pub prompt: String,
+    pub model: Option<String>,
+    #[serde(default = "default_true_field")]
+    pub silent_if_no_action: bool,
+    #[serde(default = "default_true_field")]
+    pub enabled: bool,
+}
+
+fn default_true_field() -> bool {
+    true
+}
+
+/// POST /api/notes/{note}/jobs — Create a new scheduled job for this note.
+pub async fn cron_job_create_handler(
+    State(state): State<ServerState>,
+    Path(note_id): Path<String>,
+    Json(req): Json<CronJobCreateReq>,
+) -> (StatusCode, Json<serde_json::Value>) {
+    if req.name.trim().is_empty() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"ok": false, "error": "Job name cannot be empty"})),
+        );
+    }
+    if req.prompt.trim().is_empty() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"ok": false, "error": "Prompt cannot be empty"})),
+        );
+    }
+    let st = req.schedule_type.trim().to_lowercase();
+    if st != "interval" && st != "cron" {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(
+                serde_json::json!({"ok": false, "error": "Invalid schedule_type: must be 'interval' or 'cron'"}),
+            ),
+        );
+    }
+    if st == "interval" && crate::serve::cron::parse_interval_seconds(&req.schedule_value).is_none()
+    {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(
+                serde_json::json!({"ok": false, "error": "Invalid interval value (e.g. 15m, 30m, 1h, 1d)"}),
+            ),
+        );
+    }
+    if st == "cron" && req.schedule_value.split_whitespace().count() != 5 {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(
+                serde_json::json!({"ok": false, "error": "Invalid cron expression: must have 5 fields (min hour dom month dow)"}),
+            ),
+        );
+    }
+
+    let random_suffix = &crate::serve::oauth::generate_session_id()[..8];
+    let job_id = format!("job_{}_{}", note_id, random_suffix);
+    let now_iso = crate::serve::cron::format_utc_iso(crate::serve::cron::unix_secs_to_utc(
+        crate::serve::db::now_secs(),
+    ));
+
+    let job = crate::serve::db::NoteCronJobRecord {
+        id: job_id,
+        note_id,
+        name: req.name.trim().to_string(),
+        schedule_type: st,
+        schedule_value: req.schedule_value.trim().to_string(),
+        prompt: req.prompt.trim().to_string(),
+        model: req.model.filter(|m| !m.trim().is_empty()),
+        silent_if_no_action: req.silent_if_no_action,
+        enabled: req.enabled,
+        last_run_at: None,
+        last_status: None,
+        created_at: now_iso.clone(),
+        updated_at: now_iso,
+    };
+
+    match state.chat_db.create_cron_job_async(job.clone()).await {
+        Ok(_) => (
+            StatusCode::CREATED,
+            Json(serde_json::json!({"ok": true, "job": job})),
+        ),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"ok": false, "error": e.to_string()})),
+        ),
+    }
+}
+
+/// GET /api/notes/{note}/jobs/{job_id} — Retrieve a specific cron job.
+pub async fn cron_job_get_handler(
+    State(state): State<ServerState>,
+    Path((_note_id, job_id)): Path<(String, String)>,
+) -> (StatusCode, Json<serde_json::Value>) {
+    match state.chat_db.get_cron_job_async(job_id).await {
+        Ok(Some(job)) => (
+            StatusCode::OK,
+            Json(serde_json::json!({"ok": true, "job": job})),
+        ),
+        Ok(None) => (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({"ok": false, "error": "Job not found"})),
+        ),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"ok": false, "error": e.to_string()})),
+        ),
+    }
+}
+
+#[derive(Debug, Deserialize)]
+pub struct CronJobUpdateReq {
+    pub name: Option<String>,
+    pub schedule_type: Option<String>,
+    pub schedule_value: Option<String>,
+    pub prompt: Option<String>,
+    pub model: Option<String>,
+    pub silent_if_no_action: Option<bool>,
+    pub enabled: Option<bool>,
+}
+
+/// PUT /api/notes/{note}/jobs/{job_id} — Update an existing cron job.
+pub async fn cron_job_update_handler(
+    State(state): State<ServerState>,
+    Path((note_id, job_id)): Path<(String, String)>,
+    Json(req): Json<CronJobUpdateReq>,
+) -> (StatusCode, Json<serde_json::Value>) {
+    let existing = match state.chat_db.get_cron_job_async(job_id.clone()).await {
+        Ok(Some(j)) => j,
+        Ok(None) => {
+            return (
+                StatusCode::NOT_FOUND,
+                Json(serde_json::json!({"ok": false, "error": "Job not found"})),
+            )
+        }
+        Err(e) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({"ok": false, "error": e.to_string()})),
+            )
+        }
+    };
+
+    let st = req
+        .schedule_type
+        .unwrap_or(existing.schedule_type)
+        .trim()
+        .to_lowercase();
+    let sv = req
+        .schedule_value
+        .unwrap_or(existing.schedule_value)
+        .trim()
+        .to_string();
+
+    if st != "interval" && st != "cron" {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"ok": false, "error": "Invalid schedule_type"})),
+        );
+    }
+    if st == "interval" && crate::serve::cron::parse_interval_seconds(&sv).is_none() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"ok": false, "error": "Invalid interval value"})),
+        );
+    }
+    if st == "cron" && sv.split_whitespace().count() != 5 {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"ok": false, "error": "Invalid cron expression"})),
+        );
+    }
+
+    let now_iso = crate::serve::cron::format_utc_iso(crate::serve::cron::unix_secs_to_utc(
+        crate::serve::db::now_secs(),
+    ));
+
+    let updated = crate::serve::db::NoteCronJobRecord {
+        id: job_id,
+        note_id,
+        name: req.name.unwrap_or(existing.name).trim().to_string(),
+        schedule_type: st,
+        schedule_value: sv,
+        prompt: req.prompt.unwrap_or(existing.prompt).trim().to_string(),
+        model: match req.model {
+            Some(m) if m.trim().is_empty() => None,
+            Some(m) => Some(m.trim().to_string()),
+            None => existing.model,
+        },
+        silent_if_no_action: req
+            .silent_if_no_action
+            .unwrap_or(existing.silent_if_no_action),
+        enabled: req.enabled.unwrap_or(existing.enabled),
+        last_run_at: existing.last_run_at,
+        last_status: existing.last_status,
+        created_at: existing.created_at,
+        updated_at: now_iso,
+    };
+
+    match state.chat_db.update_cron_job_async(updated.clone()).await {
+        Ok(true) => (
+            StatusCode::OK,
+            Json(serde_json::json!({"ok": true, "job": updated})),
+        ),
+        Ok(false) => (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({"ok": false, "error": "Job not found"})),
+        ),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"ok": false, "error": e.to_string()})),
+        ),
+    }
+}
+
+/// DELETE /api/notes/{note}/jobs/{job_id} — Delete a cron job and its log file.
+pub async fn cron_job_delete_handler(
+    State(state): State<ServerState>,
+    Path((note_id, job_id)): Path<(String, String)>,
+) -> (StatusCode, Json<serde_json::Value>) {
+    match state.chat_db.delete_cron_job_async(job_id.clone()).await {
+        Ok(true) => {
+            let cron_dir = crate::serve::cron::note_cron_dir(&state.data_dir, &note_id);
+            let _ = crate::serve::cron::delete_job_logs(&cron_dir, &job_id).await;
+            (StatusCode::OK, Json(serde_json::json!({"ok": true})))
+        }
+        Ok(false) => (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({"ok": false, "error": "Job not found"})),
+        ),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"ok": false, "error": e.to_string()})),
+        ),
+    }
+}
+
+#[derive(Debug, Deserialize)]
+pub struct CronLogsQuery {
+    pub limit: Option<usize>,
+}
+
+/// GET /api/notes/{note}/jobs/{job_id}/logs — Read file execution logs for a job.
+pub async fn cron_job_logs_handler(
+    State(state): State<ServerState>,
+    Path((note_id, job_id)): Path<(String, String)>,
+    Query(query): Query<CronLogsQuery>,
+) -> Json<serde_json::Value> {
+    let limit = query.limit.unwrap_or(50).clamp(1, 200);
+    let cron_dir = crate::serve::cron::note_cron_dir(&state.data_dir, &note_id);
+    match crate::serve::cron::read_job_logs(&cron_dir, &job_id, limit).await {
+        Ok(logs) => Json(serde_json::json!({
+            "ok": true,
+            "logs": logs,
+        })),
+        Err(e) => Json(serde_json::json!({
+            "ok": false,
+            "error": e.to_string(),
+        })),
+    }
+}
+
+/// POST /api/notes/{note}/jobs/{job_id}/run — Manually trigger execution of a cron job.
+pub async fn cron_job_run_handler(
+    State(state): State<ServerState>,
+    Path((_note_id, job_id)): Path<(String, String)>,
+) -> (StatusCode, Json<serde_json::Value>) {
+    let job = match state.chat_db.get_cron_job_async(job_id).await {
+        Ok(Some(j)) => j,
+        Ok(None) => {
+            return (
+                StatusCode::NOT_FOUND,
+                Json(serde_json::json!({"ok": false, "error": "Job not found"})),
+            )
+        }
+        Err(e) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({"ok": false, "error": e.to_string()})),
+            )
+        }
+    };
+
+    let log_entry = crate::serve::cron::execute_cron_job(&state, &job, "manual").await;
+    (
+        StatusCode::OK,
+        Json(serde_json::json!({
+            "ok": true,
+            "result": log_entry,
+        })),
+    )
 }
 
 pub use crate::tools::atomic_write_file;
@@ -6692,5 +7079,185 @@ mod isolation_tests {
         for r in readers {
             let _ = r.await;
         }
+    }
+
+    #[tokio::test]
+    async fn test_persona_api_init_and_status() {
+        use crate::serve::api::{persona_init_handler, persona_status_handler, PersonaInitReq};
+        use axum::extract::{Path, State};
+        use axum::Json;
+
+        let (state, _tmp) = make_state();
+        let note_id = "test-persona-note".to_string();
+        state
+            .chat_db
+            .create_note(&note_id, "Test Note", None)
+            .unwrap();
+
+        // Check initial status: missing
+        let status_res = persona_status_handler(State(state.clone()), Path(note_id.clone())).await;
+        let files = status_res.0.get("files").unwrap().as_array().unwrap();
+        assert_eq!(files.len(), 7);
+        for f in files {
+            assert_eq!(f.get("present").unwrap().as_bool().unwrap(), false);
+        }
+
+        // Initialize persona files
+        let init_res = persona_init_handler(
+            State(state.clone()),
+            Path(note_id.clone()),
+            Some(Json(PersonaInitReq { overwrite: false })),
+        )
+        .await;
+        assert_eq!(init_res.0.get("ok").unwrap().as_bool().unwrap(), true);
+        let created = init_res.0.get("created").unwrap().as_array().unwrap();
+        assert_eq!(created.len(), 7);
+
+        // Check status again: all present
+        let status_res2 = persona_status_handler(State(state.clone()), Path(note_id.clone())).await;
+        let files2 = status_res2.0.get("files").unwrap().as_array().unwrap();
+        for f in files2 {
+            assert_eq!(f.get("present").unwrap().as_bool().unwrap(), true);
+        }
+    }
+
+    #[tokio::test]
+    async fn test_cron_jobs_api_crud_and_logs() {
+        use crate::serve::api::{
+            cron_job_create_handler, cron_job_delete_handler, cron_job_get_handler,
+            cron_job_logs_handler, cron_job_update_handler, cron_jobs_list_handler,
+            CronJobCreateReq, CronJobUpdateReq, CronLogsQuery,
+        };
+        use axum::extract::{Path, Query, State};
+        use axum::http::StatusCode;
+        use axum::Json;
+
+        let (state, _tmp) = make_state();
+        let note_id = "test-cron-note".to_string();
+        state
+            .chat_db
+            .create_note(&note_id, "Test Note", None)
+            .unwrap();
+
+        // 1. Create job
+        let create_req = CronJobCreateReq {
+            name: "Heartbeat Task".to_string(),
+            schedule_type: "interval".to_string(),
+            schedule_value: "30m".to_string(),
+            prompt: "Check HEARTBEAT.md".to_string(),
+            model: None,
+            silent_if_no_action: true,
+            enabled: true,
+        };
+        let (status, res) = cron_job_create_handler(
+            State(state.clone()),
+            Path(note_id.clone()),
+            Json(create_req),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CREATED);
+        let job_id = res
+            .get("job")
+            .unwrap()
+            .get("id")
+            .unwrap()
+            .as_str()
+            .unwrap()
+            .to_string();
+
+        // 2. List jobs
+        let list_res = cron_jobs_list_handler(State(state.clone()), Path(note_id.clone())).await;
+        let jobs = list_res.0.get("jobs").unwrap().as_array().unwrap();
+        assert_eq!(jobs.len(), 1);
+
+        // 3. Get job
+        let (get_status, get_res) = cron_job_get_handler(
+            State(state.clone()),
+            Path((note_id.clone(), job_id.clone())),
+        )
+        .await;
+        assert_eq!(get_status, StatusCode::OK);
+        assert_eq!(
+            get_res
+                .get("job")
+                .unwrap()
+                .get("name")
+                .unwrap()
+                .as_str()
+                .unwrap(),
+            "Heartbeat Task"
+        );
+
+        // 4. Update job
+        let update_req = CronJobUpdateReq {
+            name: Some("Updated Heartbeat Task".to_string()),
+            schedule_type: Some("cron".to_string()),
+            schedule_value: Some("0 0 * * *".to_string()),
+            prompt: None,
+            model: Some("deepseek-chat".to_string()),
+            silent_if_no_action: Some(false),
+            enabled: Some(true),
+        };
+        let (update_status, update_res) = cron_job_update_handler(
+            State(state.clone()),
+            Path((note_id.clone(), job_id.clone())),
+            Json(update_req),
+        )
+        .await;
+        assert_eq!(update_status, StatusCode::OK);
+        assert_eq!(
+            update_res
+                .get("job")
+                .unwrap()
+                .get("name")
+                .unwrap()
+                .as_str()
+                .unwrap(),
+            "Updated Heartbeat Task"
+        );
+
+        // 5. Append dummy log & check logs handler
+        let cron_dir = crate::serve::cron::note_cron_dir(&state.data_dir, &note_id);
+        let log_entry = crate::serve::cron::NoteCronJobLogEntry {
+            timestamp: "2026-09-21T15:00:00Z".to_string(),
+            trigger: "manual".to_string(),
+            status: "silent_ok".to_string(),
+            duration_ms: 250,
+            files_modified: vec![],
+            output_snippet: "HEARTBEAT_OK".to_string(),
+            error: None,
+        };
+        crate::serve::cron::append_job_log(&cron_dir, &job_id, &log_entry)
+            .await
+            .unwrap();
+
+        let logs_res = cron_job_logs_handler(
+            State(state.clone()),
+            Path((note_id.clone(), job_id.clone())),
+            Query(CronLogsQuery { limit: Some(10) }),
+        )
+        .await;
+        let logs = logs_res.0.get("logs").unwrap().as_array().unwrap();
+        assert_eq!(logs.len(), 1);
+        assert_eq!(
+            logs[0].get("status").unwrap().as_str().unwrap(),
+            "silent_ok"
+        );
+
+        // 6. Delete job
+        let (del_status, _) = cron_job_delete_handler(
+            State(state.clone()),
+            Path((note_id.clone(), job_id.clone())),
+        )
+        .await;
+        assert_eq!(del_status, StatusCode::OK);
+
+        // Verify deleted from list and logs deleted
+        let (get_after_del, _) = cron_job_get_handler(
+            State(state.clone()),
+            Path((note_id.clone(), job_id.clone())),
+        )
+        .await;
+        assert_eq!(get_after_del, StatusCode::NOT_FOUND);
     }
 }

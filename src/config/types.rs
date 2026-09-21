@@ -114,10 +114,14 @@ pub struct NotesConfig {
     #[serde(default = "default_mcp_lenient_true")]
     pub mcp_lenient_legacy_clients: bool,
 
-    /// Enable automatic loading of notebook persona files (AGENTS.md, BOOTSTRAP.md, IDENTITY.md, SOUL.md, TOOLS.md, USER.md)
+    /// Enable automatic loading of notebook persona files (AGENTS.md, BOOTSTRAP.md, IDENTITY.md, SOUL.md, TOOLS.md, USER.md, HEARTBEAT.md)
     /// into the notebook system prompt. Default: false.
     #[serde(default)]
     pub persona_files: bool,
+
+    /// Enable background scheduled cron jobs worker and management in serve mode. Default: false.
+    #[serde(default)]
+    pub cron_jobs: bool,
 
     /// Custom title for Rune Notes web UI / pages.
     pub title: Option<String>,
@@ -143,6 +147,7 @@ impl Default for NotesConfig {
             oauth: Vec::new(),
             agent_skills: false,
             persona_files: false,
+            cron_jobs: false,
             mcp_lenient_legacy_clients: true,
             title: None,
             desc: None,

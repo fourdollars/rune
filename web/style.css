@@ -3331,3 +3331,387 @@ body.tree-open #app-scrim {
         text-align: center;
     }
 }
+
+/* --- Note Settings Tabs & Persona / Cron Enhancements --- */
+.modal-header-with-tabs {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    border-bottom: 1px solid var(--border);
+    padding-bottom: 12px;
+}
+.settings-tabs {
+    display: flex;
+    gap: 8px;
+    border-bottom: 1px solid var(--border);
+}
+.settings-tab {
+    background: transparent;
+    border: none;
+    border-bottom: 2px solid transparent;
+    color: var(--text-muted);
+    padding: 8px 14px;
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: color 0.15s, border-color 0.15s;
+}
+.settings-tab:hover {
+    color: var(--text-primary);
+}
+.settings-tab.active {
+    color: var(--accent);
+    border-bottom-color: var(--accent);
+    font-weight: 600;
+}
+.settings-tab-panel {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+}
+
+/* Persona Files Grid */
+.persona-banner {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    background: var(--bg-surface, #1e293b);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 14px 16px;
+    gap: 16px;
+}
+.persona-banner-text strong {
+    font-size: 13px;
+    color: var(--text-primary);
+    display: block;
+    margin-bottom: 4px;
+}
+.persona-banner-text p {
+    font-size: 12px;
+    color: var(--text-muted);
+    margin: 0;
+}
+.persona-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+    gap: 10px;
+    max-height: 380px;
+    overflow-y: auto;
+}
+.persona-card {
+    background: var(--bg-surface, #1e293b);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 12px 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+.persona-card.featured {
+    border-color: #a855f7;
+    grid-column: 1 / -1;
+}
+.persona-card-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+.persona-card-name {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--accent);
+}
+.persona-card-desc {
+    font-size: 11px;
+    color: var(--text-muted);
+}
+.persona-badge {
+    font-size: 11px;
+    font-weight: 600;
+    padding: 2px 8px;
+    border-radius: 4px;
+}
+.badge-present {
+    background: rgba(34, 197, 94, 0.15);
+    color: #4ade80;
+    border: 1px solid rgba(34, 197, 94, 0.3);
+}
+.badge-missing {
+    background: rgba(148, 163, 184, 0.15);
+    color: #94a3b8;
+    border: 1px solid rgba(148, 163, 184, 0.3);
+}
+.badge-silent {
+    background: rgba(168, 85, 247, 0.15);
+    color: #c084fc;
+    border: 1px solid rgba(168, 85, 247, 0.3);
+}
+
+/* Scheduled Jobs (Cron) */
+.cron-action-bar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 10px;
+}
+.cron-presets {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-wrap: wrap;
+}
+.preset-label {
+    font-size: 12px;
+    color: var(--text-muted);
+}
+.btn-chip {
+    padding: 4px 10px;
+    font-size: 12px;
+    border-radius: 4px;
+}
+.cron-jobs-list {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    max-height: 420px;
+    overflow-y: auto;
+}
+.cron-job-card {
+    background: var(--bg-surface, #1e293b);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 14px 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+.cron-job-card.active {
+    border-left: 3px solid var(--accent);
+}
+.cron-job-card.paused {
+    opacity: 0.75;
+}
+.cron-card-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+.cron-title-group {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+.cron-card-actions {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+.status-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    display: inline-block;
+}
+.dot-active { background: #4ade80; }
+.dot-paused { background: #94a3b8; }
+.cron-name {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text-primary);
+}
+.job-badge {
+    font-size: 11px;
+    font-weight: 600;
+    padding: 2px 7px;
+    border-radius: 10px;
+}
+.badge-active { background: #166534; color: #4ade80; }
+.badge-paused { background: #334155; color: #94a3b8; }
+.badge-muted { background: var(--bg-primary, #0f172a); color: var(--text-muted); border: 1px solid var(--border); border-radius: 4px; }
+.cron-meta-row {
+    font-size: 12px;
+    color: var(--text-muted);
+}
+.highlight-text {
+    color: var(--accent);
+}
+.cron-prompt-preview {
+    font-size: 12px;
+    color: var(--text-secondary);
+    font-style: italic;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    background: var(--bg-primary, #0f172a);
+    padding: 6px 10px;
+    border-radius: 4px;
+}
+
+/* Toggle Switch */
+.toggle-switch {
+    position: relative;
+    display: inline-block;
+    width: 34px;
+    height: 20px;
+}
+.toggle-switch input {
+    opacity: 0;
+    width: 0;
+    height: 0;
+}
+.toggle-slider {
+    position: absolute;
+    cursor: pointer;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background-color: var(--border, #334155);
+    transition: .2s;
+    border-radius: 20px;
+}
+.toggle-slider:before {
+    position: absolute;
+    content: "";
+    height: 14px;
+    width: 14px;
+    left: 3px;
+    bottom: 3px;
+    background-color: white;
+    transition: .2s;
+    border-radius: 50%;
+}
+input:checked + .toggle-slider {
+    background-color: var(--accent);
+}
+input:checked + .toggle-slider:before {
+    transform: translateX(14px);
+}
+
+/* Interval Chips */
+.schedule-type-toggle {
+    display: flex;
+    gap: 12px;
+    margin-bottom: 6px;
+}
+.radio-chip {
+    font-size: 13px;
+    color: var(--text-secondary);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+.interval-chips {
+    display: flex;
+    gap: 6px;
+    margin-bottom: 8px;
+    flex-wrap: wrap;
+}
+.chip-btn {
+    background: var(--bg-surface, #1e293b);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    color: var(--text-muted);
+    padding: 4px 10px;
+    font-size: 12px;
+    cursor: pointer;
+    transition: all 0.15s;
+}
+.chip-btn:hover {
+    color: var(--text-primary);
+    border-color: var(--accent);
+}
+.chip-btn.active {
+    background: var(--accent);
+    color: #fff;
+    border-color: var(--accent);
+    font-weight: 600;
+}
+
+/* Checkbox group */
+.checkbox-group {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+.checkbox-label {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    font-size: 12px;
+    color: var(--text-secondary);
+    cursor: pointer;
+}
+.checkbox-label input[type="checkbox"] {
+    margin-top: 3px;
+}
+
+/* Logs Modal & Table */
+.modal-extra-wide {
+    width: min(840px, 95vw);
+}
+.logs-stats-bar {
+    display: flex;
+    gap: 16px;
+    background: var(--bg-surface, #1e293b);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 10px 14px;
+    font-size: 12px;
+    color: var(--text-muted);
+    flex-wrap: wrap;
+}
+.logs-table-container {
+    max-height: 380px;
+    overflow-y: auto;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+}
+.logs-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 12px;
+    text-align: left;
+}
+.logs-table th, .logs-table td {
+    padding: 8px 12px;
+    border-bottom: 1px solid var(--border);
+}
+.logs-table th {
+    background: var(--bg-surface, #1e293b);
+    color: var(--text-muted);
+    font-weight: 600;
+    position: sticky;
+    top: 0;
+    z-index: 1;
+}
+.log-status-badge {
+    font-size: 11px;
+    font-weight: 600;
+    padding: 2px 7px;
+    border-radius: 10px;
+    display: inline-block;
+}
+.status-silent { background: #581c87; color: #c084fc; }
+.status-success { background: #166534; color: #4ade80; }
+.status-error { background: #7f1d1d; color: #f87171; }
+.trigger-badge {
+    color: var(--text-muted);
+    font-size: 11px;
+}
+.snippet-cell {
+    max-width: 260px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    color: var(--text-muted);
+}
+.loading-td, .empty-td, .error-td {
+    text-align: center;
+    padding: 24px;
+    color: var(--text-muted);
+}
+.error-td { color: #f87171; }
+
