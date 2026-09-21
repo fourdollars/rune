@@ -30,9 +30,9 @@ pub async fn line_webhook_handler(
     raw_body: Bytes,
 ) -> Response {
     let line_cfg = match state.config.notes.line {
-        Some(ref cfg) if cfg.enabled || !cfg.channel_secret.is_empty() => cfg,
+        Some(ref cfg) if !cfg.channel_secret.is_empty() => cfg,
         _ => {
-            warn!("LINE Webhook received but [notes.line] is not configured/enabled");
+            warn!("LINE Webhook received but [notes.line] is not configured");
             return (StatusCode::BAD_REQUEST, "LINE webhook not configured").into_response();
         }
     };
@@ -132,38 +132,45 @@ pub async fn process_webhook_payload(
             continue;
         }
 
+        // Group allowlist filtering: if the message originates from a group or room,
+        // the groupId/roomId must be present in `line_cfg.groups`.
+        let group_id = event
+            .source
+            .as_ref()
+            .and_then(|s| s.group_id.as_deref().or(s.room_id.as_deref()));
+
+        if let Some(gid) = group_id {
+            if !line_cfg.groups.iter().any(|g| g == gid) {
+                warn!(
+                    "Ignoring LINE event from unauthorized group/room ID: {}",
+                    gid
+                );
+                continue;
+            }
+        }
+
         let user_id = event
             .source
             .as_ref()
             .and_then(|s| s.user_id.as_deref())
             .unwrap_or("unknown");
 
-        // Determine permissions and target note:
-        // - Mapped users: follow their configured role and interactive_chat setting.
-        // - Unmapped users / bots: routed to default_note ("LineBot") as read-only data collectors (no AI chat).
-        let user_cfg = line_cfg.users.iter().find(|u| u.user_id == user_id);
-        let (note_id, interactive_chat, is_guest) = match user_cfg {
-            Some(cfg) => {
-                let is_guest = cfg.role.to_lowercase() == "guest";
-                let note = cfg
-                    .note
-                    .clone()
-                    .or_else(|| line_cfg.default_note.clone())
-                    .unwrap_or_else(|| "LineBot".to_string());
-                let interactive = if is_guest {
-                    false
-                } else {
-                    cfg.interactive_chat
-                };
-                (note, interactive, is_guest)
-            }
-            None => {
-                let note = line_cfg
-                    .default_note
-                    .clone()
-                    .unwrap_or_else(|| "LineBot".to_string());
-                (note, false, true)
-            }
+        // Role resolution from standard allowlists:
+        // - admins / users: interactive AI chat enabled in target note
+        // - guests / unmapped: read-only data collection into default_note ("LineBot"), no AI chat
+        let is_admin = line_cfg.admins.iter().any(|id| id == user_id);
+        let is_user = line_cfg.users.iter().any(|id| id == user_id);
+        let is_guest = line_cfg.guests.iter().any(|id| id == user_id);
+
+        let note_id = line_cfg
+            .default_note
+            .clone()
+            .unwrap_or_else(|| "LineBot".to_string());
+
+        let (interactive_chat, is_read_only_guest) = if is_admin || is_user {
+            (true, false)
+        } else {
+            (false, true)
         };
 
         // Ensure notebook exists in DB and notify frontend WebUI if newly created
@@ -299,14 +306,53 @@ pub async fn process_webhook_payload(
             let md_dir = state.note_markdown_dir(&note_id);
             let _ = std::fs::create_dir_all(&md_dir);
             let today = chrono_now_date();
-            let filename = format!("{}-line-report.md", today);
+            let filename = format!("{}-line-webhook-events.md", today);
             let file_path = md_dir.join(&filename);
 
+            let now_dt = if event.timestamp > 0 {
+                let secs = (event.timestamp / 1000) as u64;
+                let (y, m, d, h, min, s) = civil_from_timestamp(secs);
+                format!(
+                    "{:04}-{:02}-{:02} {:02}:{:02}:{:02} UTC",
+                    y, m, d, h, min, s
+                )
+            } else {
+                chrono_now_datetime()
+            };
+
+            // Format payload block nicely (pretty print if valid JSON)
+            let formatted_payload =
+                if let Ok(val) = serde_json::from_str::<serde_json::Value>(&text) {
+                    format!(
+                        "```json\n{}\n```",
+                        serde_json::to_string_pretty(&val).unwrap_or_else(|_| text.clone())
+                    )
+                } else {
+                    format!("```\n{}\n```", text)
+                };
+
+            let mut metadata_lines = vec![
+                format!("- **User ID**: `{}`", user_id),
+                format!("- **Event Type**: `{}`", event.event_type),
+            ];
+            if let Some(ref src) = event.source {
+                if let Some(ref gid) = src.group_id {
+                    metadata_lines.push(format!("- **Group ID**: `{}`", gid));
+                }
+                if let Some(ref rid) = src.room_id {
+                    metadata_lines.push(format!("- **Room ID**: `{}`", rid));
+                }
+            }
+
+            let raw_event_json = serde_json::to_string_pretty(&event).unwrap_or_default();
+
             let append_text = format!(
-                "\n\n### Report from {} ({})\n\n```\n{}\n```\n",
+                "\n\n### Report from {} ({})\n\n{}\n\n{}\n\n<details>\n<summary>Raw Event Payload</summary>\n\n```json\n{}\n```\n</details>\n",
                 nickname,
-                chrono_now_time(),
-                text
+                now_dt,
+                metadata_lines.join("\n"),
+                formatted_payload,
+                raw_event_json
             );
 
             use std::io::Write;
@@ -316,6 +362,16 @@ pub async fn process_webhook_payload(
                 .open(&file_path)
             {
                 let _ = file.write_all(append_text.as_bytes());
+            }
+
+            // Broadcast updated file content to the note room in real-time
+            if let Ok(content) = tokio::fs::read_to_string(&file_path).await {
+                let fc = SseMsg::FileContent {
+                    note_id: note_id.clone(),
+                    filename: filename.clone(),
+                    content,
+                };
+                broadcast_to_room(&room, &fc);
             }
 
             broadcast_file_list(&state, &note_id).await;
@@ -473,15 +529,35 @@ async fn execute_line_agent_and_reply(
     }
 }
 
+fn civil_from_timestamp(secs: u64) -> (i32, u32, u32, u32, u32, u32) {
+    let days = (secs / 86400) as i64;
+    let secs_of_day = (secs % 86400) as u32;
+    let hours = secs_of_day / 3600;
+    let mins = (secs_of_day % 3600) / 60;
+    let secs = secs_of_day % 60;
+
+    // Howard Hinnant's algorithm (civil date from days since 1970-01-01)
+    let z = days + 719468;
+    let era = if z >= 0 { z } else { z - 146096 } / 146097;
+    let doe = (z - era * 146097) as u32;
+    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+    let y = (yoe as i64) + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let year = if m <= 2 { y + 1 } else { y } as i32;
+
+    (year, m, d, hours, mins, secs)
+}
+
 fn chrono_now_date() -> String {
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs();
-    // Simple UTC YYYY-MM-DD estimation or format
-    let days = now / 86400;
-    // Approximated date for filename
-    format!("date-{}", days)
+    let (y, m, d, _, _, _) = civil_from_timestamp(now);
+    format!("{:04}-{:02}-{:02}", y, m, d)
 }
 
 fn chrono_now_time() -> String {
@@ -489,17 +565,26 @@ fn chrono_now_time() -> String {
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs();
-    let secs_of_day = now % 86400;
-    let hours = secs_of_day / 3600;
-    let mins = (secs_of_day % 3600) / 60;
-    let secs = secs_of_day % 60;
-    format!("{:02}:{:02}:{:02} UTC", hours, mins, secs)
+    let (_, _, _, h, min, s) = civil_from_timestamp(now);
+    format!("{:02}:{:02}:{:02} UTC", h, min, s)
+}
+
+fn chrono_now_datetime() -> String {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    let (y, m, d, h, min, s) = civil_from_timestamp(now);
+    format!(
+        "{:04}-{:02}-{:02} {:02}:{:02}:{:02} UTC",
+        y, m, d, h, min, s
+    )
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::{LineNotesConfig, LineUserConfig, RuneConfig};
+    use crate::config::{LineNotesConfig, RuneConfig};
     use crate::serve::db::ChatDb;
     use crate::serve::line::signature::compute_signature;
     use crate::serve::oauth;
@@ -509,22 +594,21 @@ mod tests {
     use std::sync::Arc;
     use tokio::sync::{broadcast, RwLock};
 
-    fn create_test_state_with_line(enabled: bool, secret: &str) -> ServerState {
+    fn create_test_state_with_line(secret: &str) -> ServerState {
         let (admin_broadcast_tx, _) = broadcast::channel(64);
         let db = ChatDb::open(std::path::Path::new(":memory:")).expect("in-memory db");
         let mut config = RuneConfig::default();
-        config.notes.line = Some(LineNotesConfig {
-            enabled,
-            channel_secret: secret.to_string(),
-            channel_access_token: "test_token".to_string(),
-            default_note: Some("Default".to_string()),
-            users: vec![LineUserConfig {
-                user_id: "U12345678".to_string(),
-                note: Some("AI".to_string()),
-                role: "user".to_string(),
-                interactive_chat: true,
-            }],
-        });
+        if !secret.is_empty() {
+            config.notes.line = Some(LineNotesConfig {
+                channel_secret: secret.to_string(),
+                channel_access_token: "test_token".to_string(),
+                default_note: Some("Default".to_string()),
+                groups: vec![],
+                admins: vec!["U12345678".to_string()],
+                users: vec![],
+                guests: vec![],
+            });
+        }
 
         ServerState {
             config,
@@ -549,7 +633,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_line_webhook_missing_signature() {
-        let state = create_test_state_with_line(true, "secret123");
+        let state = create_test_state_with_line("secret123");
         let headers = HeaderMap::new();
         let body = Bytes::from(r#"{"destination":"U123","events":[]}"#);
 
@@ -559,7 +643,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_line_webhook_invalid_signature() {
-        let state = create_test_state_with_line(true, "secret123");
+        let state = create_test_state_with_line("secret123");
         let mut headers = HeaderMap::new();
         headers.insert("x-line-signature", "invalid_signature".parse().unwrap());
         let body = Bytes::from(r#"{"destination":"U123","events":[]}"#);
@@ -571,7 +655,7 @@ mod tests {
     #[tokio::test]
     async fn test_line_webhook_valid_signature() {
         let secret = "my_secret_token";
-        let state = create_test_state_with_line(true, secret);
+        let state = create_test_state_with_line(secret);
         let body_bytes = br#"{"destination":"U123","events":[]}"#;
         let sig = compute_signature(secret, body_bytes);
 
@@ -585,7 +669,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_line_webhook_not_configured() {
-        let state = create_test_state_with_line(false, "");
+        let state = create_test_state_with_line("");
         let headers = HeaderMap::new();
         let body = Bytes::from(r#"{"destination":"U123","events":[]}"#);
 
@@ -597,7 +681,7 @@ mod tests {
     async fn test_process_webhook_unmapped_user_collected_to_default_note_no_ai() {
         use crate::serve::line::types::{EventMessage, EventSource, WebhookEvent};
 
-        let state = create_test_state_with_line(true, "secret123");
+        let state = create_test_state_with_line("secret123");
         let payload = WebhookPayload {
             destination: Some("U_BOT".to_string()),
             events: vec![WebhookEvent {
@@ -636,7 +720,7 @@ mod tests {
     async fn test_process_webhook_postback_collected() {
         use crate::serve::line::types::{EventPostback, EventSource, WebhookEvent};
 
-        let state = create_test_state_with_line(true, "secret123");
+        let state = create_test_state_with_line("secret123");
         let payload = WebhookPayload {
             destination: Some("U_BOT".to_string()),
             events: vec![WebhookEvent {
@@ -664,5 +748,146 @@ mod tests {
             .await;
         assert_eq!(history.len(), 1);
         assert!(history[0].content.contains(r#"{"action":"ci_result""#));
+    }
+
+    #[test]
+    fn test_civil_from_timestamp_accuracy() {
+        // Epoch: 1970-01-01 00:00:00 UTC
+        assert_eq!(civil_from_timestamp(0), (1970, 1, 1, 0, 0, 0));
+
+        // Leap day: 2000-02-29 12:30:45 UTC (951827445)
+        assert_eq!(civil_from_timestamp(951827445), (2000, 2, 29, 12, 30, 45));
+
+        // 2026-09-20 16:30:00 UTC (1789862400 + 16*3600 + 30*60 = 1789921800)
+        assert_eq!(civil_from_timestamp(1789921800), (2026, 9, 20, 16, 30, 0));
+
+        // 2026-09-21 00:00:00 UTC (20717 * 86400 = 1789948800)
+        assert_eq!(civil_from_timestamp(1789948800), (2026, 9, 21, 0, 0, 0));
+    }
+
+    #[tokio::test]
+    async fn test_process_webhook_broadcasts_file_content_and_file_list() {
+        use crate::serve::line::types::{EventMessage, EventSource, WebhookEvent};
+
+        let state = create_test_state_with_line("secret123");
+        let room = state.get_or_create_room("Default").await;
+        let mut rx = room.broadcast_tx.subscribe();
+
+        let payload = WebhookPayload {
+            destination: Some("U_BOT".to_string()),
+            events: vec![WebhookEvent {
+                event_type: "message".to_string(),
+                source: Some(EventSource {
+                    source_type: "user".to_string(),
+                    user_id: Some("U_STRANGER_123".to_string()),
+                    ..Default::default()
+                }),
+                reply_token: Some("dummy_token".to_string()),
+                message: Some(EventMessage {
+                    id: "msg_2".to_string(),
+                    message_type: "text".to_string(),
+                    text: Some(r#"{"status":"ready"}"#.to_string()),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }],
+        };
+
+        let cache = ProfileCache::default();
+        process_webhook_payload(state.clone(), payload, cache).await;
+
+        let mut received_messages = Vec::new();
+        while let Ok(msg_str) = rx.try_recv() {
+            received_messages.push(msg_str);
+        }
+
+        // Check that ChatMessage, FileContent, and FileList were all broadcast to the room
+        assert!(
+            received_messages.iter().any(|m| m.contains("chat_message")),
+            "Expected chat_message broadcast, got: {:?}",
+            received_messages
+        );
+        assert!(
+            received_messages.iter().any(|m| m.contains("file_content")),
+            "Expected file_content broadcast, got: {:?}",
+            received_messages
+        );
+        assert!(
+            received_messages.iter().any(|m| m.contains("file_list")),
+            "Expected file_list broadcast, got: {:?}",
+            received_messages
+        );
+    }
+
+    #[tokio::test]
+    async fn test_process_webhook_group_allowlist_filtering() {
+        use crate::serve::line::types::{EventMessage, EventSource, WebhookEvent};
+
+        let mut state = create_test_state_with_line("secret123");
+        if let Some(ref mut line_cfg) = state.config.notes.line {
+            line_cfg.groups = vec!["C_ALLOWED_GROUP".to_string()];
+        }
+
+        // 1. Event from unauthorized group
+        let unauthorized_payload = WebhookPayload {
+            destination: Some("U_BOT".to_string()),
+            events: vec![WebhookEvent {
+                event_type: "message".to_string(),
+                source: Some(EventSource {
+                    source_type: "group".to_string(),
+                    group_id: Some("C_BLOCKED_GROUP".to_string()),
+                    user_id: Some("U_SOME_USER".to_string()),
+                    ..Default::default()
+                }),
+                reply_token: Some("token1".to_string()),
+                message: Some(EventMessage {
+                    id: "msg_blocked".to_string(),
+                    message_type: "text".to_string(),
+                    text: Some("hello from blocked group".to_string()),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }],
+        };
+
+        let cache = ProfileCache::default();
+        process_webhook_payload(state.clone(), unauthorized_payload, cache.clone()).await;
+
+        let history = state
+            .chat_db
+            .load_recent_async("Default".to_string(), 10)
+            .await;
+        assert_eq!(history.len(), 0, "Blocked group should not be recorded");
+
+        // 2. Event from authorized group
+        let authorized_payload = WebhookPayload {
+            destination: Some("U_BOT".to_string()),
+            events: vec![WebhookEvent {
+                event_type: "message".to_string(),
+                source: Some(EventSource {
+                    source_type: "group".to_string(),
+                    group_id: Some("C_ALLOWED_GROUP".to_string()),
+                    user_id: Some("U_SOME_USER".to_string()),
+                    ..Default::default()
+                }),
+                reply_token: Some("token2".to_string()),
+                message: Some(EventMessage {
+                    id: "msg_allowed".to_string(),
+                    message_type: "text".to_string(),
+                    text: Some("hello from allowed group".to_string()),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }],
+        };
+
+        process_webhook_payload(state.clone(), authorized_payload, cache.clone()).await;
+
+        let history = state
+            .chat_db
+            .load_recent_async("Default".to_string(), 10)
+            .await;
+        assert_eq!(history.len(), 1, "Allowed group should be recorded");
+        assert!(history[0].content.contains("hello from allowed group"));
     }
 }

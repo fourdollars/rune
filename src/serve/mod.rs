@@ -781,7 +781,16 @@ pub async fn run(config: RuneConfig, opts: NotesOptions) {
         .route("/oauth/revoke", post(oauth_pkce::oauth_revoke_handler));
 
     #[cfg(feature = "line")]
-    let app = app.route("/webhook/line", post(line::line_webhook_handler));
+    let app = if config
+        .notes
+        .line
+        .as_ref()
+        .is_some_and(|c| !c.channel_secret.is_empty())
+    {
+        app.route("/webhook/line", post(line::line_webhook_handler))
+    } else {
+        app
+    };
 
     let app = app
         .merge(api_routes)
@@ -794,10 +803,13 @@ pub async fn run(config: RuneConfig, opts: NotesOptions) {
     println!("  ᚱ Rune Notes → http://{}", addr);
     #[cfg(feature = "line")]
     if let Some(ref line_cfg) = config.notes.line {
-        if line_cfg.enabled || !line_cfg.channel_secret.is_empty() {
+        if !line_cfg.channel_secret.is_empty() {
             println!(
-                "  📱 LINE Webhook configured → /webhook/line ({} user(s) mapped)",
-                line_cfg.users.len()
+                "  📱 LINE Webhook configured → /webhook/line ({} groups, {} admins, {} users, {} guests)",
+                line_cfg.groups.len(),
+                line_cfg.admins.len(),
+                line_cfg.users.len(),
+                line_cfg.guests.len()
             );
         }
     }
@@ -1856,8 +1868,6 @@ mod tests {
         use tokio::time::{timeout, Duration};
 
         let _lock = ENV_LOCK.lock().unwrap();
-        let orig = std::env::var("HOME").ok();
-        std::env::set_var("HOME", "/tmp/test_run_home");
 
         let config = RuneConfig::default();
         let opts = NotesOptions {
@@ -1867,12 +1877,6 @@ mod tests {
 
         // run() binds and serves; we cancel after 100ms
         let result = timeout(Duration::from_millis(100), run(config, opts)).await;
-
-        if let Some(v) = orig {
-            std::env::set_var("HOME", v);
-        } else {
-            std::env::remove_var("HOME");
-        }
 
         // Timeout means the server started listening (good);
         // an Err(Elapsed) is expected and correct.

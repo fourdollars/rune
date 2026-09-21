@@ -146,36 +146,9 @@ impl Default for NotesConfig {
     }
 }
 
-fn default_user_role() -> String {
-    "user".to_string()
-}
-
-fn default_interactive_chat() -> bool {
-    true
-}
-
-/// User mapping configuration for LINE Bot Webhook.
-#[derive(Debug, Clone, Deserialize, Default, PartialEq)]
-pub struct LineUserConfig {
-    /// LINE User ID (e.g. "U12345678...").
-    pub user_id: String,
-    /// Default Note ID bound to this user.
-    #[serde(default)]
-    pub note: Option<String>,
-    /// User role in Rune ("admin", "user", "guest").
-    #[serde(default = "default_user_role")]
-    pub role: String,
-    /// Whether two-way interactive LLM chat is enabled for this user.
-    #[serde(default = "default_interactive_chat")]
-    pub interactive_chat: bool,
-}
-
 /// Configuration for LINE Bot Webhook integration (`[notes.line]`).
 #[derive(Debug, Clone, Deserialize, Default, PartialEq)]
 pub struct LineNotesConfig {
-    /// Whether LINE Webhook integration is enabled.
-    #[serde(default)]
-    pub enabled: bool,
     /// LINE Messaging API Channel Secret (for HMAC-SHA256 signature verification).
     #[serde(default)]
     pub channel_secret: String,
@@ -185,9 +158,18 @@ pub struct LineNotesConfig {
     /// Fallback/default Note ID for unmapped users or Line Bots.
     #[serde(default)]
     pub default_note: Option<String>,
-    /// Per-user bindings and permissions.
+    /// Allowed LINE Group or Room IDs.
     #[serde(default)]
-    pub users: Vec<LineUserConfig>,
+    pub groups: Vec<String>,
+    /// LINE User IDs granted admin role.
+    #[serde(default)]
+    pub admins: Vec<String>,
+    /// LINE User IDs granted user role.
+    #[serde(default)]
+    pub users: Vec<String>,
+    /// LINE User IDs granted guest (read-only) role.
+    #[serde(default)]
+    pub guests: Vec<String>,
 }
 
 /// Local credentials configuration for Rune Notes.

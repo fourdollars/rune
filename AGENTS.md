@@ -85,17 +85,17 @@ guests = []
 
 # LINE Bot Webhook & Interactive Chat (`--features line` or `notes-line`)
 [notes.line]
-enabled = true
 channel_secret = "your_channel_secret_here"
 channel_access_token = "your_channel_access_token_here"
 default_note = "LineBot" # Fallback notebook for unmapped users or Line Bots
 
-# User mappings (system automatically resolves displayName as line:<displayName> via LINE Profile API)
-[[notes.line.users]]
-user_id = "U12345678"
-note = "AI"
-role = "user"
-interactive_chat = true # Two-way AI chat with stats and slash commands (/usage, /context, /archive)
+# Group allowlist (LINE Group/Room IDs)
+groups = ["C12345678"]
+
+# Role-based access control (LINE User IDs)
+admins = ["U12345678"]
+users = []
+guests = []
 ```
 
 ### Concourse Resource Type
