@@ -1454,6 +1454,7 @@ port = 9527
 nickname = "LineBot"
 channel_secret = "secret123"
 channel_access_token = "token456"
+keywords = ["@bot", "rune"]
 groups = ["C12345678", "C87654321"]
 admins = ["U12345678", "U_ADMIN_2"]
 users = ["U87654321"]
@@ -1463,6 +1464,7 @@ guests = ["U99999999"]
 nickname = "CIBot"
 channel_secret = "secret_ci"
 channel_access_token = "token_ci"
+keyboards = ["ci", "build"]
 groups = ["C99999999"]
 "#;
 
@@ -1473,6 +1475,7 @@ groups = ["C99999999"]
     assert_eq!(line1.nickname, "LineBot");
     assert_eq!(line1.channel_secret, "secret123");
     assert_eq!(line1.channel_access_token, "token456");
+    assert_eq!(line1.keywords, vec!["@bot", "rune"]);
     assert_eq!(line1.groups, vec!["C12345678", "C87654321"]);
     assert_eq!(line1.admins, vec!["U12345678", "U_ADMIN_2"]);
     assert_eq!(line1.users, vec!["U87654321"]);
@@ -1482,6 +1485,7 @@ groups = ["C99999999"]
     assert_eq!(line2.nickname, "CIBot");
     assert_eq!(line2.channel_secret, "secret_ci");
     assert_eq!(line2.channel_access_token, "token_ci");
+    assert_eq!(line2.keywords, vec!["ci", "build"]);
     assert_eq!(line2.groups, vec!["C99999999"]);
     assert!(line2.admins.is_empty());
 }

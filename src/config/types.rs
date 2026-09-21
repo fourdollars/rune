@@ -161,6 +161,9 @@ pub struct LineNotesConfig {
     /// Allowed LINE Group or Room IDs.
     #[serde(default)]
     pub groups: Vec<String>,
+    /// Keywords list: group messages must mention at least one keyword to trigger interactive AI chat.
+    #[serde(default, alias = "keyboards")]
+    pub keywords: Vec<String>,
     /// LINE User IDs granted admin role.
     #[serde(default)]
     pub admins: Vec<String>,

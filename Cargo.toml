@@ -41,7 +41,6 @@ zstd = "0.13"
 default = []
 notes = ["dep:axum", "dep:rusqlite", "dep:zstd"]
 line = ["notes", "dep:hmac"]
-notes-line = ["line"]
 vim = []
 
 [profile.release]

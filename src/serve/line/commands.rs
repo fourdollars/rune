@@ -13,6 +13,7 @@ pub async fn handle_slash_command(
     state: &ServerState,
     note_id: &str,
     _user_id: &str,
+    is_admin: bool,
 ) -> Option<String> {
     let trimmed = text.trim();
     let parts: Vec<&str> = trimmed.split_whitespace().collect();
@@ -24,19 +25,50 @@ pub async fn handle_slash_command(
     let arg = parts.get(1).copied().unwrap_or("");
 
     match cmd {
-        "/usage" => Some(format_usage_command(state).await),
-        "/context" => Some(format_context_command(state, note_id).await),
-        "/archive" | "/clear" => Some(format_archive_command(state, note_id).await),
-        "/model" => Some(format_model_command(state, note_id).await),
-        "/notes" => Some(format_notes_command(state).await),
-        "/note" => {
-            if arg.is_empty() {
-                Some(format!("📁 Active Note: [{}]", note_id))
+        "/usage" => {
+            if !is_admin {
+                Some("⛔ Permission denied: Admin access required.".to_string())
             } else {
-                Some(format!("📁 Switched active note to [{}]", arg))
+                Some(format_usage_command(state).await)
             }
         }
-        "/help" => Some(format_help_command()),
+        "/context" => Some(format_context_command(state, note_id).await),
+        "/archive" | "/clear" => {
+            if !is_admin {
+                Some("⛔ Permission denied: Admin access required.".to_string())
+            } else {
+                Some(format_archive_command(state, note_id).await)
+            }
+        }
+        "/model" => {
+            if arg.is_empty() {
+                Some(format_model_command(state, note_id).await)
+            } else if !is_admin {
+                Some("⛔ Permission denied: Admin access required.".to_string())
+            } else {
+                let room = state.get_or_create_room(note_id).await;
+                *room.model_override.write().await = Some(arg.to_string());
+                let _ = state.chat_db.set_note_model(note_id, Some(arg));
+                let effective_thinking = state
+                    .effective_thinking(note_id)
+                    .await
+                    .unwrap_or_else(|| "off".to_string());
+                let usage = state.provider_registry.read().await.usage();
+                broadcast_to_room(
+                    &room,
+                    &SseMsg::ModelChanged {
+                        model: arg.to_string(),
+                        thinking: effective_thinking.clone(),
+                        usage,
+                    },
+                );
+                Some(format!(
+                    "🧠 Switched model for [{}] to [{}] (thinking: {})",
+                    note_id, arg, effective_thinking
+                ))
+            }
+        }
+        "/help" => Some(format_help_command(is_admin)),
         _ => None,
     }
 }
@@ -199,30 +231,19 @@ pub async fn format_model_command(state: &ServerState, note_id: &str) -> String 
     format!("🧠 Current Model: {} (thinking: {})", model, thinking)
 }
 
-/// Format the `/notes` command output.
-pub async fn format_notes_command(state: &ServerState) -> String {
-    let notes = state.chat_db.list_notes().unwrap_or_default();
-    if notes.is_empty() {
-        return "📚 No notebooks available.".to_string();
+/// Format the `/help` command output based on user role.
+pub fn format_help_command(is_admin: bool) -> String {
+    let mut out = String::from("💡 Rune LINE Commands:\n");
+    if is_admin {
+        out.push_str("• /usage — View LLM Provider usage and remaining credits/quota\n");
+        out.push_str("• /archive — Archive and reset chat history for current notebook\n");
+        out.push_str("• /clear — Alias for /archive\n");
+        out.push_str("• /model <name> — Switch LLM model for this notebook\n");
     }
-    let mut out = String::from("📚 Available Notes:\n");
-    for note in notes {
-        out.push_str(&format!("• {}\n", note.name));
-    }
-    out.trim_end().to_string()
-}
-
-/// Format the `/help` command output.
-pub fn format_help_command() -> String {
-    r#"💡 Rune LINE Commands:
-• /usage — View LLM Provider usage and remaining credits/quota
-• /context — Check conversation context token usage and limits
-• /archive — Archive and reset chat history for current notebook
-• /note <name> — Switch or view current active notebook
-• /notes — List all available notebooks
-• /model — View current AI model and thinking configuration
-• /help — Show this help message"#
-        .to_string()
+    out.push_str("• /context — Check conversation context token usage and limits\n");
+    out.push_str("• /model — View current AI model and thinking configuration\n");
+    out.push_str("• /help — Show this help message");
+    out
 }
 
 #[cfg(test)]
@@ -271,48 +292,47 @@ mod tests {
     }
 
     #[test]
-    fn test_format_help_command() {
-        let help = format_help_command();
-        assert!(help.contains("/usage"));
-        assert!(help.contains("/context"));
-        assert!(help.contains("/archive"));
-        assert!(help.contains("/model"));
-        assert!(help.contains("/note"));
-        assert!(help.contains("/notes"));
+    fn test_format_help_command_admin_vs_user() {
+        let help_admin = format_help_command(true);
+        assert!(help_admin.contains("/usage"));
+        assert!(help_admin.contains("/archive"));
+        assert!(help_admin.contains("/model <name>"));
+        assert!(help_admin.contains("/context"));
+
+        let help_user = format_help_command(false);
+        assert!(!help_user.contains("/usage"));
+        assert!(!help_user.contains("/archive"));
+        assert!(help_user.contains("/context"));
+        assert!(help_user.contains("/model"));
     }
 
     #[tokio::test]
-    async fn test_slash_command_model_and_note() {
+    async fn test_slash_command_model_query_and_switch() {
         let state = create_test_state();
-        let reply = handle_slash_command("/model", &state, "AI", "U1234").await;
+        state.chat_db.create_note("AI", "AI Notes", None).unwrap();
+
+        // Query model (allowed for user)
+        let reply = handle_slash_command("/model", &state, "AI", "U1234", false).await;
         assert!(reply.is_some());
         assert!(reply.unwrap().contains("test-model"));
 
-        let reply_note = handle_slash_command("/note Rust", &state, "AI", "U1234").await;
+        // Switch model as user (forbidden)
+        let reply_user_switch =
+            handle_slash_command("/model gpt-5", &state, "AI", "U1234", false).await;
         assert_eq!(
-            reply_note,
-            Some("📁 Switched active note to [Rust]".to_string())
+            reply_user_switch,
+            Some("⛔ Permission denied: Admin access required.".to_string())
         );
 
-        let reply_note_current = handle_slash_command("/note", &state, "AI", "U1234").await;
-        assert_eq!(reply_note_current, Some("📁 Active Note: [AI]".to_string()));
-    }
-
-    #[tokio::test]
-    async fn test_slash_command_notes_list() {
-        let state = create_test_state();
-        state.chat_db.create_note("AI", "AI Notes", None).unwrap();
-        state
-            .chat_db
-            .create_note("Rust", "Rust Notes", None)
-            .unwrap();
-
-        let reply = handle_slash_command("/notes", &state, "AI", "U1234").await;
-        assert!(reply.is_some());
-        let msg = reply.unwrap();
-        assert!(msg.contains("Available Notes"));
-        assert!(msg.contains("AI Notes"));
-        assert!(msg.contains("Rust Notes"));
+        // Switch model as admin (allowed)
+        let reply_admin_switch =
+            handle_slash_command("/model gpt-5", &state, "AI", "U1234", true).await;
+        assert!(reply_admin_switch.is_some());
+        assert!(reply_admin_switch.unwrap().contains("Switched model"));
+        assert_eq!(
+            state.chat_db.get_note_model("AI"),
+            Some("gpt-5".to_string())
+        );
     }
 
     #[tokio::test]
@@ -328,14 +348,14 @@ mod tests {
             )
             .await;
 
-        let reply = handle_slash_command("/context", &state, "AI", "U1234").await;
+        let reply = handle_slash_command("/context", &state, "AI", "U1234", false).await;
         assert!(reply.is_some());
         let msg = reply.unwrap();
         assert!(msg.contains("context used"));
     }
 
     #[tokio::test]
-    async fn test_slash_command_archive() {
+    async fn test_slash_command_archive_admin_only() {
         let state = create_test_state();
         let _ = std::fs::create_dir_all(state.note_markdown_dir("AI"));
         state
@@ -348,16 +368,24 @@ mod tests {
             )
             .await;
 
-        let reply = handle_slash_command("/archive", &state, "AI", "U1234").await;
-        assert!(reply.is_some());
-        let msg = reply.unwrap();
+        // User forbidden
+        let reply_user = handle_slash_command("/archive", &state, "AI", "U1234", false).await;
+        assert_eq!(
+            reply_user,
+            Some("⛔ Permission denied: Admin access required.".to_string())
+        );
+
+        // Admin allowed
+        let reply_admin = handle_slash_command("/archive", &state, "AI", "U1234", true).await;
+        assert!(reply_admin.is_some());
+        let msg = reply_admin.unwrap();
         assert!(msg.contains("Chat history archived"));
     }
 
     #[tokio::test]
     async fn test_slash_command_unknown() {
         let state = create_test_state();
-        let reply = handle_slash_command("/unknown_command", &state, "AI", "U1234").await;
+        let reply = handle_slash_command("/unknown_command", &state, "AI", "U1234", true).await;
         assert_eq!(reply, None);
     }
 }

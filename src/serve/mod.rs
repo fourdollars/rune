@@ -781,17 +781,17 @@ pub async fn run(config: RuneConfig, opts: NotesOptions) {
         .route("/oauth/revoke", post(oauth_pkce::oauth_revoke_handler));
 
     #[cfg(feature = "line")]
-    let app = if config
+    let app = if state
+        .config
         .notes
         .line
         .iter()
-        .any(|c| !c.channel_secret.is_empty())
+        .any(|c| !c.channel_secret.is_empty() && !c.nickname.is_empty())
     {
-        app.route("/webhook/line", post(line::line_webhook_handler))
-            .route(
-                "/webhook/line/{nickname}",
-                post(line::line_webhook_named_handler),
-            )
+        app.route(
+            "/webhook/line/{nickname}",
+            post(line::line_webhook_named_handler),
+        )
     } else {
         app
     };
@@ -811,18 +811,19 @@ pub async fn run(config: RuneConfig, opts: NotesOptions) {
             .notes
             .line
             .iter()
-            .filter(|b| !b.channel_secret.is_empty())
+            .filter(|b| !b.channel_secret.is_empty() && !b.nickname.is_empty())
             .collect();
         if !active_bots.is_empty() {
             println!(
-                "  📱 LINE Webhook configured ({} bot(s)) → /webhook/line[/:nickname]",
+                "  📱 LINE Webhook configured ({} bot(s)) → /webhook/line/{{nickname}}",
                 active_bots.len()
             );
             for bot in &active_bots {
                 println!(
-                    "     • {} → /webhook/line/{} ({} groups, {} admins, {} users, {} guests)",
+                    "     • {} → /webhook/line/{} ({} keywords, {} groups, {} admins, {} users, {} guests)",
                     bot.nickname,
                     bot.nickname,
+                    bot.keywords.len(),
                     bot.groups.len(),
                     bot.admins.len(),
                     bot.users.len(),

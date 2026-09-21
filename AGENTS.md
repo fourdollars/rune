@@ -83,11 +83,12 @@ admins = ["alice", "grp:platform-admins"]
 users = ["grp:employees"]
 guests = []
 
-# LINE Bot Webhook & Interactive Chat (`--features line` or `notes-line`)
+# LINE Bot Webhook & Interactive Chat (`--features line`)
 [[notes.line]]
 nickname = "LineBot" # Unique bot identifier (routes to LineBot-{GROUP/USER ID})
 channel_secret = "your_channel_secret_here"
 channel_access_token = "your_channel_access_token_here"
+keywords = ["@bot", "rune"] # Group messages must mention a keyword to trigger AI
 
 # Group allowlist (LINE Group/Room IDs)
 groups = ["C12345678"]
@@ -253,7 +254,7 @@ rune notes --bind 0.0.0.0
 | `/notes/` | Lists all public notes |
 | `/notes/{note}/` | Lists public files in a note |
 | `/notes/{note}/{file}` | Rendered markdown preview (client-side with marked.js) |
-| `/webhook/line` | LINE Messaging API webhook (HMAC-SHA256 signature verified) |
+| `/webhook/line/{nickname}` | Dedicated LINE Messaging API webhook (HMAC-SHA256 signature verified) |
 
 ### SSE Events
 
