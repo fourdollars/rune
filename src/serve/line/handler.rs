@@ -6,7 +6,7 @@ use super::types::WebhookPayload;
 use crate::agent::{Agent, StopReason};
 use crate::config::LineNotesConfig;
 use crate::serve::api::{
-    broadcast_file_list, broadcast_note_list, broadcast_to_room,
+    atomic_write_file, broadcast_file_list, broadcast_note_list, broadcast_to_room,
     build_effective_note_system_prompt, build_embedding, build_provider, build_system_prompt,
     SseMsg,
 };
@@ -428,7 +428,7 @@ pub async fn process_webhook_payload_for_bot(
                 new_entry
             };
 
-            let _ = std::fs::write(&file_path, &full_content);
+            let _ = atomic_write_file(&file_path, &full_content).await;
 
             // Broadcast updated file content to the note room in real-time
             let fc = SseMsg::FileContent {

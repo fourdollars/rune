@@ -1649,7 +1649,9 @@ impl Agent {
                 let file_path = md_dir.join(&fname);
 
                 if let Some(full_content) = new_content {
-                    if let Err(e) = tokio::fs::write(&file_path, full_content).await {
+                    if let Err(e) =
+                        crate::serve::api::atomic_write_file(&file_path, full_content).await
+                    {
                         return Some(format!("Error writing {}: {}", fname, e));
                     }
                     if let Some(cb) = &self.file_list_callback {
@@ -1664,7 +1666,9 @@ impl Agent {
                         Ok(current) => {
                             if current.contains(search_str) {
                                 let updated = current.replacen(search_str, replace_str, 1);
-                                if let Err(e) = tokio::fs::write(&file_path, &updated).await {
+                                if let Err(e) =
+                                    crate::serve::api::atomic_write_file(&file_path, &updated).await
+                                {
                                     return Some(format!("Error writing {}: {}", fname, e));
                                 }
                                 if let Some(cb) = &self.file_list_callback {

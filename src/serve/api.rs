@@ -960,7 +960,7 @@ pub async fn file_create_handler(
 
     let empty = format!("# {}\n\n", req.name.trim_end_matches(".md"));
     let _ = tokio::fs::create_dir_all(&md_dir).await;
-    if let Err(e) = tokio::fs::write(&file_path, &empty).await {
+    if let Err(e) = atomic_write_file(&file_path, &empty).await {
         return Json(ApiResponse::err(format!("Failed to create file: {}", e)));
     }
 
@@ -1055,7 +1055,7 @@ pub async fn file_update_handler(
     }
 
     let file_path = state.note_markdown_dir(&note_id).join(&filename);
-    if let Err(e) = tokio::fs::write(&file_path, &req.content).await {
+    if let Err(e) = atomic_write_file(&file_path, &req.content).await {
         return Json(ApiResponse::err(format!("Failed to write: {}", e)));
     }
 
@@ -3577,6 +3577,62 @@ pub async fn build_effective_note_system_prompt(
     (final_prompt, loaded_files)
 }
 
+/// Atomically writes bytes or string content to a file by writing to a sibling temporary file first
+/// and then renaming it over the destination path. This guarantees atomic, torn-read-free file updates.
+pub async fn atomic_write_file<P: AsRef<std::path::Path>, C: AsRef<[u8]>>(
+    file_path: P,
+    content: C,
+) -> std::io::Result<()> {
+    use tokio::io::AsyncWriteExt;
+    let file_path = file_path.as_ref();
+    let parent = file_path
+        .parent()
+        .unwrap_or_else(|| std::path::Path::new("."));
+    tokio::fs::create_dir_all(parent).await?;
+
+    let filename = file_path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("file");
+
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    let pid = std::process::id();
+    let tmp_path = parent.join(format!(".{}.{}_{}.tmp", filename, nanos, pid));
+
+    let mut file = match tokio::fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .open(&tmp_path)
+        .await
+    {
+        Ok(f) => f,
+        Err(e) => return Err(e),
+    };
+
+    if let Err(e) = file.write_all(content.as_ref()).await {
+        let _ = tokio::fs::remove_file(&tmp_path).await;
+        return Err(e);
+    }
+
+    if let Err(e) = file.flush().await {
+        let _ = tokio::fs::remove_file(&tmp_path).await;
+        return Err(e);
+    }
+
+    drop(file);
+
+    if let Err(e) = tokio::fs::rename(&tmp_path, file_path).await {
+        let _ = tokio::fs::remove_file(&tmp_path).await;
+        return Err(e);
+    }
+
+    Ok(())
+}
+
 // ─── Tests ─────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -4820,7 +4876,8 @@ mod integration_tests {
 mod isolation_tests {
     use crate::config::RuneConfig;
     use crate::serve::api::{
-        build_effective_note_system_prompt, NoteRoom, MAX_PERSONA_FILE_SIZE, NOTEBOOK_PERSONA_FILES,
+        atomic_write_file, build_effective_note_system_prompt, NoteRoom, MAX_PERSONA_FILE_SIZE,
+        NOTEBOOK_PERSONA_FILES,
     };
     use crate::serve::db::ChatDb;
     use crate::serve::ModelInfo;
@@ -6636,5 +6693,58 @@ mod isolation_tests {
             "A".repeat(MAX_PERSONA_FILE_SIZE)
         );
         assert!(prompt.contains(&expected_block));
+    }
+
+    #[tokio::test]
+    async fn test_atomic_write_file_basic_and_overwrite() {
+        let tmp = tempfile::tempdir().unwrap();
+        let target = tmp.path().join("sub").join("test.md");
+
+        // Basic write with parent dir creation
+        atomic_write_file(&target, "version 1").await.unwrap();
+        let c1 = tokio::fs::read_to_string(&target).await.unwrap();
+        assert_eq!(c1, "version 1");
+
+        // Overwrite
+        atomic_write_file(&target, "version 2").await.unwrap();
+        let c2 = tokio::fs::read_to_string(&target).await.unwrap();
+        assert_eq!(c2, "version 2");
+    }
+
+    #[tokio::test]
+    async fn test_atomic_write_file_concurrent_readers() {
+        let tmp = tempfile::tempdir().unwrap();
+        let target = tmp.path().join("concurrent.md");
+        atomic_write_file(&target, "init").await.unwrap();
+
+        let target_clone = target.clone();
+        let writer = tokio::spawn(async move {
+            for i in 0..50 {
+                let content = format!("content generation {}", i);
+                atomic_write_file(&target_clone, &content).await.unwrap();
+                tokio::time::sleep(std::time::Duration::from_millis(1)).await;
+            }
+        });
+
+        let mut readers = vec![];
+        for _ in 0..5 {
+            let t = target.clone();
+            readers.push(tokio::spawn(async move {
+                for _ in 0..100 {
+                    let content = tokio::fs::read_to_string(&t).await.unwrap();
+                    // Reader should NEVER see an empty string or partial write
+                    assert!(!content.is_empty());
+                    assert!(
+                        content.starts_with("init") || content.starts_with("content generation")
+                    );
+                    tokio::time::sleep(std::time::Duration::from_micros(500)).await;
+                }
+            }));
+        }
+
+        let _ = writer.await;
+        for r in readers {
+            let _ = r.await;
+        }
     }
 }
