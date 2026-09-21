@@ -487,6 +487,49 @@ async fn execute_line_agent_and_reply(
     agent.set_serve_mode(true);
     agent.set_agent_skills(config.notes.agent_skills);
 
+    // Token streaming callback — sends to room + accumulates for mid-stream reconnect
+    let room_for_token = Arc::clone(&room);
+    let streaming_buf = Arc::clone(&room.streaming_tokens);
+    let status_for_token = Arc::clone(&room.active_status);
+    let token_callback: Arc<dyn Fn(&str) + Send + Sync> = Arc::new(move |token: &str| {
+        let msg = SseMsg::ChatToken {
+            content: token.to_string(),
+        };
+        broadcast_to_room(&room_for_token, &msg);
+        // Accumulate for clients that reconnect mid-stream
+        if let Ok(mut buf) = streaming_buf.try_write() {
+            // Update status to "typing" on first token
+            if buf.is_empty() {
+                if let Ok(mut s) = status_for_token.try_write() {
+                    *s = "typing".to_string();
+                }
+            }
+            buf.push_str(token);
+        }
+    });
+    agent.token_callback = Some(token_callback);
+
+    // Tool status callback: broadcast tool start/end to room for UI indicator
+    let room_for_tool = Arc::clone(&room);
+    let status_for_tool = Arc::clone(&room.active_status);
+    agent.tool_status_callback = Some(Arc::new(move |tool_name: &str, state: &str| {
+        let msg = SseMsg::ToolStatus {
+            tool: tool_name.to_string(),
+            state: state.to_string(),
+        };
+        broadcast_to_room(&room_for_tool, &msg);
+        // Update active_status for reconnect recovery
+        if state == "start" {
+            if let Ok(mut s) = status_for_tool.try_write() {
+                *s = format!("tool:{}", tool_name);
+            }
+        } else if state == "end" {
+            if let Ok(mut s) = status_for_tool.try_write() {
+                *s = "thinking".to_string();
+            }
+        }
+    }));
+
     agent.user_name = Some(nickname.clone());
     agent.markdown_dir = Some(state.note_markdown_dir(&note_id));
     agent.chat_db = Some(state.chat_db.clone());
@@ -521,8 +564,38 @@ async fn execute_line_agent_and_reply(
     // Run agent
     let stop_reason = agent.run(&user_msg).await;
 
+    // Clear streaming buffer — response is complete (or failed)
+    {
+        let mut buf = room.streaming_tokens.write().await;
+        buf.clear();
+    }
+
     let done = SseMsg::ChatDone {};
     broadcast_to_room(&room, &done);
+
+    // Broadcast run statistics to room
+    let meta_model = active_model.clone();
+    let meta_thinking = effective_thinking_level.clone().filter(|t| t != "off");
+    let usage = state.provider_registry.read().await.usage();
+    let meta = SseMsg::ChatMeta {
+        model: active_model.clone(),
+        thinking: meta_thinking.clone(),
+        tokens_in: agent.tokens_in() as u32,
+        tokens_out: agent.tokens_out() as u32,
+        context_tokens: agent.total_context_tokens() as u32,
+        context_window: state
+            .models
+            .read()
+            .await
+            .iter()
+            .find(|m| m.id == meta_model)
+            .and_then(|m| m.context_window)
+            .unwrap_or(agent.config.context_window as u64) as u32,
+        steps: agent.step_count() as u32,
+        tool_calls: agent.tool_call_count() as u32,
+        usage,
+    };
+    broadcast_to_room(&room, &meta);
 
     // Run statistics line
     let total_tokens = agent.tokens_in() + agent.tokens_out();
