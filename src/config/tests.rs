@@ -1453,7 +1453,7 @@ port = 9527
 [notes.line]
 channel_secret = "secret123"
 channel_access_token = "token456"
-default_note = "LineBot"
+default_note_prefix = "LineBot"
 groups = ["C12345678", "C87654321"]
 admins = ["U12345678", "U_ADMIN_2"]
 users = ["U87654321"]
@@ -1465,7 +1465,7 @@ guests = ["U99999999"]
     let line = notes.line.unwrap();
     assert_eq!(line.channel_secret, "secret123");
     assert_eq!(line.channel_access_token, "token456");
-    assert_eq!(line.default_note.as_deref(), Some("LineBot"));
+    assert_eq!(line.default_note_prefix.as_deref(), Some("LineBot"));
     assert_eq!(line.groups, vec!["C12345678", "C87654321"]);
     assert_eq!(line.admins, vec!["U12345678", "U_ADMIN_2"]);
     assert_eq!(line.users, vec!["U87654321"]);

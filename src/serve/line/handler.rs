@@ -157,15 +157,13 @@ pub async fn process_webhook_payload(
 
         // Role resolution from standard allowlists:
         // - admins / users: interactive AI chat enabled in target note
-        // - guests / unmapped: read-only data collection into default_note ("LineBot"), no AI chat
+        // - guests / unmapped: read-only data collection into resolved note, no AI chat
         let is_admin = line_cfg.admins.iter().any(|id| id == user_id);
         let is_user = line_cfg.users.iter().any(|id| id == user_id);
         let is_guest = line_cfg.guests.iter().any(|id| id == user_id);
 
-        let note_id = line_cfg
-            .default_note
-            .clone()
-            .unwrap_or_else(|| "LineBot".to_string());
+        let note_id =
+            resolve_line_note_id(line_cfg.default_note_prefix.as_deref(), group_id, user_id);
 
         let (interactive_chat, is_read_only_guest) = if is_admin || is_user {
             (true, false)
@@ -581,6 +579,23 @@ fn chrono_now_datetime() -> String {
     )
 }
 
+/// Resolve the target Notebook ID for an incoming LINE event based on `default_note_prefix`
+/// and the event source (group ID or user ID).
+///
+/// - If message has a group/room ID:
+///   - Prefix present: `{prefix}-{GROUP ID}`
+///   - Prefix absent/empty: `{GROUP ID}`
+/// - If message is 1-on-1 (user ID):
+///   - Prefix present: `{prefix}-{USER ID}`
+///   - Prefix absent/empty: `{USER ID}`
+pub fn resolve_line_note_id(prefix: Option<&str>, group_id: Option<&str>, user_id: &str) -> String {
+    let target_id = group_id.unwrap_or(user_id);
+    match prefix {
+        Some(p) if !p.trim().is_empty() => format!("{}-{}", p.trim(), target_id),
+        _ => target_id.to_string(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -602,7 +617,7 @@ mod tests {
             config.notes.line = Some(LineNotesConfig {
                 channel_secret: secret.to_string(),
                 channel_access_token: "test_token".to_string(),
-                default_note: Some("Default".to_string()),
+                default_note_prefix: Some("LineBot".to_string()),
                 groups: vec![],
                 admins: vec!["U12345678".to_string()],
                 users: vec![],
@@ -631,6 +646,38 @@ mod tests {
         }
     }
 
+    #[test]
+    fn test_resolve_line_note_id_combinations() {
+        // 1. Prefix configured
+        assert_eq!(
+            resolve_line_note_id(Some("LineBot"), Some("C12345678"), "U12345678"),
+            "LineBot-C12345678"
+        );
+        assert_eq!(
+            resolve_line_note_id(Some("LineBot"), None, "U12345678"),
+            "LineBot-U12345678"
+        );
+        assert_eq!(
+            resolve_line_note_id(Some(" Team "), Some("C999"), "U111"),
+            "Team-C999"
+        );
+
+        // 2. Prefix not configured (None or empty/whitespace)
+        assert_eq!(
+            resolve_line_note_id(None, Some("C12345678"), "U12345678"),
+            "C12345678"
+        );
+        assert_eq!(resolve_line_note_id(None, None, "U12345678"), "U12345678");
+        assert_eq!(
+            resolve_line_note_id(Some(""), Some("C12345678"), "U12345678"),
+            "C12345678"
+        );
+        assert_eq!(
+            resolve_line_note_id(Some("   "), None, "U12345678"),
+            "U12345678"
+        );
+    }
+
     #[tokio::test]
     async fn test_line_webhook_missing_signature() {
         let state = create_test_state_with_line("secret123");
@@ -645,7 +692,7 @@ mod tests {
     async fn test_line_webhook_invalid_signature() {
         let state = create_test_state_with_line("secret123");
         let mut headers = HeaderMap::new();
-        headers.insert("x-line-signature", "invalid_signature".parse().unwrap());
+        headers.insert("x-line-signature", "invalidsig".parse().unwrap());
         let body = Bytes::from(r#"{"destination":"U123","events":[]}"#);
 
         let resp = line_webhook_handler(State(state), headers, body).await;
@@ -705,10 +752,10 @@ mod tests {
         let cache = ProfileCache::default();
         process_webhook_payload(state.clone(), payload, cache).await;
 
-        // Verify message was stored in "LineBot" (or configured default_note) for data collection
+        // Verify message was stored in "LineBot-U_STRANGER_999" for data collection
         let history = state
             .chat_db
-            .load_recent_async("Default".to_string(), 10)
+            .load_recent_async("LineBot-U_STRANGER_999".to_string(), 10)
             .await;
         assert_eq!(history.len(), 1);
         assert_eq!(history[0].content, "Build succeeded with 0 warnings");
@@ -744,7 +791,7 @@ mod tests {
 
         let history = state
             .chat_db
-            .load_recent_async("Default".to_string(), 10)
+            .load_recent_async("LineBot-U_BOT_CLIENT".to_string(), 10)
             .await;
         assert_eq!(history.len(), 1);
         assert!(history[0].content.contains(r#"{"action":"ci_result""#));
@@ -770,7 +817,7 @@ mod tests {
         use crate::serve::line::types::{EventMessage, EventSource, WebhookEvent};
 
         let state = create_test_state_with_line("secret123");
-        let room = state.get_or_create_room("Default").await;
+        let room = state.get_or_create_room("LineBot-U_STRANGER_123").await;
         let mut rx = room.broadcast_tx.subscribe();
 
         let payload = WebhookPayload {
@@ -855,7 +902,7 @@ mod tests {
 
         let history = state
             .chat_db
-            .load_recent_async("Default".to_string(), 10)
+            .load_recent_async("LineBot-C_ALLOWED_GROUP".to_string(), 10)
             .await;
         assert_eq!(history.len(), 0, "Blocked group should not be recorded");
 
@@ -885,7 +932,7 @@ mod tests {
 
         let history = state
             .chat_db
-            .load_recent_async("Default".to_string(), 10)
+            .load_recent_async("LineBot-C_ALLOWED_GROUP".to_string(), 10)
             .await;
         assert_eq!(history.len(), 1, "Allowed group should be recorded");
         assert!(history[0].content.contains("hello from allowed group"));

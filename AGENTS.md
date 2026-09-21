@@ -87,7 +87,7 @@ guests = []
 [notes.line]
 channel_secret = "your_channel_secret_here"
 channel_access_token = "your_channel_access_token_here"
-default_note = "LineBot" # Fallback notebook for unmapped users or Line Bots
+default_note_prefix = "LineBot" # Prefix for dynamic notebook routing (e.g. LineBot-{GROUP/USER ID})
 
 # Group allowlist (LINE Group/Room IDs)
 groups = ["C12345678"]

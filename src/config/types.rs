@@ -155,9 +155,9 @@ pub struct LineNotesConfig {
     /// LINE Messaging API Channel Access Token (for Reply, Push, and Profile APIs).
     #[serde(default)]
     pub channel_access_token: String,
-    /// Fallback/default Note ID for unmapped users or Line Bots.
-    #[serde(default)]
-    pub default_note: Option<String>,
+    /// Optional notebook ID prefix (e.g. "LineBot" -> "LineBot-{GROUP ID}" / "LineBot-{USER ID}").
+    #[serde(default, alias = "default_note")]
+    pub default_note_prefix: Option<String>,
     /// Allowed LINE Group or Room IDs.
     #[serde(default)]
     pub groups: Vec<String>,
