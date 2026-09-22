@@ -151,37 +151,56 @@ fn resolve_domains(domains: &[&str]) -> (HashSet<IpAddr>, Vec<String>) {
         }
     }
 
+    let mut to_resolve: Vec<String> = Vec::new();
     for domain in domains {
         let domain = domain.trim();
         if domain.is_empty() {
             continue;
         }
-        if domain.starts_with("*.") {
-            // Wildcard: store pattern for runtime reverse-DNS matching
+        if let Some(base) = domain.strip_prefix("*.") {
             wildcards.push(domain.to_string());
-            // Pre-resolve the base domain and common subdomain prefixes
-            let base = &domain[2..];
-            let prefixes = [
-                "", "www.", "api.", "cdn.", "raw.", "assets.", "static.", "docs.", "app.", "m.",
-                "mail.", "ns1.", "ns2.",
-            ];
-            for prefix in &prefixes {
-                let fqdn = format!("{}{}:80", prefix, base);
-                if let Ok(addrs) = fqdn.to_socket_addrs() {
-                    for addr in addrs {
-                        ips.insert(addr.ip());
-                    }
-                }
+            if !base.is_empty() {
+                to_resolve.push(base.to_string());
+                to_resolve.push(format!("www.{}", base));
             }
         } else {
-            let addr_str = format!("{}:80", domain);
-            if let Ok(addrs) = addr_str.to_socket_addrs() {
-                for addr in addrs {
-                    ips.insert(addr.ip());
-                }
-            }
+            to_resolve.push(domain.to_string());
         }
     }
+
+    to_resolve.sort();
+    to_resolve.dedup();
+
+    if !to_resolve.is_empty() {
+        let resolved_ips: Vec<IpAddr> = std::thread::scope(|s| {
+            let mut handles = Vec::new();
+            for domain in &to_resolve {
+                let handle = s.spawn(move || {
+                    let mut found = Vec::new();
+                    let addr_str = format!("{}:80", domain);
+                    if let Ok(addrs) = addr_str.to_socket_addrs() {
+                        for addr in addrs {
+                            found.push(addr.ip());
+                        }
+                    }
+                    found
+                });
+                handles.push(handle);
+            }
+            let mut results = Vec::new();
+            for h in handles {
+                if let Ok(addrs) = h.join() {
+                    results.extend(addrs);
+                }
+            }
+            results
+        });
+
+        for ip in resolved_ips {
+            ips.insert(ip);
+        }
+    }
+
     (ips, wildcards)
 }
 
@@ -768,5 +787,37 @@ mod tests_extra {
     fn test_audit_arch_x86_64_value() {
         // AUDIT_ARCH_X86_64 = 0xC000003E
         assert_eq!(AUDIT_ARCH_X86_64, 0xC000003E);
+    }
+
+    #[test]
+    fn test_resolve_domains_wildcard_performance() {
+        let domains = [
+            "example.com",
+            "*.example.com",
+            "github.com",
+            "*.github.com",
+            "crates.io",
+            "*.crates.io",
+            "rust-lang.org",
+            "*.rust-lang.org",
+        ];
+        let start = std::time::Instant::now();
+        let (ips, wildcards) = resolve_domains(&domains);
+        let duration = start.elapsed();
+
+        println!("resolve_domains duration: {:?}", duration);
+        println!(
+            "Resolved IPs count: {}, Wildcards: {:?}",
+            ips.len(),
+            wildcards
+        );
+
+        // Pre-resolution of domains at sandbox startup MUST be fast (< 500ms)
+        // rather than spending 3-5+ seconds on speculative sequential DNS lookups.
+        assert!(
+            duration < std::time::Duration::from_millis(500),
+            "resolve_domains took {:?}, which is too slow and causes sandbox startup timeouts (must be < 500ms)",
+            duration
+        );
     }
 }
