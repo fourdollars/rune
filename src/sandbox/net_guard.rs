@@ -477,7 +477,41 @@ pub fn run() {
             libc::close(sock);
         }
 
+        let mut status = 0;
+        let mut pfd = libc::pollfd {
+            fd: notif_fd,
+            events: libc::POLLIN,
+            revents: 0,
+        };
+
         loop {
+            // Check if child has already terminated
+            let wp = unsafe { libc::waitpid(pid, &mut status, libc::WNOHANG) };
+            if wp == pid || wp < 0 {
+                // Child has exited
+                break;
+            }
+
+            pfd.revents = 0;
+            let pret = unsafe { libc::poll(&mut pfd, 1, 50) };
+            if pret < 0 {
+                let err = std::io::Error::last_os_error();
+                if err.raw_os_error() == Some(libc::EINTR) {
+                    continue;
+                }
+                break;
+            } else if pret == 0 {
+                // Poll timeout, check waitpid on next loop iteration
+                continue;
+            }
+
+            if pfd.revents & (libc::POLLHUP | libc::POLLERR | libc::POLLNVAL) != 0
+                && (pfd.revents & libc::POLLIN) == 0
+            {
+                // Listener disconnected or child closed filter
+                break;
+            }
+
             let mut req: SeccompNotif = unsafe { std::mem::zeroed() };
             let ret = unsafe { libc::ioctl(notif_fd, SECCOMP_IOCTL_NOTIF_RECV, &mut req) };
             if ret < 0 {
@@ -485,7 +519,7 @@ pub fn run() {
                 if err.raw_os_error() == Some(libc::EINTR) {
                     continue;
                 }
-                break; // child exited
+                break; // child exited or listener closed
             }
 
             let mut resp: SeccompNotifResp = unsafe { std::mem::zeroed() };
@@ -498,45 +532,51 @@ pub fn run() {
                 let mut addr: libc::sockaddr_storage = unsafe { std::mem::zeroed() };
                 let read_len = addrlen.min(std::mem::size_of::<libc::sockaddr_storage>());
 
-                // Try process_vm_readv first, fallback to /proc/pid/mem
-                let nread = unsafe {
-                    let local_iov = iovec {
-                        iov_base: &mut addr as *mut _ as *mut c_void,
-                        iov_len: read_len,
+                // Try reading from req.pid, then fallback to local child pid (for PID namespaces)
+                let pids_to_try = [req.pid as pid_t, pid];
+                let mut nread = -1;
+
+                for &target_pid in &pids_to_try {
+                    if target_pid <= 0 {
+                        continue;
+                    }
+                    let r = unsafe {
+                        let local_iov = iovec {
+                            iov_base: &mut addr as *mut _ as *mut c_void,
+                            iov_len: read_len,
+                        };
+                        let remote_iov = iovec {
+                            iov_base: sockaddr_ptr as *mut c_void,
+                            iov_len: read_len,
+                        };
+                        process_vm_readv(target_pid, &local_iov, 1, &remote_iov, 1, 0)
                     };
-                    let remote_iov = iovec {
-                        iov_base: sockaddr_ptr as *mut c_void,
-                        iov_len: read_len,
-                    };
-                    process_vm_readv(req.pid as pid_t, &local_iov, 1, &remote_iov, 1, 0)
-                };
-                let nread = if nread < 0 {
-                    // Fallback: read from /proc/pid/mem
+                    if r > 0 {
+                        nread = r;
+                        break;
+                    }
+
+                    // Fallback: read from /proc/<pid>/mem
                     use std::io::{Read, Seek, SeekFrom};
-                    let mem_path = format!("/proc/{}/mem", req.pid);
-                    match std::fs::File::open(&mem_path) {
-                        Ok(mut f) => {
-                            let offset = sockaddr_ptr as u64;
-                            if f.seek(SeekFrom::Start(offset)).is_ok() {
-                                let buf = unsafe {
-                                    std::slice::from_raw_parts_mut(
-                                        &mut addr as *mut _ as *mut u8,
-                                        read_len,
-                                    )
-                                };
-                                match f.read(buf) {
-                                    Ok(n) => n as isize,
-                                    Err(_) => -1,
+                    let mem_path = format!("/proc/{}/mem", target_pid);
+                    if let Ok(mut f) = std::fs::File::open(&mem_path) {
+                        let offset = sockaddr_ptr as u64;
+                        if f.seek(SeekFrom::Start(offset)).is_ok() {
+                            let buf = unsafe {
+                                std::slice::from_raw_parts_mut(
+                                    &mut addr as *mut _ as *mut u8,
+                                    read_len,
+                                )
+                            };
+                            if let Ok(n) = f.read(buf) {
+                                if n > 0 {
+                                    nread = n as isize;
+                                    break;
                                 }
-                            } else {
-                                -1
                             }
                         }
-                        Err(_) => -1,
                     }
-                } else {
-                    nread
-                };
+                }
 
                 let mut allowed = false;
 
@@ -588,13 +628,20 @@ pub fn run() {
             }
         }
 
-        let mut status = 0;
         unsafe {
-            libc::waitpid(pid, &mut status, 0);
+            libc::close(notif_fd);
+        }
+
+        // Ensure child is reaped if not already
+        let _ = unsafe { libc::waitpid(pid, &mut status, libc::WNOHANG) };
+        if !libc::WIFEXITED(status) && !libc::WIFSIGNALED(status) {
+            let _ = unsafe { libc::waitpid(pid, &mut status, 0) };
         }
 
         if libc::WIFEXITED(status) {
             std::process::exit(libc::WEXITSTATUS(status));
+        } else if libc::WIFSIGNALED(status) {
+            std::process::exit(128 + libc::WTERMSIG(status));
         } else {
             std::process::exit(1);
         }
