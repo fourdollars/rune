@@ -430,8 +430,8 @@ fn json_response(resp: McpJsonRpcResponse) -> Response {
 fn is_origin_allowed(origin: &str) -> bool {
     origin.contains("localhost")
         || origin.contains("127.0.0.1")
-        || origin.contains("rune.sylee.org")
-        || origin.contains("tail0a1999.ts.net")
+        || origin.contains("0.0.0.0")
+        || origin.contains("[::1]")
 }
 
 #[cfg(test)]
@@ -442,8 +442,7 @@ mod tests {
     fn test_is_origin_allowed() {
         assert!(is_origin_allowed("http://localhost:9527"));
         assert!(is_origin_allowed("http://127.0.0.1:9527"));
-        assert!(is_origin_allowed("https://rune.sylee.org"));
-        assert!(is_origin_allowed("https://foo.tail0a1999.ts.net"));
+        assert!(is_origin_allowed("http://[::1]:9527"));
         assert!(!is_origin_allowed("https://evil.example.com"));
     }
 
