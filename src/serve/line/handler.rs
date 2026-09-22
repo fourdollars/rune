@@ -557,7 +557,9 @@ async fn execute_line_agent_and_reply(
     agent.load_history(&history_without_current);
 
     // Run agent
+    let start_time = std::time::Instant::now();
     let stop_reason = agent.run(&user_msg).await;
+    let duration_ms = start_time.elapsed().as_millis() as u64;
 
     // Clear streaming buffer — response is complete (or failed)
     {
@@ -588,6 +590,7 @@ async fn execute_line_agent_and_reply(
             .unwrap_or(agent.config.context_window as u64) as u32,
         steps: agent.step_count() as u32,
         tool_calls: agent.tool_call_count() as u32,
+        duration_ms: Some(duration_ms),
         usage,
     };
     broadcast_to_room(&room, &meta);
@@ -595,10 +598,11 @@ async fn execute_line_agent_and_reply(
     // Run statistics line
     let total_tokens = agent.tokens_in() + agent.tokens_out();
     let stats_line = format!(
-        "⚡ {} steps · {} tokens · {} tool calls",
+        "⚡ {} steps · {} tokens · {} tool calls · {}",
         agent.step_count(),
         total_tokens,
-        agent.tool_call_count()
+        agent.tool_call_count(),
+        crate::serve::format_duration_ms(duration_ms)
     );
 
     // Format final reply and extract raw answer for DB
@@ -648,6 +652,7 @@ async fn execute_line_agent_and_reply(
             Some(agent.tool_call_count() as i32),
             meta_thinking,
             Some(agent.total_context_tokens() as i32),
+            Some(duration_ms),
         )
         .await;
 
@@ -775,6 +780,7 @@ mod tests {
             provider_registry: Arc::new(tokio::sync::RwLock::new(
                 crate::provider::ProviderRegistry::new(),
             )),
+            running_cron_jobs: Arc::new(tokio::sync::RwLock::new(std::collections::HashSet::new())),
         }
     }
 

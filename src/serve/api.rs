@@ -147,6 +147,8 @@ pub enum SseMsg {
         steps: u32,
         tool_calls: u32,
         #[serde(skip_serializing_if = "Option::is_none")]
+        duration_ms: Option<u64>,
+        #[serde(skip_serializing_if = "Option::is_none")]
         usage: Option<crate::provider::ProviderUsageStats>,
     },
     #[serde(rename = "chat_message")]
@@ -248,6 +250,12 @@ pub enum SseMsg {
     },
     #[serde(rename = "goal_achieved")]
     GoalAchieved { output: String },
+    #[serde(rename = "cron_job_status")]
+    CronJobStatus {
+        note_id: String,
+        job_id: String,
+        is_running: bool,
+    },
 }
 
 #[derive(Debug, Serialize, Clone)]
@@ -3205,7 +3213,9 @@ async fn handle_chat_message(
     agent.load_history(&history_without_current);
 
     // Run agent
+    let start_time = std::time::Instant::now();
     let stop_reason = agent.run(&user_msg).await;
+    let duration_ms = start_time.elapsed().as_millis() as u64;
 
     // Clear streaming buffer — response is complete (or failed)
     {
@@ -3236,6 +3246,7 @@ async fn handle_chat_message(
             .unwrap_or(agent.config.context_window as u64) as u32,
         steps: agent.step_count() as u32,
         tool_calls: agent.tool_call_count() as u32,
+        duration_ms: Some(duration_ms),
         usage,
     };
     broadcast_to_room(&room, &meta);
@@ -3258,6 +3269,7 @@ async fn handle_chat_message(
                     Some(agent.tool_call_count() as i32),
                     meta_thinking,
                     Some(agent.total_context_tokens() as i32),
+                    Some(duration_ms),
                 )
                 .await;
         }
@@ -3277,6 +3289,7 @@ async fn handle_chat_message(
                     Some(agent.tool_call_count() as i32),
                     meta_thinking.clone(),
                     Some(agent.total_context_tokens() as i32),
+                    Some(duration_ms),
                 )
                 .await;
             let err = SseMsg::Error {
@@ -3300,6 +3313,7 @@ async fn handle_chat_message(
                     Some(agent.tool_call_count() as i32),
                     meta_thinking.clone(),
                     Some(agent.total_context_tokens() as i32),
+                    Some(duration_ms),
                 )
                 .await;
             let err = SseMsg::Error {
@@ -3323,6 +3337,7 @@ async fn handle_chat_message(
                     Some(agent.tool_call_count() as i32),
                     meta_thinking.clone(),
                     Some(agent.total_context_tokens() as i32),
+                    Some(duration_ms),
                 )
                 .await;
             let err = SseMsg::Error {
@@ -3646,17 +3661,27 @@ pub async fn persona_status_handler(
 // ─── Scheduled Cron Jobs API Handlers ──────────────────────────────────────
 
 /// GET /api/notes/{note}/jobs — List all scheduled cron jobs for this note.
+/// GET /api/notes/{note}/jobs — List all scheduled cron jobs for this note.
 pub async fn cron_jobs_list_handler(
     State(state): State<ServerState>,
     Path(note_id): Path<String>,
 ) -> Json<serde_json::Value> {
     match state.chat_db.list_cron_jobs_for_note_async(note_id).await {
-        Ok(jobs) => Json(serde_json::json!({
-            "ok": true,
-            "jobs": jobs,
-            "cron_jobs_enabled": state.config.notes.cron_jobs,
-            "persona_files_enabled": state.config.notes.persona_files,
-        })),
+        Ok(jobs) => {
+            let running = state.running_cron_jobs.read().await;
+            let running_job_ids: Vec<String> = jobs
+                .iter()
+                .filter(|j| running.contains(&j.id))
+                .map(|j| j.id.clone())
+                .collect();
+            Json(serde_json::json!({
+                "ok": true,
+                "jobs": jobs,
+                "running_job_ids": running_job_ids,
+                "cron_jobs_enabled": state.config.notes.cron_jobs,
+                "persona_files_enabled": state.config.notes.persona_files,
+            }))
+        }
         Err(e) => Json(serde_json::json!({
             "ok": false,
             "error": e.to_string(),
@@ -3675,6 +3700,8 @@ pub struct CronJobCreateReq {
     pub silent_if_no_action: bool,
     #[serde(default = "default_true_field")]
     pub enabled: bool,
+    pub timeout_secs: Option<u64>,
+    pub thinking: Option<String>,
 }
 
 fn default_true_field() -> bool {
@@ -3746,6 +3773,8 @@ pub async fn cron_job_create_handler(
         last_status: None,
         created_at: now_iso.clone(),
         updated_at: now_iso,
+        timeout_secs: req.timeout_secs.map(|t| t.clamp(5, 3600)),
+        thinking: req.thinking.filter(|t| !t.trim().is_empty()),
     };
 
     match state.chat_db.create_cron_job_async(job.clone()).await {
@@ -3790,6 +3819,8 @@ pub struct CronJobUpdateReq {
     pub model: Option<String>,
     pub silent_if_no_action: Option<bool>,
     pub enabled: Option<bool>,
+    pub timeout_secs: Option<u64>,
+    pub thinking: Option<String>,
 }
 
 /// PUT /api/notes/{note}/jobs/{job_id} — Update an existing cron job.
@@ -3868,6 +3899,15 @@ pub async fn cron_job_update_handler(
         last_status: existing.last_status,
         created_at: existing.created_at,
         updated_at: now_iso,
+        timeout_secs: req
+            .timeout_secs
+            .map(|t| t.clamp(5, 3600))
+            .or(existing.timeout_secs),
+        thinking: match req.thinking {
+            Some(t) if t.trim().is_empty() => None,
+            Some(t) => Some(t.trim().to_string()),
+            None => existing.thinking,
+        },
     };
 
     match state.chat_db.update_cron_job_async(updated.clone()).await {
@@ -3938,7 +3978,21 @@ pub async fn cron_job_run_handler(
     State(state): State<ServerState>,
     Path((_note_id, job_id)): Path<(String, String)>,
 ) -> (StatusCode, Json<serde_json::Value>) {
-    let job = match state.chat_db.get_cron_job_async(job_id).await {
+    // Check if already running
+    {
+        let running = state.running_cron_jobs.read().await;
+        if running.contains(&job_id) {
+            return (
+                StatusCode::CONFLICT,
+                Json(serde_json::json!({
+                    "ok": false,
+                    "error": "Job is currently running",
+                })),
+            );
+        }
+    }
+
+    let job = match state.chat_db.get_cron_job_async(job_id.clone()).await {
         Ok(Some(j)) => j,
         Ok(None) => {
             return (
@@ -3955,6 +4009,16 @@ pub async fn cron_job_run_handler(
     };
 
     let log_entry = crate::serve::cron::execute_cron_job(&state, &job, "manual").await;
+    if log_entry.status == "error" && log_entry.error.as_deref() == Some("Job is already running") {
+        return (
+            StatusCode::CONFLICT,
+            Json(serde_json::json!({
+                "ok": false,
+                "error": "Job is currently running",
+            })),
+        );
+    }
+
     (
         StatusCode::OK,
         Json(serde_json::json!({
@@ -4211,11 +4275,13 @@ mod tests {
             context_window: 128000,
             steps: 3,
             tool_calls: 2,
+            duration_ms: Some(1234),
             usage: None,
         };
         let json = serde_json::to_string(&msg).unwrap();
         assert!(json.contains(r#""type":"chat_meta""#));
         assert!(json.contains(r#""tokens_in":100"#));
+        assert!(json.contains(r#""duration_ms":1234"#));
     }
 
     #[test]
@@ -4437,6 +4503,7 @@ mod tests {
             provider_registry: Arc::new(tokio::sync::RwLock::new(
                 crate::provider::ProviderRegistry::new(),
             )),
+            running_cron_jobs: Arc::new(tokio::sync::RwLock::new(std::collections::HashSet::new())),
         }
     }
 }
@@ -4541,6 +4608,7 @@ mod integration_tests {
             provider_registry: Arc::new(tokio::sync::RwLock::new(
                 crate::provider::ProviderRegistry::new(),
             )),
+            running_cron_jobs: Arc::new(tokio::sync::RwLock::new(std::collections::HashSet::new())),
         }
     }
 
@@ -5173,6 +5241,7 @@ mod integration_tests {
             provider_registry: Arc::new(tokio::sync::RwLock::new(
                 crate::provider::ProviderRegistry::new(),
             )),
+            running_cron_jobs: Arc::new(tokio::sync::RwLock::new(std::collections::HashSet::new())),
         };
 
         // Subscribe to note-a's room BEFORE triggering visibility change on note-b
@@ -5259,6 +5328,7 @@ mod isolation_tests {
             provider_registry: Arc::new(tokio::sync::RwLock::new(
                 crate::provider::ProviderRegistry::new(),
             )),
+            running_cron_jobs: Arc::new(tokio::sync::RwLock::new(std::collections::HashSet::new())),
         };
         (state, tmp)
     }
@@ -5338,6 +5408,7 @@ mod isolation_tests {
             provider_registry: Arc::new(tokio::sync::RwLock::new(
                 crate::provider::ProviderRegistry::new(),
             )),
+            running_cron_jobs: Arc::new(tokio::sync::RwLock::new(std::collections::HashSet::new())),
         };
         let active_model = state.effective_model("note-x").await;
         assert_eq!(active_model, model_id);
@@ -5628,6 +5699,7 @@ mod isolation_tests {
             provider_registry: Arc::new(tokio::sync::RwLock::new(
                 crate::provider::ProviderRegistry::new(),
             )),
+            running_cron_jobs: Arc::new(tokio::sync::RwLock::new(std::collections::HashSet::new())),
         };
 
         // Create note in DB so room can be created
@@ -5693,6 +5765,7 @@ mod isolation_tests {
             provider_registry: Arc::new(tokio::sync::RwLock::new(
                 crate::provider::ProviderRegistry::new(),
             )),
+            running_cron_jobs: Arc::new(tokio::sync::RwLock::new(std::collections::HashSet::new())),
         };
 
         let session = crate::serve::oauth::Session {
@@ -5765,6 +5838,7 @@ mod isolation_tests {
             provider_registry: Arc::new(tokio::sync::RwLock::new(
                 crate::provider::ProviderRegistry::new(),
             )),
+            running_cron_jobs: Arc::new(tokio::sync::RwLock::new(std::collections::HashSet::new())),
         };
 
         let session = crate::serve::oauth::Session {
@@ -5835,6 +5909,7 @@ mod isolation_tests {
             provider_registry: Arc::new(tokio::sync::RwLock::new(
                 crate::provider::ProviderRegistry::new(),
             )),
+            running_cron_jobs: Arc::new(tokio::sync::RwLock::new(std::collections::HashSet::new())),
         };
 
         let session = crate::serve::oauth::Session {
@@ -5927,6 +6002,7 @@ mod isolation_tests {
             provider_registry: Arc::new(tokio::sync::RwLock::new(
                 crate::provider::ProviderRegistry::new(),
             )),
+            running_cron_jobs: Arc::new(tokio::sync::RwLock::new(std::collections::HashSet::new())),
         };
 
         let app = Router::new()
@@ -6003,6 +6079,7 @@ mod isolation_tests {
             provider_registry: Arc::new(tokio::sync::RwLock::new(
                 crate::provider::ProviderRegistry::new(),
             )),
+            running_cron_jobs: Arc::new(tokio::sync::RwLock::new(std::collections::HashSet::new())),
         };
 
         let app = Router::new()
@@ -6069,6 +6146,7 @@ mod isolation_tests {
             provider_registry: Arc::new(tokio::sync::RwLock::new(
                 crate::provider::ProviderRegistry::new(),
             )),
+            running_cron_jobs: Arc::new(tokio::sync::RwLock::new(std::collections::HashSet::new())),
         };
 
         let app = Router::new()
@@ -6123,6 +6201,7 @@ mod isolation_tests {
             provider_registry: Arc::new(tokio::sync::RwLock::new(
                 crate::provider::ProviderRegistry::new(),
             )),
+            running_cron_jobs: Arc::new(tokio::sync::RwLock::new(std::collections::HashSet::new())),
         };
 
         let app = Router::new()
@@ -6202,6 +6281,7 @@ mod isolation_tests {
             provider_registry: Arc::new(tokio::sync::RwLock::new(
                 crate::provider::ProviderRegistry::new(),
             )),
+            running_cron_jobs: Arc::new(tokio::sync::RwLock::new(std::collections::HashSet::new())),
         };
 
         let app = Router::new()
@@ -6348,6 +6428,7 @@ mod isolation_tests {
             provider_registry: Arc::new(tokio::sync::RwLock::new(
                 crate::provider::ProviderRegistry::new(),
             )),
+            running_cron_jobs: Arc::new(tokio::sync::RwLock::new(std::collections::HashSet::new())),
         };
 
         let app = Router::new()
@@ -6414,6 +6495,7 @@ mod isolation_tests {
             provider_registry: Arc::new(tokio::sync::RwLock::new(
                 crate::provider::ProviderRegistry::new(),
             )),
+            running_cron_jobs: Arc::new(tokio::sync::RwLock::new(std::collections::HashSet::new())),
         };
 
         let app = Router::new()
@@ -6482,6 +6564,7 @@ mod isolation_tests {
             provider_registry: Arc::new(tokio::sync::RwLock::new(
                 crate::provider::ProviderRegistry::new(),
             )),
+            running_cron_jobs: Arc::new(tokio::sync::RwLock::new(std::collections::HashSet::new())),
         };
 
         use axum::routing::{delete, put};
@@ -6590,6 +6673,7 @@ mod isolation_tests {
             provider_registry: Arc::new(tokio::sync::RwLock::new(
                 crate::provider::ProviderRegistry::new(),
             )),
+            running_cron_jobs: Arc::new(tokio::sync::RwLock::new(std::collections::HashSet::new())),
         };
 
         let session = crate::serve::oauth::Session {
@@ -6672,6 +6756,7 @@ mod isolation_tests {
             provider_registry: Arc::new(tokio::sync::RwLock::new(
                 crate::provider::ProviderRegistry::new(),
             )),
+            running_cron_jobs: Arc::new(tokio::sync::RwLock::new(std::collections::HashSet::new())),
         };
 
         let session = crate::serve::oauth::Session {
@@ -7148,6 +7233,8 @@ mod isolation_tests {
             model: None,
             silent_if_no_action: true,
             enabled: true,
+            timeout_secs: Some(120),
+            thinking: Some("low".to_string()),
         };
         let (status, res) = cron_job_create_handler(
             State(state.clone()),
@@ -7164,11 +7251,36 @@ mod isolation_tests {
             .as_str()
             .unwrap()
             .to_string();
+        assert_eq!(
+            res.get("job")
+                .unwrap()
+                .get("timeout_secs")
+                .unwrap()
+                .as_u64()
+                .unwrap(),
+            120
+        );
+        assert_eq!(
+            res.get("job")
+                .unwrap()
+                .get("thinking")
+                .unwrap()
+                .as_str()
+                .unwrap(),
+            "low"
+        );
 
         // 2. List jobs
         let list_res = cron_jobs_list_handler(State(state.clone()), Path(note_id.clone())).await;
         let jobs = list_res.0.get("jobs").unwrap().as_array().unwrap();
         assert_eq!(jobs.len(), 1);
+        let running_ids = list_res
+            .0
+            .get("running_job_ids")
+            .unwrap()
+            .as_array()
+            .unwrap();
+        assert_eq!(running_ids.len(), 0);
 
         // 3. Get job
         let (get_status, get_res) = cron_job_get_handler(
@@ -7187,6 +7299,26 @@ mod isolation_tests {
                 .unwrap(),
             "Heartbeat Task"
         );
+        assert_eq!(
+            get_res
+                .get("job")
+                .unwrap()
+                .get("timeout_secs")
+                .unwrap()
+                .as_u64()
+                .unwrap(),
+            120
+        );
+        assert_eq!(
+            get_res
+                .get("job")
+                .unwrap()
+                .get("thinking")
+                .unwrap()
+                .as_str()
+                .unwrap(),
+            "low"
+        );
 
         // 4. Update job
         let update_req = CronJobUpdateReq {
@@ -7197,6 +7329,8 @@ mod isolation_tests {
             model: Some("deepseek-chat".to_string()),
             silent_if_no_action: Some(false),
             enabled: Some(true),
+            timeout_secs: Some(300),
+            thinking: Some("high".to_string()),
         };
         let (update_status, update_res) = cron_job_update_handler(
             State(state.clone()),
@@ -7215,6 +7349,16 @@ mod isolation_tests {
                 .unwrap(),
             "Updated Heartbeat Task"
         );
+        assert_eq!(
+            update_res
+                .get("job")
+                .unwrap()
+                .get("timeout_secs")
+                .unwrap()
+                .as_u64()
+                .unwrap(),
+            300
+        );
 
         // 5. Append dummy log & check logs handler
         let cron_dir = crate::serve::cron::note_cron_dir(&state.data_dir, &note_id);
@@ -7226,6 +7370,13 @@ mod isolation_tests {
             files_modified: vec![],
             output_snippet: "HEARTBEAT_OK".to_string(),
             error: None,
+            model: Some("openrouter/auto".to_string()),
+            thinking: Some("low".to_string()),
+            steps: Some(1),
+            tokens_in: Some(40),
+            tokens_out: Some(10),
+            tokens_used: Some(50),
+            tools: vec![],
         };
         crate::serve::cron::append_job_log(&cron_dir, &job_id, &log_entry)
             .await
@@ -7259,5 +7410,94 @@ mod isolation_tests {
         )
         .await;
         assert_eq!(get_after_del, StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn test_cron_jobs_concurrency_lock_and_running_ids() {
+        use crate::serve::api::{
+            cron_job_create_handler, cron_job_run_handler, cron_jobs_list_handler, CronJobCreateReq,
+        };
+        use axum::extract::{Path, State};
+        use axum::http::StatusCode;
+        use axum::Json;
+
+        let (state, _tmp) = make_state();
+        let note_id = "test-concurrent-note".to_string();
+        state
+            .chat_db
+            .create_note(&note_id, "Test Note", None)
+            .unwrap();
+
+        let create_req = CronJobCreateReq {
+            name: "Concurrent Test Task".to_string(),
+            schedule_type: "interval".to_string(),
+            schedule_value: "1h".to_string(),
+            prompt: "Test concurrency lock".to_string(),
+            model: None,
+            silent_if_no_action: true,
+            enabled: true,
+            timeout_secs: Some(60),
+            thinking: None,
+        };
+        let (status, res) = cron_job_create_handler(
+            State(state.clone()),
+            Path(note_id.clone()),
+            Json(create_req),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CREATED);
+        let job_id = res
+            .get("job")
+            .unwrap()
+            .get("id")
+            .unwrap()
+            .as_str()
+            .unwrap()
+            .to_string();
+
+        // 1. Manually mark job_id in running_cron_jobs
+        {
+            let mut running = state.running_cron_jobs.write().await;
+            running.insert(job_id.clone());
+        }
+
+        // 2. cron_jobs_list_handler should report running_job_ids
+        let list_res = cron_jobs_list_handler(State(state.clone()), Path(note_id.clone())).await;
+        let running_ids = list_res
+            .0
+            .get("running_job_ids")
+            .unwrap()
+            .as_array()
+            .unwrap();
+        assert_eq!(running_ids.len(), 1);
+        assert_eq!(running_ids[0].as_str().unwrap(), job_id);
+
+        // 3. cron_job_run_handler should return CONFLICT (409)
+        let (run_status, run_res) = cron_job_run_handler(
+            State(state.clone()),
+            Path((note_id.clone(), job_id.clone())),
+        )
+        .await;
+        assert_eq!(run_status, StatusCode::CONFLICT);
+        assert_eq!(
+            run_res.get("error").unwrap().as_str().unwrap(),
+            "Job is currently running"
+        );
+
+        // 4. Release lock
+        {
+            let mut running = state.running_cron_jobs.write().await;
+            running.remove(&job_id);
+        }
+
+        // 5. List jobs now reports empty running_job_ids
+        let list_res2 = cron_jobs_list_handler(State(state.clone()), Path(note_id.clone())).await;
+        let running_ids2 = list_res2
+            .0
+            .get("running_job_ids")
+            .unwrap()
+            .as_array()
+            .unwrap();
+        assert_eq!(running_ids2.len(), 0);
     }
 }

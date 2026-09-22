@@ -45,7 +45,7 @@ globalThis.finalizeAssistantMessage = function finalizeAssistantMessage() {
     currentAssistantDiv = null;
 };
 
-globalThis.attachMetaToLastAssistant = function attachMetaToLastAssistant(model, tokIn, tokOut, ctxTokens, ctxWindow, steps, toolCalls, thinking) {
+globalThis.attachMetaToLastAssistant = function attachMetaToLastAssistant(model, tokIn, tokOut, ctxTokens, ctxWindow, steps, toolCalls, thinking, durationMs) {
     const target = currentAssistantDiv || chatMessages.querySelector('.chat-msg.assistant:last-child');
     if (!target) return;
     const sender = target.querySelector('.sender');
@@ -64,7 +64,7 @@ globalThis.attachMetaToLastAssistant = function attachMetaToLastAssistant(model,
     }
     // Run stats go at the tail of the message body
     const totalTok = (tokIn||0) + (tokOut||0);
-    if (steps || totalTok || toolCalls) {
+    if (steps || totalTok || toolCalls || durationMs) {
         const body = target.querySelector('.body');
         if (body) {
             // Remove old stats footer if any
@@ -72,7 +72,8 @@ globalThis.attachMetaToLastAssistant = function attachMetaToLastAssistant(model,
             if (oldStats) oldStats.remove();
             const stats = document.createElement('div');
             stats.className = 'run-stats';
-            stats.textContent = `${steps||0} steps · ${totalTok} tokens · ${toolCalls||0} tool calls`;
+            const durStr = durationMs ? ` · ${formatDurationMs(durationMs)}` : '';
+            stats.textContent = `${steps||0} steps · ${totalTok} tokens · ${toolCalls||0} tool calls${durStr}`;
             body.appendChild(stats);
             // Auto-scroll to show the stats line
             chatMessages.scrollTop = chatMessages.scrollHeight;

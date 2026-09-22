@@ -24,6 +24,20 @@ pub struct NoteCronJobLogEntry {
     pub output_snippet: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub thinking: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub steps: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tokens_in: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tokens_out: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tokens_used: Option<u32>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tools: Vec<String>,
 }
 
 /// Returns the path to the cron directory for a note: `<base_dir>/notes/<note_id>/cron`.
@@ -312,22 +326,90 @@ pub fn is_heartbeat_silent(text: &str) -> bool {
 }
 
 /// Executes a single scheduled job against a notebook.
+/// Executes a single scheduled job against a notebook.
 pub async fn execute_cron_job(
     state: &ServerState,
     job: &NoteCronJobRecord,
     trigger: &str,
 ) -> NoteCronJobLogEntry {
-    let start = std::time::Instant::now();
     let now_dt = unix_secs_to_utc(crate::serve::db::now_secs());
     let now_ts = format_utc_iso(now_dt);
+    let note_id = job.note_id.clone();
+
+    // Concurrency check: prevent concurrent duplicate executions of the same job
+    {
+        let mut running = state.running_cron_jobs.write().await;
+        if !running.insert(job.id.clone()) {
+            warn!(
+                "Cron job [{}] is already running, skipping execution",
+                job.id
+            );
+            return NoteCronJobLogEntry {
+                timestamp: now_ts,
+                trigger: trigger.to_string(),
+                status: "error".to_string(),
+                duration_ms: 0,
+                files_modified: vec![],
+                output_snippet: String::new(),
+                error: Some("Job is already running".to_string()),
+                model: job.model.clone(),
+                thinking: job.thinking.clone(),
+                steps: None,
+                tokens_in: None,
+                tokens_out: None,
+                tokens_used: None,
+                tools: vec![],
+            };
+        }
+    }
+
+    let room = state.get_or_create_room(&note_id).await;
+
+    // Broadcast running status to room via SSE
+    broadcast_to_room(
+        &room,
+        &SseMsg::CronJobStatus {
+            note_id: note_id.clone(),
+            job_id: job.id.clone(),
+            is_running: true,
+        },
+    );
+
+    let res = execute_cron_job_inner(state, job, trigger, &room, &now_ts).await;
+
+    // Release concurrency lock
+    {
+        let mut running = state.running_cron_jobs.write().await;
+        running.remove(&job.id);
+    }
+
+    // Broadcast done status to room via SSE
+    broadcast_to_room(
+        &room,
+        &SseMsg::CronJobStatus {
+            note_id: note_id.clone(),
+            job_id: job.id.clone(),
+            is_running: false,
+        },
+    );
+
+    res
+}
+
+async fn execute_cron_job_inner(
+    state: &ServerState,
+    job: &NoteCronJobRecord,
+    trigger: &str,
+    room: &Arc<crate::serve::NoteRoom>,
+    now_ts: &str,
+) -> NoteCronJobLogEntry {
+    let start = std::time::Instant::now();
     let note_id = job.note_id.clone();
 
     info!(
         "Executing cron job [{}] for note [{}] (trigger: {})",
         job.name, note_id, trigger
     );
-
-    let room = state.get_or_create_room(&note_id).await;
 
     // Resolve active model: Job override > Note override > Global default
     let active_model = if let Some(ref m) = job.model {
@@ -338,7 +420,12 @@ pub async fn execute_cron_job(
 
     let mut agent_cfg = state.config.clone();
     agent_cfg.model = active_model.clone();
-    let effective_thinking_level = state.effective_thinking(&note_id).await;
+    // Resolve active thinking: Job override > Note override > Global default
+    let effective_thinking_level = if let Some(ref t) = job.thinking {
+        Some(t.clone())
+    } else {
+        state.effective_thinking(&note_id).await
+    };
     agent_cfg.thinking = effective_thinking_level.clone();
 
     let provider = match crate::serve::api::build_provider(&agent_cfg) {
@@ -346,17 +433,28 @@ pub async fn execute_cron_job(
         Err(e) => {
             error!("Cron job [{}] provider init failed: {}", job.name, e);
             let log_entry = NoteCronJobLogEntry {
-                timestamp: now_ts.clone(),
+                timestamp: now_ts.to_string(),
                 trigger: trigger.to_string(),
                 status: "error".to_string(),
                 duration_ms: 0,
                 files_modified: vec![],
                 output_snippet: String::new(),
                 error: Some(format!("Provider error: {}", e)),
+                model: Some(active_model),
+                thinking: effective_thinking_level,
+                steps: None,
+                tokens_in: None,
+                tokens_out: None,
+                tokens_used: None,
+                tools: vec![],
             };
             let _ = state
                 .chat_db
-                .update_cron_job_status_async(job.id.clone(), now_ts, "error".to_string())
+                .update_cron_job_status_async(
+                    job.id.clone(),
+                    now_ts.to_string(),
+                    "error".to_string(),
+                )
                 .await;
             let cron_dir = note_cron_dir(&state.data_dir, &note_id);
             let _ = append_job_log(&cron_dir, &job.id, &log_entry).await;
@@ -366,7 +464,7 @@ pub async fn execute_cron_job(
 
     let embedding = crate::serve::api::build_embedding(&agent_cfg).await;
 
-    let mut agent = crate::agent::Agent::new(agent_cfg, provider, true, embedding);
+    let mut agent = crate::agent::Agent::new(agent_cfg, provider, false, embedding);
     agent.set_serve_mode(true);
     agent.set_agent_skills(state.config.notes.agent_skills);
     agent.user_name = Some(format!("cron:{}", job.name));
@@ -414,15 +512,16 @@ pub async fn execute_cron_job(
     let (system_prompt, _) = build_effective_note_system_prompt(state, &note_id).await;
     agent.set_system_prompt(&system_prompt);
 
-    // Assemble prompt with metadata context
-    let prompt = format!(
-        "[SCHEDULED TASK: {}]\nCurrent Timestamp: {} (UTC)\n\nTask Instruction:\n{}",
-        job.name, now_ts, job.prompt
-    );
+    // Execute agent with the prompt specified by the cron job
+    let prompt = &job.prompt;
 
-    // Timeout: 60 seconds
-    let run_res =
-        tokio::time::timeout(std::time::Duration::from_secs(60), agent.run(&prompt)).await;
+    // Timeout: customizable (default 60s, clamped 5s - 3600s)
+    let timeout_secs = job.timeout_secs.unwrap_or(60).clamp(5, 3600);
+    let run_res = tokio::time::timeout(
+        std::time::Duration::from_secs(timeout_secs),
+        agent.run(prompt),
+    )
+    .await;
 
     let duration_ms = start.elapsed().as_millis() as u64;
     let modified_list = {
@@ -438,30 +537,21 @@ pub async fn execute_cron_job(
             if is_silent {
                 ("silent_ok", answer, None)
             } else {
-                // Substantive run: save to chat history and broadcast SSE
-                let msg_nickname = format!("⚡ CRON: {}", job.name);
-                state
-                    .chat_db
-                    .insert_with_meta_async(
-                        note_id.clone(),
-                        "assistant".to_string(),
-                        msg_nickname.clone(),
-                        answer.clone(),
-                        Some(active_model),
-                        Some(agent.tokens_in() as i32),
-                        Some(agent.tokens_out() as i32),
-                        Some(agent.step_count() as i32),
-                        Some(agent.tool_call_count() as i32),
-                        effective_thinking_level,
-                        Some(agent.total_context_tokens() as i32),
+                // Broadcast system notification to room (not recorded in chat conversation history)
+                let sys_content = if modified_list.is_empty() {
+                    format!("⚡ Cron [{}]: {}", job.name, answer)
+                } else {
+                    format!(
+                        "⚡ Cron [{}] (modified: {}): {}",
+                        job.name,
+                        modified_list.join(", "),
+                        answer
                     )
-                    .await;
-
-                let chat_msg = SseMsg::ChatMessage {
-                    nickname: msg_nickname,
-                    content: answer.clone(),
                 };
-                broadcast_to_room(&room, &chat_msg);
+                let sys_msg = SseMsg::System {
+                    content: sys_content,
+                };
+                broadcast_to_room(room, &sys_msg);
 
                 ("success", answer, None)
             }
@@ -475,33 +565,41 @@ pub async fn execute_cron_job(
             ("error", repr.clone(), Some(repr))
         }
         Err(_) => {
-            warn!("Cron job [{}] timed out after 60s", job.name);
+            warn!("Cron job [{}] timed out after {}s", job.name, timeout_secs);
             (
                 "timeout",
                 String::new(),
-                Some("Execution timed out after 60s".to_string()),
+                Some(format!("Execution timed out after {}s", timeout_secs)),
             )
         }
     };
 
+    let tools_used = agent.tool_call_names().to_vec();
     let log_entry = NoteCronJobLogEntry {
-        timestamp: now_ts.clone(),
+        timestamp: now_ts.to_string(),
         trigger: trigger.to_string(),
         status: status.to_string(),
         duration_ms,
         files_modified: modified_list,
-        output_snippet: if output_snippet.len() > 500 {
-            output_snippet[..500].to_string()
+        output_snippet: if output_snippet.len() > 4000 {
+            output_snippet[..4000].to_string()
         } else {
             output_snippet
         },
         error: err_opt,
+        model: Some(active_model),
+        thinking: effective_thinking_level,
+        steps: Some(agent.step_count()),
+        tokens_in: Some(agent.tokens_in()),
+        tokens_out: Some(agent.tokens_out()),
+        tokens_used: Some(agent.tokens_used()),
+        tools: tools_used,
     };
 
     // Update DB status
     let _ = state
         .chat_db
-        .update_cron_job_status_async(job.id.clone(), now_ts, status.to_string())
+        .update_cron_job_status_async(job.id.clone(), now_ts.to_string(), status.to_string())
         .await;
 
     // Append to file log under ~/.rune/notes/{note}/cron/{job_id}.jsonl
@@ -533,6 +631,11 @@ pub fn start_cron_scheduler(state: ServerState, cancel_token: CancellationToken)
                     if let Ok(jobs) = state.chat_db.list_all_enabled_cron_jobs_async().await {
                         for job in jobs {
                             if is_job_due(&job, now_secs) {
+                                let running = state.running_cron_jobs.read().await;
+                                if running.contains(&job.id) {
+                                    continue;
+                                }
+                                drop(running);
                                 let st = state.clone();
                                 let j = job.clone();
                                 tokio::spawn(async move {
@@ -611,6 +714,13 @@ mod tests {
             files_modified: vec![],
             output_snippet: "HEARTBEAT_OK".to_string(),
             error: None,
+            model: Some("openrouter/auto".to_string()),
+            thinking: Some("low".to_string()),
+            steps: Some(1),
+            tokens_in: Some(50),
+            tokens_out: Some(10),
+            tokens_used: Some(60),
+            tools: vec![],
         };
 
         let entry2 = NoteCronJobLogEntry {
@@ -621,6 +731,13 @@ mod tests {
             files_modified: vec!["TODO.md".to_string()],
             output_snippet: "Updated TODO".to_string(),
             error: None,
+            model: Some("openrouter/auto".to_string()),
+            thinking: Some("low".to_string()),
+            steps: Some(2),
+            tokens_in: Some(120),
+            tokens_out: Some(80),
+            tokens_used: Some(200),
+            tools: vec!["write_markdown".to_string()],
         };
 
         append_job_log(&cron_dir, "job_1", &entry1).await.unwrap();

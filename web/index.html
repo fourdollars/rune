@@ -90,6 +90,7 @@
     <!-- Note Settings dialog -->
     <div id="note-settings-modal" class="modal-overlay hidden">
         <div class="modal modal-wide" role="dialog" aria-modal="true" aria-labelledby="note-settings-title">
+            <button type="button" class="modal-close-btn" data-action="hide-note-settings" data-icon="x" aria-label="Close" title="Close"></button>
             <div class="modal-header-with-tabs">
                 <h2 id="note-settings-title">Note Settings</h2>
                 <div class="settings-tabs" role="tablist">
@@ -156,7 +157,6 @@
             <div class="modal-actions">
                 <button class="btn-danger" id="btn-delete-note" data-action="delete-note">Delete</button>
                 <span style="flex:1"></span>
-                <button class="btn-secondary" data-action="hide-note-settings">Cancel</button>
                 <button class="btn-primary" id="btn-save-note-settings" data-action="save-note-settings">Save</button>
             </div>
         </div>
@@ -166,6 +166,7 @@
     <div id="cron-job-modal" class="modal-overlay hidden">
         <div class="modal modal-wide" role="dialog" aria-modal="true" aria-labelledby="cron-job-modal-title">
             <h2 id="cron-job-modal-title">Configure Scheduled Job</h2>
+            <div id="cron-job-form-error" class="error-msg hidden"></div>
             <input type="hidden" id="cron-job-id" value="" />
             
             <div class="form-group">
@@ -189,16 +190,38 @@
                 <input type="text" id="cron-schedule-value" value="30m" placeholder="e.g. 30m, 1h, 1d" />
             </div>
 
-            <div class="form-group">
-                <label for="cron-job-prompt">Instruction Prompt * <span class="label-hint">(Supports @filename references)</span></label>
-                <textarea id="cron-job-prompt" rows="4" placeholder="e.g. Please follow HEARTBEAT.md to inspect pending tasks. If all normal, reply HEARTBEAT_OK."></textarea>
+            <div class="form-group prompt-form-group">
+                <label for="cron-job-prompt">Instruction Prompt * <span class="label-hint">(Type + for skills, @ for files)</span></label>
+                <div class="prompt-input-wrapper">
+                    <div id="cron-prompt-autocomplete" class="chat-autocomplete hidden" role="listbox" aria-label="Suggestions"></div>
+                    <textarea id="cron-job-prompt" rows="8" placeholder="e.g. Please follow @HEARTBEAT.md or use +skill to inspect pending tasks. If all normal, reply HEARTBEAT_OK."></textarea>
+                </div>
+            </div>
+
+            <div class="form-row">
+                <div class="form-group form-col">
+                    <label for="cron-job-model">Model Override</label>
+                    <select id="cron-job-model">
+                        <option value="">Inherit Note Default</option>
+                    </select>
+                </div>
+                <div class="form-group form-col">
+                    <label for="cron-job-thinking">Thinking Level Override</label>
+                    <select id="cron-job-thinking">
+                        <option value="">Inherit Note Default</option>
+                        <option value="off">off</option>
+                        <option value="low">low</option>
+                        <option value="medium">medium</option>
+                        <option value="high">high</option>
+                        <option value="xhigh">xhigh</option>
+                        <option value="max">max</option>
+                    </select>
+                </div>
             </div>
 
             <div class="form-group">
-                <label for="cron-job-model">Model Override</label>
-                <select id="cron-job-model">
-                    <option value="">Inherit Note Default</option>
-                </select>
+                <label for="cron-job-timeout">Execution Timeout *</label>
+                <input type="text" id="cron-job-timeout" value="60s" placeholder="e.g. 60s, 2m, 5m (5 - 3600s)" />
             </div>
 
             <div class="form-group checkbox-group">

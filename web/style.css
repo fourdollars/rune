@@ -834,6 +834,7 @@ pre.hljs-pre:hover .copy-btn {
 #dir-browser-modal { z-index: 1100; }
 
 .modal {
+    position: relative;
     background: var(--bg-secondary);
     border: 1px solid var(--border);
     border-radius: 12px;
@@ -844,6 +845,36 @@ pre.hljs-pre:hover .copy-btn {
     flex-direction: column;
     gap: 16px;
     color: var(--text-primary);
+}
+
+.modal-close-btn {
+    position: absolute;
+    top: 16px;
+    right: 16px;
+    width: 32px;
+    height: 32px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: transparent;
+    border: none;
+    border-radius: 6px;
+    color: var(--text-muted);
+    cursor: pointer;
+    padding: 0;
+    transition: color 0.15s, background-color 0.15s;
+    z-index: 10;
+}
+
+.modal-close-btn:hover {
+    color: var(--text-primary);
+    background: var(--bg-hover, rgba(255, 255, 255, 0.08));
+}
+
+.modal-close-btn svg,
+.modal-close-btn .rune-icon {
+    width: 18px;
+    height: 18px;
 }
 
 .modal h2 {
@@ -3339,6 +3370,7 @@ body.tree-open #app-scrim {
     gap: 12px;
     border-bottom: 1px solid var(--border);
     padding-bottom: 12px;
+    padding-right: 36px;
 }
 .settings-tabs {
     display: flex;
@@ -3531,7 +3563,18 @@ body.tree-open #app-scrim {
 }
 .badge-active { background: #166534; color: #4ade80; }
 .badge-paused { background: #334155; color: #94a3b8; }
+.badge-running { background: #1e3a8a; color: #60a5fa; border: 1px solid #3b82f6; animation: cron-pulse 1.5s infinite ease-in-out; }
 .badge-muted { background: var(--bg-primary, #0f172a); color: var(--text-muted); border: 1px solid var(--border); border-radius: 4px; }
+@keyframes cron-pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.5; }
+}
+.btn-chip.is-running,
+.btn-chip:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+    pointer-events: none;
+}
 .cron-meta-row {
     font-size: 12px;
     color: var(--text-muted);
@@ -3648,6 +3691,27 @@ input:checked + .toggle-slider:before {
     margin-top: 3px;
 }
 
+/* Form Grid Rows */
+.form-row {
+    display: flex;
+    gap: 12px;
+}
+.form-col {
+    flex: 1;
+}
+.prompt-input-wrapper {
+    position: relative;
+    width: 100%;
+}
+#cron-job-prompt {
+    width: 100%;
+    min-height: 160px;
+    font-family: var(--font-mono, monospace);
+    font-size: 13px;
+    line-height: 1.5;
+    resize: vertical;
+}
+
 /* Logs Modal & Table */
 .modal-extra-wide {
     width: min(840px, 95vw);
@@ -3714,4 +3778,88 @@ input:checked + .toggle-slider:before {
     color: var(--text-muted);
 }
 .error-td { color: #f87171; }
+
+.log-row {
+    cursor: pointer;
+    user-select: none;
+    transition: background-color 0.15s ease;
+}
+.log-row:hover {
+    background-color: var(--bg-hover, rgba(255, 255, 255, 0.05));
+}
+.log-row.is-expanded {
+    background-color: var(--bg-hover, rgba(255, 255, 255, 0.07));
+    font-weight: 500;
+}
+.log-expand-icon {
+    display: inline-block;
+    width: 14px;
+    font-size: 10px;
+    color: var(--text-muted);
+    transition: transform 0.15s ease;
+}
+.log-detail-row td {
+    padding: 0 !important;
+    background: var(--bg-surface, #1e293b);
+    border-bottom: 1px solid var(--border);
+}
+.log-detail-content {
+    padding: 12px 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    border-left: 3px solid var(--accent, #3b82f6);
+}
+.log-detail-meta {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 8px 16px;
+    font-size: 12px;
+    background: rgba(0, 0, 0, 0.2);
+    padding: 8px 12px;
+    border-radius: 4px;
+}
+.log-detail-error {
+    background: rgba(127, 29, 29, 0.25);
+    border: 1px solid #7f1d1d;
+    border-radius: 4px;
+    padding: 8px 12px;
+    font-size: 12px;
+    color: #fca5a5;
+}
+.log-detail-error pre {
+    margin: 4px 0 0 0;
+    white-space: pre-wrap;
+    word-break: break-word;
+    font-family: var(--font-mono, monospace);
+    font-size: 11px;
+}
+.log-detail-output {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+.log-detail-output-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    font-size: 12px;
+    color: var(--text-muted);
+}
+.log-output-pre {
+    margin: 0;
+    max-height: 240px;
+    overflow-y: auto;
+    background: rgba(0, 0, 0, 0.35);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 10px 12px;
+    font-family: var(--font-mono, monospace);
+    font-size: 11.5px;
+    line-height: 1.5;
+    white-space: pre-wrap;
+    word-break: break-word;
+    color: var(--text);
+}
+
 

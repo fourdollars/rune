@@ -1807,6 +1807,7 @@ mod tests {
             provider_registry: Arc::new(tokio::sync::RwLock::new(
                 crate::provider::ProviderRegistry::new(),
             )),
+            running_cron_jobs: Arc::new(tokio::sync::RwLock::new(std::collections::HashSet::new())),
         };
 
         let response = logout_handler(
@@ -1855,6 +1856,7 @@ mod tests {
             provider_registry: Arc::new(tokio::sync::RwLock::new(
                 crate::provider::ProviderRegistry::new(),
             )),
+            running_cron_jobs: Arc::new(tokio::sync::RwLock::new(std::collections::HashSet::new())),
         };
 
         let target = "https://extension-id.chromiumapp.org/callback";
@@ -1934,6 +1936,7 @@ mod tests {
             provider_registry: Arc::new(tokio::sync::RwLock::new(
                 crate::provider::ProviderRegistry::new(),
             )),
+            running_cron_jobs: Arc::new(tokio::sync::RwLock::new(std::collections::HashSet::new())),
         };
 
         let mut headers = HeaderMap::new();
@@ -1978,6 +1981,7 @@ mod tests {
             provider_registry: Arc::new(tokio::sync::RwLock::new(
                 crate::provider::ProviderRegistry::new(),
             )),
+            running_cron_jobs: Arc::new(tokio::sync::RwLock::new(std::collections::HashSet::new())),
         };
 
         let mut headers = HeaderMap::new();
@@ -2030,6 +2034,7 @@ mod tests {
             provider_registry: Arc::new(tokio::sync::RwLock::new(
                 crate::provider::ProviderRegistry::new(),
             )),
+            running_cron_jobs: Arc::new(tokio::sync::RwLock::new(std::collections::HashSet::new())),
         };
 
         let req = LocalLoginRequest {

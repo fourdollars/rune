@@ -56,6 +56,21 @@ globalThis.fmtTime = function fmtTime(unixSec) {
     return `${mm}-${dd} ${hh}:${min}`;
 };
 
+globalThis.formatDurationMs = function formatDurationMs(ms) {
+    if (ms == null || isNaN(ms) || ms < 0) return '';
+    const totalSeconds = Math.round(ms / 1000);
+    if (totalSeconds === 0) return '0s';
+    const hours = Math.floor(totalSeconds / 3600);
+    const minutes = Math.floor((totalSeconds % 3600) / 60);
+    const seconds = totalSeconds % 60;
+
+    let res = '';
+    if (hours > 0) res += `${hours}h`;
+    if (minutes > 0) res += `${minutes}m`;
+    if (seconds > 0 || res === '') res += `${seconds}s`;
+    return res;
+};
+
 globalThis.addChatMessage = function addChatMessage(nickname, content) {
     const isMe = nickname === myNickname;
     const div = document.createElement('div');

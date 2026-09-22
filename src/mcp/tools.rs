@@ -634,6 +634,7 @@ mod tests {
             oauth_providers: Arc::new(RwLock::new(std::collections::HashMap::new())),
             mcp_sessions: crate::mcp::mcp_session::McpSessionStore::new(),
             provider_registry: Arc::new(RwLock::new(crate::provider::ProviderRegistry::new())),
+            running_cron_jobs: Arc::new(tokio::sync::RwLock::new(std::collections::HashSet::new())),
         }
     }
 

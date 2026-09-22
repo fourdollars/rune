@@ -34,3 +34,21 @@ export function decodeHtml(value) {
     textarea.innerHTML = value;
     return textarea.value;
 }
+
+// Forbid blocking browser window dialogs (window.alert, window.confirm, window.prompt)
+if (typeof window !== 'undefined') {
+    window.alert = function forbiddenAlert(msg) {
+        console.warn('[Forbidden Dialog] window.alert() is forbidden:', msg);
+        if (typeof globalThis.addSystemMessage === 'function') {
+            globalThis.addSystemMessage('Notice: ' + msg);
+        }
+    };
+    window.confirm = function forbiddenConfirm(msg) {
+        console.warn('[Forbidden Dialog] window.confirm() is forbidden:', msg);
+        return false;
+    };
+    window.prompt = function forbiddenPrompt(msg) {
+        console.warn('[Forbidden Dialog] window.prompt() is forbidden:', msg);
+        return null;
+    };
+}

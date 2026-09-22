@@ -41,6 +41,9 @@ pub struct ChatRecord {
     /// Total context tokens at the time of this response (assistant only).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub context_tokens: Option<i32>,
+    /// Execution duration in milliseconds (assistant only).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub duration_ms: Option<u64>,
 }
 
 /// A stored session entry.
@@ -77,6 +80,10 @@ pub struct NoteCronJobRecord {
     pub last_status: Option<String>,
     pub created_at: String,
     pub updated_at: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub timeout_secs: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub thinking: Option<String>,
 }
 
 /// Thread-safe SQLite connection wrapper.
@@ -105,7 +112,8 @@ fn init_schema(conn: &Connection) -> anyhow::Result<()> {
             steps          INTEGER,
             tool_calls     INTEGER,
             thinking       TEXT,
-            context_tokens INTEGER
+            context_tokens INTEGER,
+            duration_ms    INTEGER
         );
         CREATE INDEX IF NOT EXISTS idx_messages_session
             ON messages(note_id, id);
@@ -154,28 +162,34 @@ fn init_schema(conn: &Connection) -> anyhow::Result<()> {
             last_run_at         TEXT,
             last_status         TEXT,
             created_at          TEXT NOT NULL,
-            updated_at          TEXT NOT NULL
+            updated_at          TEXT NOT NULL,
+            timeout_secs        INTEGER DEFAULT 60,
+            thinking            TEXT
         );
         CREATE INDEX IF NOT EXISTS idx_note_cron_jobs_note_enabled
             ON note_cron_jobs(note_id, enabled);
     ",
     )?;
-    // Add new columns to existing DBs (idempotent — errors ignored)
-    let _ = conn.execute_batch(
-        "
-        ALTER TABLE messages ADD COLUMN model          TEXT;
-        ALTER TABLE messages ADD COLUMN tokens_in      INTEGER;
-        ALTER TABLE messages ADD COLUMN tokens_out     INTEGER;
-        ALTER TABLE messages ADD COLUMN steps          INTEGER;
-        ALTER TABLE messages ADD COLUMN tool_calls     INTEGER;
-        ALTER TABLE messages ADD COLUMN thinking       TEXT;
-        ALTER TABLE messages ADD COLUMN context_tokens INTEGER;
-        ALTER TABLE sessions ADD COLUMN public         INTEGER DEFAULT 0;
-        ALTER TABLE sessions ADD COLUMN model_override TEXT;
-        ALTER TABLE sessions ADD COLUMN icon           TEXT;
-        ALTER TABLE oauth_tokens ADD COLUMN login      TEXT NOT NULL DEFAULT '';
-    ",
-    );
+    // Add new columns to existing DBs (idempotent — each statement executed individually so one failure does not abort the rest)
+    let migrations = [
+        "ALTER TABLE messages ADD COLUMN model TEXT",
+        "ALTER TABLE messages ADD COLUMN tokens_in INTEGER",
+        "ALTER TABLE messages ADD COLUMN tokens_out INTEGER",
+        "ALTER TABLE messages ADD COLUMN steps INTEGER",
+        "ALTER TABLE messages ADD COLUMN tool_calls INTEGER",
+        "ALTER TABLE messages ADD COLUMN thinking TEXT",
+        "ALTER TABLE messages ADD COLUMN context_tokens INTEGER",
+        "ALTER TABLE messages ADD COLUMN duration_ms INTEGER",
+        "ALTER TABLE sessions ADD COLUMN public INTEGER DEFAULT 0",
+        "ALTER TABLE sessions ADD COLUMN model_override TEXT",
+        "ALTER TABLE sessions ADD COLUMN icon TEXT",
+        "ALTER TABLE oauth_tokens ADD COLUMN login TEXT NOT NULL DEFAULT ''",
+        "ALTER TABLE note_cron_jobs ADD COLUMN timeout_secs INTEGER DEFAULT 60",
+        "ALTER TABLE note_cron_jobs ADD COLUMN thinking TEXT",
+    ];
+    for migration in migrations {
+        let _ = conn.execute(migration, []);
+    }
     Ok(())
 }
 
@@ -254,11 +268,11 @@ impl ChatDb {
         content: &str,
     ) -> anyhow::Result<i64> {
         self.insert_with_meta(
-            note_id, role, nickname, content, None, None, None, None, None, None, None,
+            note_id, role, nickname, content, None, None, None, None, None, None, None, None,
         )
     }
 
-    /// Insert a message with optional model/token metadata.
+    /// Insert a message with optional model/token/duration metadata.
     pub fn insert_with_meta(
         &self,
         note_id: &str,
@@ -272,6 +286,7 @@ impl ChatDb {
         tool_calls: Option<i32>,
         thinking: Option<&str>,
         context_tokens: Option<i32>,
+        duration_ms: Option<u64>,
     ) -> anyhow::Result<i64> {
         let conn = self.conn.lock().unwrap();
         let ts = std::time::SystemTime::now()
@@ -279,9 +294,9 @@ impl ChatDb {
             .unwrap_or_default()
             .as_secs() as i64;
         conn.execute(
-            "INSERT INTO messages (note_id, role, nickname, content, created_at, model, tokens_in, tokens_out, steps, tool_calls, thinking, context_tokens)
-             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12)",
-            params![note_id, role, nickname, content, ts, model, tokens_in, tokens_out, steps, tool_calls, thinking, context_tokens],
+            "INSERT INTO messages (note_id, role, nickname, content, created_at, model, tokens_in, tokens_out, steps, tool_calls, thinking, context_tokens, duration_ms)
+             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13)",
+            params![note_id, role, nickname, content, ts, model, tokens_in, tokens_out, steps, tool_calls, thinking, context_tokens, duration_ms.map(|d| d as i64)],
         )?;
         Ok(conn.last_insert_rowid())
     }
@@ -290,7 +305,7 @@ impl ChatDb {
     pub fn load_recent(&self, note_id: &str, limit: usize) -> anyhow::Result<Vec<ChatRecord>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT id, note_id, role, nickname, content, created_at, model, tokens_in, tokens_out, steps, tool_calls, thinking, context_tokens
+            "SELECT id, note_id, role, nickname, content, created_at, model, tokens_in, tokens_out, steps, tool_calls, thinking, context_tokens, duration_ms
              FROM messages
              WHERE note_id = ?1
              ORDER BY id DESC
@@ -312,6 +327,11 @@ impl ChatDb {
                     tool_calls: row.get(10)?,
                     thinking: row.get(11).ok().flatten(),
                     context_tokens: row.get(12).ok().flatten(),
+                    duration_ms: row
+                        .get::<_, Option<i64>>(13)
+                        .ok()
+                        .flatten()
+                        .map(|v| v as u64),
                 })
             })?
             .filter_map(|r| r.ok())
@@ -331,7 +351,7 @@ impl ChatDb {
         content: String,
     ) {
         self.insert_with_meta_async(
-            note_id, role, nickname, content, None, None, None, None, None, None, None,
+            note_id, role, nickname, content, None, None, None, None, None, None, None, None,
         )
         .await;
     }
@@ -350,6 +370,7 @@ impl ChatDb {
         tool_calls: Option<i32>,
         thinking: Option<String>,
         context_tokens: Option<i32>,
+        duration_ms: Option<u64>,
     ) {
         let db = self.clone();
         tokio::task::spawn_blocking(move || {
@@ -365,6 +386,7 @@ impl ChatDb {
                 tool_calls,
                 thinking.as_deref(),
                 context_tokens,
+                duration_ms,
             ) {
                 warn!("Failed to persist chat message: {}", e);
             }
@@ -780,8 +802,8 @@ impl ChatDb {
     pub fn create_cron_job(&self, job: &NoteCronJobRecord) -> anyhow::Result<()> {
         let conn = self.conn.lock().unwrap();
         conn.execute(
-            "INSERT INTO note_cron_jobs (id, note_id, name, schedule_type, schedule_value, prompt, model, silent_if_no_action, enabled, last_run_at, last_status, created_at, updated_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+            "INSERT INTO note_cron_jobs (id, note_id, name, schedule_type, schedule_value, prompt, model, silent_if_no_action, enabled, last_run_at, last_status, created_at, updated_at, timeout_secs, thinking)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
             params![
                 job.id,
                 job.note_id,
@@ -795,7 +817,9 @@ impl ChatDb {
                 job.last_run_at,
                 job.last_status,
                 job.created_at,
-                job.updated_at
+                job.updated_at,
+                job.timeout_secs.map(|t| t as i64),
+                job.thinking
             ],
         )?;
         Ok(())
@@ -805,7 +829,7 @@ impl ChatDb {
     pub fn get_cron_job(&self, job_id: &str) -> anyhow::Result<Option<NoteCronJobRecord>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT id, note_id, name, schedule_type, schedule_value, prompt, model, silent_if_no_action, enabled, last_run_at, last_status, created_at, updated_at
+            "SELECT id, note_id, name, schedule_type, schedule_value, prompt, model, silent_if_no_action, enabled, last_run_at, last_status, created_at, updated_at, timeout_secs, thinking
              FROM note_cron_jobs WHERE id = ?1",
         )?;
         let mut rows = stmt.query(params![job_id])?;
@@ -824,6 +848,8 @@ impl ChatDb {
                 last_status: row.get(10)?,
                 created_at: row.get(11)?,
                 updated_at: row.get(12)?,
+                timeout_secs: row.get::<_, Option<i64>>(13)?.map(|v| v.max(1) as u64),
+                thinking: row.get(14)?,
             }))
         } else {
             Ok(None)
@@ -834,7 +860,7 @@ impl ChatDb {
     pub fn list_cron_jobs_for_note(&self, note_id: &str) -> anyhow::Result<Vec<NoteCronJobRecord>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT id, note_id, name, schedule_type, schedule_value, prompt, model, silent_if_no_action, enabled, last_run_at, last_status, created_at, updated_at
+            "SELECT id, note_id, name, schedule_type, schedule_value, prompt, model, silent_if_no_action, enabled, last_run_at, last_status, created_at, updated_at, timeout_secs, thinking
              FROM note_cron_jobs WHERE note_id = ?1 ORDER BY created_at ASC",
         )?;
         let rows = stmt.query_map(params![note_id], |row| {
@@ -852,6 +878,8 @@ impl ChatDb {
                 last_status: row.get(10)?,
                 created_at: row.get(11)?,
                 updated_at: row.get(12)?,
+                timeout_secs: row.get::<_, Option<i64>>(13)?.map(|v| v.max(1) as u64),
+                thinking: row.get(14)?,
             })
         })?;
         let mut jobs = Vec::new();
@@ -865,7 +893,7 @@ impl ChatDb {
     pub fn list_all_enabled_cron_jobs(&self) -> anyhow::Result<Vec<NoteCronJobRecord>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT id, note_id, name, schedule_type, schedule_value, prompt, model, silent_if_no_action, enabled, last_run_at, last_status, created_at, updated_at
+            "SELECT id, note_id, name, schedule_type, schedule_value, prompt, model, silent_if_no_action, enabled, last_run_at, last_status, created_at, updated_at, timeout_secs, thinking
              FROM note_cron_jobs WHERE enabled = 1 ORDER BY created_at ASC",
         )?;
         let rows = stmt.query_map([], |row| {
@@ -883,6 +911,8 @@ impl ChatDb {
                 last_status: row.get(10)?,
                 created_at: row.get(11)?,
                 updated_at: row.get(12)?,
+                timeout_secs: row.get::<_, Option<i64>>(13)?.map(|v| v.max(1) as u64),
+                thinking: row.get(14)?,
             })
         })?;
         let mut jobs = Vec::new();
@@ -898,8 +928,9 @@ impl ChatDb {
         let count = conn.execute(
             "UPDATE note_cron_jobs
              SET name = ?1, schedule_type = ?2, schedule_value = ?3, prompt = ?4, model = ?5,
-                 silent_if_no_action = ?6, enabled = ?7, updated_at = ?8
-             WHERE id = ?9",
+                 silent_if_no_action = ?6, enabled = ?7, updated_at = ?8, timeout_secs = ?9,
+                 thinking = ?10
+             WHERE id = ?11",
             params![
                 job.name,
                 job.schedule_type,
@@ -909,6 +940,8 @@ impl ChatDb {
                 job.silent_if_no_action as i32,
                 job.enabled as i32,
                 job.updated_at,
+                job.timeout_secs.map(|t| t as i64),
+                job.thinking,
                 job.id
             ],
         )?;
@@ -994,7 +1027,7 @@ impl ChatDb {
         let conn = self.conn.lock().unwrap();
         // Load all messages for this session
         let mut stmt = conn.prepare(
-            "SELECT id, note_id, role, nickname, content, created_at, model, tokens_in, tokens_out, steps, tool_calls, thinking, context_tokens
+            "SELECT id, note_id, role, nickname, content, created_at, model, tokens_in, tokens_out, steps, tool_calls, thinking, context_tokens, duration_ms
              FROM messages WHERE note_id = ?1 ORDER BY id ASC",
         )?;
         let records: Vec<ChatRecord> = stmt
@@ -1013,24 +1046,33 @@ impl ChatDb {
                     tool_calls: row.get(10)?,
                     thinking: row.get(11).ok().flatten(),
                     context_tokens: row.get(12).ok().flatten(),
+                    duration_ms: row
+                        .get::<_, Option<i64>>(13)
+                        .ok()
+                        .flatten()
+                        .map(|v| v as u64),
                 })
             })?
             .filter_map(|r| r.ok())
             .collect();
+        drop(stmt);
 
         if records.is_empty() {
             return Ok(0);
         }
 
-        // Write JSONL
-        if let Some(parent) = archive_path.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
-        let mut file = std::fs::File::create(archive_path)?;
+        // Open archive file in append mode
+        let mut file = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(archive_path)?;
+
         for rec in &records {
             let line = serde_json::to_string(rec)?;
-            writeln!(file, "{}", line)?;
+            file.write_all(line.as_bytes())?;
+            file.write_all(b"\n")?;
         }
+        file.flush()?;
 
         // Delete archived messages from DB
         conn.execute("DELETE FROM messages WHERE note_id = ?1", params![note_id])?;
@@ -1038,33 +1080,39 @@ impl ChatDb {
         Ok(records.len())
     }
 
-    /// Full-text search across current DB + all JSONL archive files in archive_dir.
-    /// Returns matching records sorted oldest first (archives first, then live).
+    /// Search chat history for a note (both disk archives and live DB).
+    ///
+    /// Returns matching `ChatRecord`s matching query (case-insensitive) across all archives + live DB,
+    /// sorted newest-first.
     pub fn search(
         &self,
         note_id: &str,
         query: &str,
         archive_dir: &Path,
     ) -> anyhow::Result<Vec<ChatRecord>> {
+        use std::io::BufRead;
         let query_lower = query.to_lowercase();
         let mut results: Vec<ChatRecord> = Vec::new();
 
-        // 1. Search archive JSONL files
+        // 1. Search disk archives (*.jsonl in archive_dir)
         if archive_dir.exists() {
-            let mut entries: Vec<_> = std::fs::read_dir(archive_dir)?
-                .filter_map(|e| e.ok())
-                .filter(|e| e.path().extension().map(|x| x == "jsonl").unwrap_or(false))
-                .collect();
-            entries.sort_by_key(|e| e.file_name());
-            for entry in entries {
-                if let Ok(text) = std::fs::read_to_string(entry.path()) {
-                    for line in text.lines() {
-                        if let Ok(rec) = serde_json::from_str::<ChatRecord>(line) {
-                            if rec.note_id == note_id
-                                && (rec.content.to_lowercase().contains(&query_lower)
-                                    || rec.nickname.to_lowercase().contains(&query_lower))
-                            {
-                                results.push(rec);
+            if let Ok(entries) = std::fs::read_dir(archive_dir) {
+                let mut paths: Vec<_> = entries
+                    .filter_map(|e| e.ok())
+                    .map(|e| e.path())
+                    .filter(|p| p.extension().and_then(|x| x.to_str()) == Some("jsonl"))
+                    .collect();
+                paths.sort();
+                for path in paths {
+                    if let Ok(file) = std::fs::File::open(&path) {
+                        for line in std::io::BufReader::new(file).lines().map_while(Result::ok) {
+                            if let Ok(rec) = serde_json::from_str::<ChatRecord>(&line) {
+                                if rec.note_id == note_id
+                                    && (rec.content.to_lowercase().contains(&query_lower)
+                                        || rec.nickname.to_lowercase().contains(&query_lower))
+                                {
+                                    results.push(rec);
+                                }
                             }
                         }
                     }
@@ -1075,7 +1123,7 @@ impl ChatDb {
         // 2. Search live DB
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT id, note_id, role, nickname, content, created_at, model, tokens_in, tokens_out, steps, tool_calls, thinking, context_tokens
+            "SELECT id, note_id, role, nickname, content, created_at, model, tokens_in, tokens_out, steps, tool_calls, thinking, context_tokens, duration_ms
              FROM messages WHERE note_id = ?1 ORDER BY id ASC",
         )?;
         let live: Vec<ChatRecord> = stmt
@@ -1094,6 +1142,11 @@ impl ChatDb {
                     tool_calls: row.get(10)?,
                     thinking: row.get(11).ok().flatten(),
                     context_tokens: row.get(12).ok().flatten(),
+                    duration_ms: row
+                        .get::<_, Option<i64>>(13)
+                        .ok()
+                        .flatten()
+                        .map(|v| v as u64),
                 })
             })?
             .filter_map(|r| r.ok())
@@ -1310,6 +1363,7 @@ mod tests {
             tool_calls: None,
             thinking: None,
             context_tokens: None,
+            duration_ms: None,
         };
         let mut f = std::fs::File::create(&arc_path).unwrap();
         writeln!(f, "{}", serde_json::to_string(&old_rec).unwrap()).unwrap();
@@ -1359,6 +1413,7 @@ mod tests {
             Some(2),
             None,
             None,
+            None,
         )
         .unwrap();
         let rows = db.load_recent("default", 1).unwrap();
@@ -1384,10 +1439,33 @@ mod tests {
             Some(2),
             None,
             Some(4200),
+            None,
         )
         .unwrap();
         let rows = db.load_recent("default", 1).unwrap();
         assert_eq!(rows[0].context_tokens, Some(4200));
+    }
+
+    #[test]
+    fn test_insert_with_meta_persists_duration_ms() {
+        let db = in_memory_db();
+        db.insert_with_meta(
+            "default",
+            "assistant",
+            "ᚱᚢᚾᛖ",
+            "hello",
+            Some("gpt-5-mini"),
+            Some(100),
+            Some(42),
+            Some(3),
+            Some(2),
+            None,
+            Some(4200),
+            Some(80123),
+        )
+        .unwrap();
+        let rows = db.load_recent("default", 1).unwrap();
+        assert_eq!(rows[0].duration_ms, Some(80123));
     }
 
     #[test]
@@ -1405,10 +1483,12 @@ mod tests {
             Some(2),
             None,
             None,
+            None,
         )
         .unwrap();
         let rows = db.load_recent("default", 1).unwrap();
         assert!(rows[0].context_tokens.is_none());
+        assert!(rows[0].duration_ms.is_none());
     }
 
     #[test]
@@ -1419,6 +1499,7 @@ mod tests {
         assert!(rows[0].model.is_none());
         assert!(rows[0].tokens_in.is_none());
         assert!(rows[0].tokens_out.is_none());
+        assert!(rows[0].duration_ms.is_none());
     }
 
     #[test]
@@ -1439,6 +1520,7 @@ mod tests {
             Some(0),
             None,
             None,
+            Some(1234),
         )
         .unwrap();
         let archive_path = dir.path().join("arc.jsonl");
@@ -1709,6 +1791,7 @@ mod tests {
             Some(0),
             None,
             Some(500),
+            None,
         )
         .expect("insert_with_meta on lazy db should succeed with context_tokens");
 
@@ -1747,6 +1830,8 @@ mod tests {
             last_status: None,
             created_at: "2026-09-21T14:00:00Z".to_string(),
             updated_at: "2026-09-21T14:00:00Z".to_string(),
+            timeout_secs: Some(60),
+            thinking: Some("low".to_string()),
         };
 
         // Create
@@ -1759,6 +1844,7 @@ mod tests {
         assert_eq!(fetched.name, "Heartbeat Periodic Check");
         assert_eq!(fetched.schedule_type, "interval");
         assert_eq!(fetched.schedule_value, "30m");
+        assert_eq!(fetched.thinking, Some("low".to_string()));
         assert!(fetched.silent_if_no_action);
         assert!(fetched.enabled);
 
@@ -1810,6 +1896,62 @@ mod tests {
         assert!(deleted);
         let fetched_after_delete = db.get_cron_job_async("job_123".to_string()).await.unwrap();
         assert!(fetched_after_delete.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_legacy_db_migration_adds_timeout_secs_column() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("legacy.db");
+
+        // 1. Manually create an older schema DB where messages already has model, but note_cron_jobs lacks timeout_secs
+        {
+            let conn = Connection::open(&db_path).unwrap();
+            conn.execute_batch(
+                "
+                CREATE TABLE messages (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    note_id TEXT NOT NULL DEFAULT 'default',
+                    role TEXT NOT NULL,
+                    nickname TEXT NOT NULL,
+                    content TEXT NOT NULL,
+                    created_at INTEGER NOT NULL,
+                    model TEXT
+                );
+                CREATE TABLE note_cron_jobs (
+                    id                  TEXT PRIMARY KEY,
+                    note_id             TEXT NOT NULL,
+                    name                TEXT NOT NULL,
+                    schedule_type       TEXT NOT NULL,
+                    schedule_value      TEXT NOT NULL,
+                    prompt              TEXT NOT NULL,
+                    model               TEXT,
+                    silent_if_no_action INTEGER NOT NULL DEFAULT 1,
+                    enabled             INTEGER NOT NULL DEFAULT 1,
+                    last_run_at         TEXT,
+                    last_status         TEXT,
+                    created_at          TEXT NOT NULL,
+                    updated_at          TEXT NOT NULL
+                );
+                INSERT INTO note_cron_jobs VALUES (
+                    'job_old', 'my-note', 'Old Job', 'interval', '30m', 'Old prompt', NULL, 1, 1, NULL, NULL, '2026-09-20', '2026-09-20'
+                );
+            ",
+            )
+            .unwrap();
+        }
+
+        // 2. Open via ChatDb::open, which triggers init_schema and migrations
+        let db = ChatDb::open(&db_path).expect("ChatDb::open should succeed on legacy database");
+
+        // 3. Query cron jobs — should succeed without 'no such column: timeout_secs' error
+        let jobs = db
+            .list_cron_jobs_for_note_async("my-note".to_string())
+            .await
+            .expect("list_cron_jobs_for_note_async should succeed on migrated DB");
+        assert_eq!(jobs.len(), 1);
+        assert_eq!(jobs[0].id, "job_old");
+        assert_eq!(jobs[0].name, "Old Job");
+        assert_eq!(jobs[0].timeout_secs, Some(60));
     }
 }
 

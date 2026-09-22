@@ -48,6 +48,29 @@ pub fn note_cron_dir(session: &str) -> PathBuf {
     data_dir().join("notes").join(session).join("cron")
 }
 
+/// Format duration in milliseconds to human readable string rounded to seconds with no spaces (e.g. "1m45s", "45s", "1h2m3s", "0s").
+pub fn format_duration_ms(ms: u64) -> String {
+    let total_secs = ((ms as f64) / 1000.0).round() as u64;
+    if total_secs == 0 {
+        return "0s".to_string();
+    }
+    let hours = total_secs / 3600;
+    let minutes = (total_secs % 3600) / 60;
+    let seconds = total_secs % 60;
+
+    let mut res = String::new();
+    if hours > 0 {
+        res.push_str(&format!("{}h", hours));
+    }
+    if minutes > 0 {
+        res.push_str(&format!("{}m", minutes));
+    }
+    if seconds > 0 || res.is_empty() {
+        res.push_str(&format!("{}s", seconds));
+    }
+    res
+}
+
 /// Shared server state.
 #[derive(Clone)]
 pub struct ServerState {
@@ -79,6 +102,8 @@ pub struct ServerState {
     pub oauth_tokens: crate::serve::oauth_pkce::OAuthTokenStore,
     /// Resolved third-party OAuth/OIDC providers keyed by provider name.
     pub oauth_providers: Arc<RwLock<HashMap<String, crate::serve::oauth::ResolvedOAuthProvider>>>,
+    /// Currently executing cron jobs (job_id set) to prevent concurrent duplicate execution.
+    pub running_cron_jobs: Arc<tokio::sync::RwLock<std::collections::HashSet<String>>>,
 }
 
 impl ServerState {
@@ -460,6 +485,7 @@ pub async fn run(config: RuneConfig, opts: NotesOptions) {
         oauth_providers: Arc::new(RwLock::new(oauth_providers)),
         mcp_sessions: crate::mcp::mcp_session::McpSessionStore::new(),
         provider_registry,
+        running_cron_jobs: Arc::new(tokio::sync::RwLock::new(std::collections::HashSet::new())),
     };
 
     // Session sweep (every 5 minutes, removes expired sessions)
@@ -1323,6 +1349,7 @@ mod tests {
             provider_registry: Arc::new(tokio::sync::RwLock::new(
                 crate::provider::ProviderRegistry::new(),
             )),
+            running_cron_jobs: Arc::new(tokio::sync::RwLock::new(std::collections::HashSet::new())),
         }
     }
 
@@ -1823,6 +1850,7 @@ mod tests {
             provider_registry: Arc::new(tokio::sync::RwLock::new(
                 crate::provider::ProviderRegistry::new(),
             )),
+            running_cron_jobs: Arc::new(tokio::sync::RwLock::new(std::collections::HashSet::new())),
         };
 
         assert_eq!(*state.global_default_model.read().await, first_model);
@@ -1862,6 +1890,7 @@ mod tests {
             provider_registry: Arc::new(tokio::sync::RwLock::new(
                 crate::provider::ProviderRegistry::new(),
             )),
+            running_cron_jobs: Arc::new(tokio::sync::RwLock::new(std::collections::HashSet::new())),
         };
 
         assert_eq!(*state.active_file.read().await, "main.md");
@@ -1895,6 +1924,7 @@ mod tests {
             provider_registry: Arc::new(tokio::sync::RwLock::new(
                 crate::provider::ProviderRegistry::new(),
             )),
+            running_cron_jobs: Arc::new(tokio::sync::RwLock::new(std::collections::HashSet::new())),
         };
 
         // Verify per-room broadcast channel is functional
@@ -2066,10 +2096,17 @@ mod tests {
         // It will be rewritten as part of the GitHub OAuth integration (Task 3).
     }
 
-    #[ignore = "stub: test uses removed guest_token field; will be rewritten in Task 3"]
-    #[tokio::test]
-    async fn test_guest_post_mutation_blocked() {
-        // This test relied on ServerState.guest_token which was removed.
-        // It will be rewritten as part of the GitHub OAuth integration (Task 3).
+    #[test]
+    fn test_format_duration_ms() {
+        assert_eq!(format_duration_ms(0), "0s");
+        assert_eq!(format_duration_ms(450), "0s");
+        assert_eq!(format_duration_ms(600), "1s");
+        assert_eq!(format_duration_ms(12345), "12s");
+        assert_eq!(format_duration_ms(45000), "45s");
+        assert_eq!(format_duration_ms(60000), "1m");
+        assert_eq!(format_duration_ms(80123), "1m20s");
+        assert_eq!(format_duration_ms(104578), "1m45s");
+        assert_eq!(format_duration_ms(3600000), "1h");
+        assert_eq!(format_duration_ms(3665000), "1h1m5s");
     }
 }

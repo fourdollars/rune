@@ -2,6 +2,8 @@ import './state.js';
 import { api } from './api.js';
 
 let cachedSkills = [];
+let activeInput = null;
+let activeAutocompleteEl = null;
 let activeTrigger = null; // '+' or '@'
 let activeRange = null; // { start, end, query }
 let selectedIndex = 0;
@@ -24,16 +26,13 @@ export function getSkills() {
     return cachedSkills;
 }
 
-function getAutocompleteEl() {
-    return document.getElementById('chat-autocomplete');
-}
-
 function detectTrigger(input) {
+    if (!input || input.selectionStart == null) return null;
     const cursor = input.selectionStart;
     const text = input.value.slice(0, cursor);
 
     // Look backwards from cursor to find a trigger (+ or @)
-    // Must be preceded by start of string or whitespace
+    // Must be preceded by start of string, newline, or whitespace
     const match = /(?:^|\s)([+@])([a-zA-Z0-9_\-\.]*)$/.exec(text);
     if (!match) return null;
 
@@ -49,10 +48,13 @@ function detectTrigger(input) {
     };
 }
 
-export function updateAutocomplete() {
-    const input = document.getElementById('chat-input');
-    const el = getAutocompleteEl();
+export function updateAutocomplete(inputEl = null, autocompleteEl = null) {
+    const input = inputEl || activeInput || document.getElementById('chat-input');
+    const el = autocompleteEl || activeAutocompleteEl || document.getElementById('chat-autocomplete');
     if (!input || !el) return;
+
+    activeInput = input;
+    activeAutocompleteEl = el;
 
     const range = detectTrigger(input);
     if (!range) {
@@ -66,7 +68,7 @@ export function updateAutocomplete() {
 
     if (activeTrigger === '+') {
         filteredItems = cachedSkills
-            .filter(s => s.name.toLowerCase().includes(queryLower))
+            .filter(s => (s.name || '').toLowerCase().includes(queryLower))
             .map(s => ({
                 type: 'skill',
                 name: s.name,
@@ -74,7 +76,9 @@ export function updateAutocomplete() {
                 insertText: `+${s.name} `,
             }));
     } else if (activeTrigger === '@') {
-        const files = Array.isArray(globalThis.fileList) ? globalThis.fileList : [];
+        const files = Array.isArray(globalThis.fileList)
+            ? globalThis.fileList
+            : (Array.isArray(fileList) ? fileList : []);
         filteredItems = files
             .filter(f => f.toLowerCase().includes(queryLower))
             .map(f => ({
@@ -100,7 +104,7 @@ export function updateAutocomplete() {
 }
 
 function renderAutocomplete() {
-    const el = getAutocompleteEl();
+    const el = activeAutocompleteEl || document.getElementById('chat-autocomplete');
     if (!el) return;
 
     el.replaceChildren();
@@ -143,10 +147,15 @@ function renderAutocomplete() {
 }
 
 export function hideAutocomplete() {
-    const el = getAutocompleteEl();
+    const el = activeAutocompleteEl || document.getElementById('chat-autocomplete');
     if (el) {
         el.classList.add('hidden');
         el.replaceChildren();
+    }
+    const cronEl = document.getElementById('cron-prompt-autocomplete');
+    if (cronEl && cronEl !== el) {
+        cronEl.classList.add('hidden');
+        cronEl.replaceChildren();
     }
     activeTrigger = null;
     activeRange = null;
@@ -155,14 +164,14 @@ export function hideAutocomplete() {
 }
 
 export function isAutocompleteOpen() {
-    const el = getAutocompleteEl();
+    const el = activeAutocompleteEl || document.getElementById('chat-autocomplete');
     return el && !el.classList.contains('hidden') && filteredItems.length > 0;
 }
 
 export function applyItem(idx) {
     if (idx < 0 || idx >= filteredItems.length) return;
     const item = filteredItems[idx];
-    const input = document.getElementById('chat-input');
+    const input = activeInput || document.getElementById('chat-input');
     if (!input || !activeRange) return;
 
     const before = input.value.slice(0, activeRange.start);
@@ -173,7 +182,9 @@ export function applyItem(idx) {
     if (typeof input.setSelectionRange === 'function') {
         input.setSelectionRange(newCursor, newCursor);
     }
-    input.focus();
+    if (typeof input.focus === 'function') {
+        input.focus();
+    }
 
     hideAutocomplete();
 }
@@ -210,26 +221,56 @@ export function handleAutocompleteKeydown(e) {
     return false;
 }
 
-export function initAutocomplete() {
-    const input = document.getElementById('chat-input');
-    if (!input) return;
+export function attachAutocomplete(inputEl, autocompleteEl) {
+    if (!inputEl || !autocompleteEl) return;
 
-    input.addEventListener('keydown', (e) => {
-        handleAutocompleteKeydown(e);
+    inputEl.addEventListener('keydown', (e) => {
+        if (activeInput === inputEl && isAutocompleteOpen()) {
+            handleAutocompleteKeydown(e);
+        }
     }, true);
 
-    input.addEventListener('input', () => updateAutocomplete());
-    input.addEventListener('keyup', (e) => {
+    const onUpdate = () => {
+        activeInput = inputEl;
+        activeAutocompleteEl = autocompleteEl;
+        updateAutocomplete(inputEl, autocompleteEl);
+    };
+
+    inputEl.addEventListener('input', onUpdate);
+    inputEl.addEventListener('keyup', (e) => {
         if (['ArrowDown', 'ArrowUp', 'Enter', 'Tab', 'Escape'].includes(e.key)) return;
-        updateAutocomplete();
+        onUpdate();
     });
-    input.addEventListener('click', () => updateAutocomplete());
-    input.addEventListener('blur', () => {
-        setTimeout(() => hideAutocomplete(), 150);
+    inputEl.addEventListener('click', onUpdate);
+    inputEl.addEventListener('blur', () => {
+        setTimeout(() => {
+            if (activeInput === inputEl) {
+                hideAutocomplete();
+            }
+        }, 150);
     });
+}
+
+export function initAutocomplete() {
+    const chatInput = document.getElementById('chat-input');
+    const chatAutocomplete = document.getElementById('chat-autocomplete');
+    if (chatInput && chatAutocomplete) {
+        attachAutocomplete(chatInput, chatAutocomplete);
+    }
+
+    const cronPrompt = document.getElementById('cron-job-prompt');
+    const cronAutocomplete = document.getElementById('cron-prompt-autocomplete');
+    if (cronPrompt && cronAutocomplete) {
+        attachAutocomplete(cronPrompt, cronAutocomplete);
+    }
 
     fetchSkills();
 }
 
 globalThis.initAutocomplete = initAutocomplete;
+globalThis.attachAutocomplete = attachAutocomplete;
 globalThis.fetchSkills = fetchSkills;
+globalThis.updateAutocomplete = updateAutocomplete;
+globalThis.hideAutocomplete = hideAutocomplete;
+globalThis.handleAutocompleteKeydown = handleAutocompleteKeydown;
+globalThis.applyItem = applyItem;

@@ -3325,6 +3325,7 @@ read(3, "root:x:0:0:...", 4096) = 1234"#;
                     tool_calls: None,
                     thinking: None,
                     context_tokens: None,
+                    duration_ms: None,
                 },
                 ChatRecord {
                     id: 2,
@@ -3340,6 +3341,7 @@ read(3, "root:x:0:0:...", 4096) = 1234"#;
                     tool_calls: None,
                     thinking: None,
                     context_tokens: None,
+                    duration_ms: None,
                 },
             ];
             // Verify filtering: tool_call roles should be excluded
@@ -3369,6 +3371,7 @@ read(3, "root:x:0:0:...", 4096) = 1234"#;
                 tool_calls: None,
                 thinking: None,
                 context_tokens: None,
+                duration_ms: None,
             }
         }
 

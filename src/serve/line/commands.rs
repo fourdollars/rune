@@ -288,6 +288,7 @@ mod tests {
             provider_registry: Arc::new(tokio::sync::RwLock::new(
                 crate::provider::ProviderRegistry::new(),
             )),
+            running_cron_jobs: Arc::new(tokio::sync::RwLock::new(std::collections::HashSet::new())),
         }
     }
 

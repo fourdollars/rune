@@ -25,7 +25,7 @@ globalThis.handleMessage = function handleMessage(msg) {
             appendToLastAssistant(msg.content);
             break;
         case 'chat_meta':
-            attachMetaToLastAssistant(msg.model, msg.tokens_in, msg.tokens_out, msg.context_tokens, msg.context_window, msg.steps, msg.tool_calls, msg.thinking);
+            attachMetaToLastAssistant(msg.model, msg.tokens_in, msg.tokens_out, msg.context_tokens, msg.context_window, msg.steps, msg.tool_calls, msg.thinking, msg.duration_ms);
             if (msg.usage) {
                 providerUsage = msg.usage;
                 updateUsageIndicator();
@@ -209,6 +209,23 @@ globalThis.handleMessage = function handleMessage(msg) {
             break;
         case 'approval_request':
             showApprovalRequest(msg.id, msg.detail);
+            break;
+        case 'cron_job_status':
+            if (msg.job_id) {
+                if (!runningCronJobIds || !(runningCronJobIds instanceof Set)) {
+                    runningCronJobIds = new Set();
+                }
+                if (msg.is_running) {
+                    runningCronJobIds.add(msg.job_id);
+                } else {
+                    runningCronJobIds.delete(msg.job_id);
+                }
+                if (typeof settingsNoteId !== 'undefined' && (!msg.note_id || settingsNoteId === msg.note_id)) {
+                    if (typeof renderCronJobsList === 'function') {
+                        renderCronJobsList();
+                    }
+                }
+            }
             break;
         case 'error':
             addSystemMessage('Error: ' + (msg.message || 'Unknown error'));

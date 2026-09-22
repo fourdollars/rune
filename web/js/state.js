@@ -38,6 +38,7 @@ const initial = {
     providerUsage: null,
     personaFilesEnabled: false,
     cronJobsEnabled: false,
+    runningCronJobIds: new Set(),
 };
 
 const listeners = new Set();

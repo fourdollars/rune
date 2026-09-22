@@ -56,10 +56,11 @@ globalThis.replayHistory = function replayHistory(messages) {
             }
             // Run stats at message tail
             const totalTok = (m.tokens_in||0) + (m.tokens_out||0);
-            if (m.steps || totalTok || m.tool_calls) {
+            if (m.steps || totalTok || m.tool_calls || m.duration_ms) {
                 const stats = document.createElement('div');
                 stats.className = 'run-stats';
-                stats.textContent = `${m.steps||0} steps · ${totalTok} tokens · ${m.tool_calls||0} tool calls`;
+                const durStr = m.duration_ms ? ` · ${formatDurationMs(m.duration_ms)}` : '';
+                stats.textContent = `${m.steps||0} steps · ${totalTok} tokens · ${m.tool_calls||0} tool calls${durStr}`;
                 body.appendChild(stats);
             }
             div.appendChild(sender);

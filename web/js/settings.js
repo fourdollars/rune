@@ -25,7 +25,7 @@ globalThis.showNoteSettings = function showNoteSettings(sessionId) {
     markSelectedEmoji();
     closeEmojiPicker();
 
-    // Default to General tab
+    // Default to General tab (configures delete/save buttons)
     switchSettingsTab('general');
 
     // Toggle tab buttons visibility based on opt-in configuration flags
@@ -43,9 +43,6 @@ globalThis.showNoteSettings = function showNoteSettings(sessionId) {
         btn.style.display = (typeof personaFilesEnabled !== 'undefined' && personaFilesEnabled) ? '' : 'none';
     });
 
-    // Hide delete button for default session
-    const delBtn = document.getElementById('btn-delete-note');
-    if (delBtn) delBtn.style.display = sessionId === 'default' ? 'none' : '';
     document.getElementById('note-settings-modal').classList.remove('hidden');
 };
 
@@ -70,9 +67,20 @@ globalThis.switchSettingsTab = function switchSettingsTab(tabName) {
         activePanel.classList.remove('hidden');
     }
 
+    // Only show Delete button on General tab (and never for 'default' note)
+    const delBtn = document.getElementById('btn-delete-note');
+    if (delBtn) {
+        delBtn.style.display = (tabName === 'general' && settingsNoteId !== 'default') ? '' : 'none';
+    }
+
     const saveBtn = document.getElementById('btn-save-note-settings');
     if (saveBtn) {
         saveBtn.style.display = tabName === 'general' ? '' : 'none';
+    }
+
+    const modalActions = document.querySelector('#note-settings-modal .modal-actions');
+    if (modalActions) {
+        modalActions.style.display = tabName === 'general' ? '' : 'none';
     }
 
     if (tabName === 'persona') {
@@ -141,8 +149,8 @@ globalThis.initPersonaFiles = async function initPersonaFiles() {
         if (typeof fetchNoteListAndConnect === 'function') {
             fetchNoteListAndConnect();
         }
-    } else {
-        alert('Failed to initialize persona files: ' + ((r && r.error) || 'Unknown error'));
+    } else if (typeof addSystemMessage === 'function') {
+        addSystemMessage('Failed to initialize persona files: ' + ((r && r.error) || 'Unknown error'));
     }
 };
 
@@ -159,6 +167,14 @@ globalThis.loadCronJobs = async function loadCronJobs() {
     }
 
     currentCronJobs = r.jobs || [];
+
+    if (r.running_job_ids && Array.isArray(r.running_job_ids)) {
+        if (!runningCronJobIds || !(runningCronJobIds instanceof Set)) {
+            runningCronJobIds = new Set();
+        }
+        runningCronJobIds.clear();
+        r.running_job_ids.forEach(id => runningCronJobIds.add(id));
+    }
 
     if (r.cron_jobs_enabled !== undefined && typeof cronJobsEnabled !== 'undefined') {
         cronJobsEnabled = !!r.cron_jobs_enabled;
@@ -191,8 +207,9 @@ function renderCronJobsList() {
     }
 
     currentCronJobs.forEach(job => {
+        const isRunning = typeof runningCronJobIds !== 'undefined' && runningCronJobIds && runningCronJobIds.has(job.id);
         const card = document.createElement('div');
-        card.className = `cron-job-card ${job.enabled ? 'active' : 'paused'}`;
+        card.className = `cron-job-card ${isRunning ? 'running' : (job.enabled ? 'active' : 'paused')}`;
 
         const header = document.createElement('div');
         header.className = 'cron-card-header';
@@ -201,15 +218,20 @@ function renderCronJobsList() {
         titleGroup.className = 'cron-title-group';
 
         const dot = document.createElement('span');
-        dot.className = `status-dot ${job.enabled ? 'dot-active' : 'dot-paused'}`;
+        dot.className = `status-dot ${isRunning ? 'dot-running' : (job.enabled ? 'dot-active' : 'dot-paused')}`;
 
         const nameEl = document.createElement('span');
         nameEl.className = 'cron-name';
         nameEl.textContent = job.name;
 
         const stateBadge = document.createElement('span');
-        stateBadge.className = `job-badge ${job.enabled ? 'badge-active' : 'badge-paused'}`;
-        stateBadge.textContent = job.enabled ? 'Active' : 'Paused';
+        if (isRunning) {
+            stateBadge.className = 'job-badge badge-running';
+            stateBadge.textContent = '⏳ Running...';
+        } else {
+            stateBadge.className = `job-badge ${job.enabled ? 'badge-active' : 'badge-paused'}`;
+            stateBadge.textContent = job.enabled ? 'Active' : 'Paused';
+        }
 
         const silentBadge = document.createElement('span');
         silentBadge.className = 'job-badge badge-muted';
@@ -219,7 +241,15 @@ function renderCronJobsList() {
         modelBadge.className = 'job-badge badge-muted';
         modelBadge.textContent = `Model: ${job.model || 'inherit'}`;
 
-        titleGroup.append(dot, nameEl, stateBadge, silentBadge, modelBadge);
+        const thinkingBadge = document.createElement('span');
+        thinkingBadge.className = 'job-badge badge-muted';
+        thinkingBadge.textContent = `Thinking: ${job.thinking || 'inherit'}`;
+
+        const timeoutBadge = document.createElement('span');
+        timeoutBadge.className = 'job-badge badge-muted';
+        timeoutBadge.textContent = `Timeout: ${job.timeout_secs || 60}s`;
+
+        titleGroup.append(dot, nameEl, stateBadge, silentBadge, modelBadge, thinkingBadge, timeoutBadge);
 
         // Actions
         const actionsGroup = document.createElement('div');
@@ -227,10 +257,15 @@ function renderCronJobsList() {
 
         const runBtn = document.createElement('button');
         runBtn.type = 'button';
-        runBtn.className = 'btn-secondary btn-chip';
+        runBtn.className = `btn-secondary btn-chip ${isRunning ? 'is-running' : ''}`;
         runBtn.dataset.action = 'run-cron-job';
         runBtn.dataset.id = job.id;
-        runBtn.textContent = '▶ Run Now';
+        if (isRunning) {
+            runBtn.disabled = true;
+            runBtn.textContent = '⏳ Running...';
+        } else {
+            runBtn.textContent = '▶ Run Now';
+        }
 
         const logsBtn = document.createElement('button');
         logsBtn.type = 'button';
@@ -341,20 +376,69 @@ globalThis.setCronScheduleType = function setCronScheduleType(type, customVal = 
     }
 };
 
+globalThis.parseDurationSeconds = function parseDurationSeconds(val) {
+    if (typeof val === 'number') return Math.round(val);
+    if (!val) return 60;
+    const s = String(val).trim();
+    if (/^\d+$/.test(s)) return parseInt(s, 10);
+    let totalSecs = 0, totalMs = 0, matched = false;
+    const re = /(\d+(?:\.\d+)?)\s*(ms|s|m|h|d)/gi;
+    let match;
+    while ((match = re.exec(s)) !== null) {
+        matched = true;
+        const num = parseFloat(match[1]);
+        const unit = match[2].toLowerCase();
+        if (unit === 'ms') totalMs += num;
+        else if (unit === 's') totalSecs += num;
+        else if (unit === 'm') totalSecs += num * 60;
+        else if (unit === 'h') totalSecs += num * 3600;
+        else if (unit === 'd') totalSecs += num * 86400;
+    }
+    if (matched) {
+        const total = totalSecs + (totalMs / 1000);
+        return Math.round(total);
+    }
+    const parsed = parseInt(s, 10);
+    return isNaN(parsed) ? 60 : parsed;
+};
+
 globalThis.showCronJobModal = function showCronJobModal(job = null) {
     const modal = document.getElementById('cron-job-modal');
     if (!modal) return;
 
+    const errEl = document.getElementById('cron-job-form-error');
+    if (errEl) {
+        errEl.textContent = '';
+        errEl.classList.add('hidden');
+    }
+
     // Populate model options
     const modelSelect = document.getElementById('cron-job-model');
-    if (modelSelect && typeof models !== 'undefined') {
-        modelSelect.innerHTML = '<option value="">Inherit Note Default</option>';
-        models.forEach(m => {
-            const opt = document.createElement('option');
-            opt.value = m.id;
-            opt.textContent = m.id;
-            modelSelect.appendChild(opt);
+    const modelsList = (typeof availableModels !== 'undefined' && Array.isArray(availableModels))
+        ? availableModels
+        : ((typeof globalThis.availableModels !== 'undefined' && Array.isArray(globalThis.availableModels)) ? globalThis.availableModels : []);
+
+    if (modelSelect) {
+        modelSelect.innerHTML = '';
+        const defaultOpt = document.createElement('option');
+        defaultOpt.value = '';
+        defaultOpt.textContent = 'Inherit Note Default';
+        modelSelect.appendChild(defaultOpt);
+        modelsList.forEach(m => {
+            const mId = typeof m === 'string' ? m : (m.id || '');
+            if (mId) {
+                const opt = document.createElement('option');
+                opt.value = mId;
+                opt.textContent = mId;
+                modelSelect.appendChild(opt);
+            }
         });
+        modelSelect.value = job ? (job.model || '') : '';
+    }
+
+    const thinkingSelect = document.getElementById('cron-job-thinking');
+    if (thinkingSelect) {
+        thinkingSelect.value = job ? (job.thinking || '') : '';
     }
 
     if (job) {
@@ -363,8 +447,11 @@ globalThis.showCronJobModal = function showCronJobModal(job = null) {
         document.getElementById('cron-job-name').value = job.name || '';
         document.getElementById('cron-job-prompt').value = job.prompt || '';
         if (modelSelect) modelSelect.value = job.model || '';
+        if (thinkingSelect) thinkingSelect.value = job.thinking || '';
         document.getElementById('cron-job-silent').checked = !!job.silent_if_no_action;
         document.getElementById('cron-job-enabled').checked = job.enabled !== false;
+        const timeoutInput = document.getElementById('cron-job-timeout');
+        if (timeoutInput) timeoutInput.value = job.timeout_secs ? `${job.timeout_secs}s` : '60s';
         
         setCronScheduleType(job.schedule_type || 'interval', job.schedule_value || (job.schedule_type === 'cron' ? '*/30 * * * *' : '30m'));
     } else {
@@ -373,8 +460,11 @@ globalThis.showCronJobModal = function showCronJobModal(job = null) {
         document.getElementById('cron-job-name').value = '';
         document.getElementById('cron-job-prompt').value = '';
         if (modelSelect) modelSelect.value = '';
+        if (thinkingSelect) thinkingSelect.value = '';
         document.getElementById('cron-job-silent').checked = true;
         document.getElementById('cron-job-enabled').checked = true;
+        const timeoutInput = document.getElementById('cron-job-timeout');
+        if (timeoutInput) timeoutInput.value = '60s';
         
         setCronScheduleType('interval', '30m');
     }
@@ -400,8 +490,10 @@ globalThis.applyCronPreset = function applyCronPreset(presetType) {
             schedule_value: '30m',
             prompt: 'Follow @HEARTBEAT.md to review pending tasks and system health. If no action is needed, reply with "HEARTBEAT_OK".',
             model: null,
+            thinking: null,
             silent_if_no_action: true,
             enabled: true,
+            timeout_secs: 60,
         });
     } else if (presetType === 'memory') {
         showCronJobModal({
@@ -411,8 +503,10 @@ globalThis.applyCronPreset = function applyCronPreset(presetType) {
             schedule_value: '0 0 * * *',
             prompt: 'Summarize highlights and key notes from memory-YYYY-MM-DD.md and distill updates into MEMORY.md.',
             model: null,
+            thinking: null,
             silent_if_no_action: false,
             enabled: true,
+            timeout_secs: 60,
         });
     } else if (presetType === 'weekly') {
         showCronJobModal({
@@ -422,19 +516,35 @@ globalThis.applyCronPreset = function applyCronPreset(presetType) {
             schedule_value: '0 9 * * 1',
             prompt: 'Summarize notes and progress from the past week, and generate a weekly report saved to weekly-report.md.',
             model: null,
+            thinking: null,
             silent_if_no_action: false,
             enabled: true,
+            timeout_secs: 60,
         });
     }
 };
 
+function setCronFormError(msg, focusId = null) {
+    const errEl = document.getElementById('cron-job-form-error');
+    if (errEl) {
+        errEl.textContent = msg;
+        errEl.classList.remove('hidden');
+    } else if (typeof addSystemMessage === 'function') {
+        addSystemMessage('Error: ' + msg);
+    }
+    if (focusId) {
+        const input = document.getElementById(focusId);
+        if (input && typeof input.focus === 'function') input.focus();
+    }
+}
+
 globalThis.saveCronJob = async function saveCronJob() {
     if (!settingsNoteId) return;
 
-    const id = document.getElementById('cron-job-id').value.trim();
-    const name = document.getElementById('cron-job-name').value.trim();
-    const prompt = document.getElementById('cron-job-prompt').value.trim();
-    const schedule_value = document.getElementById('cron-schedule-value').value.trim();
+    const id = (document.getElementById('cron-job-id')?.value || '').trim();
+    const name = (document.getElementById('cron-job-name')?.value || '').trim();
+    const prompt = (document.getElementById('cron-job-prompt')?.value || '').trim();
+    const schedule_value = (document.getElementById('cron-schedule-value')?.value || '').trim();
     
     let schedule_type = 'interval';
     document.getElementsByName('cron-schedule-type').forEach(r => {
@@ -443,19 +553,26 @@ globalThis.saveCronJob = async function saveCronJob() {
 
     const modelSelect = document.getElementById('cron-job-model');
     const model = modelSelect && modelSelect.value ? modelSelect.value : null;
-    const silent_if_no_action = document.getElementById('cron-job-silent').checked;
-    const enabled = document.getElementById('cron-job-enabled').checked;
+    const thinkingSelect = document.getElementById('cron-job-thinking');
+    const thinking = thinkingSelect && thinkingSelect.value ? thinkingSelect.value : null;
+    const silent_if_no_action = !!document.getElementById('cron-job-silent')?.checked;
+    const enabled = document.getElementById('cron-job-enabled') ? document.getElementById('cron-job-enabled').checked : true;
+
+    const timeoutInput = document.getElementById('cron-job-timeout');
+    let timeout_secs = timeoutInput ? parseDurationSeconds(timeoutInput.value) : 60;
+    if (isNaN(timeout_secs) || timeout_secs < 5) timeout_secs = 60;
+    if (timeout_secs > 3600) timeout_secs = 3600;
 
     if (!name) {
-        alert('Please enter a job name.');
+        setCronFormError('Please enter a job name.', 'cron-job-name');
         return;
     }
     if (!prompt) {
-        alert('Please enter an instruction prompt.');
+        setCronFormError('Please enter an instruction prompt.', 'cron-job-prompt');
         return;
     }
     if (!schedule_value) {
-        alert('Please enter a schedule value.');
+        setCronFormError('Please enter a schedule value.', 'cron-schedule-value');
         return;
     }
 
@@ -465,8 +582,10 @@ globalThis.saveCronJob = async function saveCronJob() {
         schedule_value,
         prompt,
         model,
+        thinking,
         silent_if_no_action,
         enabled,
+        timeout_secs,
     };
 
     let r;
@@ -480,7 +599,7 @@ globalThis.saveCronJob = async function saveCronJob() {
         hideCronJobModal();
         loadCronJobs();
     } else {
-        alert('Failed to save scheduled job: ' + ((r && r.error) || 'Unknown error'));
+        setCronFormError('Failed to save scheduled job: ' + ((r && r.error) || 'Unknown error'));
     }
 };
 
@@ -493,13 +612,24 @@ globalThis.editCronJob = function editCronJob(jobId) {
 
 globalThis.runCronJob = async function runCronJob(jobId) {
     if (!settingsNoteId) return;
+    if (typeof runningCronJobIds !== 'undefined' && runningCronJobIds && runningCronJobIds.has(jobId)) {
+        return;
+    }
+    if (typeof runningCronJobIds !== 'undefined' && runningCronJobIds) {
+        runningCronJobIds.add(jobId);
+        renderCronJobsList();
+    }
     const r = await api(`notes/${encodeURIComponent(settingsNoteId)}/jobs/${encodeURIComponent(jobId)}/run`, {}, 'POST');
+    if (typeof runningCronJobIds !== 'undefined' && runningCronJobIds) {
+        runningCronJobIds.delete(jobId);
+    }
     if (r && r.ok) {
-        const result = r.result || {};
-        alert(`Job executed successfully!\nStatus: ${result.status || 'unknown'}\nDuration: ${result.duration_ms || 0}ms\nOutput: ${result.output_snippet || 'None'}`);
         loadCronJobs();
     } else {
-        alert('Failed to run job: ' + ((r && r.error) || 'Unknown error'));
+        if (typeof addSystemMessage === 'function') {
+            addSystemMessage('Failed to run scheduled job: ' + ((r && r.error) || 'Unknown error'));
+        }
+        renderCronJobsList();
     }
 };
 
@@ -508,8 +638,8 @@ globalThis.toggleCronJob = async function toggleCronJob(jobId, enabled) {
     const r = await api(`notes/${encodeURIComponent(settingsNoteId)}/jobs/${encodeURIComponent(jobId)}`, { enabled }, 'PUT');
     if (r && r.ok) {
         loadCronJobs();
-    } else {
-        alert('Failed to toggle job: ' + ((r && r.error) || 'Unknown error'));
+    } else if (typeof addSystemMessage === 'function') {
+        addSystemMessage('Failed to toggle scheduled job: ' + ((r && r.error) || 'Unknown error'));
     }
 };
 
@@ -521,8 +651,8 @@ globalThis.deleteCronJob = async function deleteCronJob(jobId) {
     const r = await api(`notes/${encodeURIComponent(settingsNoteId)}/jobs/${encodeURIComponent(jobId)}`, undefined, 'DELETE');
     if (r && r.ok) {
         loadCronJobs();
-    } else {
-        alert('Failed to delete job: ' + ((r && r.error) || 'Unknown error'));
+    } else if (typeof addSystemMessage === 'function') {
+        addSystemMessage('Failed to delete scheduled job: ' + ((r && r.error) || 'Unknown error'));
     }
 };
 
@@ -568,20 +698,165 @@ globalThis.viewCronLogs = async function viewCronLogs(jobId) {
         `;
     }
 
-    logs.forEach(log => {
+    logs.forEach((log, index) => {
         const tr = document.createElement('tr');
+        tr.className = 'log-row';
+        tr.dataset.action = 'toggle-log-detail';
+        tr.dataset.index = String(index);
+        tr.role = 'button';
+        tr.tabIndex = 0;
+        tr.setAttribute('aria-expanded', 'false');
+        tr.setAttribute('aria-label', `View details for log at ${log.timestamp}`);
+
         const statusClass = log.status === 'silent_ok' ? 'status-silent' : (log.status === 'success' ? 'status-success' : 'status-error');
 
-        tr.innerHTML = `
-            <td>${log.timestamp}</td>
-            <td><span class="trigger-badge">${log.trigger}</span></td>
-            <td><span class="log-status-badge ${statusClass}">${log.status}</span></td>
-            <td>${log.duration_ms}ms</td>
-            <td>${(log.files_modified && log.files_modified.length > 0) ? log.files_modified.join(', ') : '0 files'}</td>
-            <td class="snippet-cell" title="${log.output_snippet || ''}">${log.output_snippet || (log.error ? 'Error: ' + log.error : '—')}</td>
-        `;
+        const expandIcon = document.createElement('span');
+        expandIcon.className = 'log-expand-icon';
+        expandIcon.textContent = '▶';
+
+        const timeTd = document.createElement('td');
+        timeTd.append(expandIcon, ' ' + log.timestamp);
+
+        const triggerTd = document.createElement('td');
+        triggerTd.innerHTML = `<span class="trigger-badge">${log.trigger}</span>`;
+
+        const statusTd = document.createElement('td');
+        statusTd.innerHTML = `<span class="log-status-badge ${statusClass}">${log.status}</span>`;
+
+        const durationTd = document.createElement('td');
+        durationTd.textContent = `${log.duration_ms}ms`;
+
+        const filesTd = document.createElement('td');
+        filesTd.textContent = (log.files_modified && log.files_modified.length > 0) ? log.files_modified.join(', ') : '0 files';
+
+        const snippetTd = document.createElement('td');
+        snippetTd.className = 'snippet-cell';
+        snippetTd.title = log.output_snippet || log.error || '';
+        snippetTd.textContent = log.output_snippet || (log.error ? 'Error: ' + log.error : '—');
+
+        tr.append(timeTd, triggerTd, statusTd, durationTd, filesTd, snippetTd);
         tbody.appendChild(tr);
+
+        // Detail row (hidden by default)
+        const detailTr = document.createElement('tr');
+        detailTr.className = 'log-detail-row hidden';
+        detailTr.id = `log-detail-${index}`;
+
+        const detailTd = document.createElement('td');
+        detailTd.colSpan = 6;
+
+        const detailContent = document.createElement('div');
+        detailContent.className = 'log-detail-content';
+
+        const metaBox = document.createElement('div');
+        metaBox.className = 'log-detail-meta';
+
+        let tokensStr = '—';
+        if (log.tokens_in != null || log.tokens_out != null || log.tokens_used != null) {
+            const tIn = log.tokens_in != null ? `${log.tokens_in} in` : null;
+            const tOut = log.tokens_out != null ? `${log.tokens_out} out` : null;
+            const tTot = log.tokens_used != null ? `${log.tokens_used} total` : null;
+            if (tIn && tOut) {
+                tokensStr = `${tIn} / ${tOut} (${tTot || (log.tokens_in + log.tokens_out) + ' total'})`;
+            } else if (tTot) {
+                tokensStr = tTot;
+            }
+        }
+
+        const toolsStr = (log.tools && log.tools.length > 0) ? log.tools.join(', ') : 'None';
+        const filesStr = (log.files_modified && log.files_modified.length > 0) ? log.files_modified.join(', ') : 'None';
+
+        metaBox.innerHTML = `
+            <div><strong>Timestamp (UTC):</strong> <span>${log.timestamp}</span></div>
+            <div><strong>Trigger Type:</strong> <span>${log.trigger}</span></div>
+            <div><strong>Status:</strong> <span class="log-status-badge ${statusClass}">${log.status}</span></div>
+            <div><strong>Duration:</strong> <span>${log.duration_ms}ms</span></div>
+            <div><strong>Model:</strong> <span>${log.model || '—'}</span></div>
+            <div><strong>Thinking:</strong> <span>${log.thinking || '—'}</span></div>
+            <div><strong>Steps:</strong> <span>${log.steps != null ? log.steps : '—'}</span></div>
+            <div><strong>Tokens:</strong> <span>${tokensStr}</span></div>
+            <div><strong>Tools Used:</strong> <span>${toolsStr}</span></div>
+            <div><strong>Files Modified:</strong> <span>${filesStr}</span></div>
+        `;
+        detailContent.appendChild(metaBox);
+
+        if (log.error) {
+            const errBox = document.createElement('div');
+            errBox.className = 'log-detail-error';
+            const errTitle = document.createElement('strong');
+            errTitle.textContent = 'Error Details:';
+            const errPre = document.createElement('pre');
+            errPre.textContent = log.error;
+            errBox.append(errTitle, errPre);
+            detailContent.appendChild(errBox);
+        }
+
+        const outBox = document.createElement('div');
+        outBox.className = 'log-detail-output';
+
+        const outHeader = document.createElement('div');
+        outHeader.className = 'log-detail-output-header';
+        const outTitle = document.createElement('strong');
+        outTitle.textContent = 'Execution Output / Response:';
+
+        const copyBtn = document.createElement('button');
+        copyBtn.type = 'button';
+        copyBtn.className = 'btn-secondary btn-chip';
+        copyBtn.dataset.action = 'copy-log-output';
+        copyBtn.textContent = '📋 Copy Output';
+
+        outHeader.append(outTitle, copyBtn);
+
+        const outPre = document.createElement('pre');
+        outPre.className = 'log-output-pre';
+        outPre.textContent = log.output_snippet || '(No output recorded)';
+
+        outBox.append(outHeader, outPre);
+        detailContent.appendChild(outBox);
+
+        detailTd.appendChild(detailContent);
+        detailTr.appendChild(detailTd);
+        tbody.appendChild(detailTr);
     });
+};
+
+globalThis.toggleLogDetail = function toggleLogDetail(rowElement) {
+    const tr = rowElement.closest('.log-row');
+    if (!tr) return;
+    const index = tr.dataset.index;
+    const detailRow = document.getElementById(`log-detail-${index}`);
+    if (!detailRow) return;
+
+    const isHidden = detailRow.classList.contains('hidden');
+    detailRow.classList.toggle('hidden', !isHidden);
+    tr.classList.toggle('is-expanded', isHidden);
+    tr.setAttribute('aria-expanded', isHidden ? 'true' : 'false');
+    const icon = tr.querySelector('.log-expand-icon');
+    if (icon) icon.textContent = isHidden ? '▼' : '▶';
+};
+
+globalThis.copyLogOutput = function copyLogOutput(button) {
+    const detailBox = button.closest('.log-detail-output');
+    const pre = detailBox ? detailBox.querySelector('.log-output-pre') : null;
+    const text = pre ? pre.textContent : '';
+    if (!text) return;
+
+    const done = () => {
+        const orig = button.textContent;
+        button.textContent = '✓ Copied!';
+        setTimeout(() => { button.textContent = orig; }, 1500);
+    };
+
+    if (navigator.clipboard && window.isSecureContext) {
+        navigator.clipboard.writeText(text).then(done).catch(() => {
+            if (typeof fallbackCopy === 'function') fallbackCopy(text, done);
+            else done();
+        });
+    } else if (typeof fallbackCopy === 'function') {
+        fallbackCopy(text, done);
+    } else {
+        done();
+    }
 };
 
 globalThis.hideCronLogsModal = function hideCronLogsModal() {
