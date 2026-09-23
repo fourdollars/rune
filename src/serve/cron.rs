@@ -464,7 +464,7 @@ async fn execute_cron_job_inner(
 
     let embedding = crate::serve::api::build_embedding(&agent_cfg).await;
 
-    let mut agent = crate::agent::Agent::new(agent_cfg, provider, false, embedding);
+    let mut agent = crate::agent::Agent::new(agent_cfg, provider, true, embedding);
     agent.set_serve_mode(true);
     agent.set_agent_skills(state.config.notes.agent_skills);
     agent.user_name = Some(format!("cron:{}", job.name));
@@ -752,5 +752,101 @@ mod tests {
         delete_job_logs(&cron_dir, "job_1").await.unwrap();
         let logs_after = read_job_logs(&cron_dir, "job_1", 10).await.unwrap();
         assert_eq!(logs_after.len(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_cron_agent_tool_error_retry() {
+        use crate::agent::Agent;
+        use std::sync::Mutex;
+
+        struct RetryMockProvider {
+            call_count: Mutex<usize>,
+        }
+
+        impl crate::provider::Provider for RetryMockProvider {
+            fn name(&self) -> &str {
+                "retry-mock"
+            }
+            fn chat(
+                &self,
+                request: crate::provider::LlmRequest,
+            ) -> std::pin::Pin<
+                Box<
+                    dyn std::future::Future<Output = anyhow::Result<crate::provider::LlmResponse>>
+                        + Send,
+                >,
+            > {
+                let mut count = self.call_count.lock().unwrap();
+                *count += 1;
+                let step = *count;
+                Box::pin(async move {
+                    if step == 1 {
+                        // First turn: try to read a non-existent file, which produces a tool error
+                        Ok(crate::provider::LlmResponse {
+                            content: None,
+                            tool_calls: vec![crate::provider::LlmToolCall {
+                                id: "call_read_fail".to_string(),
+                                call_type: "function".to_string(),
+                                function: crate::provider::LlmFunction {
+                                    name: "read_markdown".to_string(),
+                                    arguments: r#"{"filename":"non_existent.md"}"#.to_string(),
+                                },
+                            }],
+                            usage: crate::provider::TokenUsage::default(),
+                            model: "retry-mock".to_string(),
+                        })
+                    } else if step == 2 {
+                        // Second turn: check that the previous message contains the tool error and recover
+                        let last_msg = request.messages.last().expect("must have last message");
+                        assert_eq!(last_msg.role, "tool");
+                        let err_content = last_msg.content.as_deref().unwrap_or("");
+                        assert!(
+                            err_content.contains("not found")
+                                || err_content.contains("Error")
+                                || err_content.contains("does not exist")
+                                || err_content.contains("No such file"),
+                            "Unexpected error content: {}",
+                            err_content
+                        );
+
+                        Ok(crate::provider::LlmResponse {
+                            content: Some(
+                                "Recovered from error and completed cron task.".to_string(),
+                            ),
+                            tool_calls: vec![],
+                            usage: crate::provider::TokenUsage::default(),
+                            model: "retry-mock".to_string(),
+                        })
+                    } else {
+                        panic!("Unexpected extra call");
+                    }
+                })
+            }
+        }
+
+        let tmp = TempDir::new().unwrap();
+        let mut config = crate::config::RuneConfig {
+            model: "retry-mock".to_string(),
+            ..Default::default()
+        };
+        config.policy.mode = "unrestricted".to_string();
+
+        let mut registry = crate::provider::ProviderRegistry::new();
+        registry.register(Box::new(RetryMockProvider {
+            call_count: Mutex::new(0),
+        }));
+
+        // Cron Agent with interactive = true
+        let mut agent = Agent::new(config, registry, true, None);
+        agent.markdown_dir = Some(tmp.path().to_path_buf());
+        agent.set_serve_mode(true);
+
+        let result = agent.run("Run periodic check").await;
+        match result {
+            StopReason::FinalAnswer(ans) => {
+                assert_eq!(ans, "Recovered from error and completed cron task.");
+            }
+            other => panic!("Expected FinalAnswer after retry, got {:?}", other),
+        }
     }
 }
