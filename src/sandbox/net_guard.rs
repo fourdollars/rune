@@ -478,6 +478,7 @@ pub fn run() {
         }
 
         let mut status = 0;
+        let mut child_reaped = false;
         let mut pfd = libc::pollfd {
             fd: notif_fd,
             events: libc::POLLIN,
@@ -487,8 +488,10 @@ pub fn run() {
         loop {
             // Check if child has already terminated
             let wp = unsafe { libc::waitpid(pid, &mut status, libc::WNOHANG) };
-            if wp == pid || wp < 0 {
-                // Child has exited
+            if wp == pid {
+                child_reaped = true;
+                break;
+            } else if wp < 0 {
                 break;
             }
 
@@ -633,8 +636,7 @@ pub fn run() {
         }
 
         // Ensure child is reaped if not already
-        let _ = unsafe { libc::waitpid(pid, &mut status, libc::WNOHANG) };
-        if !libc::WIFEXITED(status) && !libc::WIFSIGNALED(status) {
+        if !child_reaped {
             let _ = unsafe { libc::waitpid(pid, &mut status, 0) };
         }
 
