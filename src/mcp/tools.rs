@@ -440,6 +440,10 @@ pub async fn handle_tool_call(
                 .map_err(|e| format!("Failed to create notebook: {}", e))?;
             let md_dir = state.note_markdown_dir(name);
             let _ = tokio::fs::create_dir_all(&md_dir).await;
+            if let Some(parent) = md_dir.parent() {
+                let archive_dir = parent.join("archives");
+                let _ = tokio::fs::create_dir_all(&archive_dir).await;
+            }
 
             crate::serve::api::broadcast_note_list(state).await;
 

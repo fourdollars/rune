@@ -1517,6 +1517,12 @@ groups = ["C99999999"]
     assert_eq!(line1.nickname, "LineBot");
     assert_eq!(line1.channel_secret, "secret123");
     assert_eq!(line1.channel_access_token, "token456");
+    assert!(!line1.log);
+    assert!(!line1.anonymous);
+    assert_eq!(
+        line1.access_denied_message,
+        "⛔ Access denied. User ID: {user_id}"
+    );
     assert_eq!(line1.keywords, vec!["@bot", "rune"]);
     assert_eq!(line1.groups, vec!["C12345678", "C87654321"]);
     assert_eq!(line1.admins, vec!["U12345678", "U_ADMIN_2"]);
@@ -1530,4 +1536,26 @@ groups = ["C99999999"]
     assert_eq!(line2.keywords, vec!["ci", "build"]);
     assert_eq!(line2.groups, vec!["C99999999"]);
     assert!(line2.admins.is_empty());
+}
+
+#[test]
+fn test_line_notes_config_custom_log_and_denied_message() {
+    let toml_str = r#"
+[[notes.line]]
+nickname = "CustomBot"
+channel_secret = "sec"
+channel_access_token = "tok"
+log = true
+anonymous = true
+access_denied_message = "Custom rejection for {user_id}"
+"#;
+
+    let partial: PartialConfig = toml::from_str(toml_str).unwrap();
+    let notes = partial.notes.unwrap();
+    assert_eq!(notes.line.len(), 1);
+    let bot = &notes.line[0];
+    assert_eq!(bot.nickname, "CustomBot");
+    assert!(bot.log);
+    assert!(bot.anonymous);
+    assert_eq!(bot.access_denied_message, "Custom rejection for {user_id}");
 }

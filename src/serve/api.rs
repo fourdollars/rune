@@ -1102,6 +1102,10 @@ pub async fn note_create_handler(
             info!("Note '{}' created", id);
             let md_dir = state.note_markdown_dir(&id);
             let _ = tokio::fs::create_dir_all(&md_dir).await;
+            if let Some(parent) = md_dir.parent() {
+                let archive_dir = parent.join("archives");
+                let _ = tokio::fs::create_dir_all(&archive_dir).await;
+            }
             broadcast_note_list(&state).await;
             Json(ApiResponse::success())
         }
@@ -1374,6 +1378,7 @@ pub async fn archive_handler(
         .parent()
         .unwrap()
         .join("archives");
+    let _ = tokio::fs::create_dir_all(&archive_dir).await;
     let ts = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()

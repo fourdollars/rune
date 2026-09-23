@@ -86,10 +86,17 @@ guests = []
 
 # LINE Bot Webhook & Interactive Chat (`--features line`)
 [[notes.line]]
-nickname = "LineBot" # Unique bot identifier (routes to LineBot-{GROUP/USER ID})
+nickname = "LineBot" # Unique bot identifier (routes to centralized notebook 'LineBot')
 channel_secret = "your_channel_secret_here"
 channel_access_token = "your_channel_access_token_here"
 keywords = ["@bot", "rune"] # Group messages must mention a keyword to trigger AI
+
+# Event logging switches (default false)
+log = false # Enable Markdown event logging (notes/{nickname}/YYYY-MM-DD-line-{id}.md)
+anonymous = false # Enable event logging for anonymous/unregistered sources
+
+# Custom access denied message for 1-on-1 chats ({user_id} replaced at runtime)
+# access_denied_message = "⛔ Access denied. User ID: {user_id}"
 
 # Group allowlist (LINE Group/Room IDs)
 groups = ["C12345678"]

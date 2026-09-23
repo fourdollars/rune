@@ -157,8 +157,12 @@ impl Default for NotesConfig {
     }
 }
 
+fn default_access_denied_message() -> String {
+    "⛔ Access denied. User ID: {user_id}".to_string()
+}
+
 /// Configuration for LINE Bot Webhook integration (`[[notes.line]]`).
-#[derive(Debug, Clone, Deserialize, Default, PartialEq)]
+#[derive(Debug, Clone, Deserialize, PartialEq)]
 pub struct LineNotesConfig {
     /// Unique nickname for the LINE bot (used for notebook routing and endpoint `/webhook/line/{nickname}`).
     #[serde(default)]
@@ -169,6 +173,15 @@ pub struct LineNotesConfig {
     /// LINE Messaging API Channel Access Token (for Reply, Push, and Profile APIs).
     #[serde(default)]
     pub channel_access_token: String,
+    /// Whether to enable Markdown event logging (default: false).
+    #[serde(default)]
+    pub log: bool,
+    /// Whether to log anonymous/unregistered events (default: false).
+    #[serde(default)]
+    pub anonymous: bool,
+    /// Access denied message template for 1-on-1 chats (supports {user_id}).
+    #[serde(default = "default_access_denied_message")]
+    pub access_denied_message: String,
     /// Allowed LINE Group or Room IDs.
     #[serde(default)]
     pub groups: Vec<String>,
@@ -184,6 +197,24 @@ pub struct LineNotesConfig {
     /// LINE User IDs granted guest (read-only) role.
     #[serde(default)]
     pub guests: Vec<String>,
+}
+
+impl Default for LineNotesConfig {
+    fn default() -> Self {
+        Self {
+            nickname: String::new(),
+            channel_secret: String::new(),
+            channel_access_token: String::new(),
+            log: false,
+            anonymous: false,
+            access_denied_message: default_access_denied_message(),
+            groups: Vec::new(),
+            keywords: Vec::new(),
+            admins: Vec::new(),
+            users: Vec::new(),
+            guests: Vec::new(),
+        }
+    }
 }
 
 /// Local credentials configuration for Rune Notes.

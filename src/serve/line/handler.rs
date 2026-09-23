@@ -129,6 +129,7 @@ pub async fn process_webhook_payload(
 }
 
 /// Background processor for LINE Webhook events for a specific bot.
+/// Background processor for LINE Webhook events for a specific bot.
 pub async fn process_webhook_payload_for_bot(
     state: ServerState,
     line_cfg: LineNotesConfig,
@@ -136,6 +137,19 @@ pub async fn process_webhook_payload_for_bot(
     cache: ProfileCache,
 ) {
     let client = LineClient::new(line_cfg.channel_access_token.clone());
+    let note_id = resolve_line_note_id(&line_cfg.nickname);
+
+    // Ensure notebook exists in DB and notify frontend WebUI if newly created
+    let _ = state.chat_db.ensure_persistent();
+    if state.chat_db.create_note(&note_id, &note_id, None).is_ok() {
+        let md_dir = state.note_markdown_dir(&note_id);
+        let _ = tokio::fs::create_dir_all(&md_dir).await;
+        if let Some(parent) = md_dir.parent() {
+            let archive_dir = parent.join("archives");
+            let _ = tokio::fs::create_dir_all(&archive_dir).await;
+        }
+        broadcast_note_list(&state).await;
+    }
 
     for event in payload.events {
         let text = if event.event_type == "message" {
@@ -176,22 +190,10 @@ pub async fn process_webhook_payload_for_bot(
             continue;
         }
 
-        // Group allowlist filtering: if the message originates from a group or room,
-        // the groupId/roomId must be present in `line_cfg.groups`.
         let group_id = event
             .source
             .as_ref()
             .and_then(|s| s.group_id.as_deref().or(s.room_id.as_deref()));
-
-        if let Some(gid) = group_id {
-            if !line_cfg.groups.iter().any(|g| g == gid) {
-                warn!(
-                    "Ignoring LINE event from unauthorized group/room ID: {}",
-                    gid
-                );
-                continue;
-            }
-        }
 
         let user_id = event
             .source
@@ -199,50 +201,16 @@ pub async fn process_webhook_payload_for_bot(
             .and_then(|s| s.user_id.as_deref())
             .unwrap_or("unknown");
 
-        // Role resolution from standard allowlists:
-        // - admins / users: interactive AI chat & commands enabled
-        // - guests: read-only data collection into resolved note, no AI chat / commands
-        // - unregistered (1-on-1): prompt rejection and drop
+        // Role resolution from standard allowlists
         let is_admin = line_cfg.admins.iter().any(|id| id == user_id);
         let is_user = line_cfg.users.iter().any(|id| id == user_id);
         let is_guest = line_cfg.guests.iter().any(|id| id == user_id);
-
-        // 1-on-1 stranger rejection: if not in a group, sender MUST be in admins, users, or guests
-        if group_id.is_none() && !is_admin && !is_user && !is_guest {
-            warn!(
-                "Rejecting LINE 1-on-1 message from unregistered user: {}",
-                user_id
-            );
-            if let Some(ref reply_token) = event.reply_token {
-                let denied_msg = format!(
-                    "⛔ Access denied. Your User ID is `{}`. Please contact an administrator to be added to the allowlist.",
-                    user_id
-                );
-                let _ = client.reply_message(reply_token, &denied_msg).await;
-            }
-            continue;
-        }
-
-        let note_id = resolve_line_note_id(&line_cfg.nickname, group_id, user_id);
-
-        // Group keyword filtering: if from a group and keywords are configured, text must match at least one keyword
-        let mut keyword_matched = true;
-        if group_id.is_some() && !line_cfg.keywords.is_empty() {
-            let lower_text = text.to_lowercase();
-            keyword_matched = line_cfg
-                .keywords
-                .iter()
-                .any(|k| lower_text.contains(&k.to_lowercase()));
-        }
-
-        let interactive_chat = (is_admin || is_user) && keyword_matched;
-
-        // Ensure notebook exists in DB and notify frontend WebUI if newly created
-        if state.chat_db.create_note(&note_id, &note_id, None).is_ok() {
-            let md_dir = state.note_markdown_dir(&note_id);
-            let _ = tokio::fs::create_dir_all(&md_dir).await;
-            broadcast_note_list(&state).await;
-        }
+        let is_in_whitelist = group_id
+            .map(|gid| line_cfg.groups.iter().any(|g| g == gid))
+            .unwrap_or(false)
+            || is_admin
+            || is_user
+            || is_guest;
 
         // Resolve display name via Cache / Profile API
         let display_name = match cache.get(user_id).await {
@@ -273,101 +241,14 @@ pub async fn process_webhook_payload_for_bot(
             user_id,
         );
 
-        // Check if slash command
-        if is_slash_command(&text) {
-            if is_admin || is_user {
-                if let Some(reply_text) =
-                    handle_slash_command(&text, &state, &note_id, user_id, is_admin).await
-                {
-                    if let Some(ref reply_token) = event.reply_token {
-                        if let Err(e) = client.reply_message(reply_token, &reply_text).await {
-                            error!("Failed to reply to LINE slash command: {}", e);
-                        }
-                    }
-                }
-                continue;
-            }
-            // If guest or unregistered in group, fall through to pure data collection mode
-        }
-
-        // Interactive AI Chat
-        if interactive_chat {
-            let reply_token = event.reply_token.clone();
-            let client_clone = client.clone();
-            let state_clone = state.clone();
-            let note_id_clone = note_id.clone();
-            let nickname_clone = nickname.clone();
-            let text_clone = text.clone();
-            let user_id_clone = user_id.to_string();
-
-            tokio::spawn(async move {
-                // Show loading animation in LINE chat
-                if user_id_clone != "unknown" {
-                    let _ = client_clone
-                        .start_loading_animation(&user_id_clone, Some(60))
-                        .await;
-                }
-
-                // Broadcast and persist user message
-                let room = state_clone.get_or_create_room(&note_id_clone).await;
-                let user_msg = SseMsg::ChatMessage {
-                    nickname: nickname_clone.clone(),
-                    content: text_clone.clone(),
-                };
-                broadcast_to_room(&room, &user_msg);
-
-                state_clone
-                    .chat_db
-                    .insert_async(
-                        note_id_clone.clone(),
-                        "user".to_string(),
-                        nickname_clone.clone(),
-                        text_clone.clone(),
-                    )
-                    .await;
-
-                // Send thinking status to room
-                let thinking = SseMsg::Status {
-                    state: "thinking".to_string(),
-                };
-                broadcast_to_room(&room, &thinking);
-
-                // Run Agent & reply
-                execute_line_agent_and_reply(
-                    state_clone,
-                    note_id_clone,
-                    nickname_clone,
-                    text_clone,
-                    reply_token,
-                    client_clone,
-                )
-                .await;
-            });
-        } else {
-            // Line Bot logger mode: persist to Chat DB and prepend (Newest First) to Notebook Markdown file
-            info!("LINE Bot message received for note [{}]: {}", note_id, text);
-            state
-                .chat_db
-                .insert_async(
-                    note_id.clone(),
-                    "user".to_string(),
-                    nickname.clone(),
-                    text.clone(),
-                )
-                .await;
-
-            let room = state.get_or_create_room(&note_id).await;
-            let user_msg = SseMsg::ChatMessage {
-                nickname: nickname.clone(),
-                content: text.clone(),
-            };
-            broadcast_to_room(&room, &user_msg);
-
-            // Prepend to bot markdown report file (Newest First)
+        // 1. Configurable Event Logging (Logging Matrix)
+        let should_log = line_cfg.log && (line_cfg.anonymous || is_in_whitelist);
+        if should_log {
+            let source_id = extract_source_id(&event);
+            let today = chrono_now_date();
+            let filename = format!("{}-line-{}.md", today, source_id);
             let md_dir = state.note_markdown_dir(&note_id);
             let _ = std::fs::create_dir_all(&md_dir);
-            let today = chrono_now_date();
-            let filename = format!("{}-line-webhook-events.md", today);
             let file_path = md_dir.join(&filename);
 
             let now_dt = if event.timestamp > 0 {
@@ -381,7 +262,6 @@ pub async fn process_webhook_payload_for_bot(
                 chrono_now_datetime()
             };
 
-            // Format payload block nicely (pretty print if valid JSON)
             let formatted_payload =
                 if let Ok(val) = serde_json::from_str::<serde_json::Value>(&text) {
                     format!(
@@ -392,11 +272,19 @@ pub async fn process_webhook_payload_for_bot(
                     format!("```\n{}\n```", text)
                 };
 
-            let mut metadata_lines = vec![
-                format!("- **User ID**: `{}`", user_id),
-                format!("- **Event Type**: `{}`", event.event_type),
-            ];
+            let role_str = if is_admin {
+                "admin"
+            } else if is_user {
+                "user"
+            } else if is_guest {
+                "guest"
+            } else {
+                "anonymous"
+            };
+
+            let mut metadata_lines = Vec::new();
             if let Some(ref src) = event.source {
+                metadata_lines.push(format!("- **Source Type**: `{}`", src.source_type));
                 if let Some(ref gid) = src.group_id {
                     metadata_lines.push(format!("- **Group ID**: `{}`", gid));
                 }
@@ -404,6 +292,9 @@ pub async fn process_webhook_payload_for_bot(
                     metadata_lines.push(format!("- **Room ID**: `{}`", rid));
                 }
             }
+            metadata_lines.push(format!("- **User ID**: `{}`", user_id));
+            metadata_lines.push(format!("- **Role**: `{}`", role_str));
+            metadata_lines.push(format!("- **Event Type**: `{}`", event.event_type));
 
             let raw_event_json = serde_json::to_string_pretty(&event).unwrap_or_default();
 
@@ -431,6 +322,7 @@ pub async fn process_webhook_payload_for_bot(
             let _ = atomic_write_file(&file_path, &full_content).await;
 
             // Broadcast updated file content to the note room in real-time
+            let room = state.get_or_create_room(&note_id).await;
             let fc = SseMsg::FileContent {
                 note_id: note_id.clone(),
                 filename: filename.clone(),
@@ -439,6 +331,122 @@ pub async fn process_webhook_payload_for_bot(
             broadcast_to_room(&room, &fc);
             broadcast_file_list(&state, &note_id).await;
         }
+
+        // 2. RBAC & AI Execution Flow (Decoupled from Logging)
+        if let Some(gid) = group_id {
+            // Group / Room flow
+            if !line_cfg.groups.iter().any(|g| g == gid) {
+                debug!(
+                    "Ignoring LINE event from unauthorized group/room ID: {}",
+                    gid
+                );
+                continue;
+            }
+
+            let mut keyword_matched = true;
+            if !line_cfg.keywords.is_empty() {
+                let lower_text = text.to_lowercase();
+                keyword_matched = line_cfg
+                    .keywords
+                    .iter()
+                    .any(|k| lower_text.contains(&k.to_lowercase()));
+            }
+
+            if !keyword_matched {
+                debug!("Group message did not match any keywords, skipping AI response");
+                continue;
+            }
+
+            if !is_admin && !is_user {
+                debug!("Group sender is guest or unregistered, skipping AI response");
+                continue;
+            }
+        } else {
+            // 1-on-1 private chat flow
+            if !is_admin && !is_user && !is_guest {
+                warn!(
+                    "Rejecting LINE 1-on-1 message from unregistered user: {}",
+                    user_id
+                );
+                if let Some(ref reply_token) = event.reply_token {
+                    let denied_msg = line_cfg.access_denied_message.replace("{user_id}", user_id);
+                    let _ = client.reply_message(reply_token, &denied_msg).await;
+                }
+                continue;
+            }
+
+            if is_guest {
+                debug!("1-on-1 sender is guest, skipping AI response");
+                continue;
+            }
+        }
+
+        // Check if slash command
+        if is_slash_command(&text) {
+            if let Some(reply_text) =
+                handle_slash_command(&text, &state, &note_id, user_id, is_admin).await
+            {
+                if let Some(ref reply_token) = event.reply_token {
+                    if let Err(e) = client.reply_message(reply_token, &reply_text).await {
+                        error!("Failed to reply to LINE slash command: {}", e);
+                    }
+                }
+            }
+            continue;
+        }
+
+        // Interactive AI Chat
+        let reply_token = event.reply_token.clone();
+        let client_clone = client.clone();
+        let state_clone = state.clone();
+        let note_id_clone = note_id.clone();
+        let nickname_clone = nickname.clone();
+        let text_clone = text.clone();
+        let user_id_clone = user_id.to_string();
+
+        tokio::spawn(async move {
+            // Show loading animation in LINE chat
+            if user_id_clone != "unknown" {
+                let _ = client_clone
+                    .start_loading_animation(&user_id_clone, Some(60))
+                    .await;
+            }
+
+            // Broadcast and persist user message
+            let room = state_clone.get_or_create_room(&note_id_clone).await;
+            let user_msg = SseMsg::ChatMessage {
+                nickname: nickname_clone.clone(),
+                content: text_clone.clone(),
+            };
+            broadcast_to_room(&room, &user_msg);
+
+            state_clone
+                .chat_db
+                .insert_async(
+                    note_id_clone.clone(),
+                    "user".to_string(),
+                    nickname_clone.clone(),
+                    text_clone.clone(),
+                )
+                .await;
+
+            // Send thinking status to room
+            let thinking = SseMsg::Status {
+                state: "thinking".to_string(),
+            };
+            broadcast_to_room(&room, &thinking);
+
+            // Run Agent & reply
+            execute_line_agent_and_reply(
+                state_clone,
+                note_id_clone,
+                nickname_clone,
+                text_clone,
+                reply_token,
+                client_clone,
+            )
+            .await;
+        });
     }
 }
 
@@ -716,19 +724,32 @@ fn chrono_now_datetime() -> String {
     )
 }
 
-/// Resolve the target Notebook ID for an incoming LINE event based on `nickname`
-/// and the event source (group ID or user ID).
+/// Resolve the target Notebook ID for an incoming LINE bot based on `nickname`.
 ///
-/// - If message has a group/room ID: `{nickname}-{GROUP ID}` (or `{GROUP ID}` if nickname is empty)
-/// - If message is 1-on-1 (user ID): `{nickname}-{USER ID}` (or `{USER ID}` if nickname is empty)
-pub fn resolve_line_note_id(nickname: &str, group_id: Option<&str>, user_id: &str) -> String {
-    let target_id = group_id.unwrap_or(user_id);
+/// Returns `{nickname}` (or `"LineBot"` if nickname is empty/whitespace).
+pub fn resolve_line_note_id(nickname: &str) -> String {
     let trimmed = nickname.trim();
     if trimmed.is_empty() {
-        target_id.to_string()
+        "LineBot".to_string()
     } else {
-        format!("{}-{}", trimmed, target_id)
+        trimmed.to_string()
     }
+}
+
+/// Extracts the source identifier (groupId > roomId > userId > "unknown") from a WebhookEvent.
+pub fn extract_source_id(event: &crate::serve::line::types::WebhookEvent) -> &str {
+    if let Some(ref src) = event.source {
+        if let Some(ref gid) = src.group_id {
+            return gid.as_str();
+        }
+        if let Some(ref rid) = src.room_id {
+            return rid.as_str();
+        }
+        if let Some(ref uid) = src.user_id {
+            return uid.as_str();
+        }
+    }
+    "unknown"
 }
 
 #[cfg(test)]
@@ -754,6 +775,9 @@ mod tests {
                 nickname: "LineBot".to_string(),
                 channel_secret: secret.to_string(),
                 channel_access_token: "test_token".to_string(),
+                log: false,
+                anonymous: false,
+                access_denied_message: "⛔ Access denied. User ID: {user_id}".to_string(),
                 keywords: vec![],
                 groups: vec![],
                 admins: vec!["U12345678".to_string()],
@@ -785,28 +809,51 @@ mod tests {
     }
 
     #[test]
-    fn test_resolve_line_note_id_combinations() {
-        // 1. Nickname provided
-        assert_eq!(
-            resolve_line_note_id("LineBot", Some("C12345678"), "U12345678"),
-            "LineBot-C12345678"
-        );
-        assert_eq!(
-            resolve_line_note_id("LineBot", None, "U12345678"),
-            "LineBot-U12345678"
-        );
-        assert_eq!(
-            resolve_line_note_id(" Team ", Some("C999"), "U111"),
-            "Team-C999"
-        );
+    fn test_resolve_line_note_id() {
+        assert_eq!(resolve_line_note_id("LineBot"), "LineBot");
+        assert_eq!(resolve_line_note_id(" TeamBot "), "TeamBot");
+        assert_eq!(resolve_line_note_id(""), "LineBot");
+        assert_eq!(resolve_line_note_id("   "), "LineBot");
+    }
 
-        // 2. Empty nickname
-        assert_eq!(
-            resolve_line_note_id("", Some("C12345678"), "U12345678"),
-            "C12345678"
-        );
-        assert_eq!(resolve_line_note_id("", None, "U12345678"), "U12345678");
-        assert_eq!(resolve_line_note_id("   ", None, "U12345678"), "U12345678");
+    #[test]
+    fn test_extract_source_id() {
+        use crate::serve::line::types::{EventSource, WebhookEvent};
+
+        let event_group = WebhookEvent {
+            source: Some(EventSource {
+                source_type: "group".to_string(),
+                group_id: Some("C123".to_string()),
+                user_id: Some("U456".to_string()),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        assert_eq!(extract_source_id(&event_group), "C123");
+
+        let event_room = WebhookEvent {
+            source: Some(EventSource {
+                source_type: "room".to_string(),
+                room_id: Some("R789".to_string()),
+                user_id: Some("U456".to_string()),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        assert_eq!(extract_source_id(&event_room), "R789");
+
+        let event_user = WebhookEvent {
+            source: Some(EventSource {
+                source_type: "user".to_string(),
+                user_id: Some("U456".to_string()),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        assert_eq!(extract_source_id(&event_user), "U456");
+
+        let event_none = WebhookEvent::default();
+        assert_eq!(extract_source_id(&event_none), "unknown");
     }
 
     #[tokio::test]
@@ -935,89 +982,165 @@ mod tests {
         // Verify stranger message was NOT stored in DB
         let history = state
             .chat_db
-            .load_recent_async("LineBot-U_STRANGER_999".to_string(), 10)
+            .load_recent_async("LineBot".to_string(), 10)
             .await;
         assert_eq!(history.len(), 0);
+
+        // Verify no log file was created (since log = false by default)
+        let md_dir = state.note_markdown_dir("LineBot");
+        let log_file = md_dir.join(format!("{}-line-U_STRANGER_999.md", chrono_now_date()));
+        assert!(!log_file.exists());
     }
 
     #[tokio::test]
-    async fn test_process_webhook_1on1_guest_collected() {
+    async fn test_process_webhook_logging_matrix() {
         use crate::serve::line::types::{EventMessage, EventSource, WebhookEvent};
 
-        let mut state = create_test_state_with_line("secret123");
-        if let Some(ref mut bot) = state.config.notes.line.first_mut() {
-            bot.guests = vec!["U_GUEST_999".to_string()];
+        let temp_dir = tempfile::tempdir().unwrap();
+
+        // 1. log = false: No files created for any event
+        {
+            let mut state = create_test_state_with_line("secret123");
+            state.data_dir = temp_dir.path().to_path_buf();
+            if let Some(ref mut bot) = state.config.notes.line.first_mut() {
+                bot.log = false;
+                bot.anonymous = false;
+                bot.guests = vec!["U_GUEST_1".to_string()];
+            }
+
+            let payload = WebhookPayload {
+                destination: Some("U_BOT".to_string()),
+                events: vec![WebhookEvent {
+                    event_type: "message".to_string(),
+                    source: Some(EventSource {
+                        source_type: "user".to_string(),
+                        user_id: Some("U_GUEST_1".to_string()),
+                        ..Default::default()
+                    }),
+                    reply_token: Some("tok1".to_string()),
+                    message: Some(EventMessage {
+                        id: "m1".to_string(),
+                        message_type: "text".to_string(),
+                        text: Some("guest data".to_string()),
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                }],
+            };
+
+            process_webhook_payload(state.clone(), payload, ProfileCache::default()).await;
+            let log_file = state
+                .note_markdown_dir("LineBot")
+                .join(format!("{}-line-U_GUEST_1.md", chrono_now_date()));
+            assert!(!log_file.exists(), "log=false should not create log file");
         }
 
-        let payload = WebhookPayload {
-            destination: Some("U_BOT".to_string()),
-            events: vec![WebhookEvent {
-                event_type: "message".to_string(),
-                source: Some(EventSource {
-                    source_type: "user".to_string(),
-                    user_id: Some("U_GUEST_999".to_string()),
-                    ..Default::default()
-                }),
-                reply_token: Some("dummy_token".to_string()),
-                message: Some(EventMessage {
-                    id: "msg_1".to_string(),
-                    message_type: "text".to_string(),
-                    text: Some("Build succeeded with 0 warnings".to_string()),
-                    ..Default::default()
-                }),
-                ..Default::default()
-            }],
-        };
+        // 2. log = true, anonymous = false: Whitelisted generates file, Stranger does not
+        {
+            let mut state = create_test_state_with_line("secret123");
+            state.data_dir = temp_dir.path().to_path_buf();
+            if let Some(ref mut bot) = state.config.notes.line.first_mut() {
+                bot.log = true;
+                bot.anonymous = false;
+                bot.guests = vec!["U_GUEST_2".to_string()];
+            }
 
-        let cache = ProfileCache::default();
-        process_webhook_payload(state.clone(), payload, cache).await;
+            let payload = WebhookPayload {
+                destination: Some("U_BOT".to_string()),
+                events: vec![
+                    WebhookEvent {
+                        event_type: "message".to_string(),
+                        source: Some(EventSource {
+                            source_type: "user".to_string(),
+                            user_id: Some("U_GUEST_2".to_string()),
+                            ..Default::default()
+                        }),
+                        reply_token: Some("tok2".to_string()),
+                        message: Some(EventMessage {
+                            id: "m2".to_string(),
+                            message_type: "text".to_string(),
+                            text: Some("whitelisted guest message".to_string()),
+                            ..Default::default()
+                        }),
+                        ..Default::default()
+                    },
+                    WebhookEvent {
+                        event_type: "message".to_string(),
+                        source: Some(EventSource {
+                            source_type: "user".to_string(),
+                            user_id: Some("U_STRANGER_2".to_string()),
+                            ..Default::default()
+                        }),
+                        reply_token: Some("tok3".to_string()),
+                        message: Some(EventMessage {
+                            id: "m3".to_string(),
+                            message_type: "text".to_string(),
+                            text: Some("stranger message".to_string()),
+                            ..Default::default()
+                        }),
+                        ..Default::default()
+                    },
+                ],
+            };
 
-        // Verify message was stored in "LineBot-U_GUEST_999" for data collection
-        let history = state
-            .chat_db
-            .load_recent_async("LineBot-U_GUEST_999".to_string(), 10)
-            .await;
-        assert_eq!(history.len(), 1);
-        assert_eq!(history[0].content, "Build succeeded with 0 warnings");
-        assert_eq!(history[0].role, "user");
-    }
-
-    #[tokio::test]
-    async fn test_process_webhook_postback_collected() {
-        use crate::serve::line::types::{EventPostback, EventSource, WebhookEvent};
-
-        let mut state = create_test_state_with_line("secret123");
-        if let Some(ref mut bot) = state.config.notes.line.first_mut() {
-            bot.guests = vec!["U_BOT_CLIENT".to_string()];
+            process_webhook_payload(state.clone(), payload, ProfileCache::default()).await;
+            let guest_log = state
+                .note_markdown_dir("LineBot")
+                .join(format!("{}-line-U_GUEST_2.md", chrono_now_date()));
+            let stranger_log = state
+                .note_markdown_dir("LineBot")
+                .join(format!("{}-line-U_STRANGER_2.md", chrono_now_date()));
+            assert!(
+                guest_log.exists(),
+                "whitelisted guest should generate log file"
+            );
+            assert!(
+                !stranger_log.exists(),
+                "stranger should not generate log file when anonymous=false"
+            );
         }
 
-        let payload = WebhookPayload {
-            destination: Some("U_BOT".to_string()),
-            events: vec![WebhookEvent {
-                event_type: "postback".to_string(),
-                source: Some(EventSource {
-                    source_type: "user".to_string(),
-                    user_id: Some("U_BOT_CLIENT".to_string()),
+        // 3. log = true, anonymous = true: Stranger generates log file
+        {
+            let mut state = create_test_state_with_line("secret123");
+            state.data_dir = temp_dir.path().to_path_buf();
+            if let Some(ref mut bot) = state.config.notes.line.first_mut() {
+                bot.log = true;
+                bot.anonymous = true;
+            }
+
+            let payload = WebhookPayload {
+                destination: Some("U_BOT".to_string()),
+                events: vec![WebhookEvent {
+                    event_type: "message".to_string(),
+                    source: Some(EventSource {
+                        source_type: "user".to_string(),
+                        user_id: Some("U_STRANGER_ANON".to_string()),
+                        ..Default::default()
+                    }),
+                    reply_token: Some("tok4".to_string()),
+                    message: Some(EventMessage {
+                        id: "m4".to_string(),
+                        message_type: "text".to_string(),
+                        text: Some("stranger anonymous message".to_string()),
+                        ..Default::default()
+                    }),
                     ..Default::default()
-                }),
-                reply_token: Some("dummy_token".to_string()),
-                postback: Some(EventPostback {
-                    data: r#"{"action":"ci_result","status":"passed"}"#.to_string(),
-                    params: None,
-                }),
-                ..Default::default()
-            }],
-        };
+                }],
+            };
 
-        let cache = ProfileCache::default();
-        process_webhook_payload(state.clone(), payload, cache).await;
-
-        let history = state
-            .chat_db
-            .load_recent_async("LineBot-U_BOT_CLIENT".to_string(), 10)
-            .await;
-        assert_eq!(history.len(), 1);
-        assert!(history[0].content.contains(r#"{"action":"ci_result""#));
+            process_webhook_payload(state.clone(), payload, ProfileCache::default()).await;
+            let stranger_log = state
+                .note_markdown_dir("LineBot")
+                .join(format!("{}-line-U_STRANGER_ANON.md", chrono_now_date()));
+            assert!(
+                stranger_log.exists(),
+                "stranger should generate log file when anonymous=true"
+            );
+            let content = std::fs::read_to_string(&stranger_log).unwrap();
+            assert!(content.contains("- **Role**: `anonymous`"));
+            assert!(content.contains("stranger anonymous message"));
+        }
     }
 
     #[test]
@@ -1039,12 +1162,15 @@ mod tests {
     async fn test_process_webhook_broadcasts_file_content_and_file_list() {
         use crate::serve::line::types::{EventMessage, EventSource, WebhookEvent};
 
+        let temp_dir = tempfile::tempdir().unwrap();
         let mut state = create_test_state_with_line("secret123");
+        state.data_dir = temp_dir.path().to_path_buf();
         if let Some(ref mut bot) = state.config.notes.line.first_mut() {
+            bot.log = true;
             bot.guests = vec!["U_GUEST_123".to_string()];
         }
 
-        let room = state.get_or_create_room("LineBot-U_GUEST_123").await;
+        let room = state.get_or_create_room("LineBot").await;
         let mut rx = room.broadcast_tx.subscribe();
 
         let payload = WebhookPayload {
@@ -1075,12 +1201,7 @@ mod tests {
             received_messages.push(msg_str);
         }
 
-        // Check that ChatMessage, FileContent, and FileList were all broadcast to the room
-        assert!(
-            received_messages.iter().any(|m| m.contains("chat_message")),
-            "Expected chat_message broadcast, got: {:?}",
-            received_messages
-        );
+        // Check that FileContent and FileList were broadcast to the centralized room
         assert!(
             received_messages.iter().any(|m| m.contains("file_content")),
             "Expected file_content broadcast, got: {:?}",
@@ -1097,14 +1218,17 @@ mod tests {
     async fn test_process_webhook_group_allowlist_and_keywords_filtering() {
         use crate::serve::line::types::{EventMessage, EventSource, WebhookEvent};
 
+        let temp_dir = tempfile::tempdir().unwrap();
         let mut state = create_test_state_with_line("secret123");
+        state.data_dir = temp_dir.path().to_path_buf();
         if let Some(ref mut line_cfg) = state.config.notes.line.first_mut() {
+            line_cfg.log = true;
             line_cfg.groups = vec!["C_ALLOWED_GROUP".to_string()];
             line_cfg.keywords = vec!["@bot".to_string(), "rune".to_string()];
             line_cfg.admins = vec!["U_ADMIN_USER".to_string()];
         }
 
-        // 1. Event from unauthorized group
+        // 1. Event from unauthorized group (with anonymous = false) -> no log file and no chat DB
         let unauthorized_payload = WebhookPayload {
             destination: Some("U_BOT".to_string()),
             events: vec![WebhookEvent {
@@ -1112,7 +1236,7 @@ mod tests {
                 source: Some(EventSource {
                     source_type: "group".to_string(),
                     group_id: Some("C_BLOCKED_GROUP".to_string()),
-                    user_id: Some("U_ADMIN_USER".to_string()),
+                    user_id: Some("U_UNKNOWN".to_string()),
                     ..Default::default()
                 }),
                 reply_token: Some("token1".to_string()),
@@ -1129,13 +1253,12 @@ mod tests {
         let cache = ProfileCache::default();
         process_webhook_payload(state.clone(), unauthorized_payload, cache.clone()).await;
 
-        let history = state
-            .chat_db
-            .load_recent_async("LineBot-C_ALLOWED_GROUP".to_string(), 10)
-            .await;
-        assert_eq!(history.len(), 0, "Blocked group should not be recorded");
+        let blocked_log = state
+            .note_markdown_dir("LineBot")
+            .join(format!("{}-line-C_BLOCKED_GROUP.md", chrono_now_date()));
+        assert!(!blocked_log.exists());
 
-        // 2. Event from authorized group without keywords -> recorded as data collection (no AI chat)
+        // 2. Event from authorized group without keywords -> logged to file, but no AI chat DB
         let unkeyworded_payload = WebhookPayload {
             destination: Some("U_BOT".to_string()),
             events: vec![WebhookEvent {
@@ -1159,20 +1282,23 @@ mod tests {
 
         process_webhook_payload(state.clone(), unkeyworded_payload, cache.clone()).await;
 
-        let history = state
-            .chat_db
-            .load_recent_async("LineBot-C_ALLOWED_GROUP".to_string(), 10)
-            .await;
-        assert_eq!(history.len(), 1, "Unkeyworded group chat should be logged");
-        assert_eq!(history[0].content, "Casual group chat without keyword");
+        let allowed_log = state
+            .note_markdown_dir("LineBot")
+            .join(format!("{}-line-C_ALLOWED_GROUP.md", chrono_now_date()));
+        assert!(allowed_log.exists());
+        let content = std::fs::read_to_string(&allowed_log).unwrap();
+        assert!(content.contains("Casual group chat without keyword"));
     }
 
     #[tokio::test]
     async fn test_process_webhook_data_collection_prepend_order() {
         use crate::serve::line::types::{EventMessage, EventSource, WebhookEvent};
 
+        let temp_dir = tempfile::tempdir().unwrap();
         let mut state = create_test_state_with_line("secret123");
+        state.data_dir = temp_dir.path().to_path_buf();
         if let Some(ref mut line_cfg) = state.config.notes.line.first_mut() {
+            line_cfg.log = true;
             line_cfg.groups = vec!["C_GROUP_ORDER".to_string()];
         }
 
@@ -1224,9 +1350,9 @@ mod tests {
         process_webhook_payload(state.clone(), payload_1, cache.clone()).await;
         process_webhook_payload(state.clone(), payload_2, cache.clone()).await;
 
-        let md_dir = state.note_markdown_dir("LineBot-C_GROUP_ORDER");
+        let md_dir = state.note_markdown_dir("LineBot");
         let today = chrono_now_date();
-        let filename = format!("{}-line-webhook-events.md", today);
+        let filename = format!("{}-line-C_GROUP_ORDER.md", today);
         let file_path = md_dir.join(&filename);
 
         let content = std::fs::read_to_string(&file_path).unwrap();
@@ -1238,5 +1364,52 @@ mod tests {
             pos_second < pos_first,
             "Newer event should be prepended before older event in markdown file"
         );
+    }
+
+    #[tokio::test]
+    async fn test_process_webhook_custom_access_denied_message() {
+        use crate::serve::line::types::{EventMessage, EventSource, WebhookEvent};
+
+        let mut state = create_test_state_with_line("secret123");
+        if let Some(ref mut bot) = state.config.notes.line.first_mut() {
+            bot.access_denied_message = "Sorry {user_id}, you do not have permission.".to_string();
+        }
+
+        let denied_msg = state.config.notes.line[0]
+            .access_denied_message
+            .replace("{user_id}", "U_STRANGER_123");
+        assert_eq!(
+            denied_msg,
+            "Sorry U_STRANGER_123, you do not have permission."
+        );
+
+        let payload = WebhookPayload {
+            destination: Some("U_BOT".to_string()),
+            events: vec![WebhookEvent {
+                event_type: "message".to_string(),
+                source: Some(EventSource {
+                    source_type: "user".to_string(),
+                    user_id: Some("U_STRANGER_123".to_string()),
+                    ..Default::default()
+                }),
+                reply_token: Some("dummy_token".to_string()),
+                message: Some(EventMessage {
+                    id: "msg_custom_denied".to_string(),
+                    message_type: "text".to_string(),
+                    text: Some("hi".to_string()),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }],
+        };
+
+        let cache = ProfileCache::default();
+        process_webhook_payload(state.clone(), payload, cache).await;
+
+        let history = state
+            .chat_db
+            .load_recent_async("LineBot".to_string(), 10)
+            .await;
+        assert_eq!(history.len(), 0);
     }
 }

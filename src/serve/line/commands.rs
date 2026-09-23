@@ -202,6 +202,7 @@ pub async fn format_archive_command(state: &ServerState, note_id: &str) -> Strin
         .parent()
         .unwrap()
         .join("archives");
+    let _ = tokio::fs::create_dir_all(&archive_dir).await;
     let ts = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()

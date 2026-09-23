@@ -1061,6 +1061,10 @@ impl ChatDb {
             return Ok(0);
         }
 
+        if let Some(parent) = archive_path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+
         // Open archive file in append mode
         let mut file = std::fs::OpenOptions::new()
             .create(true)
