@@ -328,18 +328,18 @@ globalThis.setCronScheduleType = function setCronScheduleType(type, customVal = 
     if (type === 'cron') {
         if (chipsContainer) chipsContainer.style.display = 'none';
         if (input) {
-            input.placeholder = 'e.g. */30 * * * * or 0 9 * * 1';
+            input.placeholder = 'e.g. 0 0 * * 1-5 or 0 9 * * 1';
             if (customVal !== null && customVal !== undefined) {
                 input.value = customVal;
             } else {
                 const curr = input.value.trim();
                 if (!curr || /^\d+[smhd]$/i.test(curr)) {
                     if (curr === '15m') input.value = '*/15 * * * *';
-                    else if (curr === '30m') input.value = '*/30 * * * *';
+                    else if (curr === '30m') input.value = '0 0 * * 1-5';
                     else if (curr === '1h') input.value = '0 * * * *';
                     else if (curr === '6h') input.value = '0 */6 * * *';
                     else if (curr === '1d') input.value = '0 0 * * *';
-                    else input.value = '*/30 * * * *';
+                    else input.value = '0 0 * * 1-5';
                 }
             }
         }
@@ -356,7 +356,7 @@ globalThis.setCronScheduleType = function setCronScheduleType(type, customVal = 
                     targetVal = curr;
                 } else if (curr === '*/15 * * * *') {
                     targetVal = '15m';
-                } else if (curr === '*/30 * * * *') {
+                } else if (curr === '*/30 * * * *' || curr === '0 0 * * 1-5') {
                     targetVal = '30m';
                 } else if (curr === '0 * * * *') {
                     targetVal = '1h';
@@ -453,7 +453,7 @@ globalThis.showCronJobModal = function showCronJobModal(job = null) {
         const timeoutInput = document.getElementById('cron-job-timeout');
         if (timeoutInput) timeoutInput.value = job.timeout_secs ? `${job.timeout_secs}s` : '60s';
         
-        setCronScheduleType(job.schedule_type || 'interval', job.schedule_value || (job.schedule_type === 'cron' ? '*/30 * * * *' : '30m'));
+        setCronScheduleType(job.schedule_type || 'interval', job.schedule_value || (job.schedule_type === 'cron' ? '0 0 * * 1-5' : '30m'));
     } else {
         document.getElementById('cron-job-modal-title').textContent = 'New Scheduled Job';
         document.getElementById('cron-job-id').value = '';

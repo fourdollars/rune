@@ -783,8 +783,8 @@ async function runTests() {
     sandbox.setCronScheduleType('cron');
     assert.strictEqual(cronRadio.checked, true);
     assert.strictEqual(intervalChipsContainer.style.display, 'none', 'Interval chips must disappear when Cron Syntax is selected');
-    assert.strictEqual(valueInput.value, '*/30 * * * *', 'Schedule value should have a cron template');
-    assert.ok(valueInput.placeholder.includes('* * * *'), 'Placeholder should indicate cron expression format');
+    assert.strictEqual(valueInput.value, '0 0 * * 1-5', 'Schedule value should have a cron template');
+    assert.ok(valueInput.placeholder.includes('* * *') || valueInput.placeholder.includes('0 0 * * 1-5'), 'Placeholder should indicate cron expression format');
 
     // User switches back to Interval
     sandbox.setCronScheduleType('interval');
