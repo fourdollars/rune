@@ -5,7 +5,7 @@ use crate::provider::{
     ContentPart, LlmMessage, LlmRequest, LlmResponse, LlmToolCall, ProviderRegistry,
 };
 use crate::skills::SkillLoader;
-use crate::tools::ToolRegistry;
+use crate::tools::{ToolOutput, ToolRegistry};
 use crate::trace::{redact, StepKind, TraceWriter};
 use anyhow::Result;
 use colored::Colorize;
@@ -1232,10 +1232,10 @@ impl Agent {
                     }
                 }
 
-                // Parallel dispatch via ToolRegistry (which only needs &self)
+                // Parallel dispatch via unified backend
                 let futs: Vec<_> = dispatch_list
                     .iter()
-                    .map(|(_id, name, args)| self.tools.execute(name, args.clone()))
+                    .map(|(_id, name, args)| self.execute_tool_backend(name, args))
                     .collect();
                 let results = futures::future::join_all(futs).await;
 
@@ -1572,12 +1572,30 @@ impl Agent {
     async fn handle_markdown_tool(&self, name: &str, args: &serde_json::Value) -> Option<String> {
         let md_dir = self.markdown_dir.as_ref()?;
 
+        if name != "list_markdown" && name != "read_markdown" && name != "write_markdown" {
+            return None;
+        }
+
         // Reject 'path' or other path-based parameter names immediately
         if args.get("path").is_some() {
             return Some(format!(
                 "Error: {} only accepts 'filename' (bare .md filename without any path prefix, e.g. 'notes.md'). Do not use 'path'.",
                 name
             ));
+        }
+
+        if name == "list_markdown" {
+            let mut names = Vec::new();
+            if let Ok(mut rd) = tokio::fs::read_dir(md_dir).await {
+                while let Ok(Some(entry)) = rd.next_entry().await {
+                    let n = entry.file_name().to_string_lossy().to_string();
+                    if n.ends_with(".md") {
+                        names.push(n);
+                    }
+                }
+            }
+            names.sort();
+            return Some(format!("Files: {}", names.join(", ")));
         }
 
         // Resolve filename: use 'filename' arg if provided, else first .md file in notebook
@@ -1622,19 +1640,6 @@ impl Agent {
         };
 
         match name {
-            "list_markdown" => {
-                let mut names = Vec::new();
-                if let Ok(mut rd) = tokio::fs::read_dir(md_dir).await {
-                    while let Ok(Some(entry)) = rd.next_entry().await {
-                        let n = entry.file_name().to_string_lossy().to_string();
-                        if n.ends_with(".md") {
-                            names.push(n);
-                        }
-                    }
-                }
-                names.sort();
-                Some(format!("Files: {}", names.join(", ")))
-            }
             "read_markdown" => {
                 let file_path = md_dir.join(&fname);
                 match tokio::fs::read_to_string(&file_path).await {
@@ -1716,6 +1721,68 @@ impl Agent {
             .map(|(i, _)| i)
             .unwrap_or(s.len());
         format!("{}...{}", &s[..prefix_end], &s[suffix_start..])
+    }
+
+    /// Low-level tool execution handling serve-mode dynamic tools, built-in tools, and MCP tools.
+    async fn execute_tool_backend(&self, name: &str, args: &serde_json::Value) -> ToolOutput {
+        // Intercept markdown tools (list_markdown / read_markdown / write_markdown) for serve mode
+        if let Some(spec_output) = self.handle_markdown_tool(name, args).await {
+            let is_error = spec_output.starts_with("Error:") || spec_output.starts_with("Error ");
+            return ToolOutput {
+                content: self.unmap_path_from_worktree(&spec_output),
+                is_error,
+                active_layers: None,
+                degraded: None,
+            };
+        }
+
+        // Intercept search_chat tool for serve mode
+        if name == "search_chat" {
+            if let Some(output) = self.handle_search_chat_tool(args).await {
+                let is_error = output.starts_with("Error:") || output.starts_with("Error ");
+                return ToolOutput {
+                    content: self.unmap_path_from_worktree(&output),
+                    is_error,
+                    active_layers: None,
+                    degraded: None,
+                };
+            }
+        }
+
+        let mut output = self.tools.execute(name, args.clone()).await;
+        output.content = self.unmap_path_from_worktree(&output.content);
+
+        // If built-in tools don't know this tool, try MCP
+        if output.is_error && output.content.starts_with("unknown tool:") {
+            if let Some(ref mcp) = self.mcp_manager {
+                let mut mgr = mcp.lock().await;
+                match mgr.call_tool(name, args.clone()).await {
+                    Ok(result) => {
+                        let text = if let Some(s) = result.as_str() {
+                            s.to_string()
+                        } else {
+                            serde_json::to_string_pretty(&result).unwrap_or_default()
+                        };
+                        output = ToolOutput {
+                            content: self.unmap_path_from_worktree(&text),
+                            is_error: false,
+                            active_layers: None,
+                            degraded: None,
+                        };
+                    }
+                    Err(e) => {
+                        output = ToolOutput {
+                            content: format!("MCP tool error: {}", e),
+                            is_error: true,
+                            active_layers: None,
+                            degraded: None,
+                        };
+                    }
+                }
+            }
+        }
+
+        output
     }
 
     /// Execute a single tool call.
@@ -1830,56 +1897,9 @@ impl Agent {
             }
         }
 
-        // Intercept markdown tools (list_markdown / read_markdown / write_markdown) for serve mode
-        if let Some(spec_output) = self.handle_markdown_tool(&tc.function.name, &args).await {
-            return Ok(spec_output);
-        }
-
-        // Intercept search_chat tool for serve mode
-        if tc.function.name == "search_chat" {
-            if let Some(output) = self.handle_search_chat_tool(&args).await {
-                return Ok(output);
-            }
-        }
-
         let mut output = self
-            .tools
-            .execute(&tc_mapped.function.name, mapped_args.clone())
+            .execute_tool_backend(&tc_mapped.function.name, &mapped_args)
             .await;
-        output.content = self.unmap_path_from_worktree(&output.content);
-
-        // If built-in tools don't know this tool, try MCP
-        if output.is_error && output.content.starts_with("unknown tool:") {
-            if let Some(ref mcp) = self.mcp_manager {
-                let mut mgr = mcp.lock().await;
-                match mgr
-                    .call_tool(&tc_mapped.function.name, mapped_args.clone())
-                    .await
-                {
-                    Ok(result) => {
-                        let text = if let Some(s) = result.as_str() {
-                            s.to_string()
-                        } else {
-                            serde_json::to_string_pretty(&result).unwrap_or_default()
-                        };
-                        output = crate::tools::ToolOutput {
-                            content: self.unmap_path_from_worktree(&text),
-                            is_error: false,
-                            active_layers: None,
-                            degraded: None,
-                        };
-                    }
-                    Err(e) => {
-                        output = crate::tools::ToolOutput {
-                            content: format!("MCP tool error: {}", e),
-                            is_error: true,
-                            active_layers: None,
-                            degraded: None,
-                        };
-                    }
-                }
-            }
-        }
 
         loop {
             if !output.is_error {
@@ -5031,6 +5051,219 @@ read(3, "root:x:0:0:...", 4096) = 1234"#;
             recorded
         );
         assert_eq!(ends.len(), 2, "Expected 2 end events, got: {:?}", recorded);
+    }
+
+    #[tokio::test]
+    async fn test_parallel_tool_dispatch_with_serve_markdown_tools() {
+        use std::sync::{Arc, Mutex};
+
+        let temp_dir = tempfile::tempdir().unwrap();
+        let md_path = temp_dir.path().join("doc.md");
+        tokio::fs::write(&md_path, "# Hello Parallel Notes\n")
+            .await
+            .unwrap();
+
+        struct ParallelServeProvider {
+            call_count: Mutex<u32>,
+        }
+        impl crate::provider::Provider for ParallelServeProvider {
+            fn name(&self) -> &str {
+                "parallel-serve-mock"
+            }
+            fn chat(
+                &self,
+                _request: crate::provider::LlmRequest,
+            ) -> std::pin::Pin<
+                Box<
+                    dyn std::future::Future<Output = anyhow::Result<crate::provider::LlmResponse>>
+                        + Send
+                        + '_,
+                >,
+            > {
+                Box::pin(async move {
+                    let mut count = self.call_count.lock().unwrap();
+                    *count += 1;
+                    if *count == 1 {
+                        Ok(crate::provider::LlmResponse {
+                            content: None,
+                            tool_calls: vec![
+                                crate::provider::LlmToolCall {
+                                    id: "call_list".to_string(),
+                                    call_type: "function".to_string(),
+                                    function: crate::provider::LlmFunction {
+                                        name: "list_markdown".to_string(),
+                                        arguments: "{}".to_string(),
+                                    },
+                                },
+                                crate::provider::LlmToolCall {
+                                    id: "call_read".to_string(),
+                                    call_type: "function".to_string(),
+                                    function: crate::provider::LlmFunction {
+                                        name: "read_markdown".to_string(),
+                                        arguments: r#"{"filename":"doc.md"}"#.to_string(),
+                                    },
+                                },
+                                crate::provider::LlmToolCall {
+                                    id: "call_cmd".to_string(),
+                                    call_type: "function".to_string(),
+                                    function: crate::provider::LlmFunction {
+                                        name: "execute_cmd".to_string(),
+                                        arguments: r#"{"cmd":"echo parallel_ok"}"#.to_string(),
+                                    },
+                                },
+                            ],
+                            usage: crate::provider::TokenUsage::default(),
+                            model: "mock".to_string(),
+                        })
+                    } else {
+                        Ok(crate::provider::LlmResponse {
+                            content: Some(
+                                "Parallel serve tools executed successfully.".to_string(),
+                            ),
+                            tool_calls: vec![],
+                            usage: crate::provider::TokenUsage::default(),
+                            model: "mock".to_string(),
+                        })
+                    }
+                })
+            }
+        }
+
+        let mut config = crate::config::RuneConfig {
+            model: "parallel-serve-mock".to_string(),
+            ..Default::default()
+        };
+        config.policy.mode = "unrestricted".to_string();
+
+        let mut registry = crate::provider::ProviderRegistry::new();
+        registry.register(Box::new(ParallelServeProvider {
+            call_count: Mutex::new(0),
+        }));
+        // Run in non-interactive mode (interactive = false), just like Cron jobs
+        let mut agent = Agent::new(config, registry, false, None);
+        agent.markdown_dir = Some(temp_dir.path().to_path_buf());
+        agent.set_serve_mode(true);
+        agent.set_agent_skills(true);
+
+        let result = agent.run("List notes, read doc.md, and run echo").await;
+
+        match result {
+            StopReason::FinalAnswer(ans) => {
+                assert_eq!(ans, "Parallel serve tools executed successfully.");
+            }
+            other => panic!("Expected FinalAnswer, got {:?}", other),
+        }
+
+        // Verify tool response messages
+        let tool_messages: Vec<_> = agent.messages.iter().filter(|m| m.role == "tool").collect();
+        assert_eq!(tool_messages.len(), 3);
+        assert!(tool_messages[0]
+            .content
+            .as_ref()
+            .unwrap()
+            .contains("Files: doc.md"));
+        assert!(tool_messages[1]
+            .content
+            .as_ref()
+            .unwrap()
+            .contains("# Hello Parallel Notes"));
+        assert!(tool_messages[2]
+            .content
+            .as_ref()
+            .unwrap()
+            .contains("parallel_ok"));
+    }
+
+    #[tokio::test]
+    async fn test_parallel_tool_dispatch_with_write_markdown() {
+        use std::sync::{Arc, Mutex};
+
+        let temp_dir = tempfile::tempdir().unwrap();
+
+        struct ParallelWriteProvider {
+            call_count: Mutex<u32>,
+        }
+        impl crate::provider::Provider for ParallelWriteProvider {
+            fn name(&self) -> &str {
+                "parallel-write-mock"
+            }
+            fn chat(
+                &self,
+                _request: crate::provider::LlmRequest,
+            ) -> std::pin::Pin<
+                Box<
+                    dyn std::future::Future<Output = anyhow::Result<crate::provider::LlmResponse>>
+                        + Send
+                        + '_,
+                >,
+            > {
+                Box::pin(async move {
+                    let mut count = self.call_count.lock().unwrap();
+                    *count += 1;
+                    if *count == 1 {
+                        Ok(crate::provider::LlmResponse {
+                            content: None,
+                            tool_calls: vec![
+                                crate::provider::LlmToolCall {
+                                    id: "call_write".to_string(),
+                                    call_type: "function".to_string(),
+                                    function: crate::provider::LlmFunction {
+                                        name: "write_markdown".to_string(),
+                                        arguments: r##"{"filename":"new_note.md","content":"# New Note Content"}"##.to_string(),
+                                    },
+                                },
+                                crate::provider::LlmToolCall {
+                                    id: "call_list".to_string(),
+                                    call_type: "function".to_string(),
+                                    function: crate::provider::LlmFunction {
+                                        name: "list_markdown".to_string(),
+                                        arguments: "{}".to_string(),
+                                    },
+                                },
+                            ],
+                            usage: crate::provider::TokenUsage::default(),
+                            model: "mock".to_string(),
+                        })
+                    } else {
+                        Ok(crate::provider::LlmResponse {
+                            content: Some("Write and list done.".to_string()),
+                            tool_calls: vec![],
+                            usage: crate::provider::TokenUsage::default(),
+                            model: "mock".to_string(),
+                        })
+                    }
+                })
+            }
+        }
+
+        let mut config = crate::config::RuneConfig {
+            model: "parallel-write-mock".to_string(),
+            ..Default::default()
+        };
+        config.policy.mode = "unrestricted".to_string();
+
+        let mut registry = crate::provider::ProviderRegistry::new();
+        registry.register(Box::new(ParallelWriteProvider {
+            call_count: Mutex::new(0),
+        }));
+
+        let mut agent = Agent::new(config, registry, false, None);
+        agent.markdown_dir = Some(temp_dir.path().to_path_buf());
+        agent.set_serve_mode(true);
+
+        let result = agent.run("Write note and list").await;
+
+        match result {
+            StopReason::FinalAnswer(ans) => {
+                assert_eq!(ans, "Write and list done.");
+            }
+            other => panic!("Expected FinalAnswer, got {:?}", other),
+        }
+
+        let written_content = tokio::fs::read_to_string(temp_dir.path().join("new_note.md"))
+            .await
+            .unwrap();
+        assert_eq!(written_content, "# New Note Content");
     }
 
     #[test]
