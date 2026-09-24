@@ -6,7 +6,8 @@ globalThis.hideArchiveDialog = function hideArchiveDialog() {
     document.getElementById('archive-modal').classList.add('hidden');
 };
 globalThis.confirmArchive = function confirmArchive() {
-    api('chat/archive', { note_id: currentNoteId });
+    const sessId = typeof currentSessionId !== 'undefined' && currentSessionId ? currentSessionId : 'main';
+    api('chat/archive', { note_id: currentNoteId, session_id: sessId });
 }
 
 // --- Search ---
@@ -40,7 +41,7 @@ globalThis.renderSearchResults = function renderSearchResults(query, results) {
     count.textContent = `${results.length} result(s)`;
     el.appendChild(count);
     results.forEach((r, i) => {
-        const ts = new Date(r.created_at * 1000).toLocaleString('zh-TW');
+        const ts = (typeof fmtTime === 'function') ? fmtTime(r.created_at || null) : new Date(r.created_at * 1000).toLocaleString();
         const item = document.createElement('div');
         item.className = 'search-item';
         const meta = document.createElement('div');
@@ -49,12 +50,13 @@ globalThis.renderSearchResults = function renderSearchResults(query, results) {
         role.className = 'search-role';
         role.appendChild(runeIcon(r.role === 'assistant' ? 'bot' : 'user'));
         role.title = r.role === 'assistant' ? 'Assistant' : 'User';
-        meta.append(role);
         const name = document.createElement('strong');
         name.textContent = r.nickname;
         const time = document.createElement('span');
         time.className = 'search-time';
         time.textContent = ts;
+        meta.append(role, name, time);
+
         const copy = document.createElement('button');
         copy.type = 'button';
         copy.className = 'search-copy-btn';
@@ -63,7 +65,20 @@ globalThis.renderSearchResults = function renderSearchResults(query, results) {
         copy.appendChild(runeIcon('copy'));
         copy.dataset.action = 'copy-search';
         copy.dataset.content = r.content;
-        meta.append(name, time, copy);
+        meta.append(copy);
+
+        if (r.archive_file) {
+            const restore = document.createElement('button');
+            restore.type = 'button';
+            restore.className = 'search-copy-btn search-restore-btn';
+            restore.title = `Restore conversation session (${r.archive_file})`;
+            restore.setAttribute('aria-label', restore.title);
+            restore.appendChild(runeIcon('rotate-ccw'));
+            restore.dataset.action = 'restore-search';
+            restore.dataset.archiveFile = r.archive_file;
+            meta.append(restore);
+        }
+
         const content = document.createElement('div');
         content.className = 'search-content';
         appendHighlighted(content, r.content, query);
@@ -90,6 +105,26 @@ globalThis.copySearchResult = function copySearchResult(button) {
         setRuneIcon(button, 'check');
         setTimeout(() => setRuneIcon(button, 'copy'), 1500);
     });
+};
+
+globalThis.restoreSearchResult = async function restoreSearchResult(button) {
+    const archiveFile = button.dataset.archiveFile;
+    const noteId = typeof currentNoteId !== 'undefined' ? currentNoteId : null;
+    if (!noteId || !archiveFile) return;
+
+    const confirmed = typeof globalThis.showDialog === 'function'
+        ? await globalThis.showDialog({
+            title: 'Restore Session',
+            message: `Are you sure you want to restore the entire conversation session (${archiveFile}) to the current chat? Current active messages will be automatically backed up.`,
+            okLabel: 'Restore',
+        })
+        : true;
+
+    if (!confirmed) return;
+
+    hideSearchDialog();
+    const sessId = typeof currentSessionId !== 'undefined' && currentSessionId ? currentSessionId : 'main';
+    api('chat/restore', { note_id: noteId, session_id: sessId, archive_file: archiveFile });
 };
 globalThis.escapeHtml = function escapeHtml(str) {
     return str.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');

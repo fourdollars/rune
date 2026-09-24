@@ -3334,6 +3334,7 @@ read(3, "root:x:0:0:...", 4096) = 1234"#;
                 ChatRecord {
                     id: 1,
                     note_id: "default".into(),
+                    session_id: "main".into(),
                     role: "user".into(),
                     nickname: "alice".into(),
                     content: "hello".into(),
@@ -3346,10 +3347,12 @@ read(3, "root:x:0:0:...", 4096) = 1234"#;
                     thinking: None,
                     context_tokens: None,
                     duration_ms: None,
+                    archive_file: None,
                 },
                 ChatRecord {
                     id: 2,
                     note_id: "default".into(),
+                    session_id: "main".into(),
                     role: "assistant".into(),
                     nickname: "rune".into(),
                     content: "hi there".into(),
@@ -3362,6 +3365,7 @@ read(3, "root:x:0:0:...", 4096) = 1234"#;
                     thinking: None,
                     context_tokens: None,
                     duration_ms: None,
+                    archive_file: None,
                 },
             ];
             // Verify filtering: tool_call roles should be excluded
@@ -3380,6 +3384,7 @@ read(3, "root:x:0:0:...", 4096) = 1234"#;
             crate::serve::db::ChatRecord {
                 id,
                 note_id: "default".into(),
+                session_id: "main".into(),
                 role: role.into(),
                 nickname: "".into(),
                 content: content.into(),
@@ -3392,6 +3397,7 @@ read(3, "root:x:0:0:...", 4096) = 1234"#;
                 thinking: None,
                 context_tokens: None,
                 duration_ms: None,
+                archive_file: None,
             }
         }
 

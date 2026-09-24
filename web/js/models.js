@@ -148,12 +148,30 @@ globalThis.hideThinkingDialog = function hideThinkingDialog() {
 };
 
 globalThis.switchThinking = function switchThinking(level) {
-    if (isConnected) {
-        api('notes/' + encodeURIComponent(currentNoteId), { thinking: level }, 'PATCH');
-    }
+    if (!isConnected || !currentNoteId) return;
+    const sessId = typeof currentSessionId !== 'undefined' && currentSessionId ? currentSessionId : 'main';
+
+    currentThinking = level;
     if (typeof updateThinkingButton === 'function') {
-        currentThinking = level;
         updateThinkingButton();
+    }
+
+    if (sessId === 'main') {
+        api('notes/' + encodeURIComponent(currentNoteId), { thinking: level }, 'PATCH');
+    } else {
+        api('notes/' + encodeURIComponent(currentNoteId) + '/session/config', {
+            session_id: sessId,
+            thinking: level,
+        }, 'POST');
+    }
+    // Update local session meta
+    if (Array.isArray(sessionsMeta)) {
+        let meta = sessionsMeta.find(m => m.session_id === sessId);
+        if (meta) {
+            meta.thinking = level;
+        } else {
+            sessionsMeta.push({ session_id: sessId, model: activeModel, thinking: level });
+        }
     }
 };
 
@@ -435,7 +453,29 @@ globalThis.hideModelDialog = function hideModelDialog() {
 };
 
 globalThis.switchModel = function switchModel(model) {
-    if (isConnected) {
-        api('notes/' + encodeURIComponent(currentNoteId), { model }, 'PATCH');
+    if (!isConnected || !currentNoteId) return;
+    const sessId = typeof currentSessionId !== 'undefined' && currentSessionId ? currentSessionId : 'main';
+
+    activeModel = model;
+    if (typeof updateModelIndicator === 'function') {
+        updateModelIndicator();
     }
-}
+
+    if (sessId === 'main') {
+        api('notes/' + encodeURIComponent(currentNoteId), { model }, 'PATCH');
+    } else {
+        api('notes/' + encodeURIComponent(currentNoteId) + '/session/config', {
+            session_id: sessId,
+            model: model,
+        }, 'POST');
+    }
+    // Update local session meta
+    if (Array.isArray(sessionsMeta)) {
+        let meta = sessionsMeta.find(m => m.session_id === sessId);
+        if (meta) {
+            meta.model = model;
+        } else {
+            sessionsMeta.push({ session_id: sessId, model: model, thinking: currentThinking });
+        }
+    }
+};

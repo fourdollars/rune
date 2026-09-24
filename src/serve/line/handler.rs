@@ -206,7 +206,7 @@ pub async fn process_webhook_payload_for_bot(
         let is_user = line_cfg.users.iter().any(|id| id == user_id);
         let is_guest = line_cfg.guests.iter().any(|id| id == user_id);
         let is_in_whitelist = group_id
-            .map(|gid| line_cfg.groups.iter().any(|g| g == gid))
+            .map(|gid| line_cfg.groups.iter().any(|g| g == gid || g == "*"))
             .unwrap_or(false)
             || is_admin
             || is_user
@@ -335,7 +335,7 @@ pub async fn process_webhook_payload_for_bot(
         // 2. RBAC & AI Execution Flow (Decoupled from Logging)
         if let Some(gid) = group_id {
             // Group / Room flow
-            if !line_cfg.groups.iter().any(|g| g == gid) {
+            if !line_cfg.groups.iter().any(|g| g == gid || g == "*") {
                 debug!(
                     "Ignoring LINE event from unauthorized group/room ID: {}",
                     gid
@@ -357,8 +357,8 @@ pub async fn process_webhook_payload_for_bot(
                 continue;
             }
 
-            if !is_admin && !is_user {
-                debug!("Group sender is guest or unregistered, skipping AI response");
+            if is_guest {
+                debug!("Group sender is guest, skipping AI response");
                 continue;
             }
         } else {
@@ -402,13 +402,24 @@ pub async fn process_webhook_payload_for_bot(
         let note_id_clone = note_id.clone();
         let nickname_clone = nickname.clone();
         let text_clone = text.clone();
-        let user_id_clone = user_id.to_string();
+        let session_id = if let Some(gid) = group_id {
+            format!("group:{}", gid)
+        } else if user_id != "unknown" {
+            format!("user:{}", user_id)
+        } else {
+            "main".to_string()
+        };
+        let chat_id = if let Some(gid) = group_id {
+            gid.to_string()
+        } else {
+            user_id.to_string()
+        };
 
         tokio::spawn(async move {
             // Show loading animation in LINE chat
-            if user_id_clone != "unknown" {
+            if chat_id != "unknown" {
                 let _ = client_clone
-                    .start_loading_animation(&user_id_clone, Some(60))
+                    .start_loading_animation(&chat_id, Some(60))
                     .await;
             }
 
@@ -417,18 +428,22 @@ pub async fn process_webhook_payload_for_bot(
             let user_msg = SseMsg::ChatMessage {
                 nickname: nickname_clone.clone(),
                 content: text_clone.clone(),
+                session_id: Some(session_id.clone()),
             };
             broadcast_to_room(&room, &user_msg);
 
             state_clone
                 .chat_db
-                .insert_async(
+                .insert_session_async(
                     note_id_clone.clone(),
+                    session_id.clone(),
                     "user".to_string(),
                     nickname_clone.clone(),
                     text_clone.clone(),
                 )
                 .await;
+
+            crate::serve::api::broadcast_session_list(&state_clone, &note_id_clone).await;
 
             // Set active status to thinking
             {
@@ -446,6 +461,7 @@ pub async fn process_webhook_payload_for_bot(
             execute_line_agent_and_reply(
                 state_clone,
                 note_id_clone,
+                session_id,
                 nickname_clone,
                 text_clone,
                 reply_token,
@@ -460,13 +476,16 @@ pub async fn process_webhook_payload_for_bot(
 async fn execute_line_agent_and_reply(
     state: ServerState,
     note_id: String,
+    session_id: String,
     nickname: String,
     user_msg: String,
     reply_token: Option<String>,
     line_client: LineClient,
 ) {
     let config = state.config.clone();
-    let active_model = state.effective_model(&note_id).await;
+    let active_model = state
+        .effective_model_for_session(&note_id, &session_id)
+        .await;
     let room = state.get_or_create_room(&note_id).await;
 
     // Build provider
@@ -498,7 +517,9 @@ async fn execute_line_agent_and_reply(
     // Build agent
     let mut cfg = config.clone();
     cfg.model = active_model.clone();
-    let effective_thinking_level = state.effective_thinking(&note_id).await;
+    let effective_thinking_level = state
+        .effective_thinking_for_session(&note_id, &session_id)
+        .await;
     cfg.thinking = effective_thinking_level.clone();
 
     {
@@ -518,9 +539,11 @@ async fn execute_line_agent_and_reply(
     let room_for_token = Arc::clone(&room);
     let streaming_buf = Arc::clone(&room.streaming_tokens);
     let status_for_token = Arc::clone(&room.active_status);
+    let sess_id_token = session_id.clone();
     let token_callback: Arc<dyn Fn(&str) + Send + Sync> = Arc::new(move |token: &str| {
         let msg = SseMsg::ChatToken {
             content: token.to_string(),
+            session_id: Some(sess_id_token.clone()),
         };
         broadcast_to_room(&room_for_token, &msg);
         // Accumulate for clients that reconnect mid-stream
@@ -602,8 +625,11 @@ async fn execute_line_agent_and_reply(
         build_effective_note_system_prompt(&state, &note_id).await;
     agent.set_system_prompt(&system_prompt);
 
-    // Load recent history (up to 20 records)
-    let history = state.chat_db.load_recent_async(note_id.clone(), 20).await;
+    // Load recent history (up to 20 records) for this session
+    let history = state
+        .chat_db
+        .load_recent_session_async(note_id.clone(), session_id.clone(), 20)
+        .await;
     let history_without_current: Vec<_> = history
         .into_iter()
         .filter(|r| !(r.role == "user" && r.content == user_msg))
@@ -621,7 +647,9 @@ async fn execute_line_agent_and_reply(
         buf.clear();
     }
 
-    let done = SseMsg::ChatDone {};
+    let done = SseMsg::ChatDone {
+        session_id: Some(session_id.clone()),
+    };
     broadcast_to_room(&room, &done);
 
     // Broadcast run statistics to room
@@ -646,6 +674,7 @@ async fn execute_line_agent_and_reply(
         tool_calls: agent.tool_call_count() as u32,
         duration_ms: Some(duration_ms),
         usage,
+        session_id: Some(session_id.clone()),
     };
     broadcast_to_room(&room, &meta);
 
@@ -689,13 +718,14 @@ async fn execute_line_agent_and_reply(
         ),
     };
 
-    // Save assistant message to Chat DB
+    // Save assistant message to Chat DB with session_id
     let meta_model = active_model.clone();
     let meta_thinking = effective_thinking_level.clone().filter(|t| t != "off");
     state
         .chat_db
-        .insert_with_meta_async(
+        .insert_session_with_meta_async(
             note_id.clone(),
+            session_id.clone(),
             "assistant".to_string(),
             "ᚱᚢᚾᛖ".to_string(),
             raw_answer,
@@ -1482,6 +1512,7 @@ mod tests {
         execute_line_agent_and_reply(
             state.clone(),
             "LineBot".to_string(),
+            "main".to_string(),
             "User".to_string(),
             "hello".to_string(),
             None,
@@ -1491,5 +1522,88 @@ mod tests {
 
         let status = room.active_status.read().await;
         assert_eq!(*status, "idle");
+    }
+
+    #[tokio::test]
+    async fn test_line_user_and_group_session_isolation() {
+        let state = create_test_state_with_line("secret123");
+        state
+            .chat_db
+            .create_note("LineBot", "LineBot", None)
+            .unwrap();
+
+        // Simulate user U123 message
+        state
+            .chat_db
+            .insert_session_async(
+                "LineBot".to_string(),
+                "user:U123".to_string(),
+                "user".to_string(),
+                "Alice".to_string(),
+                "Alice private query".to_string(),
+            )
+            .await;
+
+        // Simulate user U456 message
+        state
+            .chat_db
+            .insert_session_async(
+                "LineBot".to_string(),
+                "user:U456".to_string(),
+                "user".to_string(),
+                "Bob".to_string(),
+                "Bob private query".to_string(),
+            )
+            .await;
+
+        // Simulate group C789 message
+        state
+            .chat_db
+            .insert_session_async(
+                "LineBot".to_string(),
+                "group:C789".to_string(),
+                "user".to_string(),
+                "Charlie".to_string(),
+                "Group topic".to_string(),
+            )
+            .await;
+
+        // Check isolation
+        let alice_history = state
+            .chat_db
+            .load_recent_session_async("LineBot".to_string(), "user:U123".to_string(), 10)
+            .await;
+        assert_eq!(alice_history.len(), 1);
+        assert_eq!(alice_history[0].content, "Alice private query");
+
+        let bob_history = state
+            .chat_db
+            .load_recent_session_async("LineBot".to_string(), "user:U456".to_string(), 10)
+            .await;
+        assert_eq!(bob_history.len(), 1);
+        assert_eq!(bob_history[0].content, "Bob private query");
+
+        let group_history = state
+            .chat_db
+            .load_recent_session_async("LineBot".to_string(), "group:C789".to_string(), 10)
+            .await;
+        assert_eq!(group_history.len(), 1);
+        assert_eq!(group_history[0].content, "Group topic");
+
+        let main_history = state
+            .chat_db
+            .load_recent_session_async("LineBot".to_string(), "main".to_string(), 10)
+            .await;
+        assert_eq!(main_history.len(), 0);
+
+        let sessions = state
+            .chat_db
+            .list_sessions_for_note_async("LineBot".to_string())
+            .await
+            .unwrap();
+        assert_eq!(
+            sessions,
+            vec!["main", "group:C789", "user:U123", "user:U456"]
+        );
     }
 }

@@ -1466,6 +1466,185 @@ pre.hljs-pre:hover .copy-btn {
     text-align: center;
     font-style: italic;
 }
+
+/* --- Chat Session Button & Minimal Modal Styles --- */
+.modal-session {
+    width: min(440px, 92vw);
+    max-height: 80vh;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.session-modal-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+}
+
+.session-modal-header h2 {
+    margin: 0;
+    font-size: 16px;
+}
+
+.session-add-icon-btn {
+    width: 28px;
+    height: 28px;
+    border-radius: 6px;
+    background: var(--bg-surface);
+    border: 1px solid var(--border);
+    color: var(--text-primary);
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.15s ease;
+}
+
+.session-add-icon-btn:hover {
+    border-color: var(--accent);
+    color: var(--accent);
+    background: var(--bg-hover);
+}
+
+.session-add-icon-btn svg,
+.session-add-icon-btn .rune-icon {
+    width: 15px;
+    height: 15px;
+}
+
+.session-modal-search input {
+    width: 100%;
+    background: var(--bg-surface);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--text-primary);
+    font-size: 13px;
+    padding: 7px 10px;
+    outline: none;
+    transition: border-color 0.15s;
+    box-sizing: border-box;
+}
+
+.session-modal-search input:focus {
+    border-color: var(--accent);
+}
+
+.session-modal-list {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    max-height: 52vh;
+    overflow-y: auto;
+    margin: 4px 0;
+    padding-right: 2px;
+}
+
+.session-card-empty {
+    text-align: center;
+    padding: 20px;
+    color: var(--text-muted);
+    font-size: 12px;
+    font-style: italic;
+}
+
+.session-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 7px 10px;
+    border-radius: 6px;
+    border: 1px solid transparent;
+    background: var(--bg-surface);
+    cursor: pointer;
+    transition: background-color 0.12s ease, border-color 0.12s ease;
+    gap: 8px;
+}
+
+.session-row:hover {
+    background: var(--bg-hover);
+    border-color: var(--border);
+}
+
+.session-row.is-active {
+    border-color: var(--accent);
+    background: var(--accent-subtle, rgba(99, 102, 241, 0.08));
+}
+
+.session-row-main {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+}
+
+.session-row-icon {
+    font-size: 13px;
+    line-height: 1;
+    flex-shrink: 0;
+}
+
+.session-row-name {
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--text-primary);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    flex: 1;
+}
+
+.session-row-badge {
+    font-size: 10px;
+    font-weight: 600;
+    padding: 1px 5px;
+    border-radius: 3px;
+    line-height: 1.2;
+    text-transform: uppercase;
+    letter-spacing: 0.3px;
+    flex-shrink: 0;
+}
+
+.session-row-badge.active {
+    background: var(--accent, #6366f1);
+    color: #ffffff;
+}
+
+.session-row-badge.unread {
+    background: #f59e0b;
+    color: #000000;
+}
+
+.session-row-delete {
+    background: transparent;
+    border: none;
+    padding: 4px;
+    border-radius: 4px;
+    color: var(--text-muted);
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    opacity: 0.5;
+    transition: all 0.12s ease;
+    flex-shrink: 0;
+}
+
+.session-row-delete:hover {
+    opacity: 1;
+    color: var(--error, #f38ba8);
+    background: rgba(243, 139, 168, 0.15);
+}
+
+.session-row-delete svg,
+.session-row-delete .rune-icon {
+    width: 14px;
+    height: 14px;
+}
+
 /* --- Multi-file markdown manager --- */
 .doc-title-area {
     display: flex;
@@ -1676,6 +1855,51 @@ pre.hljs-pre:hover .copy-btn {
     flex: 0 1 auto;
     min-width: 0;
     overflow: visible;
+}
+
+.session-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 11px;
+    font-weight: 500;
+    height: 24px;
+    padding: 0 7px;
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    background: var(--bg-surface, rgba(255, 255, 255, 0.05));
+    color: var(--text-muted);
+    cursor: pointer;
+    user-select: none;
+    transition: all 0.15s ease;
+    flex: 0 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    box-sizing: border-box;
+}
+
+.session-btn:hover {
+    color: var(--text);
+    border-color: var(--accent);
+    background: var(--bg-hover, rgba(255, 255, 255, 0.08));
+}
+
+.session-btn.has-unread {
+    border-color: var(--accent, #6366f1);
+    color: var(--accent, #6366f1);
+}
+
+#session-btn-icon {
+    font-size: 12px;
+    line-height: 1;
+    flex-shrink: 0;
+}
+
+#session-btn-label {
+    max-width: 90px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
 .model-name {

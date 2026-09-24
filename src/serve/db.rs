@@ -16,6 +16,8 @@ use tracing::warn;
 pub struct ChatRecord {
     pub id: i64,
     pub note_id: String,
+    #[serde(default = "default_session_id")]
+    pub session_id: String,
     pub role: String,     // "user" | "assistant" | "system"
     pub nickname: String, // user nickname, or "ᚱᚢᚾᛖ" for assistant
     pub content: String,
@@ -44,6 +46,13 @@ pub struct ChatRecord {
     /// Execution duration in milliseconds (assistant only).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub duration_ms: Option<u64>,
+    /// Archive filename if this record was found in archives (search only).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub archive_file: Option<String>,
+}
+
+fn default_session_id() -> String {
+    "main".to_string()
 }
 
 /// A stored session entry.
@@ -86,6 +95,21 @@ pub struct NoteCronJobRecord {
     pub thinking: Option<String>,
 }
 
+/// Metadata and overrides for a chat session within a note.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ChatSessionMeta {
+    pub note_id: String,
+    pub session_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub thinking: Option<String>,
+    #[serde(default)]
+    pub message_count: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_activity: Option<i64>,
+}
+
 /// Thread-safe SQLite connection wrapper.
 #[derive(Clone)]
 pub struct ChatDb {
@@ -102,6 +126,7 @@ fn init_schema(conn: &Connection) -> anyhow::Result<()> {
         CREATE TABLE IF NOT EXISTS messages (
             id             INTEGER PRIMARY KEY AUTOINCREMENT,
             note_id        TEXT    NOT NULL DEFAULT 'default',
+            session_id     TEXT    NOT NULL DEFAULT 'main',
             role           TEXT    NOT NULL,
             nickname       TEXT    NOT NULL,
             content        TEXT    NOT NULL,
@@ -166,12 +191,22 @@ fn init_schema(conn: &Connection) -> anyhow::Result<()> {
             timeout_secs        INTEGER DEFAULT 60,
             thinking            TEXT
         );
-        CREATE INDEX IF NOT EXISTS idx_note_cron_jobs_note_enabled
-            ON note_cron_jobs(note_id, enabled);
+        CREATE TABLE IF NOT EXISTS chat_sessions (
+            note_id    TEXT NOT NULL,
+            session_id TEXT NOT NULL,
+            model      TEXT,
+            thinking   TEXT,
+            created_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now')),
+            updated_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now')),
+            PRIMARY KEY (note_id, session_id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_chat_sessions_note
+            ON chat_sessions(note_id);
     ",
     )?;
     // Add new columns to existing DBs (idempotent — each statement executed individually so one failure does not abort the rest)
     let migrations = [
+        "ALTER TABLE messages ADD COLUMN session_id TEXT NOT NULL DEFAULT 'main'",
         "ALTER TABLE messages ADD COLUMN model TEXT",
         "ALTER TABLE messages ADD COLUMN tokens_in INTEGER",
         "ALTER TABLE messages ADD COLUMN tokens_out INTEGER",
@@ -190,6 +225,10 @@ fn init_schema(conn: &Connection) -> anyhow::Result<()> {
     for migration in migrations {
         let _ = conn.execute(migration, []);
     }
+    let _ = conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_messages_note_session ON messages(note_id, session_id, id)",
+        [],
+    );
     Ok(())
 }
 
@@ -259,23 +298,26 @@ impl ChatDb {
         self.deferred_path.lock().unwrap().is_some()
     }
 
-    /// Insert a message. Returns the new row id.
-    pub fn insert(
+    /// Insert a message for a specific thread/session. Returns the new row id.
+    pub fn insert_session(
         &self,
         note_id: &str,
+        session_id: &str,
         role: &str,
         nickname: &str,
         content: &str,
     ) -> anyhow::Result<i64> {
-        self.insert_with_meta(
-            note_id, role, nickname, content, None, None, None, None, None, None, None, None,
+        self.insert_session_with_meta(
+            note_id, session_id, role, nickname, content, None, None, None, None, None, None, None,
+            None,
         )
     }
 
-    /// Insert a message with optional model/token/duration metadata.
-    pub fn insert_with_meta(
+    /// Insert a message with optional model/token/duration metadata into a specific session.
+    pub fn insert_session_with_meta(
         &self,
         note_id: &str,
+        session_id: &str,
         role: &str,
         nickname: &str,
         content: &str,
@@ -293,45 +335,121 @@ impl ChatDb {
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
             .as_secs() as i64;
+        let s_id = if session_id.trim().is_empty() {
+            "main"
+        } else {
+            session_id
+        };
         conn.execute(
-            "INSERT INTO messages (note_id, role, nickname, content, created_at, model, tokens_in, tokens_out, steps, tool_calls, thinking, context_tokens, duration_ms)
-             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13)",
-            params![note_id, role, nickname, content, ts, model, tokens_in, tokens_out, steps, tool_calls, thinking, context_tokens, duration_ms.map(|d| d as i64)],
+            "INSERT INTO messages (note_id, session_id, role, nickname, content, created_at, model, tokens_in, tokens_out, steps, tool_calls, thinking, context_tokens, duration_ms)
+             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14)",
+            params![
+                note_id,
+                s_id,
+                role,
+                nickname,
+                content,
+                ts,
+                model,
+                tokens_in,
+                tokens_out,
+                steps,
+                tool_calls,
+                thinking,
+                context_tokens,
+                duration_ms.map(|d| d as i64)
+            ],
         )?;
         Ok(conn.last_insert_rowid())
     }
 
-    /// Load the last `limit` messages for a session (ordered oldest first).
-    pub fn load_recent(&self, note_id: &str, limit: usize) -> anyhow::Result<Vec<ChatRecord>> {
+    /// Insert a message into default ("main") session. Returns the new row id.
+    pub fn insert(
+        &self,
+        note_id: &str,
+        role: &str,
+        nickname: &str,
+        content: &str,
+    ) -> anyhow::Result<i64> {
+        self.insert_session(note_id, "main", role, nickname, content)
+    }
+
+    /// Insert a message with optional model/token/duration metadata into default ("main") session.
+    pub fn insert_with_meta(
+        &self,
+        note_id: &str,
+        role: &str,
+        nickname: &str,
+        content: &str,
+        model: Option<&str>,
+        tokens_in: Option<i32>,
+        tokens_out: Option<i32>,
+        steps: Option<i32>,
+        tool_calls: Option<i32>,
+        thinking: Option<&str>,
+        context_tokens: Option<i32>,
+        duration_ms: Option<u64>,
+    ) -> anyhow::Result<i64> {
+        self.insert_session_with_meta(
+            note_id,
+            "main",
+            role,
+            nickname,
+            content,
+            model,
+            tokens_in,
+            tokens_out,
+            steps,
+            tool_calls,
+            thinking,
+            context_tokens,
+            duration_ms,
+        )
+    }
+
+    /// Load the last `limit` messages for a note's session (ordered oldest first).
+    pub fn load_recent_session(
+        &self,
+        note_id: &str,
+        session_id: &str,
+        limit: usize,
+    ) -> anyhow::Result<Vec<ChatRecord>> {
         let conn = self.conn.lock().unwrap();
+        let s_id = if session_id.trim().is_empty() {
+            "main"
+        } else {
+            session_id
+        };
         let mut stmt = conn.prepare(
-            "SELECT id, note_id, role, nickname, content, created_at, model, tokens_in, tokens_out, steps, tool_calls, thinking, context_tokens, duration_ms
+            "SELECT id, note_id, session_id, role, nickname, content, created_at, model, tokens_in, tokens_out, steps, tool_calls, thinking, context_tokens, duration_ms
              FROM messages
-             WHERE note_id = ?1
+             WHERE note_id = ?1 AND session_id = ?2
              ORDER BY id DESC
-             LIMIT ?2",
+             LIMIT ?3",
         )?;
         let rows: Vec<ChatRecord> = stmt
-            .query_map(params![note_id, limit as i64], |row| {
+            .query_map(params![note_id, s_id, limit as i64], |row| {
                 Ok(ChatRecord {
                     id: row.get(0)?,
                     note_id: row.get(1)?,
-                    role: row.get(2)?,
-                    nickname: row.get(3)?,
-                    content: row.get(4)?,
-                    created_at: row.get(5)?,
-                    model: row.get(6)?,
-                    tokens_in: row.get(7)?,
-                    tokens_out: row.get(8)?,
-                    steps: row.get(9)?,
-                    tool_calls: row.get(10)?,
-                    thinking: row.get(11).ok().flatten(),
-                    context_tokens: row.get(12).ok().flatten(),
+                    session_id: row.get(2)?,
+                    role: row.get(3)?,
+                    nickname: row.get(4)?,
+                    content: row.get(5)?,
+                    created_at: row.get(6)?,
+                    model: row.get(7)?,
+                    tokens_in: row.get(8)?,
+                    tokens_out: row.get(9)?,
+                    steps: row.get(10)?,
+                    tool_calls: row.get(11)?,
+                    thinking: row.get(12).ok().flatten(),
+                    context_tokens: row.get(13).ok().flatten(),
                     duration_ms: row
-                        .get::<_, Option<i64>>(13)
+                        .get::<_, Option<i64>>(14)
                         .ok()
                         .flatten()
                         .map(|v| v as u64),
+                    archive_file: None,
                 })
             })?
             .filter_map(|r| r.ok())
@@ -342,6 +460,155 @@ impl ChatDb {
         Ok(rows)
     }
 
+    /// Load the last `limit` messages for a session (ordered oldest first).
+    pub fn load_recent(&self, note_id: &str, limit: usize) -> anyhow::Result<Vec<ChatRecord>> {
+        self.load_recent_session(note_id, "main", limit)
+    }
+
+    /// List all distinct session IDs for a note.
+    pub fn list_sessions_for_note(&self, note_id: &str) -> anyhow::Result<Vec<String>> {
+        let meta = self.list_chat_sessions_meta(note_id)?;
+        Ok(meta.into_iter().map(|s| s.session_id).collect())
+    }
+
+    /// Get model and thinking override for a specific session.
+    pub fn get_session_meta(
+        &self,
+        note_id: &str,
+        session_id: &str,
+    ) -> Option<(Option<String>, Option<String>)> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn
+            .prepare(
+                "SELECT model, thinking FROM chat_sessions WHERE note_id = ?1 AND session_id = ?2",
+            )
+            .ok()?;
+        stmt.query_row(params![note_id, session_id], |row| {
+            Ok((row.get(0)?, row.get(1)?))
+        })
+        .ok()
+    }
+
+    /// Set model and thinking override for a specific session.
+    pub fn set_session_meta(
+        &self,
+        note_id: &str,
+        session_id: &str,
+        model: Option<&str>,
+        thinking: Option<&str>,
+    ) -> anyhow::Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "INSERT INTO chat_sessions (note_id, session_id, model, thinking, updated_at)
+             VALUES (?1, ?2, ?3, ?4, strftime('%s', 'now'))
+             ON CONFLICT(note_id, session_id) DO UPDATE SET
+                 model = COALESCE(?3, chat_sessions.model),
+                 thinking = COALESCE(?4, chat_sessions.thinking),
+                 updated_at = strftime('%s', 'now')",
+            params![note_id, session_id, model, thinking],
+        )?;
+        Ok(())
+    }
+
+    /// List all chat sessions with their metadata for a note.
+    pub fn list_chat_sessions_meta(&self, note_id: &str) -> anyhow::Result<Vec<ChatSessionMeta>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT s.session_id,
+                    cs.model,
+                    cs.thinking,
+                    COUNT(m.id) as msg_count,
+                    MAX(m.created_at) as last_act
+             FROM (
+                 SELECT session_id FROM messages WHERE note_id = ?1
+                 UNION
+                 SELECT session_id FROM chat_sessions WHERE note_id = ?1
+                 UNION
+                 SELECT 'main' AS session_id
+             ) s
+             LEFT JOIN chat_sessions cs ON cs.note_id = ?1 AND cs.session_id = s.session_id
+             LEFT JOIN messages m ON m.note_id = ?1 AND m.session_id = s.session_id
+             GROUP BY s.session_id
+             ORDER BY CASE WHEN s.session_id = 'main' THEN 0 ELSE 1 END, s.session_id ASC",
+        )?;
+        let rows = stmt
+            .query_map(params![note_id], |row| {
+                let session_id: String = row.get(0)?;
+                let model: Option<String> = row.get(1)?;
+                let thinking: Option<String> = row.get(2)?;
+                let message_count: usize = row.get(3)?;
+                let last_activity: Option<i64> = row.get(4)?;
+                Ok(ChatSessionMeta {
+                    note_id: note_id.to_string(),
+                    session_id,
+                    model,
+                    thinking,
+                    message_count,
+                    last_activity,
+                })
+            })?
+            .filter_map(|r| r.ok())
+            .collect();
+        Ok(rows)
+    }
+
+    /// Async wrapper for insert_session.
+    pub async fn insert_session_async(
+        &self,
+        note_id: String,
+        session_id: String,
+        role: String,
+        nickname: String,
+        content: String,
+    ) {
+        self.insert_session_with_meta_async(
+            note_id, session_id, role, nickname, content, None, None, None, None, None, None, None,
+            None,
+        )
+        .await;
+    }
+
+    /// Async wrapper for insert_session_with_meta.
+    pub async fn insert_session_with_meta_async(
+        &self,
+        note_id: String,
+        session_id: String,
+        role: String,
+        nickname: String,
+        content: String,
+        model: Option<String>,
+        tokens_in: Option<i32>,
+        tokens_out: Option<i32>,
+        steps: Option<i32>,
+        tool_calls: Option<i32>,
+        thinking: Option<String>,
+        context_tokens: Option<i32>,
+        duration_ms: Option<u64>,
+    ) {
+        let db = self.clone();
+        tokio::task::spawn_blocking(move || {
+            if let Err(e) = db.insert_session_with_meta(
+                &note_id,
+                &session_id,
+                &role,
+                &nickname,
+                &content,
+                model.as_deref(),
+                tokens_in,
+                tokens_out,
+                steps,
+                tool_calls,
+                thinking.as_deref(),
+                context_tokens,
+                duration_ms,
+            ) {
+                warn!("Failed to persist chat message: {}", e);
+            }
+        })
+        .await
+        .ok();
+    }
+
     /// Async wrapper for insert (runs on blocking thread pool).
     pub async fn insert_async(
         &self,
@@ -350,10 +617,8 @@ impl ChatDb {
         nickname: String,
         content: String,
     ) {
-        self.insert_with_meta_async(
-            note_id, role, nickname, content, None, None, None, None, None, None, None, None,
-        )
-        .await;
+        self.insert_session_async(note_id, "main".to_string(), role, nickname, content)
+            .await;
     }
 
     /// Async wrapper for insert_with_meta.
@@ -372,27 +637,90 @@ impl ChatDb {
         context_tokens: Option<i32>,
         duration_ms: Option<u64>,
     ) {
+        self.insert_session_with_meta_async(
+            note_id,
+            "main".to_string(),
+            role,
+            nickname,
+            content,
+            model,
+            tokens_in,
+            tokens_out,
+            steps,
+            tool_calls,
+            thinking,
+            context_tokens,
+            duration_ms,
+        )
+        .await;
+    }
+
+    /// Async wrapper for load_recent_session.
+    pub async fn load_recent_session_async(
+        &self,
+        note_id: String,
+        session_id: String,
+        limit: usize,
+    ) -> Vec<ChatRecord> {
         let db = self.clone();
         tokio::task::spawn_blocking(move || {
-            if let Err(e) = db.insert_with_meta(
-                &note_id,
-                &role,
-                &nickname,
-                &content,
-                model.as_deref(),
-                tokens_in,
-                tokens_out,
-                steps,
-                tool_calls,
-                thinking.as_deref(),
-                context_tokens,
-                duration_ms,
-            ) {
-                warn!("Failed to persist chat message: {}", e);
-            }
+            db.load_recent_session(&note_id, &session_id, limit)
+                .unwrap_or_default()
         })
         .await
-        .ok();
+        .unwrap_or_default()
+    }
+
+    /// Async wrapper for load_recent.
+    pub async fn load_recent_async(&self, note_id: String, limit: usize) -> Vec<ChatRecord> {
+        self.load_recent_session_async(note_id, "main".to_string(), limit)
+            .await
+    }
+
+    /// Async wrapper for list_sessions_for_note.
+    pub async fn list_sessions_for_note_async(
+        &self,
+        note_id: String,
+    ) -> anyhow::Result<Vec<String>> {
+        let db = self.clone();
+        tokio::task::spawn_blocking(move || db.list_sessions_for_note(&note_id)).await?
+    }
+
+    /// Async wrapper for get_session_meta.
+    pub async fn get_session_meta_async(
+        &self,
+        note_id: String,
+        session_id: String,
+    ) -> Option<(Option<String>, Option<String>)> {
+        let db = self.clone();
+        tokio::task::spawn_blocking(move || db.get_session_meta(&note_id, &session_id))
+            .await
+            .ok()
+            .flatten()
+    }
+
+    /// Async wrapper for set_session_meta.
+    pub async fn set_session_meta_async(
+        &self,
+        note_id: String,
+        session_id: String,
+        model: Option<String>,
+        thinking: Option<String>,
+    ) -> anyhow::Result<()> {
+        let db = self.clone();
+        tokio::task::spawn_blocking(move || {
+            db.set_session_meta(&note_id, &session_id, model.as_deref(), thinking.as_deref())
+        })
+        .await?
+    }
+
+    /// Async wrapper for list_chat_sessions_meta.
+    pub async fn list_chat_sessions_meta_async(
+        &self,
+        note_id: String,
+    ) -> anyhow::Result<Vec<ChatSessionMeta>> {
+        let db = self.clone();
+        tokio::task::spawn_blocking(move || db.list_chat_sessions_meta(&note_id)).await?
     }
 
     pub fn save_session(
@@ -502,14 +830,6 @@ impl ChatDb {
             params![now],
         );
         Ok(())
-    }
-
-    /// Async wrapper for load_recent.
-    pub async fn load_recent_async(&self, note_id: String, limit: usize) -> Vec<ChatRecord> {
-        let db = self.clone();
-        tokio::task::spawn_blocking(move || db.load_recent(&note_id, limit).unwrap_or_default())
-            .await
-            .unwrap_or_default()
     }
 
     // ── Session CRUD ──────────────────────────────────────────────────────
@@ -1022,40 +1342,62 @@ impl ChatDb {
 
     /// Dump all messages for a session to JSONL, then delete them from the DB.
     /// Returns the number of messages archived.
-    pub fn archive(&self, note_id: &str, archive_path: &Path) -> anyhow::Result<usize> {
+    pub fn archive_session(
+        &self,
+        note_id: &str,
+        session_id: &str,
+        archive_path: &Path,
+    ) -> anyhow::Result<usize> {
         use std::io::Write;
         let conn = self.conn.lock().unwrap();
+        let s_id = if session_id.trim().is_empty() {
+            "main"
+        } else {
+            session_id
+        };
         // Load all messages for this session
         let mut stmt = conn.prepare(
-            "SELECT id, note_id, role, nickname, content, created_at, model, tokens_in, tokens_out, steps, tool_calls, thinking, context_tokens, duration_ms
-             FROM messages WHERE note_id = ?1 ORDER BY id ASC",
+            "SELECT id, note_id, session_id, role, nickname, content, created_at, model, tokens_in, tokens_out, steps, tool_calls, thinking, context_tokens, duration_ms
+             FROM messages WHERE note_id = ?1 AND session_id = ?2 ORDER BY id ASC",
         )?;
         let records: Vec<ChatRecord> = stmt
-            .query_map(params![note_id], |row| {
+            .query_map(params![note_id, s_id], |row| {
                 Ok(ChatRecord {
                     id: row.get(0)?,
                     note_id: row.get(1)?,
-                    role: row.get(2)?,
-                    nickname: row.get(3)?,
-                    content: row.get(4)?,
-                    created_at: row.get(5)?,
-                    model: row.get(6)?,
-                    tokens_in: row.get(7)?,
-                    tokens_out: row.get(8)?,
-                    steps: row.get(9)?,
-                    tool_calls: row.get(10)?,
-                    thinking: row.get(11).ok().flatten(),
-                    context_tokens: row.get(12).ok().flatten(),
+                    session_id: row.get(2)?,
+                    role: row.get(3)?,
+                    nickname: row.get(4)?,
+                    content: row.get(5)?,
+                    created_at: row.get(6)?,
+                    model: row.get(7)?,
+                    tokens_in: row.get(8)?,
+                    tokens_out: row.get(9)?,
+                    steps: row.get(10)?,
+                    tool_calls: row.get(11)?,
+                    thinking: row.get(12).ok().flatten(),
+                    context_tokens: row.get(13).ok().flatten(),
                     duration_ms: row
-                        .get::<_, Option<i64>>(13)
+                        .get::<_, Option<i64>>(14)
                         .ok()
                         .flatten()
                         .map(|v| v as u64),
+                    archive_file: None,
                 })
             })?
             .filter_map(|r| r.ok())
             .collect();
         drop(stmt);
+
+        // Delete session metadata and messages from DB
+        let _ = conn.execute(
+            "DELETE FROM chat_sessions WHERE note_id = ?1 AND session_id = ?2",
+            params![note_id, s_id],
+        );
+        let _ = conn.execute(
+            "DELETE FROM messages WHERE note_id = ?1 AND session_id = ?2",
+            params![note_id, s_id],
+        );
 
         if records.is_empty() {
             return Ok(0);
@@ -1078,10 +1420,12 @@ impl ChatDb {
         }
         file.flush()?;
 
-        // Delete archived messages from DB
-        conn.execute("DELETE FROM messages WHERE note_id = ?1", params![note_id])?;
-
         Ok(records.len())
+    }
+
+    /// Dump all messages for "main" session to JSONL, then delete them from the DB.
+    pub fn archive(&self, note_id: &str, archive_path: &Path) -> anyhow::Result<usize> {
+        self.archive_session(note_id, "main", archive_path)
     }
 
     /// Search chat history for a note (both disk archives and live DB).
@@ -1108,13 +1452,19 @@ impl ChatDb {
                     .collect();
                 paths.sort();
                 for path in paths {
+                    let filename = path
+                        .file_name()
+                        .and_then(|n| n.to_str())
+                        .unwrap_or_default()
+                        .to_string();
                     if let Ok(file) = std::fs::File::open(&path) {
                         for line in std::io::BufReader::new(file).lines().map_while(Result::ok) {
-                            if let Ok(rec) = serde_json::from_str::<ChatRecord>(&line) {
+                            if let Ok(mut rec) = serde_json::from_str::<ChatRecord>(&line) {
                                 if rec.note_id == note_id
                                     && (rec.content.to_lowercase().contains(&query_lower)
                                         || rec.nickname.to_lowercase().contains(&query_lower))
                                 {
+                                    rec.archive_file = Some(filename.clone());
                                     results.push(rec);
                                 }
                             }
@@ -1127,7 +1477,7 @@ impl ChatDb {
         // 2. Search live DB
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT id, note_id, role, nickname, content, created_at, model, tokens_in, tokens_out, steps, tool_calls, thinking, context_tokens, duration_ms
+            "SELECT id, note_id, session_id, role, nickname, content, created_at, model, tokens_in, tokens_out, steps, tool_calls, thinking, context_tokens, duration_ms
              FROM messages WHERE note_id = ?1 ORDER BY id ASC",
         )?;
         let live: Vec<ChatRecord> = stmt
@@ -1135,22 +1485,24 @@ impl ChatDb {
                 Ok(ChatRecord {
                     id: row.get(0)?,
                     note_id: row.get(1)?,
-                    role: row.get(2)?,
-                    nickname: row.get(3)?,
-                    content: row.get(4)?,
-                    created_at: row.get(5)?,
-                    model: row.get(6)?,
-                    tokens_in: row.get(7)?,
-                    tokens_out: row.get(8)?,
-                    steps: row.get(9)?,
-                    tool_calls: row.get(10)?,
-                    thinking: row.get(11).ok().flatten(),
-                    context_tokens: row.get(12).ok().flatten(),
+                    session_id: row.get(2)?,
+                    role: row.get(3)?,
+                    nickname: row.get(4)?,
+                    content: row.get(5)?,
+                    created_at: row.get(6)?,
+                    model: row.get(7)?,
+                    tokens_in: row.get(8)?,
+                    tokens_out: row.get(9)?,
+                    steps: row.get(10)?,
+                    tool_calls: row.get(11)?,
+                    thinking: row.get(12).ok().flatten(),
+                    context_tokens: row.get(13).ok().flatten(),
                     duration_ms: row
-                        .get::<_, Option<i64>>(13)
+                        .get::<_, Option<i64>>(14)
                         .ok()
                         .flatten()
                         .map(|v| v as u64),
+                    archive_file: None,
                 })
             })?
             .filter_map(|r| r.ok())
@@ -1170,14 +1522,125 @@ impl ChatDb {
         Ok(results)
     }
 
+    /// Restore messages from an archive file into active messages table for a specific session.
+    /// Replaces the current active messages for `note_id` + `session_id`.
+    pub fn restore_session(
+        &self,
+        note_id: &str,
+        session_id: &str,
+        archive_path: &Path,
+    ) -> anyhow::Result<usize> {
+        use std::io::BufRead;
+        if !archive_path.exists() {
+            return Err(anyhow::anyhow!(
+                "Archive file does not exist: {:?}",
+                archive_path
+            ));
+        }
+        let file = std::fs::File::open(archive_path)?;
+        let mut records: Vec<ChatRecord> = Vec::new();
+        let s_id = if session_id.trim().is_empty() {
+            "main"
+        } else {
+            session_id
+        };
+        for line in std::io::BufReader::new(file).lines().map_while(Result::ok) {
+            if let Ok(mut rec) = serde_json::from_str::<ChatRecord>(&line) {
+                if rec.note_id == note_id {
+                    rec.session_id = s_id.to_string();
+                    records.push(rec);
+                }
+            }
+        }
+        if records.is_empty() {
+            return Ok(0);
+        }
+
+        let mut conn = self.conn.lock().unwrap();
+        let tx = conn.transaction()?;
+        // Clear current active messages for this session
+        tx.execute(
+            "DELETE FROM messages WHERE note_id = ?1 AND session_id = ?2",
+            params![note_id, s_id],
+        )?;
+
+        for r in &records {
+            tx.execute(
+                "INSERT INTO messages (note_id, session_id, role, nickname, content, created_at, model, tokens_in, tokens_out, steps, tool_calls, thinking, context_tokens, duration_ms)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
+                params![
+                    r.note_id,
+                    r.session_id,
+                    r.role,
+                    r.nickname,
+                    r.content,
+                    r.created_at,
+                    r.model,
+                    r.tokens_in,
+                    r.tokens_out,
+                    r.steps,
+                    r.tool_calls,
+                    r.thinking,
+                    r.context_tokens,
+                    r.duration_ms.map(|d| d as i64),
+                ],
+            )?;
+        }
+        tx.commit()?;
+        Ok(records.len())
+    }
+
+    /// Restore messages from an archive file into active messages table ("main" session).
+    pub fn restore(&self, note_id: &str, archive_path: &Path) -> anyhow::Result<usize> {
+        self.restore_session(note_id, "main", archive_path)
+    }
+
+    /// Async wrapper for restore_session.
+    pub async fn restore_session_async(
+        &self,
+        note_id: String,
+        session_id: String,
+        archive_path: std::path::PathBuf,
+    ) -> anyhow::Result<usize> {
+        let db = self.clone();
+        tokio::task::spawn_blocking(move || {
+            db.restore_session(&note_id, &session_id, &archive_path)
+        })
+        .await?
+    }
+
+    /// Async wrapper for restore.
+    pub async fn restore_async(
+        &self,
+        note_id: String,
+        archive_path: std::path::PathBuf,
+    ) -> anyhow::Result<usize> {
+        self.restore_session_async(note_id, "main".to_string(), archive_path)
+            .await
+    }
+
+    /// Async wrapper for archive_session.
+    pub async fn archive_session_async(
+        &self,
+        note_id: String,
+        session_id: String,
+        archive_path: std::path::PathBuf,
+    ) -> anyhow::Result<usize> {
+        let db = self.clone();
+        tokio::task::spawn_blocking(move || {
+            db.archive_session(&note_id, &session_id, &archive_path)
+        })
+        .await?
+    }
+
     /// Async wrapper for archive.
     pub async fn archive_async(
         &self,
         note_id: String,
         archive_path: std::path::PathBuf,
     ) -> anyhow::Result<usize> {
-        let db = self.clone();
-        tokio::task::spawn_blocking(move || db.archive(&note_id, &archive_path)).await?
+        self.archive_session_async(note_id, "main".to_string(), archive_path)
+            .await
     }
 
     /// Async wrapper for search.
@@ -1356,6 +1819,7 @@ mod tests {
         let old_rec = ChatRecord {
             id: 1,
             note_id: "default".into(),
+            session_id: "main".into(),
             role: "user".into(),
             nickname: "bob".into(),
             content: "search me".into(),
@@ -1368,6 +1832,7 @@ mod tests {
             thinking: None,
             context_tokens: None,
             duration_ms: None,
+            archive_file: None,
         };
         let mut f = std::fs::File::create(&arc_path).unwrap();
         writeln!(f, "{}", serde_json::to_string(&old_rec).unwrap()).unwrap();
@@ -1385,6 +1850,44 @@ mod tests {
             "Newer live result first"
         );
         assert_eq!(results[1].content, "search me", "Older archive result last");
+        assert_eq!(
+            results[1].archive_file.as_deref(),
+            Some("old.jsonl"),
+            "Archive filename should be populated"
+        );
+    }
+
+    #[test]
+    fn test_restore_from_archive() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("chat.db");
+        let db = ChatDb::open(&db_path).unwrap();
+
+        // 1. Initial messages
+        db.insert("note-1", "user", "alice", "old message 1")
+            .unwrap();
+        db.insert("note-1", "assistant", "ᚱᚢᚾᛖ", "old response 1")
+            .unwrap();
+
+        // 2. Archive to file
+        let archive_path = dir.path().join("archive_1.jsonl");
+        let archived_count = db.archive("note-1", &archive_path).unwrap();
+        assert_eq!(archived_count, 2);
+        assert!(db.load_recent("note-1", 10).unwrap().is_empty());
+
+        // 3. New conversation happens in note-1
+        db.insert("note-1", "user", "bob", "new active conversation")
+            .unwrap();
+        assert_eq!(db.load_recent("note-1", 10).unwrap().len(), 1);
+
+        // 4. Restore the old archive
+        let restored_count = db.restore("note-1", &archive_path).unwrap();
+        assert_eq!(restored_count, 2);
+
+        let active_now = db.load_recent("note-1", 10).unwrap();
+        assert_eq!(active_now.len(), 2);
+        assert_eq!(active_now[0].content, "old message 1");
+        assert_eq!(active_now[1].content, "old response 1");
     }
 
     #[tokio::test]
@@ -1956,6 +2459,61 @@ mod tests {
         assert_eq!(jobs[0].id, "job_old");
         assert_eq!(jobs[0].name, "Old Job");
         assert_eq!(jobs[0].timeout_secs, Some(60));
+    }
+
+    #[tokio::test]
+    async fn test_session_isolation_and_listing() {
+        let db = in_memory_db();
+        db.insert_session("note-a", "main", "user", "alice", "hello main")
+            .unwrap();
+        db.insert_session(
+            "note-a",
+            "user:U1234",
+            "user",
+            "bob",
+            "hello from line user",
+        )
+        .unwrap();
+        db.insert_session(
+            "note-a",
+            "group:C5678",
+            "user",
+            "charlie",
+            "hello from line group",
+        )
+        .unwrap();
+
+        let main_msgs = db.load_recent_session("note-a", "main", 10).unwrap();
+        assert_eq!(main_msgs.len(), 1);
+        assert_eq!(main_msgs[0].content, "hello main");
+        assert_eq!(main_msgs[0].session_id, "main");
+
+        let user_msgs = db.load_recent_session("note-a", "user:U1234", 10).unwrap();
+        assert_eq!(user_msgs.len(), 1);
+        assert_eq!(user_msgs[0].content, "hello from line user");
+        assert_eq!(user_msgs[0].session_id, "user:U1234");
+
+        let sessions = db.list_sessions_for_note("note-a").unwrap();
+        assert!(sessions.contains(&"group:C5678".to_string()));
+        assert!(sessions.contains(&"main".to_string()));
+        assert!(sessions.contains(&"user:U1234".to_string()));
+    }
+
+    #[tokio::test]
+    async fn test_chat_sessions_meta() {
+        let db = in_memory_db();
+        db.set_session_meta("note-a", "user:U100", Some("openai/gpt-4o"), Some("high"))
+            .unwrap();
+
+        let meta = db.get_session_meta("note-a", "user:U100").unwrap();
+        assert_eq!(meta.0, Some("openai/gpt-4o".to_string()));
+        assert_eq!(meta.1, Some("high".to_string()));
+
+        let list = db.list_chat_sessions_meta("note-a").unwrap();
+        assert!(list.iter().any(|s| s.session_id == "main"));
+        let u100 = list.iter().find(|s| s.session_id == "user:U100").unwrap();
+        assert_eq!(u100.model, Some("openai/gpt-4o".to_string()));
+        assert_eq!(u100.thinking, Some("high".to_string()));
     }
 }
 

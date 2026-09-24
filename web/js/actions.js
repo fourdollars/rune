@@ -7,6 +7,18 @@ const actions = {
     'confirm-logout': () => confirmLogout(),
     'hide-new-note-dialog': () => hideNewNoteDialog(),
     'create-note': () => createNote(),
+    'show-session-modal': () => showSessionModal(),
+    'hide-session-modal': () => hideSessionModal(),
+    'prompt-new-session': () => promptNewSession(),
+    'create-session-from-modal': () => promptNewSession(),
+    'switch-session-from-modal': element => { switchSession(element.dataset.session); hideSessionModal(); },
+    'delete-session': element => deleteSession(element.dataset.session),
+    'archive-session-from-modal': element => deleteSession(element.dataset.session),
+    'show-new-session-dialog': () => showSessionModal(),
+    'hide-new-session-dialog': () => hideSessionModal(),
+    'create-session': () => promptNewSession(),
+    'switch-session': element => switchSession(element.dataset.session),
+    'close-session': element => deleteSession(element.dataset.session),
     'navigate-dir': () => navigateDir(document.getElementById('dir-browser-path').value),
     'hide-dir-browser': () => hideDirBrowser(),
     'select-dir': () => selectDir(),
@@ -48,6 +60,7 @@ const actions = {
     'respond-approval': element => respondApproval(element.dataset.id, element.dataset.approved === 'true'),
     'copy-code': element => copyCodeBlock(element),
     'copy-search': element => copySearchResult(element),
+    'restore-search': element => restoreSearchResult(element),
     'switch-model': element => { switchModel(element.dataset.model); hideModelDialog(); },
     'toggle-note': element => toggleNoteRow(element),
     'toggle-note-visibility': element => toggleNoteVisibility(element),
@@ -101,6 +114,7 @@ export function initActions() {
         if (event.target.id === 'file-search-input') renderNoteList();
         if (event.target.id === 'model-search-input') filterModels(event.target.value);
         if (event.target.id === 'emoji-search-input') filterEmojis(event.target.value);
+        if (event.target.id === 'session-modal-search-input') renderSessionModal(event.target.value);
     });
     document.addEventListener('keydown', event => {
         if (event.key === 'Escape') {
@@ -116,6 +130,11 @@ export function initActions() {
         if (event.target.id === 'new-note-name') {
             event.preventDefault();
             createNote();
+            return;
+        }
+        if (event.target.id === 'new-session-name' || event.target.id === 'session-modal-new-name') {
+            event.preventDefault();
+            createSessionFromModal();
             return;
         }
         if (event.target.matches('[data-action="search-input"]')) doSearch();

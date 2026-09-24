@@ -174,6 +174,39 @@ impl ServerState {
         }
         None
     }
+
+    /// Effective model for a specific session: per-session override if set and allowed, else note-level effective model.
+    pub async fn effective_model_for_session(&self, note_id: &str, session_id: &str) -> String {
+        if let Some((Some(model), _)) = self
+            .chat_db
+            .get_session_meta_async(note_id.to_string(), session_id.to_string())
+            .await
+        {
+            let models = self.models.read().await;
+            if !model.is_empty() && (models.is_empty() || models.iter().any(|m| m.id == model)) {
+                return model;
+            }
+        }
+        self.effective_model(note_id).await
+    }
+
+    /// Effective thinking for a specific session: per-session override if set, else note-level effective thinking.
+    pub async fn effective_thinking_for_session(
+        &self,
+        note_id: &str,
+        session_id: &str,
+    ) -> Option<String> {
+        if let Some((_, Some(thinking))) = self
+            .chat_db
+            .get_session_meta_async(note_id.to_string(), session_id.to_string())
+            .await
+        {
+            if !thinking.is_empty() {
+                return Some(thinking);
+            }
+        }
+        self.effective_thinking(note_id).await
+    }
 }
 
 /// Options for `rune serve`.
@@ -744,14 +777,19 @@ pub async fn run(config: RuneConfig, opts: NotesOptions) {
             "/api/notes/{note}/jobs/{job_id}/run",
             post(api::cron_job_run_handler),
         )
-        // Session (active note/file for SSE stream)
+        // Session (active note/file for SSE stream & session config)
         .route("/api/session", put(api::session_handler))
+        .route(
+            "/api/notes/{note}/session/config",
+            post(api::session_config_handler),
+        )
         // Chat
         .route(
             "/api/chat",
             post(api::chat_handler).delete(api::chat_cancel_handler),
         )
         .route("/api/chat/archive", post(api::archive_handler))
+        .route("/api/chat/restore", post(api::restore_handler))
         .route("/api/chat/search", post(api::search_handler))
         // Goal
         .route(

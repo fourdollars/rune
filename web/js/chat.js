@@ -4,11 +4,258 @@ globalThis.sendMessage = function sendMessage() {
     const text = chatInput.value.trim();
     if (!text || !isConnected || !currentNoteId) return;
 
+    const sessId = typeof currentSessionId !== 'undefined' && currentSessionId ? currentSessionId : 'main';
     // Send to server — do NOT optimistic render; wait for broadcast echo
-    api('chat', { note_id: currentNoteId, content: text, nickname: myNickname });
+    api('chat', { note_id: currentNoteId, session_id: sessId, content: text, nickname: myNickname });
     chatInput.value = '';
     chatInput.style.height = 'auto';
 };
+
+globalThis.updateSessionButton = function updateSessionButton() {
+    const btn = document.getElementById('session-btn');
+    const iconEl = document.getElementById('session-btn-icon');
+    const labelEl = document.getElementById('session-btn-label');
+    if (!btn || !labelEl) return;
+
+    const sess = (typeof currentSessionId !== 'undefined' && currentSessionId) ? currentSessionId : 'main';
+    let icon = '#';
+    let label = sess;
+    if (sess.startsWith('user:')) {
+        icon = '👤';
+        label = sess.slice(5);
+    } else if (sess.startsWith('group:')) {
+        icon = '👥';
+        label = sess.slice(6);
+    } else if (sess === 'main') {
+        icon = '💬';
+        label = 'main';
+    }
+
+    if (iconEl) iconEl.textContent = icon;
+    labelEl.textContent = label;
+    btn.title = `Current session: ${sess} (Click to manage sessions)`;
+
+    const hasUnread = typeof unreadSessions !== 'undefined' && unreadSessions && unreadSessions.size > 0;
+    if (hasUnread) {
+        btn.classList.add('has-unread');
+    } else {
+        btn.classList.remove('has-unread');
+    }
+};
+
+globalThis.renderSessionBar = function renderSessionBar() {
+    updateSessionButton();
+};
+
+globalThis.showSessionModal = function showSessionModal() {
+    const modal = document.getElementById('session-modal');
+    if (!modal) return;
+    modal.classList.remove('hidden');
+    const searchInput = document.getElementById('session-modal-search-input');
+    if (searchInput) {
+        searchInput.value = '';
+        searchInput.focus();
+    }
+    renderSessionModal();
+    if (typeof hydrateIcons === 'function') {
+        hydrateIcons(modal);
+    }
+};
+
+globalThis.hideSessionModal = function hideSessionModal() {
+    const modal = document.getElementById('session-modal');
+    if (modal) modal.classList.add('hidden');
+};
+
+globalThis.renderSessionModal = function renderSessionModal(filter = '') {
+    const listEl = document.getElementById('session-modal-list');
+    if (!listEl) return;
+    listEl.replaceChildren();
+
+    const sessList = (Array.isArray(sessions) && sessions.length > 0) ? sessions : ['main'];
+    const normalizedFilter = (filter || '').toLowerCase().trim();
+    const filteredSessions = sessList.filter(s => {
+        if (!normalizedFilter) return true;
+        return s.toLowerCase().includes(normalizedFilter);
+    });
+
+    if (filteredSessions.length === 0) {
+        const emptyDiv = document.createElement('div');
+        emptyDiv.className = 'session-card-empty';
+        emptyDiv.textContent = 'No matching sessions found';
+        listEl.appendChild(emptyDiv);
+        return;
+    }
+
+    filteredSessions.forEach(sess => {
+        const isCurrent = sess === currentSessionId;
+        const row = document.createElement('div');
+        row.className = `session-row ${isCurrent ? 'is-active' : ''}`;
+        row.dataset.session = sess;
+
+        // Click row to switch session and close modal
+        const mainArea = document.createElement('div');
+        mainArea.className = 'session-row-main';
+        mainArea.dataset.action = 'switch-session-from-modal';
+        mainArea.dataset.session = sess;
+
+        let icon = '#';
+        let displayLabel = sess;
+        if (sess.startsWith('user:')) {
+            icon = '👤';
+            displayLabel = sess.slice(5);
+        } else if (sess.startsWith('group:')) {
+            icon = '👥';
+            displayLabel = sess.slice(6);
+        } else if (sess === 'main') {
+            icon = '💬';
+            displayLabel = 'main';
+        }
+
+        const iconEl = document.createElement('span');
+        iconEl.className = 'session-row-icon';
+        iconEl.textContent = icon;
+        mainArea.appendChild(iconEl);
+
+        const nameEl = document.createElement('span');
+        nameEl.className = 'session-row-name';
+        nameEl.textContent = displayLabel;
+        nameEl.title = sess;
+        mainArea.appendChild(nameEl);
+
+        if (isCurrent) {
+            const badge = document.createElement('span');
+            badge.className = 'session-row-badge active';
+            badge.textContent = 'Active';
+            mainArea.appendChild(badge);
+        } else if (typeof unreadSessions !== 'undefined' && unreadSessions && unreadSessions.has && unreadSessions.has(sess)) {
+            const badge = document.createElement('span');
+            badge.className = 'session-row-badge unread';
+            badge.textContent = 'Unread';
+            mainArea.appendChild(badge);
+        }
+
+        row.appendChild(mainArea);
+
+        // Delete icon button (for non-main sessions)
+        if (sess !== 'main') {
+            const delBtn = document.createElement('button');
+            delBtn.type = 'button';
+            delBtn.className = 'session-row-delete';
+            delBtn.dataset.action = 'delete-session';
+            delBtn.dataset.session = sess;
+            delBtn.title = `Delete & archive session "${sess}"`;
+            delBtn.setAttribute('aria-label', `Delete session ${sess}`);
+            delBtn.dataset.icon = 'trash';
+            row.appendChild(delBtn);
+        }
+
+        listEl.appendChild(row);
+    });
+
+    if (typeof hydrateIcons === 'function') {
+        hydrateIcons(listEl);
+    }
+};
+
+globalThis.promptNewSession = async function promptNewSession() {
+    if (!currentNoteId) return;
+    const name = await showDialog({
+        title: 'New Chat Session',
+        message: 'Enter session name (e.g. #research, topic):',
+        input: true,
+        placeholder: 'research',
+        okLabel: 'Create'
+    });
+    if (!name || !name.trim()) return;
+
+    let cleanName = name.trim();
+    if (cleanName.startsWith('#')) cleanName = cleanName.slice(1).trim();
+    if (!cleanName) return;
+
+    if (!sessions.includes(cleanName)) {
+        sessions.push(cleanName);
+    }
+    await switchSession(cleanName);
+    hideSessionModal();
+};
+
+globalThis.deleteSession = async function deleteSession(sessionId) {
+    if (!sessionId || !currentNoteId || sessionId === 'main') return;
+
+    const confirmed = await showDialog({
+        title: 'Delete Session',
+        message: `Delete and archive session "${sessionId}"?`,
+        danger: true,
+        okLabel: 'Delete'
+    });
+    if (!confirmed) return;
+
+    const res = await api('chat/archive', { note_id: currentNoteId, session_id: sessionId });
+    if (res && res.ok) {
+        if (typeof unreadSessions !== 'undefined' && unreadSessions && unreadSessions.delete) {
+            unreadSessions.delete(sessionId);
+        }
+        sessions = sessions.filter(s => s !== sessionId);
+        if (Array.isArray(sessionsMeta)) {
+            sessionsMeta = sessionsMeta.filter(m => m.session_id !== sessionId);
+        }
+        if (!sessions.includes('main')) {
+            sessions.unshift('main');
+        }
+        addSystemMessage(`Session "${sessionId}" deleted and archived`);
+        if (currentSessionId === sessionId) {
+            await switchSession('main');
+        } else {
+            updateSessionButton();
+            renderSessionModal(document.getElementById('session-modal-search-input')?.value || '');
+        }
+    }
+};
+
+globalThis.createSessionFromModal = globalThis.promptNewSession;
+globalThis.archiveSessionFromModal = globalThis.deleteSession;
+
+globalThis.switchSession = async function switchSession(sessionId) {
+    if (!sessionId || !currentNoteId) return;
+    if (sessionId === currentSessionId) return;
+    currentSessionId = sessionId;
+    if (typeof unreadSessions !== 'undefined' && unreadSessions && unreadSessions.delete) {
+        unreadSessions.delete(sessionId);
+    }
+    updateSessionButton();
+
+    // Fetch messages and session meta for this session
+    const data = await api('session', { note: currentNoteId, session_id: sessionId }, 'PUT');
+    if (!data || !data.ok) return;
+
+    if (data.sessions_meta) {
+        sessionsMeta = data.sessions_meta;
+    }
+    if (data.current_model) {
+        activeModel = data.current_model;
+        updateModelIndicator();
+    }
+    if (data.current_thinking) {
+        currentThinking = data.current_thinking;
+        updateThinkingSelect();
+    }
+
+    document.getElementById('chat-messages').innerHTML = '';
+    currentAssistantEl = null;
+    currentAssistantText = '';
+    currentAssistantDiv = null;
+    if (data.history && data.history.length) {
+        replayHistory(data.history);
+    }
+    updateSessionButton();
+};
+
+globalThis.closeSession = globalThis.archiveSessionFromModal;
+
+globalThis.showNewSessionDialog = globalThis.showSessionModal;
+globalThis.hideNewSessionDialog = globalThis.hideSessionModal;
+globalThis.createSession = globalThis.createSessionFromModal;
 
 globalThis.updateChatInputState = function updateChatInputState() {
     if (!currentNoteId) {
@@ -18,6 +265,7 @@ globalThis.updateChatInputState = function updateChatInputState() {
         chatInput.disabled = false;
         chatInput.placeholder = 'Type a message...';
     }
+    if (typeof renderSessionBar === 'function') renderSessionBar();
     applyNoNoteLayout();
 };
 

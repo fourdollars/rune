@@ -15,27 +15,66 @@ globalThis.handleMessage = function handleMessage(msg) {
             setEditorValue(msg.content);
             if (showPreview) renderPreview();
             break;
-        case 'chat_message':
-            addChatMessage(msg.nickname, msg.content);
-            break;
-        case 'chat_token':
-            if (currentStatus !== 'typing') {
-                setStatus('typing');
-            }
-            appendToLastAssistant(msg.content);
-            break;
-        case 'chat_meta':
-            attachMetaToLastAssistant(msg.model, msg.tokens_in, msg.tokens_out, msg.context_tokens, msg.context_window, msg.steps, msg.tool_calls, msg.thinking, msg.duration_ms);
-            if (msg.usage) {
-                providerUsage = msg.usage;
-                updateUsageIndicator();
+        case 'session_list':
+            if (msg.note_id && msg.note_id === currentNoteId) {
+                sessions = (Array.isArray(msg.sessions) && msg.sessions.length > 0) ? msg.sessions : ['main'];
+                if (!sessions.includes('main')) sessions.unshift('main');
+                if (Array.isArray(msg.sessions_meta)) {
+                    sessionsMeta = msg.sessions_meta;
+                }
+                updateSessionButton();
+                const sessionModal = document.getElementById('session-modal');
+                if (sessionModal && !sessionModal.classList.contains('hidden')) {
+                    renderSessionModal(document.getElementById('session-modal-search-input')?.value || '');
+                }
             }
             break;
-        case 'chat_done':
-            finalizeAssistantMessage();
-            removeAllApprovalButtons();
-            setStatus('idle');
+        case 'chat_message': {
+            const msgSess = msg.session_id || 'main';
+            if (!sessions.includes(msgSess)) {
+                sessions.push(msgSess);
+                updateSessionButton();
+            }
+            if (msgSess === currentSessionId) {
+                addChatMessage(msg.nickname, msg.content);
+            } else {
+                if (typeof unreadSessions !== 'undefined' && unreadSessions && unreadSessions.add) {
+                    unreadSessions.add(msgSess);
+                }
+                updateSessionButton();
+            }
             break;
+        }
+        case 'chat_token': {
+            const tokenSess = msg.session_id || 'main';
+            if (tokenSess === currentSessionId) {
+                if (currentStatus !== 'typing') {
+                    setStatus('typing');
+                }
+                appendToLastAssistant(msg.content);
+            }
+            break;
+        }
+        case 'chat_meta': {
+            const metaSess = msg.session_id || 'main';
+            if (metaSess === currentSessionId) {
+                attachMetaToLastAssistant(msg.model, msg.tokens_in, msg.tokens_out, msg.context_tokens, msg.context_window, msg.steps, msg.tool_calls, msg.thinking, msg.duration_ms);
+                if (msg.usage) {
+                    providerUsage = msg.usage;
+                    updateUsageIndicator();
+                }
+            }
+            break;
+        }
+        case 'chat_done': {
+            const doneSess = msg.session_id || 'main';
+            if (doneSess === currentSessionId) {
+                finalizeAssistantMessage();
+                removeAllApprovalButtons();
+                setStatus('idle');
+            }
+            break;
+        }
         case 'status':
             setStatus(msg.state);
             break;
@@ -138,15 +177,21 @@ globalThis.handleMessage = function handleMessage(msg) {
             updateUsageIndicator();
             break;
         case 'model_changed':
-            activeModel = msg.model || '';
-            currentThinking = msg.thinking || ((activeModel && activeModel.startsWith('openrouter/auto')) ? 'low' : 'off');
+            {
+                const sessId = (typeof currentSessionId !== 'undefined' && currentSessionId) ? currentSessionId : 'main';
+                const currentMeta = (Array.isArray(sessionsMeta)) ? sessionsMeta.find(m => m.session_id === sessId) : null;
+                if (sessId === 'main' || !currentMeta || !currentMeta.model) {
+                    activeModel = msg.model || '';
+                    currentThinking = msg.thinking || ((activeModel && activeModel.startsWith('openrouter/auto')) ? 'low' : 'off');
+                    updateModelIndicator();
+                    updateThinkingSelect();
+                    addSystemMessage('Model switched to: ' + activeModel + ' ' + currentThinking);
+                }
+            }
             if (msg.usage !== undefined) {
                 providerUsage = msg.usage;
+                updateUsageIndicator();
             }
-            updateModelIndicator();
-            updateThinkingSelect();
-            updateUsageIndicator();
-            addSystemMessage('Model switched to: ' + activeModel + ' ' + currentThinking);
             if (lastContextTokens !== null) {
                 const newModel = availableModels.find(m => m.id === activeModel);
                 if (newModel && newModel.context_window) {
@@ -155,9 +200,15 @@ globalThis.handleMessage = function handleMessage(msg) {
             }
             break;
         case 'thinking_changed':
-            currentThinking = msg.thinking || 'off';
-            updateThinkingSelect();
-            addSystemMessage("Model switched to: " + activeModel + " " + currentThinking);
+            {
+                const sessId = (typeof currentSessionId !== 'undefined' && currentSessionId) ? currentSessionId : 'main';
+                const currentMeta = (Array.isArray(sessionsMeta)) ? sessionsMeta.find(m => m.session_id === sessId) : null;
+                if (sessId === 'main' || !currentMeta || !currentMeta.thinking) {
+                    currentThinking = msg.thinking || 'off';
+                    updateThinkingSelect();
+                    addSystemMessage("Thinking switched to: " + currentThinking);
+                }
+            }
             break;
         case 'note_list':
             // Always rebuild fileVisibility from authoritative public_files in SSE payload.

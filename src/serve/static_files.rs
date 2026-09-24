@@ -460,6 +460,14 @@ mod tests {
             js.contains("renderSearchResults"),
             "missing renderSearchResults"
         );
+        assert!(
+            js.contains("restoreSearchResult"),
+            "missing restoreSearchResult"
+        );
+        assert!(
+            js.contains("restore-search"),
+            "missing restore-search action"
+        );
         assert!(js.contains("chat/archive"), "missing chat/archive api call");
         assert!(js.contains("chat/search"), "missing chat/search api call");
         assert!(js.contains("archive_done"), "missing archive_done handler");

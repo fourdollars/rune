@@ -14,11 +14,32 @@ globalThis.switchNote = async function switchNote(sessionId, forceFile = null) {
     const data = await api('session', { note: sessionId, file: targetReqFile }, 'PUT');
     if (!data || !data.ok) return;
 
-    // Update active model for this note
+    // Update active model & thinking for this note/session
     if (data.current_model) {
         activeModel = data.current_model;
         updateModelIndicator();
     }
+    if (data.current_thinking) {
+        currentThinking = data.current_thinking;
+        if (typeof updateThinkingSelect === 'function') updateThinkingSelect();
+    }
+
+    // Update sessions from response
+    if (data.sessions) {
+        sessions = data.sessions;
+    } else {
+        sessions = ['main'];
+    }
+    if (data.sessions_meta) {
+        sessionsMeta = data.sessions_meta;
+    } else {
+        sessionsMeta = [];
+    }
+    currentSessionId = data.current_session || 'main';
+    if (typeof unreadSessions !== 'undefined' && unreadSessions && unreadSessions.clear) {
+        unreadSessions.clear();
+    }
+    if (typeof updateSessionButton === 'function') updateSessionButton();
 
     // Replay history from response
     if (typeof closeOnlineUsers === 'function') closeOnlineUsers();

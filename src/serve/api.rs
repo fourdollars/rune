@@ -132,9 +132,16 @@ pub struct ModelListEntry {
 #[serde(tag = "type")]
 pub enum SseMsg {
     #[serde(rename = "chat_token")]
-    ChatToken { content: String },
+    ChatToken {
+        content: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        session_id: Option<String>,
+    },
     #[serde(rename = "chat_done")]
-    ChatDone {},
+    ChatDone {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        session_id: Option<String>,
+    },
     #[serde(rename = "chat_meta")]
     ChatMeta {
         model: String,
@@ -150,9 +157,23 @@ pub enum SseMsg {
         duration_ms: Option<u64>,
         #[serde(skip_serializing_if = "Option::is_none")]
         usage: Option<crate::provider::ProviderUsageStats>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        session_id: Option<String>,
     },
     #[serde(rename = "chat_message")]
-    ChatMessage { nickname: String, content: String },
+    ChatMessage {
+        nickname: String,
+        content: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        session_id: Option<String>,
+    },
+    #[serde(rename = "session_list")]
+    SessionList {
+        note_id: String,
+        sessions: Vec<String>,
+        #[serde(default)]
+        sessions_meta: Vec<crate::serve::db::ChatSessionMeta>,
+    },
     #[serde(rename = "status")]
     Status { state: String },
     #[serde(rename = "tool_status")]
@@ -297,6 +318,8 @@ pub struct ChatReq {
     pub note_id: String,
     pub content: String,
     pub nickname: Option<String>,
+    #[serde(default = "default_session_id")]
+    pub session_id: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -315,6 +338,8 @@ pub struct FileCreateReq {
 pub struct SessionReq {
     pub note: String,
     pub file: Option<String>,
+    #[serde(default = "default_session_id")]
+    pub session_id: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -334,6 +359,13 @@ pub struct NoteCreateReq {
 }
 
 #[derive(Debug, Deserialize)]
+pub struct SessionConfigReq {
+    pub session_id: String,
+    pub model: Option<String>,
+    pub thinking: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
 pub struct NotePatchReq {
     pub name: Option<String>,
     pub icon: Option<String>,
@@ -345,6 +377,20 @@ pub struct NotePatchReq {
 #[derive(Debug, Deserialize)]
 pub struct ArchiveReq {
     pub note_id: String,
+    #[serde(default = "default_session_id")]
+    pub session_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct RestoreReq {
+    pub note_id: String,
+    pub archive_file: String,
+    #[serde(default = "default_session_id")]
+    pub session_id: String,
+}
+
+fn default_session_id() -> String {
+    "main".to_string()
 }
 
 #[derive(Debug, Deserialize)]
@@ -474,6 +520,23 @@ pub fn broadcast_to_room(room: &NoteRoom, msg: &SseMsg) {
     if let Ok(json) = serde_json::to_string(msg) {
         let _ = room.broadcast_tx.send(json);
     }
+}
+
+/// Broadcast the list of active sessions for a note to the note room.
+pub async fn broadcast_session_list(state: &ServerState, note_id: &str) {
+    let meta = state
+        .chat_db
+        .list_chat_sessions_meta_async(note_id.to_string())
+        .await
+        .unwrap_or_default();
+    let sessions = meta.iter().map(|s| s.session_id.clone()).collect();
+    let room = state.get_or_create_room(note_id).await;
+    let msg = SseMsg::SessionList {
+        note_id: note_id.to_string(),
+        sessions,
+        sessions_meta: meta,
+    };
+    broadcast_to_room(&room, &msg);
 }
 
 // ─── SSE endpoint ──────────────────────────────────────────────────────────
@@ -677,6 +740,19 @@ pub async fn events_handler(
         active: note_id.clone(),
     });
 
+    // Session list for this note
+    let meta = state
+        .chat_db
+        .list_chat_sessions_meta_async(note_id.clone())
+        .await
+        .unwrap_or_default();
+    let sessions = meta.iter().map(|s| s.session_id.clone()).collect();
+    init_msgs.push(SseMsg::SessionList {
+        note_id: note_id.clone(),
+        sessions,
+        sessions_meta: meta,
+    });
+
     // File list for this note
     let md_dir = state.note_markdown_dir(&note_id);
     let mut file_names = Vec::new();
@@ -753,6 +829,7 @@ pub async fn events_handler(
             if !buf.is_empty() {
                 init_msgs.push(SseMsg::ChatToken {
                     content: buf.clone(),
+                    session_id: None,
                 });
             }
         }
@@ -816,6 +893,7 @@ pub fn is_guest_allowed_event(event_type: &str) -> bool {
             | "file_content"
             | "file_list"
             | "note_list"
+            | "session_list"
             | "auth_result"
             | "model_list"
             | "model_changed"
@@ -886,6 +964,12 @@ pub async fn chat_handler(
         }
     };
 
+    let session_id = if req.session_id.trim().is_empty() {
+        "main".to_string()
+    } else {
+        req.session_id
+    };
+
     // Get (or create) the room for this note
     let room = state.get_or_create_room(&req.note_id).await;
 
@@ -893,19 +977,24 @@ pub async fn chat_handler(
     let user_msg = SseMsg::ChatMessage {
         nickname: nickname.clone(),
         content: req.content.clone(),
+        session_id: Some(session_id.clone()),
     };
     broadcast_to_room(&room, &user_msg);
 
     // Persist user message
     state
         .chat_db
-        .insert_async(
+        .insert_session_async(
             req.note_id.clone(),
+            session_id.clone(),
             "user".to_string(),
             nickname.clone(),
             req.content.clone(),
         )
         .await;
+
+    // Broadcast updated session list to the note room
+    broadcast_session_list(&state, &req.note_id).await;
 
     // Send thinking status to the room
     let thinking = SseMsg::Status {
@@ -939,12 +1028,13 @@ pub async fn chat_handler(
     let content = req.content.clone();
     let nick = nickname.clone();
     let cancel = new_token.clone();
+    let sess_id = session_id.clone();
     tokio::spawn(async move {
         tokio::select! {
             _ = cancel.cancelled() => {
                 // Silently exit — new message replaced this one
             }
-            _ = handle_chat_message(content, state_clone, note_id, nick) => {}
+            _ = handle_chat_message(content, state_clone, note_id, sess_id, nick) => {}
         }
     });
 
@@ -1135,7 +1225,29 @@ pub async fn session_handler(
         );
     }
 
-    let history = state.chat_db.load_recent_async(req.note.clone(), 100).await;
+    let session_id = if req.session_id.trim().is_empty() {
+        "main".to_string()
+    } else {
+        req.session_id
+    };
+
+    let history = state
+        .chat_db
+        .load_recent_session_async(req.note.clone(), session_id.clone(), 100)
+        .await;
+    let sessions_meta = state
+        .chat_db
+        .list_chat_sessions_meta_async(req.note.clone())
+        .await
+        .unwrap_or_default();
+    let mut sessions: Vec<String> = sessions_meta.iter().map(|s| s.session_id.clone()).collect();
+    if !sessions.iter().any(|s| s == "main") {
+        sessions.insert(0, "main".to_string());
+    }
+    if !sessions.iter().any(|s| s == &session_id) {
+        sessions.push(session_id.clone());
+    }
+
     let md_dir = state.note_markdown_dir(&req.note);
     let mut files = Vec::new();
     if let Ok(mut rd) = tokio::fs::read_dir(&md_dir).await {
@@ -1172,17 +1284,54 @@ pub async fn session_handler(
         None
     };
 
-    let current_model = state.effective_model(&req.note).await;
+    let current_model = state
+        .effective_model_for_session(&req.note, &session_id)
+        .await;
+    let current_thinking = state
+        .effective_thinking_for_session(&req.note, &session_id)
+        .await
+        .unwrap_or_else(|| "off".to_string());
 
     Json(serde_json::json!({
         "ok": true,
         "note_id": req.note,
+        "current_session": session_id,
+        "sessions": sessions,
+        "sessions_meta": sessions_meta,
         "history": history,
         "files": files,
         "current_file": current_file,
         "file_content": first_content,
         "current_model": current_model,
+        "current_thinking": current_thinking,
     }))
+}
+
+pub async fn session_config_handler(
+    State(state): State<ServerState>,
+    axum::extract::Path(note_id): axum::extract::Path<String>,
+    Json(req): Json<SessionConfigReq>,
+) -> Json<ApiResponse> {
+    if note_id.is_empty() || req.session_id.is_empty() {
+        return Json(ApiResponse::err("Note ID and Session ID required"));
+    }
+    if let Err(e) = state
+        .chat_db
+        .set_session_meta_async(
+            note_id.clone(),
+            req.session_id.clone(),
+            req.model,
+            req.thinking,
+        )
+        .await
+    {
+        return Json(ApiResponse::err(format!(
+            "Failed to update session config: {}",
+            e
+        )));
+    }
+    broadcast_session_list(&state, &note_id).await;
+    Json(ApiResponse::success())
 }
 
 /// Merge contents of `src` note directory into `dst`.
@@ -1373,6 +1522,11 @@ pub async fn archive_handler(
     if req.note_id.is_empty() {
         return Json(ApiResponse::err("No note selected"));
     }
+    let session_id = if req.session_id.trim().is_empty() {
+        "main".to_string()
+    } else {
+        req.session_id
+    };
     let archive_dir = state
         .note_markdown_dir(&req.note_id)
         .parent()
@@ -1387,7 +1541,10 @@ pub async fn archive_handler(
     let archive_path = archive_dir.join(&filename);
 
     let db = state.chat_db.clone();
-    match db.archive_async(req.note_id.clone(), archive_path).await {
+    match db
+        .archive_session_async(req.note_id.clone(), session_id, archive_path)
+        .await
+    {
         Ok(count) => {
             let room = state.get_or_create_room(&req.note_id).await;
             let msg = SseMsg::ArchiveDone { filename, count };
@@ -1395,9 +1552,84 @@ pub async fn archive_handler(
             // Send empty history to the room
             let hist = SseMsg::History { messages: vec![] };
             broadcast_to_room(&room, &hist);
+            broadcast_session_list(&state, &req.note_id).await;
             Json(ApiResponse::success())
         }
         Err(e) => Json(ApiResponse::err(format!("Archive failed: {}", e))),
+    }
+}
+
+pub async fn restore_handler(
+    State(state): State<ServerState>,
+    Json(req): Json<RestoreReq>,
+) -> Json<ApiResponse> {
+    if req.note_id.is_empty() || req.archive_file.is_empty() {
+        return Json(ApiResponse::err(
+            "Note ID and archive file must be provided",
+        ));
+    }
+    if req.archive_file.contains("..")
+        || req.archive_file.contains('/')
+        || req.archive_file.contains('\\')
+    {
+        return Json(ApiResponse::err("Invalid archive file name"));
+    }
+
+    let session_id = if req.session_id.trim().is_empty() {
+        "main".to_string()
+    } else {
+        req.session_id
+    };
+
+    let archive_dir = state
+        .note_markdown_dir(&req.note_id)
+        .parent()
+        .unwrap()
+        .join("archives");
+    let target_archive = archive_dir.join(&req.archive_file);
+    if !target_archive.exists() {
+        return Json(ApiResponse::err("Archive file not found"));
+    }
+
+    // Auto-archive current active messages before restoring, if any exist
+    let active_records = state
+        .chat_db
+        .load_recent_session_async(req.note_id.clone(), session_id.clone(), 1)
+        .await;
+    if !active_records.is_empty() {
+        let ts = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        let backup_filename = format!("{}.jsonl", ts);
+        let backup_path = archive_dir.join(&backup_filename);
+        let _ = state
+            .chat_db
+            .archive_session_async(req.note_id.clone(), session_id.clone(), backup_path)
+            .await;
+    }
+
+    let db = state.chat_db.clone();
+    match db
+        .restore_session_async(req.note_id.clone(), session_id.clone(), target_archive)
+        .await
+    {
+        Ok(_) => {
+            let history = state
+                .chat_db
+                .load_recent_session_async(req.note_id.clone(), session_id, 100)
+                .await;
+            let room = state.get_or_create_room(&req.note_id).await;
+            let hist_msg = SseMsg::History { messages: history };
+            broadcast_to_room(&room, &hist_msg);
+            let status_msg = SseMsg::Status {
+                state: "idle".to_string(),
+            };
+            broadcast_to_room(&room, &status_msg);
+            broadcast_session_list(&state, &req.note_id).await;
+            Json(ApiResponse::success())
+        }
+        Err(e) => Json(ApiResponse::err(format!("Restore failed: {}", e))),
     }
 }
 
@@ -3032,11 +3264,14 @@ async fn handle_chat_message(
     user_msg: String,
     state: ServerState,
     note_id: String,
+    session_id: String,
     nickname: String,
 ) {
     let config = state.config.clone();
-    // Use per-note effective model (override > global default)
-    let active_model = state.effective_model(&note_id).await;
+    // Use per-session effective model (session override > note override > global default)
+    let active_model = state
+        .effective_model_for_session(&note_id, &session_id)
+        .await;
 
     // Get the room for per-note broadcasting
     let room = state.get_or_create_room(&note_id).await;
@@ -3064,9 +3299,11 @@ async fn handle_chat_message(
     let room_for_token = Arc::clone(&room);
     let streaming_buf = Arc::clone(&room.streaming_tokens);
     let status_for_token = Arc::clone(&room.active_status);
+    let sess_id_token = session_id.clone();
     let token_callback: Arc<dyn Fn(&str) + Send + Sync> = Arc::new(move |token: &str| {
         let msg = SseMsg::ChatToken {
             content: token.to_string(),
+            session_id: Some(sess_id_token.clone()),
         };
         broadcast_to_room(&room_for_token, &msg);
         // Accumulate for clients that reconnect mid-stream
@@ -3119,7 +3356,9 @@ async fn handle_chat_message(
     // Build agent
     let mut cfg = config.clone();
     cfg.model = active_model.clone();
-    let effective_thinking_level = state.effective_thinking(&note_id).await;
+    let effective_thinking_level = state
+        .effective_thinking_for_session(&note_id, &session_id)
+        .await;
     cfg.thinking = effective_thinking_level.clone();
     // Use the model actual context window from ModelInfo (dynamic, from provider API).
     // This ensures compact threshold aligns with real model capability.
@@ -3207,10 +3446,13 @@ async fn handle_chat_message(
         build_effective_note_system_prompt(&state, &note_id).await;
     agent.set_system_prompt(&system_prompt);
 
-    // Load recent chat history into agent context (up to 20 records).
+    // Load recent chat history into agent context for this session (up to 20 records).
     // Token-aware trimming inside load_history will ensure it fits within
     // the history token cap.
-    let history = state.chat_db.load_recent_async(note_id.clone(), 20).await;
+    let history = state
+        .chat_db
+        .load_recent_session_async(note_id.clone(), session_id.clone(), 20)
+        .await;
     let history_without_current: Vec<_> = history
         .into_iter()
         .filter(|r| !(r.role == "user" && r.content == user_msg))
@@ -3228,7 +3470,9 @@ async fn handle_chat_message(
         buf.clear();
     }
 
-    let done = SseMsg::ChatDone {};
+    let done = SseMsg::ChatDone {
+        session_id: Some(session_id.clone()),
+    };
     broadcast_to_room(&room, &done);
 
     // Broadcast run statistics
@@ -3253,6 +3497,7 @@ async fn handle_chat_message(
         tool_calls: agent.tool_call_count() as u32,
         duration_ms: Some(duration_ms),
         usage,
+        session_id: Some(session_id.clone()),
     };
     broadcast_to_room(&room, &meta);
 
@@ -3262,8 +3507,9 @@ async fn handle_chat_message(
             // Save assistant response with run statistics
             state
                 .chat_db
-                .insert_with_meta_async(
+                .insert_session_with_meta_async(
                     note_id.clone(),
+                    session_id.clone(),
                     "assistant".to_string(),
                     "ᚱᚢᚾᛖ".to_string(),
                     answer.clone(),
@@ -3282,8 +3528,9 @@ async fn handle_chat_message(
             let err_msg = format!("⚠️ Agent error: {}", e);
             state
                 .chat_db
-                .insert_with_meta_async(
+                .insert_session_with_meta_async(
                     note_id.clone(),
+                    session_id.clone(),
                     "assistant".to_string(),
                     "ᚱᚢᚾᛖ".to_string(),
                     err_msg,
@@ -3306,8 +3553,9 @@ async fn handle_chat_message(
             let err_msg = "⚠️ Agent reached max steps".to_string();
             state
                 .chat_db
-                .insert_with_meta_async(
+                .insert_session_with_meta_async(
                     note_id.clone(),
+                    session_id.clone(),
                     "assistant".to_string(),
                     "ᚱᚢᚾᛖ".to_string(),
                     err_msg,
@@ -3330,8 +3578,9 @@ async fn handle_chat_message(
             let err_msg = "⚠️ Token budget exhausted".to_string();
             state
                 .chat_db
-                .insert_with_meta_async(
+                .insert_session_with_meta_async(
                     note_id.clone(),
+                    session_id.clone(),
                     "assistant".to_string(),
                     "ᚱᚢᚾᛖ".to_string(),
                     err_msg,
@@ -4234,10 +4483,12 @@ mod tests {
     fn test_sse_msg_serialization() {
         let msg = SseMsg::ChatToken {
             content: "hello".into(),
+            session_id: Some("main".into()),
         };
         let json = serde_json::to_string(&msg).unwrap();
         assert!(json.contains(r#""type":"chat_token""#));
         assert!(json.contains(r#""content":"hello""#));
+        assert!(json.contains(r#""session_id":"main""#));
     }
 
     #[test]
@@ -4282,11 +4533,13 @@ mod tests {
             tool_calls: 2,
             duration_ms: Some(1234),
             usage: None,
+            session_id: Some("main".into()),
         };
         let json = serde_json::to_string(&msg).unwrap();
         assert!(json.contains(r#""type":"chat_meta""#));
         assert!(json.contains(r#""tokens_in":100"#));
         assert!(json.contains(r#""duration_ms":1234"#));
+        assert!(json.contains(r#""session_id":"main""#));
     }
 
     #[test]
@@ -4565,6 +4818,7 @@ mod integration_tests {
             )
             .route("/api/session", put(session_handler))
             .route("/api/chat/archive", post(archive_handler))
+            .route("/api/chat/restore", post(restore_handler))
             .route("/api/chat/search", post(search_handler))
             .route(
                 "/api/goal",
@@ -5030,6 +5284,57 @@ mod integration_tests {
         )
         .await;
         assert_eq!(body["ok"], false);
+    }
+
+    #[tokio::test]
+    async fn test_restore_endpoint() {
+        let (app, tmp) = test_app();
+        post_json(&app, "/api/notes", json!({"name": "restore-test"})).await;
+
+        // Archive non-existent
+        let (_, body) = post_json(
+            &app,
+            "/api/chat/restore",
+            json!({
+                "note_id": "restore-test",
+                "archive_file": "missing.jsonl"
+            }),
+        )
+        .await;
+        assert_eq!(body["ok"], false);
+
+        // Create archive file directly in archives/
+        let archive_dir = tmp
+            .path()
+            .join(".rune")
+            .join("notes")
+            .join("restore-test")
+            .join("archives");
+        tokio::fs::create_dir_all(&archive_dir).await.unwrap();
+        let archive_file = archive_dir.join("saved_session.jsonl");
+        let sample_record = json!({
+            "id": 1,
+            "note_id": "restore-test",
+            "role": "user",
+            "nickname": "alice",
+            "content": "restored prompt test",
+            "created_at": 1700000000
+        });
+        tokio::fs::write(&archive_file, format!("{}\n", sample_record.to_string()))
+            .await
+            .unwrap();
+
+        // Restore the archive
+        let (_, body) = post_json(
+            &app,
+            "/api/chat/restore",
+            json!({
+                "note_id": "restore-test",
+                "archive_file": "saved_session.jsonl"
+            }),
+        )
+        .await;
+        assert_eq!(body["ok"], true);
     }
 
     #[tokio::test]
@@ -6880,6 +7185,7 @@ mod isolation_tests {
             note_id: "note1".to_string(),
             content: "Hello from alice".to_string(),
             nickname: Some("spoofed_hacker".to_string()),
+            session_id: "main".to_string(),
         };
         let res = super::chat_handler(
             axum::extract::State(state.clone()),
@@ -6917,6 +7223,7 @@ mod isolation_tests {
             note_id: "note1".to_string(),
             content: "Hello from bob via bearer".to_string(),
             nickname: None,
+            session_id: "main".to_string(),
         };
         let res2 = super::chat_handler(
             axum::extract::State(state.clone()),

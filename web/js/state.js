@@ -39,6 +39,10 @@ const initial = {
     personaFilesEnabled: false,
     cronJobsEnabled: false,
     runningCronJobIds: new Set(),
+    currentSessionId: 'main',
+    sessions: ['main'],
+    sessionsMeta: [],
+    unreadSessions: new Set(),
 };
 
 const listeners = new Set();

@@ -71,6 +71,21 @@
         </div>
     </div>
 
+    <!-- New Session / Thread dialog -->
+    <div id="new-session-modal" class="modal-overlay hidden">
+        <div class="modal" role="dialog" aria-modal="true" aria-labelledby="new-session-modal-title">
+            <h2 id="new-session-modal-title">New Thread</h2>
+            <div class="form-group">
+                <label for="new-session-name">Thread Name</label>
+                <input type="text" id="new-session-name" placeholder="e.g. topic-1, debug, user-query" maxlength="50" />
+            </div>
+            <div class="modal-actions">
+                <button class="btn-secondary" data-action="hide-new-session-dialog">Cancel</button>
+                <button class="btn-primary" data-action="create-session">Create</button>
+            </div>
+        </div>
+    </div>
+
     <!-- Directory Browser dialog -->
     <div id="dir-browser-modal" class="modal-overlay hidden">
         <div class="modal modal-wide" role="dialog" aria-modal="true" aria-labelledby="dir-browser-title">
@@ -290,6 +305,22 @@
         </div>
     </div>
 
+    <div id="session-modal" class="modal-overlay hidden">
+        <div class="modal modal-session" role="dialog" aria-modal="true" aria-labelledby="session-modal-title">
+            <div class="session-modal-header">
+                <h2 id="session-modal-title">Manage Chat Sessions</h2>
+                <button type="button" class="btn-icon session-add-icon-btn" data-action="prompt-new-session" data-icon="plus" title="New Session" aria-label="New Session"></button>
+            </div>
+            <div class="session-modal-search">
+                <input type="text" id="session-modal-search-input" placeholder="Search sessions..." autocomplete="off" aria-label="Search sessions" />
+            </div>
+            <div id="session-modal-list" class="session-modal-list"></div>
+            <div class="modal-actions">
+                <button class="btn-secondary" data-action="hide-session-modal">Close</button>
+            </div>
+        </div>
+    </div>
+
     <div id="app" data-pane="preview">
         <!-- Compact chrome: CSS-gated to <=768px, never a parallel mobile DOM. -->
         <header id="compact-bar">
@@ -384,6 +415,10 @@
                 <div class="chat-header">
                     <h3><a href="/notes/" target="_blank" rel="noopener" class="title-link" id="rune-title"><span class="rune-char">ᚱ</span><span class="rune-char">ᚢ</span><span class="rune-char">ᚾ</span><span class="rune-char">ᛖ</span></a><span id="status-indicator" class="status disconnected" role="status" title="disconnected" aria-label="Connection status" data-icon="dot"></span></h3>
                     <div id="model-indicator" class="model-indicator" style="display:none">
+                        <button id="session-btn" class="session-btn" data-action="show-session-modal" title="Switch or manage sessions" aria-label="Switch or manage sessions">
+                            <span id="session-btn-icon">💬</span>
+                            <span id="session-btn-label">main</span>
+                        </button>
                         <button id="model-name" class="model-name" data-action="show-model-dialog" title="Switch model" aria-label="Switch model"></button>
                         <button id="thinking-btn" class="thinking-btn" data-action="show-thinking-dialog" title="Thinking level" aria-label="Thinking level" style="display:none">
                             <span class="thinking-icon" data-icon="brain"></span>
