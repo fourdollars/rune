@@ -430,6 +430,12 @@ pub async fn process_webhook_payload_for_bot(
                 )
                 .await;
 
+            // Set active status to thinking
+            {
+                let mut status = room.active_status.write().await;
+                *status = "thinking".to_string();
+            }
+
             // Send thinking status to room
             let thinking = SseMsg::Status {
                 state: "thinking".to_string(),
@@ -471,6 +477,18 @@ async fn execute_line_agent_and_reply(
             if let Some(token) = reply_token {
                 let _ = line_client.reply_message(&token, &err_msg).await;
             }
+            let err = SseMsg::Error {
+                message: format!("Provider error: {}", e),
+            };
+            broadcast_to_room(&room, &err);
+            {
+                let mut status = room.active_status.write().await;
+                *status = "idle".to_string();
+            }
+            let idle = SseMsg::Status {
+                state: "idle".to_string(),
+            };
+            broadcast_to_room(&room, &idle);
             return;
         }
     };
@@ -550,6 +568,34 @@ async fn execute_line_agent_and_reply(
             .unwrap()
             .join("archives"),
     );
+
+    // Notify UI whenever AI writes/creates a markdown file — broadcast to room
+    let state_for_filelist = state.clone();
+    let note_id_for_filelist = note_id.clone();
+    agent.file_list_callback = Some(Arc::new(move || {
+        let s = state_for_filelist.clone();
+        let n = note_id_for_filelist.clone();
+        tokio::spawn(async move {
+            broadcast_file_list(&s, &n).await;
+        });
+    }));
+
+    // Broadcast file content changes to all users in the room (real-time sync)
+    let state_for_content = state.clone();
+    let note_id_for_content = note_id.clone();
+    agent.file_content_callback = Some(Arc::new(move |filename: String, content: String| {
+        let s = state_for_content.clone();
+        let n = note_id_for_content.clone();
+        tokio::spawn(async move {
+            let room = s.get_or_create_room(&n).await;
+            let fc = SseMsg::FileContent {
+                note_id: n,
+                filename,
+                content,
+            };
+            broadcast_to_room(&room, &fc);
+        });
+    }));
 
     // Set system prompt: per-note override + optional persona files > global config > default
     let (system_prompt, _loaded_personas) =
@@ -670,6 +716,19 @@ async fn execute_line_agent_and_reply(
             error!("Failed to reply message to LINE: {}", e);
         }
     }
+
+    // Always reset room status to idle and broadcast to room users
+    {
+        let mut status = room.active_status.write().await;
+        *status = "idle".to_string();
+    }
+    let idle_msg = SseMsg::Status {
+        state: "idle".to_string(),
+    };
+    broadcast_to_room(&room, &idle_msg);
+
+    // Broadcast updated file list to the room
+    broadcast_file_list(&state, &note_id).await;
 }
 
 fn civil_from_timestamp(secs: u64) -> (i32, u32, u32, u32, u32, u32) {
@@ -1411,5 +1470,26 @@ mod tests {
             .load_recent_async("LineBot".to_string(), 10)
             .await;
         assert_eq!(history.len(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_execute_line_agent_status_reset_to_idle() {
+        let state = create_test_state_with_line("secret123");
+        let room = state.get_or_create_room("LineBot").await;
+        *room.active_status.write().await = "thinking".to_string();
+
+        let client = LineClient::new("dummy_token".to_string());
+        execute_line_agent_and_reply(
+            state.clone(),
+            "LineBot".to_string(),
+            "User".to_string(),
+            "hello".to_string(),
+            None,
+            client,
+        )
+        .await;
+
+        let status = room.active_status.read().await;
+        assert_eq!(*status, "idle");
     }
 }

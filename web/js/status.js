@@ -50,7 +50,6 @@ globalThis.setToolStatus = function setToolStatus(toolName) {
 
 globalThis.clearToolStatus = function clearToolStatus() {
     if (currentStatus !== 'tool') {
-        setStatus('thinking');
         return;
     }
     const elapsed = Date.now() - toolStartTime;
