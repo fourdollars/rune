@@ -1514,11 +1514,7 @@ impl ChatDb {
             .collect();
         drop(stmt);
 
-        // Delete session metadata and messages from DB
-        let _ = conn.execute(
-            "DELETE FROM chat_sessions WHERE note_id = ?1 AND session_id = ?2",
-            params![note_id, s_id],
-        );
+        // Clear active messages from DB (session metadata in chat_sessions is preserved)
         let _ = conn.execute(
             "DELETE FROM messages WHERE note_id = ?1 AND session_id = ?2",
             params![note_id, s_id],
@@ -1756,6 +1752,35 @@ impl ChatDb {
             db.archive_session(&note_id, &session_id, &archive_path)
         })
         .await?
+    }
+
+    /// Delete a chat session completely (both metadata in chat_sessions and messages in messages table).
+    pub fn delete_chat_session(&self, note_id: &str, session_id: &str) -> anyhow::Result<usize> {
+        let conn = self.conn.lock().unwrap();
+        let s_id = if session_id.trim().is_empty() {
+            "main"
+        } else {
+            session_id
+        };
+        let _ = conn.execute(
+            "DELETE FROM chat_sessions WHERE note_id = ?1 AND session_id = ?2",
+            params![note_id, s_id],
+        );
+        let deleted_msgs = conn.execute(
+            "DELETE FROM messages WHERE note_id = ?1 AND session_id = ?2",
+            params![note_id, s_id],
+        )?;
+        Ok(deleted_msgs)
+    }
+
+    /// Async wrapper for delete_chat_session.
+    pub async fn delete_chat_session_async(
+        &self,
+        note_id: String,
+        session_id: String,
+    ) -> anyhow::Result<usize> {
+        let db = self.clone();
+        tokio::task::spawn_blocking(move || db.delete_chat_session(&note_id, &session_id)).await?
     }
 
     /// Async wrapper for archive.
@@ -2675,6 +2700,72 @@ mod tests {
         let c123 = list.iter().find(|s| s.session_id == "group:C123").unwrap();
         assert_eq!(c123.title, Some("New LINE Group Name".to_string()));
         assert_eq!(c123.custom_title, None);
+    }
+
+    #[tokio::test]
+    async fn test_archive_session_preserves_metadata() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("chat.db");
+        let db = ChatDb::open(&db_path).unwrap();
+
+        // 1. Insert LINE session message and title
+        db.set_session_title("LineBot", "user:U12345", Some("Alice"))
+            .unwrap();
+        db.set_session_custom_title("LineBot", "user:U12345", Some("Alice Custom"))
+            .unwrap();
+        db.set_session_meta(
+            "LineBot",
+            "user:U12345",
+            Some("openai/gpt-4o"),
+            Some("high"),
+        )
+        .unwrap();
+        db.insert_session(
+            "LineBot",
+            "user:U12345",
+            "user",
+            "Alice",
+            "Hello from Alice",
+        )
+        .unwrap();
+
+        let list_before = db.list_chat_sessions_meta("LineBot").unwrap();
+        let s_before = list_before
+            .iter()
+            .find(|s| s.session_id == "user:U12345")
+            .unwrap();
+        assert_eq!(s_before.title, Some("Alice".to_string()));
+        assert_eq!(s_before.custom_title, Some("Alice Custom".to_string()));
+        assert_eq!(s_before.message_count, 1);
+
+        // 2. Archive session messages
+        let archive_path = dir.path().join("alice_arc.jsonl");
+        let archived = db
+            .archive_session("LineBot", "user:U12345", &archive_path)
+            .unwrap();
+        assert_eq!(archived, 1);
+
+        // Messages should be cleared, but chat_sessions metadata MUST be preserved!
+        let msgs = db
+            .load_recent_session("LineBot", "user:U12345", 10)
+            .unwrap();
+        assert!(msgs.is_empty());
+
+        let list_after = db.list_chat_sessions_meta("LineBot").unwrap();
+        let s_after = list_after
+            .iter()
+            .find(|s| s.session_id == "user:U12345")
+            .unwrap();
+        assert_eq!(s_after.title, Some("Alice".to_string()));
+        assert_eq!(s_after.custom_title, Some("Alice Custom".to_string()));
+        assert_eq!(s_after.model, Some("openai/gpt-4o".to_string()));
+        assert_eq!(s_after.thinking, Some("high".to_string()));
+        assert_eq!(s_after.message_count, 0);
+
+        // 3. Deleting session explicitly removes both metadata and messages
+        db.delete_chat_session("LineBot", "user:U12345").unwrap();
+        let list_final = db.list_chat_sessions_meta("LineBot").unwrap();
+        assert!(!list_final.iter().any(|s| s.session_id == "user:U12345"));
     }
 }
 

@@ -290,7 +290,7 @@ globalThis.deleteSession = async function deleteSession(sessionId) {
     });
     if (!confirmed) return;
 
-    const res = await api('chat/archive', { note_id: currentNoteId, session_id: sessionId });
+    const res = await api('chat/archive', { note_id: currentNoteId, session_id: sessionId, delete_session: true });
     if (res && res.ok) {
         if (typeof unreadSessions !== 'undefined' && unreadSessions && unreadSessions.delete) {
             unreadSessions.delete(sessionId);

@@ -381,6 +381,8 @@ pub struct ArchiveReq {
     pub note_id: String,
     #[serde(default = "default_session_id")]
     pub session_id: String,
+    #[serde(default)]
+    pub delete_session: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1614,10 +1616,15 @@ pub async fn archive_handler(
 
     let db = state.chat_db.clone();
     match db
-        .archive_session_async(req.note_id.clone(), session_id, archive_path)
+        .archive_session_async(req.note_id.clone(), session_id.clone(), archive_path)
         .await
     {
         Ok(count) => {
+            if req.delete_session && session_id != "main" {
+                let _ = db
+                    .delete_chat_session_async(req.note_id.clone(), session_id)
+                    .await;
+            }
             let room = state.get_or_create_room(&req.note_id).await;
             let msg = SseMsg::ArchiveDone { filename, count };
             broadcast_to_room(&room, &msg);
@@ -5357,6 +5364,53 @@ mod integration_tests {
         )
         .await;
         assert_eq!(body["ok"], false);
+    }
+
+    #[tokio::test]
+    async fn test_archive_chat_session_preserves_title() {
+        let (app, _tmp) = test_app();
+        post_json(&app, "/api/notes", json!({"name": "line-archive-test"})).await;
+
+        let db = app_db(&app);
+        db.set_session_title("line-archive-test", "user:U999", Some("Alice"))
+            .unwrap();
+        db.insert_session("line-archive-test", "user:U999", "user", "Alice", "hello")
+            .unwrap();
+
+        // Archive chat messages (default delete_session = false)
+        let (_, body) = post_json(
+            &app,
+            "/api/chat/archive",
+            json!({
+                "note_id": "line-archive-test",
+                "session_id": "user:U999",
+            }),
+        )
+        .await;
+        assert_eq!(body["ok"], true);
+
+        // Metadata must still exist
+        let list = db.list_chat_sessions_meta("line-archive-test").unwrap();
+        let u999 = list.iter().find(|s| s.session_id == "user:U999").unwrap();
+        assert_eq!(u999.title, Some("Alice".to_string()));
+        assert_eq!(u999.message_count, 0);
+
+        // Now archive with delete_session = true
+        let (_, body) = post_json(
+            &app,
+            "/api/chat/archive",
+            json!({
+                "note_id": "line-archive-test",
+                "session_id": "user:U999",
+                "delete_session": true,
+            }),
+        )
+        .await;
+        assert_eq!(body["ok"], true);
+
+        // Metadata is now deleted
+        let list2 = db.list_chat_sessions_meta("line-archive-test").unwrap();
+        assert!(!list2.iter().any(|s| s.session_id == "user:U999"));
     }
 
     #[tokio::test]
