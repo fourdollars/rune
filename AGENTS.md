@@ -94,6 +94,7 @@ keywords = ["@bot", "rune"] # Group messages must mention a keyword to trigger A
 # Event logging switches (default false)
 log = false # Enable Markdown event logging (notes/{nickname}/YYYY-MM-DD-line-{id}.md)
 anonymous = false # Enable event logging for anonymous/unregistered sources
+timezone = "+08:00" # Timezone for event logging and date calculations (e.g. "+08:00", "UTC+8", "local", "Asia/Taipei", default: "UTC")
 
 # Custom access denied message for 1-on-1 chats ({user_id} replaced at runtime)
 # access_denied_message = "⛔ Access denied. User ID: {user_id}"

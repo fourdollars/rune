@@ -302,22 +302,24 @@ pub async fn process_webhook_payload_for_bot(
         let should_log = line_cfg.log && (line_cfg.anonymous || is_in_whitelist);
         if should_log {
             let source_id = extract_source_id(&event);
-            let today = chrono_now_date();
+            let event_secs = if event.timestamp > 0 {
+                (event.timestamp / 1000) as u64
+            } else {
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs()
+            };
+            let (tz_offset, tz_label) =
+                crate::serve::timezone::resolve_timezone_offset(&line_cfg.timezone, event_secs);
+            let today = crate::serve::timezone::format_date_with_tz(event_secs, tz_offset);
             let filename = format!("{}-line-{}.md", today, source_id);
             let md_dir = state.note_markdown_dir(&note_id);
             let _ = std::fs::create_dir_all(&md_dir);
             let file_path = md_dir.join(&filename);
 
-            let now_dt = if event.timestamp > 0 {
-                let secs = (event.timestamp / 1000) as u64;
-                let (y, m, d, h, min, s) = civil_from_timestamp(secs);
-                format!(
-                    "{:04}-{:02}-{:02} {:02}:{:02}:{:02} UTC",
-                    y, m, d, h, min, s
-                )
-            } else {
-                chrono_now_datetime()
-            };
+            let now_dt =
+                crate::serve::timezone::format_datetime_with_tz(event_secs, tz_offset, &tz_label);
 
             let formatted_payload =
                 if let Ok(val) = serde_json::from_str::<serde_json::Value>(&text) {
@@ -840,25 +842,7 @@ async fn execute_line_agent_and_reply(
 }
 
 fn civil_from_timestamp(secs: u64) -> (i32, u32, u32, u32, u32, u32) {
-    let days = (secs / 86400) as i64;
-    let secs_of_day = (secs % 86400) as u32;
-    let hours = secs_of_day / 3600;
-    let mins = (secs_of_day % 3600) / 60;
-    let secs = secs_of_day % 60;
-
-    // Howard Hinnant's algorithm (civil date from days since 1970-01-01)
-    let z = days + 719468;
-    let era = if z >= 0 { z } else { z - 146096 } / 146097;
-    let doe = (z - era * 146097) as u32;
-    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
-    let y = (yoe as i64) + era * 400;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let d = doy - (153 * mp + 2) / 5 + 1;
-    let m = if mp < 10 { mp + 3 } else { mp - 9 };
-    let year = if m <= 2 { y + 1 } else { y } as i32;
-
-    (year, m, d, hours, mins, secs)
+    crate::serve::timezone::civil_from_timestamp(secs)
 }
 
 fn chrono_now_date() -> String {
@@ -866,8 +850,7 @@ fn chrono_now_date() -> String {
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs();
-    let (y, m, d, _, _, _) = civil_from_timestamp(now);
-    format!("{:04}-{:02}-{:02}", y, m, d)
+    crate::serve::timezone::format_date_with_tz(now, 0)
 }
 
 fn chrono_now_time() -> String {
@@ -875,7 +858,7 @@ fn chrono_now_time() -> String {
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs();
-    let (_, _, _, h, min, s) = civil_from_timestamp(now);
+    let (_, _, _, h, min, s) = crate::serve::timezone::civil_from_timestamp(now);
     format!("{:02}:{:02}:{:02} UTC", h, min, s)
 }
 
@@ -884,11 +867,7 @@ fn chrono_now_datetime() -> String {
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs();
-    let (y, m, d, h, min, s) = civil_from_timestamp(now);
-    format!(
-        "{:04}-{:02}-{:02} {:02}:{:02}:{:02} UTC",
-        y, m, d, h, min, s
-    )
+    crate::serve::timezone::format_datetime_with_tz(now, 0, "UTC")
 }
 
 /// Resolve the target Notebook ID for an incoming LINE bot based on `nickname`.
@@ -1024,6 +1003,7 @@ mod tests {
     use crate::config::{LineNotesConfig, RuneConfig};
     use crate::serve::db::ChatDb;
     use crate::serve::line::signature::compute_signature;
+    use crate::serve::line::types::{EventMessage, EventSource, WebhookEvent, WebhookPayload};
     use crate::serve::oauth;
     use axum::body::Bytes;
     use axum::extract::Path;
@@ -1043,6 +1023,7 @@ mod tests {
                 channel_access_token: "test_token".to_string(),
                 log: false,
                 anonymous: false,
+                timezone: "UTC".to_string(),
                 access_denied_message: "⛔ Access denied. User ID: {user_id}".to_string(),
                 keywords: vec![],
                 groups: vec![],
@@ -1617,9 +1598,8 @@ mod tests {
         process_webhook_payload(state.clone(), payload_2, cache.clone()).await;
 
         let md_dir = state.note_markdown_dir("LineBot");
-        let today = chrono_now_date();
-        let filename = format!("{}-line-C_GROUP_ORDER.md", today);
-        let file_path = md_dir.join(&filename);
+        let filename = "1970-01-01-line-C_GROUP_ORDER.md";
+        let file_path = md_dir.join(filename);
 
         let content = std::fs::read_to_string(&file_path).unwrap();
         let pos_first = content.find("First event content").unwrap();
@@ -1863,5 +1843,63 @@ mod tests {
             .unwrap();
         assert_eq!(group_session.title, Some("DevOps Team".to_string()));
         assert_eq!(group_session.custom_title, None);
+    }
+
+    #[tokio::test]
+    async fn test_event_logging_with_timezone() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let mut state = create_test_state_with_line("secret123");
+        state.data_dir = temp_dir.path().to_path_buf();
+        if let Some(ref mut bot) = state.config.notes.line.first_mut() {
+            bot.log = true;
+            bot.timezone = "+08:00".to_string();
+            bot.admins = vec!["U_TZ_ADMIN".to_string()];
+        }
+        let cache = get_profile_cache().clone();
+
+        // UTC timestamp: 2026-09-24 23:30:00 UTC (1790292600 s = 1790292600000 ms)
+        // With +08:00 timezone, local time is 2026-09-25 07:30:00
+        let payload = WebhookPayload {
+            destination: Some("U_BOT".to_string()),
+            events: vec![WebhookEvent {
+                event_type: "message".to_string(),
+                source: Some(EventSource {
+                    source_type: "user".to_string(),
+                    user_id: Some("U_TZ_ADMIN".to_string()),
+                    ..Default::default()
+                }),
+                reply_token: Some("dummy".to_string()),
+                message: Some(EventMessage {
+                    id: "msg_tz".to_string(),
+                    message_type: "text".to_string(),
+                    text: Some("Good morning Taipei".to_string()),
+                    ..Default::default()
+                }),
+                timestamp: 1790292600000,
+                ..Default::default()
+            }],
+        };
+
+        process_webhook_payload(state.clone(), payload, cache).await;
+
+        let md_dir = state.note_markdown_dir("LineBot");
+        let expected_file = md_dir.join("2026-09-25-line-U_TZ_ADMIN.md");
+        let wrong_utc_file = md_dir.join("2026-09-24-line-U_TZ_ADMIN.md");
+
+        assert!(
+            expected_file.exists(),
+            "Expected 2026-09-25-line-U_TZ_ADMIN.md to exist under +08:00 timezone"
+        );
+        assert!(
+            !wrong_utc_file.exists(),
+            "Wrong UTC date file 2026-09-24-line-U_TZ_ADMIN.md should not exist"
+        );
+
+        let content = std::fs::read_to_string(&expected_file).unwrap();
+        assert!(
+            content.contains("2026-09-25 07:30:00 +08:00"),
+            "Content missing expected formatted datetime: {}",
+            content
+        );
     }
 }

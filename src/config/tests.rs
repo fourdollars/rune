@@ -1519,6 +1519,7 @@ groups = ["C99999999"]
     assert_eq!(line1.channel_access_token, "token456");
     assert!(!line1.log);
     assert!(!line1.anonymous);
+    assert_eq!(line1.timezone, "UTC");
     assert_eq!(
         line1.access_denied_message,
         "⛔ Access denied. User ID: {user_id}"
@@ -1533,6 +1534,7 @@ groups = ["C99999999"]
     assert_eq!(line2.nickname, "CIBot");
     assert_eq!(line2.channel_secret, "secret_ci");
     assert_eq!(line2.channel_access_token, "token_ci");
+    assert_eq!(line2.timezone, "UTC");
     assert_eq!(line2.keywords, vec!["ci", "build"]);
     assert_eq!(line2.groups, vec!["C99999999"]);
     assert!(line2.admins.is_empty());
@@ -1547,6 +1549,7 @@ channel_secret = "sec"
 channel_access_token = "tok"
 log = true
 anonymous = true
+timezone = "+08:00"
 access_denied_message = "Custom rejection for {user_id}"
 "#;
 
@@ -1557,5 +1560,6 @@ access_denied_message = "Custom rejection for {user_id}"
     assert_eq!(bot.nickname, "CustomBot");
     assert!(bot.log);
     assert!(bot.anonymous);
+    assert_eq!(bot.timezone, "+08:00");
     assert_eq!(bot.access_denied_message, "Custom rejection for {user_id}");
 }

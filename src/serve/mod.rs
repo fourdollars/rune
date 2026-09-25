@@ -15,6 +15,7 @@ pub mod oauth;
 pub mod oauth_pkce;
 pub mod persona;
 mod static_files;
+pub mod timezone;
 pub use db::ChatDb;
 pub use oauth::AuthenticatedUser;
 

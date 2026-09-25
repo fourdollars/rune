@@ -161,6 +161,10 @@ fn default_access_denied_message() -> String {
     "⛔ Access denied. User ID: {user_id}".to_string()
 }
 
+fn default_line_timezone() -> String {
+    "UTC".to_string()
+}
+
 /// Configuration for LINE Bot Webhook integration (`[[notes.line]]`).
 #[derive(Debug, Clone, Deserialize, PartialEq)]
 pub struct LineNotesConfig {
@@ -179,6 +183,9 @@ pub struct LineNotesConfig {
     /// Whether to log anonymous/unregistered events (default: false).
     #[serde(default)]
     pub anonymous: bool,
+    /// Timezone for event logging and date calculations (e.g. "+08:00", "UTC+8", "local", "Asia/Taipei", default: "UTC").
+    #[serde(default = "default_line_timezone")]
+    pub timezone: String,
     /// Access denied message template for 1-on-1 chats (supports {user_id}).
     #[serde(default = "default_access_denied_message")]
     pub access_denied_message: String,
@@ -207,6 +214,7 @@ impl Default for LineNotesConfig {
             channel_access_token: String::new(),
             log: false,
             anonymous: false,
+            timezone: default_line_timezone(),
             access_denied_message: default_access_denied_message(),
             groups: Vec::new(),
             keywords: Vec::new(),
