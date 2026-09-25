@@ -305,8 +305,10 @@ globalThis.deleteSession = async function deleteSession(sessionId) {
         addSystemMessage(`Session "${sessionId}" deleted and archived`);
         if (currentSessionId === sessionId) {
             await switchSession('main');
-        } else {
-            updateSessionButton();
+        }
+        updateSessionButton();
+        const sessionModal = document.getElementById('session-modal');
+        if (sessionModal && !sessionModal.classList.contains('hidden')) {
             renderSessionModal(document.getElementById('session-modal-search-input')?.value || '');
         }
     }
@@ -328,6 +330,9 @@ globalThis.switchSession = async function switchSession(sessionId) {
     const data = await api('session', { note: currentNoteId, session_id: sessionId }, 'PUT');
     if (!data || !data.ok) return;
 
+    if (Array.isArray(data.sessions)) {
+        sessions = data.sessions;
+    }
     if (data.sessions_meta) {
         sessionsMeta = data.sessions_meta;
     }
@@ -348,6 +353,10 @@ globalThis.switchSession = async function switchSession(sessionId) {
         replayHistory(data.history);
     }
     updateSessionButton();
+    const sessionModal = document.getElementById('session-modal');
+    if (sessionModal && !sessionModal.classList.contains('hidden')) {
+        renderSessionModal(document.getElementById('session-modal-search-input')?.value || '');
+    }
 };
 
 globalThis.closeSession = globalThis.archiveSessionFromModal;
