@@ -181,3 +181,12 @@ pub struct LineProfile {
     #[serde(rename = "statusMessage", default)]
     pub status_message: Option<String>,
 }
+
+/// Group summary returned by `GET /v2/bot/group/{groupId}/summary`.
+#[derive(Debug, Clone, Deserialize, Serialize, Default)]
+pub struct LineGroupSummary {
+    #[serde(rename = "groupId")]
+    pub group_id: String,
+    #[serde(rename = "groupName")]
+    pub group_name: String,
+}

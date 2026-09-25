@@ -33,7 +33,25 @@ globalThis.handleMessage = function handleMessage(msg) {
             const msgSess = msg.session_id || 'main';
             if (!sessions.includes(msgSess)) {
                 sessions.push(msgSess);
-                updateSessionButton();
+            }
+            if (!Array.isArray(sessionsMeta)) {
+                sessionsMeta = [];
+            }
+            let meta = sessionsMeta.find(m => m.session_id === msgSess);
+            if (!meta) {
+                meta = { session_id: msgSess, note_id: currentNoteId };
+                sessionsMeta.push(meta);
+            }
+            if (msg.session_title && !meta.title) {
+                meta.title = msg.session_title;
+            } else if (!meta.title && msg.nickname) {
+                // If nickname is formatted like "LineBot (Alice)", extract "Alice"
+                const match = msg.nickname.match(/\(([^)]+)\)/);
+                if (match && match[1]) {
+                    meta.title = match[1].trim();
+                } else if (!msg.nickname.startsWith('line:U') && !msg.nickname.startsWith('LineBot')) {
+                    meta.title = msg.nickname;
+                }
             }
             if (msgSess === currentSessionId) {
                 addChatMessage(msg.nickname, msg.content);
@@ -41,7 +59,11 @@ globalThis.handleMessage = function handleMessage(msg) {
                 if (typeof unreadSessions !== 'undefined' && unreadSessions && unreadSessions.add) {
                     unreadSessions.add(msgSess);
                 }
-                updateSessionButton();
+            }
+            updateSessionButton();
+            const sessionModal = document.getElementById('session-modal');
+            if (sessionModal && !sessionModal.classList.contains('hidden')) {
+                renderSessionModal(document.getElementById('session-modal-search-input')?.value || '');
             }
             break;
         }

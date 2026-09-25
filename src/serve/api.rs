@@ -166,6 +166,8 @@ pub enum SseMsg {
         content: String,
         #[serde(skip_serializing_if = "Option::is_none")]
         session_id: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        session_title: Option<String>,
     },
     #[serde(rename = "session_list")]
     SessionList {
@@ -978,6 +980,7 @@ pub async fn chat_handler(
         nickname: nickname.clone(),
         content: req.content.clone(),
         session_id: Some(session_id.clone()),
+        session_title: None,
     };
     broadcast_to_room(&room, &user_msg);
 
@@ -1231,6 +1234,24 @@ pub async fn session_handler(
         req.session_id
     };
 
+    if session_id != "main" && !is_guest {
+        let _ = state
+            .chat_db
+            .ensure_session_async(req.note.clone(), session_id.clone())
+            .await;
+        broadcast_session_list(&state, &req.note).await;
+    }
+
+    // Trigger lazy resolution for any sessions with missing friendly titles
+    #[cfg(feature = "line")]
+    {
+        let state_clone = state.clone();
+        let note_clone = req.note.clone();
+        tokio::spawn(async move {
+            crate::serve::line::resolve_missing_session_titles(&state_clone, &note_clone).await;
+        });
+    }
+
     let history = state
         .chat_db
         .load_recent_session_async(req.note.clone(), session_id.clone(), 100)
@@ -1331,6 +1352,57 @@ pub async fn session_config_handler(
         )));
     }
     broadcast_session_list(&state, &note_id).await;
+    Json(ApiResponse::success())
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct SessionRenameReq {
+    pub note_id: String,
+    pub session_id: String,
+    #[serde(default)]
+    pub title: Option<String>,
+}
+
+pub async fn session_rename_handler(
+    State(state): State<ServerState>,
+    headers: axum::http::HeaderMap,
+    Json(req): Json<SessionRenameReq>,
+) -> Json<ApiResponse> {
+    if req.note_id.is_empty() || req.session_id.is_empty() {
+        return Json(ApiResponse::err("Note ID and Session ID required"));
+    }
+
+    let is_guest = {
+        let sid = crate::serve::oauth::get_cookie(&headers, "rune_sid");
+        let session = match sid {
+            Some(ref id) => state.sessions.get(id).await,
+            None => None,
+        };
+        session.map(|s| s.is_guest()).unwrap_or(false)
+    };
+    if is_guest {
+        return Json(ApiResponse::err("Guest users cannot rename chat sessions"));
+    }
+
+    let title_trimmed = req
+        .title
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty());
+
+    if let Err(e) = state
+        .chat_db
+        .set_session_custom_title_async(
+            req.note_id.clone(),
+            req.session_id.clone(),
+            title_trimmed.map(|s| s.to_string()),
+        )
+        .await
+    {
+        return Json(ApiResponse::err(format!("Failed to rename session: {}", e)));
+    }
+
+    broadcast_session_list(&state, &req.note_id).await;
     Json(ApiResponse::success())
 }
 
@@ -4817,6 +4889,7 @@ mod integration_tests {
                 get(system_prompt_get_handler).put(system_prompt_handler),
             )
             .route("/api/session", put(session_handler))
+            .route("/api/chat/session/rename", post(session_rename_handler))
             .route("/api/chat/archive", post(archive_handler))
             .route("/api/chat/restore", post(restore_handler))
             .route("/api/chat/search", post(search_handler))
@@ -5367,6 +5440,53 @@ mod integration_tests {
         )
         .await;
         assert_eq!(body["ok"], true);
+    }
+
+    #[tokio::test]
+    async fn test_session_rename_endpoint() {
+        let (app, tmp) = test_app();
+        let db_path = tmp.path().join("test.db");
+        let db = ChatDb::open(&db_path).unwrap();
+
+        // 1. Pre-populate auto title
+        db.set_session_title("main", "group:C123", Some("Original Group Name"))
+            .unwrap();
+
+        // 2. Rename with valid custom title
+        let (_, body) = post_json(
+            &app,
+            "/api/chat/session/rename",
+            json!({
+                "note_id": "main",
+                "session_id": "group:C123",
+                "title": "DevOps War Room"
+            }),
+        )
+        .await;
+        assert_eq!(body["ok"], true);
+
+        let list = db.list_chat_sessions_meta("main").unwrap();
+        let s = list.iter().find(|m| m.session_id == "group:C123").unwrap();
+        assert_eq!(s.title, Some("Original Group Name".to_string()));
+        assert_eq!(s.custom_title, Some("DevOps War Room".to_string()));
+
+        // 3. Rename with empty title -> resets custom title, original title remains
+        let (_, body) = post_json(
+            &app,
+            "/api/chat/session/rename",
+            json!({
+                "note_id": "main",
+                "session_id": "group:C123",
+                "title": ""
+            }),
+        )
+        .await;
+        assert_eq!(body["ok"], true);
+
+        let list = db.list_chat_sessions_meta("main").unwrap();
+        let s = list.iter().find(|m| m.session_id == "group:C123").unwrap();
+        assert_eq!(s.title, Some("Original Group Name".to_string()));
+        assert_eq!(s.custom_title, None);
     }
 
     // ─── Dir browse tests ──────────────────────────────────────────────────────

@@ -309,15 +309,15 @@
         <div class="modal modal-session" role="dialog" aria-modal="true" aria-labelledby="session-modal-title">
             <div class="session-modal-header">
                 <h2 id="session-modal-title">Manage Chat Sessions</h2>
-                <button type="button" class="btn-icon session-add-icon-btn" data-action="prompt-new-session" data-icon="plus" title="New Session" aria-label="New Session"></button>
+                <div class="session-modal-header-actions">
+                    <button type="button" class="btn-icon session-add-icon-btn" data-action="prompt-new-session" data-icon="plus" title="New Session" aria-label="New Session"></button>
+                    <button type="button" class="btn-icon session-close-icon-btn" data-action="hide-session-modal" data-icon="x" title="Close" aria-label="Close"></button>
+                </div>
             </div>
             <div class="session-modal-search">
                 <input type="text" id="session-modal-search-input" placeholder="Search sessions..." autocomplete="off" aria-label="Search sessions" />
             </div>
             <div id="session-modal-list" class="session-modal-list"></div>
-            <div class="modal-actions">
-                <button class="btn-secondary" data-action="hide-session-modal">Close</button>
-            </div>
         </div>
     </div>
 

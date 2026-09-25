@@ -152,6 +152,108 @@ pub async fn process_webhook_payload_for_bot(
     }
 
     for event in payload.events {
+        let group_id = event.source.as_ref().and_then(|s| s.group_id.as_deref());
+
+        let user_id = event
+            .source
+            .as_ref()
+            .and_then(|s| s.user_id.as_deref())
+            .unwrap_or("unknown");
+
+        // Role resolution from standard allowlists
+        let is_admin = line_cfg.admins.iter().any(|id| id == user_id);
+        let is_user = line_cfg.users.iter().any(|id| id == user_id);
+        let is_guest = line_cfg.guests.iter().any(|id| id == user_id);
+        let is_in_whitelist = group_id
+            .map(|gid| line_cfg.groups.iter().any(|g| g == gid || g == "*"))
+            .unwrap_or(false)
+            || is_admin
+            || is_user
+            || is_guest;
+
+        // Resolve display name via Cache / Profile API
+        let display_name = match cache.get(user_id).await {
+            Some(name) => Some(name),
+            None => {
+                if user_id != "unknown" && !line_cfg.channel_access_token.is_empty() {
+                    let res = if let Some(gid) = group_id {
+                        client.get_group_member_profile(gid, user_id).await
+                    } else {
+                        client.get_profile(user_id).await
+                    };
+                    match res {
+                        Ok(profile) => {
+                            cache
+                                .insert(user_id.to_string(), profile.display_name.clone())
+                                .await;
+                            Some(profile.display_name)
+                        }
+                        Err(e) => {
+                            warn!("Failed to fetch profile for LINE user {}: {}", user_id, e);
+                            None
+                        }
+                    }
+                } else {
+                    None
+                }
+            }
+        };
+
+        // Resolve group name via Cache / Group Summary API (if group message)
+        let group_name = if let Some(gid) = group_id {
+            match cache.get_group(gid).await {
+                Some(name) => Some(name),
+                None => {
+                    if !line_cfg.channel_access_token.is_empty() {
+                        match client.get_group_summary(gid).await {
+                            Ok(summary) => {
+                                cache
+                                    .insert_group(gid.to_string(), summary.group_name.clone())
+                                    .await;
+                                Some(summary.group_name)
+                            }
+                            Err(e) => {
+                                warn!(
+                                    "Failed to fetch group summary for LINE group {}: {}",
+                                    gid, e
+                                );
+                                None
+                            }
+                        }
+                    } else {
+                        None
+                    }
+                }
+            }
+        } else {
+            None
+        };
+
+        let session_id = if let Some(gid) = group_id {
+            format!("group:{}", gid)
+        } else if user_id != "unknown" {
+            format!("user:{}", user_id)
+        } else {
+            "main".to_string()
+        };
+
+        let auto_title = if group_id.is_some() {
+            group_name.clone()
+        } else if user_id != "unknown" {
+            display_name.clone()
+        } else {
+            None
+        };
+
+        // Immediately persist session in DB (with auto title if available) and broadcast to connected WebUI clients
+        if session_id != "main" {
+            let _ = state
+                .chat_db
+                .set_session_title_async(note_id.clone(), session_id.clone(), auto_title.clone())
+                .await;
+            crate::serve::api::broadcast_session_list(&state, &note_id).await;
+        }
+
         let text = if event.event_type == "message" {
             if let Some(ref msg) = event.message {
                 if let Some(ref t) = msg.text {
@@ -189,51 +291,6 @@ pub async fn process_webhook_payload_for_bot(
         if text.is_empty() {
             continue;
         }
-
-        let group_id = event
-            .source
-            .as_ref()
-            .and_then(|s| s.group_id.as_deref().or(s.room_id.as_deref()));
-
-        let user_id = event
-            .source
-            .as_ref()
-            .and_then(|s| s.user_id.as_deref())
-            .unwrap_or("unknown");
-
-        // Role resolution from standard allowlists
-        let is_admin = line_cfg.admins.iter().any(|id| id == user_id);
-        let is_user = line_cfg.users.iter().any(|id| id == user_id);
-        let is_guest = line_cfg.guests.iter().any(|id| id == user_id);
-        let is_in_whitelist = group_id
-            .map(|gid| line_cfg.groups.iter().any(|g| g == gid || g == "*"))
-            .unwrap_or(false)
-            || is_admin
-            || is_user
-            || is_guest;
-
-        // Resolve display name via Cache / Profile API
-        let display_name = match cache.get(user_id).await {
-            Some(name) => Some(name),
-            None => {
-                if user_id != "unknown" && !line_cfg.channel_access_token.is_empty() {
-                    match client.get_profile(user_id).await {
-                        Ok(profile) => {
-                            cache
-                                .insert(user_id.to_string(), profile.display_name.clone())
-                                .await;
-                            Some(profile.display_name)
-                        }
-                        Err(e) => {
-                            warn!("Failed to fetch profile for LINE user {}: {}", user_id, e);
-                            None
-                        }
-                    }
-                } else {
-                    None
-                }
-            }
-        };
 
         let nickname = ProfileCache::format_nickname_for_bot(
             &line_cfg.nickname,
@@ -415,6 +472,14 @@ pub async fn process_webhook_payload_for_bot(
             user_id.to_string()
         };
 
+        let auto_title = if group_id.is_some() {
+            group_name.clone()
+        } else if user_id != "unknown" {
+            display_name.clone()
+        } else {
+            None
+        };
+
         tokio::spawn(async move {
             // Show loading animation in LINE chat
             if chat_id != "unknown" {
@@ -423,14 +488,17 @@ pub async fn process_webhook_payload_for_bot(
                     .await;
             }
 
-            // Broadcast and persist user message
-            let room = state_clone.get_or_create_room(&note_id_clone).await;
-            let user_msg = SseMsg::ChatMessage {
-                nickname: nickname_clone.clone(),
-                content: text_clone.clone(),
-                session_id: Some(session_id.clone()),
-            };
-            broadcast_to_room(&room, &user_msg);
+            // Save auto title from LINE API
+            if let Some(ref t) = auto_title {
+                let _ = state_clone
+                    .chat_db
+                    .set_session_title_async(
+                        note_id_clone.clone(),
+                        session_id.clone(),
+                        Some(t.clone()),
+                    )
+                    .await;
+            }
 
             state_clone
                 .chat_db
@@ -444,6 +512,16 @@ pub async fn process_webhook_payload_for_bot(
                 .await;
 
             crate::serve::api::broadcast_session_list(&state_clone, &note_id_clone).await;
+
+            // Broadcast user message to room
+            let room = state_clone.get_or_create_room(&note_id_clone).await;
+            let user_msg = SseMsg::ChatMessage {
+                nickname: nickname_clone.clone(),
+                content: text_clone.clone(),
+                session_id: Some(session_id.clone()),
+                session_title: auto_title.clone(),
+            };
+            broadcast_to_room(&room, &user_msg);
 
             // Set active status to thinking
             {
@@ -839,6 +917,105 @@ pub fn extract_source_id(event: &crate::serve::line::types::WebhookEvent) -> &st
         }
     }
     "unknown"
+}
+
+/// Asynchronously resolves missing friendly titles for LINE sessions (e.g. from 1-on-1 or groups)
+/// and updates `chat_sessions` table and broadcasts updated list if any title was resolved.
+pub async fn resolve_missing_session_titles(state: &ServerState, note_id: &str) {
+    let bot_cfg = match state.config.notes.line.iter().find(|b| {
+        resolve_line_note_id(&b.nickname) == note_id && !b.channel_access_token.is_empty()
+    }) {
+        Some(cfg) => cfg.clone(),
+        None => return,
+    };
+
+    let meta_list = match state
+        .chat_db
+        .list_chat_sessions_meta_async(note_id.to_string())
+        .await
+    {
+        Ok(list) => list,
+        Err(_) => return,
+    };
+
+    let client = LineClient::new(bot_cfg.channel_access_token.clone());
+    let cache = get_profile_cache().clone();
+    let mut updated = false;
+
+    for meta in meta_list {
+        if meta.title.is_some() || meta.custom_title.is_some() {
+            continue;
+        }
+
+        if meta.session_id.starts_with("user:") {
+            let user_id = &meta.session_id["user:".len()..];
+            if user_id.starts_with('U') && user_id.len() >= 8 {
+                let name = match cache.get(user_id).await {
+                    Some(n) => Some(n),
+                    None => match client.get_profile(user_id).await {
+                        Ok(p) => {
+                            cache
+                                .insert(user_id.to_string(), p.display_name.clone())
+                                .await;
+                            Some(p.display_name)
+                        }
+                        Err(e) => {
+                            warn!("Lazy title resolve failed for LINE user {}: {}", user_id, e);
+                            None
+                        }
+                    },
+                };
+                if let Some(t) = name {
+                    let _ = state
+                        .chat_db
+                        .set_session_title_async(
+                            note_id.to_string(),
+                            meta.session_id.clone(),
+                            Some(t),
+                        )
+                        .await;
+                    updated = true;
+                }
+            }
+        } else if meta.session_id.starts_with("group:") {
+            let group_id = &meta.session_id["group:".len()..];
+            if group_id.starts_with('C') && group_id.len() >= 8 {
+                let name = match cache.get_group(group_id).await {
+                    Some(n) => Some(n),
+                    None => match client.get_group_summary(group_id).await {
+                        Ok(s) => {
+                            cache
+                                .insert_group(group_id.to_string(), s.group_name.clone())
+                                .await;
+                            Some(s.group_name)
+                        }
+                        Err(e) => {
+                            warn!(
+                                "Lazy title resolve failed for LINE group {}: {}",
+                                group_id, e
+                            );
+                            None
+                        }
+                    },
+                };
+                if let Some(t) = name {
+                    let _ = state
+                        .chat_db
+                        .set_session_title_async(
+                            note_id.to_string(),
+                            meta.session_id.clone(),
+                            Some(t),
+                        )
+                        .await;
+                    updated = true;
+                }
+            }
+        }
+    }
+
+    if updated {
+        crate::serve::api::broadcast_session_list(state, note_id).await;
+    }
 }
 
 #[cfg(test)]
@@ -1605,5 +1782,86 @@ mod tests {
             sessions,
             vec!["main", "group:C789", "user:U123", "user:U456"]
         );
+    }
+
+    #[tokio::test]
+    async fn test_line_webhook_auto_session_title() {
+        let state = create_test_state_with_line("secret123");
+        state
+            .chat_db
+            .create_note("LineBot", "LineBot", None)
+            .unwrap();
+
+        let cache = ProfileCache::default();
+        cache
+            .insert("U12345678".to_string(), "Alice".to_string())
+            .await;
+        cache
+            .insert_group("C12345678".to_string(), "DevOps Team".to_string())
+            .await;
+
+        let payload = WebhookPayload {
+            destination: Some("U_BOT".to_string()),
+            events: vec![
+                WebhookEvent {
+                    event_type: "message".to_string(),
+                    source: Some(EventSource {
+                        source_type: "user".to_string(),
+                        user_id: Some("U12345678".to_string()),
+                        ..Default::default()
+                    }),
+                    reply_token: Some("dummy1".to_string()),
+                    message: Some(EventMessage {
+                        id: "msg1".to_string(),
+                        message_type: "text".to_string(),
+                        text: Some("Hello".to_string()),
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                },
+                WebhookEvent {
+                    event_type: "message".to_string(),
+                    source: Some(EventSource {
+                        source_type: "group".to_string(),
+                        group_id: Some("C12345678".to_string()),
+                        user_id: Some("U12345678".to_string()),
+                        ..Default::default()
+                    }),
+                    reply_token: Some("dummy2".to_string()),
+                    message: Some(EventMessage {
+                        id: "msg2".to_string(),
+                        message_type: "text".to_string(),
+                        text: Some("@bot hello group".to_string()),
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                },
+            ],
+        };
+
+        process_webhook_payload(state.clone(), payload, cache).await;
+
+        // Yield to let spawned tasks complete DB inserts
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+        let meta_list = state
+            .chat_db
+            .list_chat_sessions_meta_async("LineBot".to_string())
+            .await
+            .unwrap();
+
+        let user_session = meta_list
+            .iter()
+            .find(|s| s.session_id == "user:U12345678")
+            .unwrap();
+        assert_eq!(user_session.title, Some("Alice".to_string()));
+        assert_eq!(user_session.custom_title, None);
+
+        let group_session = meta_list
+            .iter()
+            .find(|s| s.session_id == "group:C12345678")
+            .unwrap();
+        assert_eq!(group_session.title, Some("DevOps Team".to_string()));
+        assert_eq!(group_session.custom_title, None);
     }
 }

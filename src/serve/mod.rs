@@ -788,6 +788,10 @@ pub async fn run(config: RuneConfig, opts: NotesOptions) {
             "/api/chat",
             post(api::chat_handler).delete(api::chat_cancel_handler),
         )
+        .route(
+            "/api/chat/session/rename",
+            post(api::session_rename_handler),
+        )
         .route("/api/chat/archive", post(api::archive_handler))
         .route("/api/chat/restore", post(api::restore_handler))
         .route("/api/chat/search", post(api::search_handler))

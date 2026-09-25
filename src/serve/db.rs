@@ -101,6 +101,10 @@ pub struct ChatSessionMeta {
     pub note_id: String,
     pub session_id: String,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub custom_title: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub thinking: Option<String>,
@@ -192,12 +196,14 @@ fn init_schema(conn: &Connection) -> anyhow::Result<()> {
             thinking            TEXT
         );
         CREATE TABLE IF NOT EXISTS chat_sessions (
-            note_id    TEXT NOT NULL,
-            session_id TEXT NOT NULL,
-            model      TEXT,
-            thinking   TEXT,
-            created_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now')),
-            updated_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now')),
+            note_id      TEXT NOT NULL,
+            session_id   TEXT NOT NULL,
+            title        TEXT,
+            custom_title TEXT,
+            model        TEXT,
+            thinking     TEXT,
+            created_at   INTEGER NOT NULL DEFAULT (strftime('%s', 'now')),
+            updated_at   INTEGER NOT NULL DEFAULT (strftime('%s', 'now')),
             PRIMARY KEY (note_id, session_id)
         );
         CREATE INDEX IF NOT EXISTS idx_chat_sessions_note
@@ -221,6 +227,8 @@ fn init_schema(conn: &Connection) -> anyhow::Result<()> {
         "ALTER TABLE oauth_tokens ADD COLUMN login TEXT NOT NULL DEFAULT ''",
         "ALTER TABLE note_cron_jobs ADD COLUMN timeout_secs INTEGER DEFAULT 60",
         "ALTER TABLE note_cron_jobs ADD COLUMN thinking TEXT",
+        "ALTER TABLE chat_sessions ADD COLUMN title TEXT",
+        "ALTER TABLE chat_sessions ADD COLUMN custom_title TEXT",
     ];
     for migration in migrations {
         let _ = conn.execute(migration, []);
@@ -510,11 +518,86 @@ impl ChatDb {
         Ok(())
     }
 
+    /// Ensure a session exists in chat_sessions table.
+    pub fn ensure_session(&self, note_id: &str, session_id: &str) -> anyhow::Result<()> {
+        let conn = self.conn.lock().unwrap();
+        let s_id = if session_id.trim().is_empty() {
+            "main"
+        } else {
+            session_id.trim()
+        };
+        conn.execute(
+            "INSERT INTO chat_sessions (note_id, session_id, updated_at)
+             VALUES (?1, ?2, strftime('%s', 'now'))
+             ON CONFLICT(note_id, session_id) DO NOTHING",
+            params![note_id, s_id],
+        )?;
+        Ok(())
+    }
+
+    /// Set or update the auto-discovered title (e.g. from LINE API) for a session.
+    pub fn set_session_title(
+        &self,
+        note_id: &str,
+        session_id: &str,
+        title: Option<&str>,
+    ) -> anyhow::Result<()> {
+        let conn = self.conn.lock().unwrap();
+        let s_id = if session_id.trim().is_empty() {
+            "main"
+        } else {
+            session_id.trim()
+        };
+        if let Some(t) = title {
+            if !t.trim().is_empty() {
+                conn.execute(
+                    "INSERT INTO chat_sessions (note_id, session_id, title, updated_at)
+                     VALUES (?1, ?2, ?3, strftime('%s', 'now'))
+                     ON CONFLICT(note_id, session_id) DO UPDATE SET
+                         title = ?3,
+                         updated_at = strftime('%s', 'now')",
+                    params![note_id, s_id, t.trim()],
+                )?;
+                return Ok(());
+            }
+        }
+        conn.execute(
+            "INSERT INTO chat_sessions (note_id, session_id, updated_at)
+             VALUES (?1, ?2, strftime('%s', 'now'))
+             ON CONFLICT(note_id, session_id) DO NOTHING",
+            params![note_id, s_id],
+        )?;
+        Ok(())
+    }
+
+    /// Set or update the user-customized title for a session.
+    /// If `custom_title` is None or empty, it clears the custom title so it falls back to `title`.
+    pub fn set_session_custom_title(
+        &self,
+        note_id: &str,
+        session_id: &str,
+        custom_title: Option<&str>,
+    ) -> anyhow::Result<()> {
+        let conn = self.conn.lock().unwrap();
+        let clean = custom_title.map(str::trim).filter(|s| !s.is_empty());
+        conn.execute(
+            "INSERT INTO chat_sessions (note_id, session_id, custom_title, updated_at)
+             VALUES (?1, ?2, ?3, strftime('%s', 'now'))
+             ON CONFLICT(note_id, session_id) DO UPDATE SET
+                 custom_title = ?3,
+                 updated_at = strftime('%s', 'now')",
+            params![note_id, session_id, clean],
+        )?;
+        Ok(())
+    }
+
     /// List all chat sessions with their metadata for a note.
     pub fn list_chat_sessions_meta(&self, note_id: &str) -> anyhow::Result<Vec<ChatSessionMeta>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
             "SELECT s.session_id,
+                    cs.title,
+                    cs.custom_title,
                     cs.model,
                     cs.thinking,
                     COUNT(m.id) as msg_count,
@@ -534,13 +617,17 @@ impl ChatDb {
         let rows = stmt
             .query_map(params![note_id], |row| {
                 let session_id: String = row.get(0)?;
-                let model: Option<String> = row.get(1)?;
-                let thinking: Option<String> = row.get(2)?;
-                let message_count: usize = row.get(3)?;
-                let last_activity: Option<i64> = row.get(4)?;
+                let title: Option<String> = row.get(1)?;
+                let custom_title: Option<String> = row.get(2)?;
+                let model: Option<String> = row.get(3)?;
+                let thinking: Option<String> = row.get(4)?;
+                let message_count: usize = row.get(5)?;
+                let last_activity: Option<i64> = row.get(6)?;
                 Ok(ChatSessionMeta {
                     note_id: note_id.to_string(),
                     session_id,
+                    title,
+                    custom_title,
                     model,
                     thinking,
                     message_count,
@@ -710,6 +797,44 @@ impl ChatDb {
         let db = self.clone();
         tokio::task::spawn_blocking(move || {
             db.set_session_meta(&note_id, &session_id, model.as_deref(), thinking.as_deref())
+        })
+        .await?
+    }
+
+    /// Async wrapper for ensure_session.
+    pub async fn ensure_session_async(
+        &self,
+        note_id: String,
+        session_id: String,
+    ) -> anyhow::Result<()> {
+        let db = self.clone();
+        tokio::task::spawn_blocking(move || db.ensure_session(&note_id, &session_id)).await?
+    }
+
+    /// Async wrapper for set_session_title.
+    pub async fn set_session_title_async(
+        &self,
+        note_id: String,
+        session_id: String,
+        title: Option<String>,
+    ) -> anyhow::Result<()> {
+        let db = self.clone();
+        tokio::task::spawn_blocking(move || {
+            db.set_session_title(&note_id, &session_id, title.as_deref())
+        })
+        .await?
+    }
+
+    /// Async wrapper for set_session_custom_title.
+    pub async fn set_session_custom_title_async(
+        &self,
+        note_id: String,
+        session_id: String,
+        custom_title: Option<String>,
+    ) -> anyhow::Result<()> {
+        let db = self.clone();
+        tokio::task::spawn_blocking(move || {
+            db.set_session_custom_title(&note_id, &session_id, custom_title.as_deref())
         })
         .await?
     }
@@ -2514,6 +2639,42 @@ mod tests {
         let u100 = list.iter().find(|s| s.session_id == "user:U100").unwrap();
         assert_eq!(u100.model, Some("openai/gpt-4o".to_string()));
         assert_eq!(u100.thinking, Some("high".to_string()));
+    }
+
+    #[tokio::test]
+    async fn test_chat_sessions_title_and_custom_override() {
+        let db = in_memory_db();
+        // 1. Auto-sync title from LINE
+        db.set_session_title("note-a", "group:C123", Some("DevOps Group"))
+            .unwrap();
+        let list = db.list_chat_sessions_meta("note-a").unwrap();
+        let c123 = list.iter().find(|s| s.session_id == "group:C123").unwrap();
+        assert_eq!(c123.title, Some("DevOps Group".to_string()));
+        assert_eq!(c123.custom_title, None);
+
+        // 2. User sets custom title
+        db.set_session_custom_title("note-a", "group:C123", Some("War Room 2026"))
+            .unwrap();
+        let list = db.list_chat_sessions_meta("note-a").unwrap();
+        let c123 = list.iter().find(|s| s.session_id == "group:C123").unwrap();
+        assert_eq!(c123.title, Some("DevOps Group".to_string()));
+        assert_eq!(c123.custom_title, Some("War Room 2026".to_string()));
+
+        // 3. Auto-sync updates default title without touching custom_title
+        db.set_session_title("note-a", "group:C123", Some("New LINE Group Name"))
+            .unwrap();
+        let list = db.list_chat_sessions_meta("note-a").unwrap();
+        let c123 = list.iter().find(|s| s.session_id == "group:C123").unwrap();
+        assert_eq!(c123.title, Some("New LINE Group Name".to_string()));
+        assert_eq!(c123.custom_title, Some("War Room 2026".to_string()));
+
+        // 4. User clears custom title -> custom_title becomes None, title is still preserved!
+        db.set_session_custom_title("note-a", "group:C123", None)
+            .unwrap();
+        let list = db.list_chat_sessions_meta("note-a").unwrap();
+        let c123 = list.iter().find(|s| s.session_id == "group:C123").unwrap();
+        assert_eq!(c123.title, Some("New LINE Group Name".to_string()));
+        assert_eq!(c123.custom_title, None);
     }
 }
 

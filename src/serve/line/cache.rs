@@ -9,10 +9,11 @@ struct CachedProfile {
     fetched_at: Instant,
 }
 
-/// In-memory cache for LINE user profile display names with time-to-live (TTL).
+/// In-memory cache for LINE user profile display names and group summaries with time-to-live (TTL).
 #[derive(Clone)]
 pub struct ProfileCache {
     entries: Arc<RwLock<HashMap<String, CachedProfile>>>,
+    groups: Arc<RwLock<HashMap<String, CachedProfile>>>,
     ttl: Duration,
 }
 
@@ -27,6 +28,7 @@ impl ProfileCache {
     pub fn new(ttl: Duration) -> Self {
         Self {
             entries: Arc::new(RwLock::new(HashMap::new())),
+            groups: Arc::new(RwLock::new(HashMap::new())),
             ttl,
         }
     }
@@ -49,6 +51,29 @@ impl ProfileCache {
             user_id,
             CachedProfile {
                 display_name,
+                fetched_at: Instant::now(),
+            },
+        );
+    }
+
+    /// Retrieve cached group name if not expired.
+    pub async fn get_group(&self, group_id: &str) -> Option<String> {
+        let groups = self.groups.read().await;
+        if let Some(entry) = groups.get(group_id) {
+            if entry.fetched_at.elapsed() < self.ttl {
+                return Some(entry.display_name.clone());
+            }
+        }
+        None
+    }
+
+    /// Store or update group name in cache.
+    pub async fn insert_group(&self, group_id: String, group_name: String) {
+        let mut groups = self.groups.write().await;
+        groups.insert(
+            group_id,
+            CachedProfile {
+                display_name: group_name,
                 fetched_at: Instant::now(),
             },
         );
@@ -103,6 +128,23 @@ mod tests {
 
         tokio::time::sleep(Duration::from_millis(70)).await;
         assert_eq!(cache.get("U12345").await, None);
+    }
+
+    #[tokio::test]
+    async fn test_group_cache_hit_and_expiry() {
+        let cache = ProfileCache::new(Duration::from_millis(50));
+        cache
+            .insert_group("C12345".to_string(), "DevOps Team".to_string())
+            .await;
+
+        assert_eq!(
+            cache.get_group("C12345").await,
+            Some("DevOps Team".to_string())
+        );
+        assert_eq!(cache.get_group("C99999").await, None);
+
+        tokio::time::sleep(Duration::from_millis(70)).await;
+        assert_eq!(cache.get_group("C12345").await, None);
     }
 
     #[test]

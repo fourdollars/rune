@@ -31,9 +31,16 @@ globalThis.updateSessionButton = function updateSessionButton() {
         label = 'main';
     }
 
+    const meta = (Array.isArray(sessionsMeta)) ? sessionsMeta.find(m => m.session_id === sess) : null;
+    if (meta && meta.custom_title && meta.custom_title.trim()) {
+        label = meta.custom_title.trim();
+    } else if (meta && meta.title && meta.title.trim()) {
+        label = meta.title.trim();
+    }
+
     if (iconEl) iconEl.textContent = icon;
     labelEl.textContent = label;
-    btn.title = `Current session: ${sess} (Click to manage sessions)`;
+    btn.title = `Current session: ${label} (${sess}) (Click to manage sessions)`;
 
     const hasUnread = typeof unreadSessions !== 'undefined' && unreadSessions && unreadSessions.size > 0;
     if (hasUnread) {
@@ -47,7 +54,7 @@ globalThis.renderSessionBar = function renderSessionBar() {
     updateSessionButton();
 };
 
-globalThis.showSessionModal = function showSessionModal() {
+globalThis.showSessionModal = async function showSessionModal() {
     const modal = document.getElementById('session-modal');
     if (!modal) return;
     modal.classList.remove('hidden');
@@ -59,6 +66,19 @@ globalThis.showSessionModal = function showSessionModal() {
     renderSessionModal();
     if (typeof hydrateIcons === 'function') {
         hydrateIcons(modal);
+    }
+
+    if (currentNoteId) {
+        try {
+            const data = await api('session', { note: currentNoteId, session_id: currentSessionId || 'main' }, 'PUT');
+            if (data && data.ok) {
+                if (Array.isArray(data.sessions)) sessions = data.sessions;
+                if (Array.isArray(data.sessions_meta)) sessionsMeta = data.sessions_meta;
+                if (!modal.classList.contains('hidden')) {
+                    renderSessionModal(searchInput?.value || '');
+                }
+            }
+        } catch (_) {}
     }
 };
 
@@ -76,7 +96,10 @@ globalThis.renderSessionModal = function renderSessionModal(filter = '') {
     const normalizedFilter = (filter || '').toLowerCase().trim();
     const filteredSessions = sessList.filter(s => {
         if (!normalizedFilter) return true;
-        return s.toLowerCase().includes(normalizedFilter);
+        const meta = (Array.isArray(sessionsMeta)) ? sessionsMeta.find(m => m.session_id === s) : null;
+        const customTitle = (meta?.custom_title || '').toLowerCase();
+        const title = (meta?.title || '').toLowerCase();
+        return s.toLowerCase().includes(normalizedFilter) || customTitle.includes(normalizedFilter) || title.includes(normalizedFilter);
     });
 
     if (filteredSessions.length === 0) {
@@ -89,6 +112,7 @@ globalThis.renderSessionModal = function renderSessionModal(filter = '') {
 
     filteredSessions.forEach(sess => {
         const isCurrent = sess === currentSessionId;
+        const meta = (Array.isArray(sessionsMeta)) ? sessionsMeta.find(m => m.session_id === sess) : null;
         const row = document.createElement('div');
         row.className = `session-row ${isCurrent ? 'is-active' : ''}`;
         row.dataset.session = sess;
@@ -100,28 +124,103 @@ globalThis.renderSessionModal = function renderSessionModal(filter = '') {
         mainArea.dataset.session = sess;
 
         let icon = '#';
-        let displayLabel = sess;
+        let defaultLabel = sess;
         if (sess.startsWith('user:')) {
             icon = '👤';
-            displayLabel = sess.slice(5);
+            defaultLabel = sess.slice(5);
         } else if (sess.startsWith('group:')) {
             icon = '👥';
-            displayLabel = sess.slice(6);
+            defaultLabel = sess.slice(6);
         } else if (sess === 'main') {
             icon = '💬';
-            displayLabel = 'main';
+            defaultLabel = 'main';
         }
+
+        const autoTitle = (meta && meta.title && meta.title.trim()) ? meta.title.trim() : defaultLabel;
+        const displayTitle = (meta && meta.custom_title && meta.custom_title.trim()) ? meta.custom_title.trim() : autoTitle;
 
         const iconEl = document.createElement('span');
         iconEl.className = 'session-row-icon';
         iconEl.textContent = icon;
         mainArea.appendChild(iconEl);
 
-        const nameEl = document.createElement('span');
-        nameEl.className = 'session-row-name';
-        nameEl.textContent = displayLabel;
-        nameEl.title = sess;
-        mainArea.appendChild(nameEl);
+        const infoEl = document.createElement('div');
+        infoEl.className = 'session-row-info';
+
+        const titleEl = document.createElement('span');
+        titleEl.className = 'session-row-title';
+        titleEl.textContent = displayTitle;
+        titleEl.title = 'Click text to rename (clear to reset)';
+
+        // Click on title directly to enter inline edit mode
+        titleEl.addEventListener('click', (e) => {
+            e.stopPropagation();
+            if (titleEl.querySelector('input')) return;
+
+            titleEl.classList.add('is-editing');
+            const input = document.createElement('input');
+            input.type = 'text';
+            input.className = 'session-row-title-input';
+            input.value = (meta && meta.custom_title) ? meta.custom_title : '';
+            input.placeholder = autoTitle;
+
+            const originalDisplay = titleEl.textContent;
+            titleEl.replaceChildren(input);
+            input.focus();
+            input.select();
+
+            let finished = false;
+            const finishEdit = async (save) => {
+                if (finished) return;
+                finished = true;
+                titleEl.classList.remove('is-editing');
+                const val = input.value.trim();
+                if (save) {
+                    await api('chat/session/rename', {
+                        note_id: currentNoteId,
+                        session_id: sess,
+                        title: val || null
+                    });
+                    if (Array.isArray(sessionsMeta)) {
+                        let m = sessionsMeta.find(item => item.session_id === sess);
+                        if (!m) {
+                            m = { session_id: sess, note_id: currentNoteId };
+                            sessionsMeta.push(m);
+                        }
+                        m.custom_title = val || undefined;
+                    }
+                    updateSessionButton();
+                    renderSessionModal(document.getElementById('session-modal-search-input')?.value || '');
+                } else {
+                    titleEl.textContent = originalDisplay;
+                }
+            };
+
+            input.addEventListener('click', (ev) => ev.stopPropagation());
+            input.addEventListener('keydown', (ev) => {
+                if (ev.key === 'Enter') {
+                    ev.preventDefault();
+                    finishEdit(true);
+                } else if (ev.key === 'Escape') {
+                    ev.preventDefault();
+                    finishEdit(false);
+                }
+            });
+            input.addEventListener('blur', () => {
+                finishEdit(true);
+            });
+        });
+
+        infoEl.appendChild(titleEl);
+
+        if (sess !== 'main' && displayTitle !== sess) {
+            const subtitleEl = document.createElement('span');
+            subtitleEl.className = 'session-row-subtitle';
+            subtitleEl.textContent = sess;
+            infoEl.appendChild(subtitleEl);
+        }
+
+        mainArea.appendChild(infoEl);
 
         if (isCurrent) {
             const badge = document.createElement('span');

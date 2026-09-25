@@ -1488,7 +1488,14 @@ pre.hljs-pre:hover .copy-btn {
     font-size: 16px;
 }
 
-.session-add-icon-btn {
+.session-modal-header-actions {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.session-add-icon-btn,
+.session-close-icon-btn {
     width: 28px;
     height: 28px;
     border-radius: 6px;
@@ -1502,14 +1509,17 @@ pre.hljs-pre:hover .copy-btn {
     transition: all 0.15s ease;
 }
 
-.session-add-icon-btn:hover {
+.session-add-icon-btn:hover,
+.session-close-icon-btn:hover {
     border-color: var(--accent);
     color: var(--accent);
     background: var(--bg-hover);
 }
 
 .session-add-icon-btn svg,
-.session-add-icon-btn .rune-icon {
+.session-add-icon-btn .rune-icon,
+.session-close-icon-btn svg,
+.session-close-icon-btn .rune-icon {
     width: 15px;
     height: 15px;
 }
@@ -1582,9 +1592,63 @@ pre.hljs-pre:hover .copy-btn {
 }
 
 .session-row-icon {
-    font-size: 13px;
+    font-size: 14px;
     line-height: 1;
     flex-shrink: 0;
+}
+
+.session-row-info {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    flex: 1;
+    min-width: 0;
+}
+
+.session-row-title {
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--text-primary);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    border-bottom: 1px dashed transparent;
+    cursor: text;
+    align-self: flex-start;
+    max-width: 100%;
+    transition: border-color 0.15s ease;
+}
+
+.session-row-title:hover {
+    border-bottom-color: var(--text-muted);
+}
+
+.session-row-title.is-editing,
+.session-row-title:has(.session-row-title-input) {
+    align-self: stretch;
+    width: 100%;
+    border-bottom-color: transparent;
+}
+
+.session-row-subtitle {
+    font-size: 10px;
+    color: var(--text-muted);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    line-height: 1.1;
+}
+
+.session-row-title-input {
+    width: 100%;
+    font-size: 12px;
+    padding: 2px 4px;
+    background: var(--bg-surface);
+    border: 1px solid var(--accent);
+    border-radius: 4px;
+    color: var(--text-primary);
+    outline: none;
+    box-sizing: border-box;
 }
 
 .session-row-name {

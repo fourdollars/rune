@@ -1,4 +1,6 @@
-use super::types::{LineMessage, LineProfile, LoadingStartReq, PushMessageReq, ReplyMessageReq};
+use super::types::{
+    LineGroupSummary, LineMessage, LineProfile, LoadingStartReq, PushMessageReq, ReplyMessageReq,
+};
 use reqwest::Client;
 use tracing::{debug, error, info, warn};
 
@@ -49,6 +51,60 @@ impl LineClient {
             let status = resp.status();
             let err_text = resp.text().await.unwrap_or_default();
             anyhow::bail!("LINE get_profile failed [{}]: {}", status, err_text);
+        }
+
+        let profile: LineProfile = resp.json().await?;
+        Ok(profile)
+    }
+
+    /// Fetch group summary (groupId, groupName) by groupId.
+    pub async fn get_group_summary(
+        &self,
+        group_id: &str,
+    ) -> Result<LineGroupSummary, anyhow::Error> {
+        let url = format!("{}/v2/bot/group/{}/summary", self.base_url, group_id);
+        let resp = self
+            .http_client
+            .get(&url)
+            .bearer_auth(&self.channel_access_token)
+            .send()
+            .await?;
+
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let err_text = resp.text().await.unwrap_or_default();
+            anyhow::bail!("LINE get_group_summary failed [{}]: {}", status, err_text);
+        }
+
+        let summary: LineGroupSummary = resp.json().await?;
+        Ok(summary)
+    }
+
+    /// Fetch group member profile (displayName, pictureUrl) by groupId and userId.
+    pub async fn get_group_member_profile(
+        &self,
+        group_id: &str,
+        user_id: &str,
+    ) -> Result<LineProfile, anyhow::Error> {
+        let url = format!(
+            "{}/v2/bot/group/{}/member/{}",
+            self.base_url, group_id, user_id
+        );
+        let resp = self
+            .http_client
+            .get(&url)
+            .bearer_auth(&self.channel_access_token)
+            .send()
+            .await?;
+
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let err_text = resp.text().await.unwrap_or_default();
+            anyhow::bail!(
+                "LINE get_group_member_profile failed [{}]: {}",
+                status,
+                err_text
+            );
         }
 
         let profile: LineProfile = resp.json().await?;
