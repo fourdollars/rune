@@ -89,27 +89,6 @@ impl ProfileCache {
             }
         }
     }
-
-    /// Format nickname with bot identifier as `line:<bot>:<displayName>` or fallback to `line:<bot>:<userId prefix>`.
-    pub fn format_nickname_for_bot(
-        bot_nickname: &str,
-        display_name: Option<&str>,
-        user_id: &str,
-    ) -> String {
-        let name_part = match display_name {
-            Some(name) if !name.trim().is_empty() => name.trim().to_string(),
-            _ => {
-                let prefix: String = user_id.chars().take(8).collect();
-                prefix
-            }
-        };
-        let bot_trimmed = bot_nickname.trim();
-        if bot_trimmed.is_empty() {
-            format!("line:{}", name_part)
-        } else {
-            format!("line:{}:{}", bot_trimmed, name_part)
-        }
-    }
 }
 
 #[cfg(test)]
@@ -164,22 +143,6 @@ mod tests {
         assert_eq!(
             ProfileCache::format_nickname(Some(""), "U123456789"),
             "line:U1234567"
-        );
-    }
-
-    #[test]
-    fn test_format_nickname_for_bot() {
-        assert_eq!(
-            ProfileCache::format_nickname_for_bot("LineBot", Some("Alice"), "U123456789"),
-            "line:LineBot:Alice"
-        );
-        assert_eq!(
-            ProfileCache::format_nickname_for_bot("CIBot", None, "U123456789"),
-            "line:CIBot:U1234567"
-        );
-        assert_eq!(
-            ProfileCache::format_nickname_for_bot("", Some("Alice"), "U123456789"),
-            "line:Alice"
         );
     }
 }

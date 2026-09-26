@@ -292,11 +292,7 @@ pub async fn process_webhook_payload_for_bot(
             continue;
         }
 
-        let nickname = ProfileCache::format_nickname_for_bot(
-            &line_cfg.nickname,
-            display_name.as_deref(),
-            user_id,
-        );
+        let nickname = ProfileCache::format_nickname(display_name.as_deref(), user_id);
 
         // 1. Configurable Event Logging (Logging Matrix)
         let should_log = line_cfg.log && (line_cfg.anonymous || is_in_whitelist);
