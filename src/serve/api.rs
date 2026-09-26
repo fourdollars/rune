@@ -34,23 +34,23 @@ use tracing::{debug, info, warn};
 // ─── Per-note isolation ────────────────────────────────────────────────────
 
 /// Each note gets its own isolated "chat room" with independent SSE channel,
-/// model override, and AI task lifecycle.
+/// model override, and per-session AI task lifecycle.
 pub struct NoteRoom {
     pub note_id: String,
     /// Per-note SSE broadcast channel (replaces global broadcast_tx for chat events)
     pub broadcast_tx: broadcast::Sender<String>,
-    /// Cancel token for the currently running AI task (Cancel & Replace)
-    pub cancel_token: Mutex<Option<CancellationToken>>,
+    /// Per-session cancellation tokens for active AI tasks (Cancel & Replace per session)
+    pub cancel_tokens: Arc<TokioRwLock<HashMap<String, CancellationToken>>>,
     /// Per-note model override; None = fall back to global default
     pub model_override: TokioRwLock<Option<String>>,
     /// Per-note system prompt override; None = fall back to global default
     pub system_prompt: TokioRwLock<Option<String>>,
-    /// Accumulated streaming tokens for the current AI response (cleared on chat_done).
+    /// Accumulated streaming tokens per session (cleared on chat_done).
     /// Allows clients reconnecting mid-stream to recover partial output.
-    pub streaming_tokens: Arc<TokioRwLock<String>>,
-    /// Current AI task status for this room ("idle", "thinking", "typing").
+    pub streaming_tokens: Arc<TokioRwLock<HashMap<String, String>>>,
+    /// Current AI task status per session ("idle", "thinking", "typing", "tool:<name>").
     /// Used by SSE reconnect to restore correct status even when streaming_tokens is empty.
-    pub active_status: Arc<TokioRwLock<String>>,
+    pub active_statuses: Arc<TokioRwLock<HashMap<String, String>>>,
     /// Per-note thinking override; None = fall back to config.thinking
     pub thinking_override: TokioRwLock<Option<String>>,
     pub goal_condition: TokioRwLock<Option<String>>,
@@ -65,17 +65,68 @@ impl NoteRoom {
         Self {
             note_id,
             broadcast_tx,
-            cancel_token: Mutex::new(None),
+            cancel_tokens: Arc::new(TokioRwLock::new(HashMap::new())),
             model_override: TokioRwLock::new(None),
             system_prompt: TokioRwLock::new(None),
-            streaming_tokens: Arc::new(TokioRwLock::new(String::new())),
-            active_status: Arc::new(TokioRwLock::new("idle".to_string())),
+            streaming_tokens: Arc::new(TokioRwLock::new(HashMap::new())),
+            active_statuses: Arc::new(TokioRwLock::new(HashMap::new())),
             thinking_override: TokioRwLock::new(None),
             goal_condition: TokioRwLock::new(None),
             goal_status: TokioRwLock::new(None),
             goal_model: TokioRwLock::new(None),
             online_users: Arc::new(TokioRwLock::new(HashMap::new())),
         }
+    }
+
+    /// Cancel and replace the cancellation token for a specific session.
+    pub async fn cancel_and_replace_session_token(&self, session_id: &str) -> CancellationToken {
+        let new_token = CancellationToken::new();
+        let mut tokens = self.cancel_tokens.write().await;
+        if let Some(old) = tokens.insert(session_id.to_string(), new_token.clone()) {
+            old.cancel();
+        }
+        new_token
+    }
+
+    /// Cancel all active AI tasks in this room.
+    pub async fn cancel_all_tasks(&self) {
+        let mut tokens = self.cancel_tokens.write().await;
+        for (_, token) in tokens.drain() {
+            token.cancel();
+        }
+    }
+
+    /// Cancel task for a specific session.
+    pub async fn cancel_session_task(&self, session_id: &str) {
+        let mut tokens = self.cancel_tokens.write().await;
+        if let Some(token) = tokens.remove(session_id) {
+            token.cancel();
+        }
+    }
+
+    /// Set session status and update active_statuses map.
+    pub async fn set_session_status(&self, session_id: &str, status: &str) {
+        let mut statuses = self.active_statuses.write().await;
+        if status == "idle" {
+            statuses.remove(session_id);
+        } else {
+            statuses.insert(session_id.to_string(), status.to_string());
+        }
+    }
+
+    /// Append a streaming token for a session.
+    pub async fn append_streaming_token(&self, session_id: &str, token: &str) {
+        let mut tokens = self.streaming_tokens.write().await;
+        tokens
+            .entry(session_id.to_string())
+            .or_default()
+            .push_str(token);
+    }
+
+    /// Clear streaming tokens for a session.
+    pub async fn clear_streaming_tokens(&self, session_id: &str) {
+        let mut tokens = self.streaming_tokens.write().await;
+        tokens.remove(session_id);
     }
 }
 
@@ -109,6 +160,7 @@ impl Drop for UserPresenceGuard {
 
             let leave_msg = SseMsg::System {
                 content: format!("{} left", nickname),
+                session_id: None,
             };
             broadcast_to_room(&room, &leave_msg);
         });
@@ -177,13 +229,26 @@ pub enum SseMsg {
         sessions_meta: Vec<crate::serve::db::ChatSessionMeta>,
     },
     #[serde(rename = "status")]
-    Status { state: String },
+    Status {
+        state: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        session_id: Option<String>,
+    },
     #[serde(rename = "tool_status")]
-    ToolStatus { tool: String, state: String },
+    ToolStatus {
+        tool: String,
+        state: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        session_id: Option<String>,
+    },
     #[serde(rename = "error")]
     Error { message: String },
     #[serde(rename = "system")]
-    System { content: String },
+    System {
+        content: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        session_id: Option<String>,
+    },
     #[serde(rename = "users_update")]
     UsersUpdate {
         count: u32,
@@ -811,30 +876,34 @@ pub async fn events_handler(
 
     // Streaming recovery: restore AI task status on reconnect
     {
-        let status = room.active_status.read().await;
-        if *status != "idle" {
-            // Room has an active AI task — send current status
-            if let Some(tool_name) = status.strip_prefix("tool:") {
-                // Currently executing a tool — send thinking + tool_status
-                init_msgs.push(SseMsg::Status {
-                    state: "thinking".to_string(),
-                });
-                init_msgs.push(SseMsg::ToolStatus {
-                    tool: tool_name.to_string(),
-                    state: "start".to_string(),
-                });
-            } else {
-                init_msgs.push(SseMsg::Status {
-                    state: status.clone(),
-                });
-            }
-            // If there are accumulated tokens, send them for partial display
-            let buf = room.streaming_tokens.read().await;
-            if !buf.is_empty() {
-                init_msgs.push(SseMsg::ChatToken {
-                    content: buf.clone(),
-                    session_id: None,
-                });
+        let statuses = room.active_statuses.read().await;
+        let streaming = room.streaming_tokens.read().await;
+        for (sess_id, status) in statuses.iter() {
+            if status != "idle" {
+                if let Some(tool_name) = status.strip_prefix("tool:") {
+                    init_msgs.push(SseMsg::Status {
+                        state: "thinking".to_string(),
+                        session_id: Some(sess_id.clone()),
+                    });
+                    init_msgs.push(SseMsg::ToolStatus {
+                        tool: tool_name.to_string(),
+                        state: "start".to_string(),
+                        session_id: Some(sess_id.clone()),
+                    });
+                } else {
+                    init_msgs.push(SseMsg::Status {
+                        state: status.clone(),
+                        session_id: Some(sess_id.clone()),
+                    });
+                }
+                if let Some(buf) = streaming.get(sess_id) {
+                    if !buf.is_empty() {
+                        init_msgs.push(SseMsg::ChatToken {
+                            content: buf.clone(),
+                            session_id: Some(sess_id.clone()),
+                        });
+                    }
+                }
             }
         }
     }
@@ -842,6 +911,7 @@ pub async fn events_handler(
     // System join message — broadcast to the room
     let join_msg = SseMsg::System {
         content: format!("{} joined", nickname),
+        session_id: None,
     };
     broadcast_to_room(&room, &join_msg);
 
@@ -1001,31 +1071,20 @@ pub async fn chat_handler(
     // Broadcast updated session list to the note room
     broadcast_session_list(&state, &req.note_id).await;
 
-    // Send thinking status to the room
+    // Send thinking status for this session to the room
     let thinking = SseMsg::Status {
         state: "thinking".to_string(),
+        session_id: Some(session_id.clone()),
     };
     broadcast_to_room(&room, &thinking);
 
-    // Mark room as active (for SSE reconnect recovery)
-    {
-        let mut status = room.active_status.write().await;
-        *status = "thinking".to_string();
-    }
+    // Mark session as active (for SSE reconnect recovery)
+    room.set_session_status(&session_id, "thinking").await;
 
-    // Cancel & Replace: cancel any existing AI task for this note
-    let new_token = CancellationToken::new();
-    {
-        let mut guard = room.cancel_token.lock().unwrap();
-        if let Some(old) = guard.replace(new_token.clone()) {
-            old.cancel();
-        }
-    }
-    // Clear accumulated tokens from the cancelled task
-    {
-        let mut buf = room.streaming_tokens.write().await;
-        buf.clear();
-    }
+    // Cancel & Replace: cancel any existing AI task for this specific session
+    let new_token = room.cancel_and_replace_session_token(&session_id).await;
+    // Clear accumulated tokens for this session
+    room.clear_streaming_tokens(&session_id).await;
 
     // Spawn agent task with cancellation
     let state_clone = state.clone();
@@ -1455,14 +1514,11 @@ pub async fn note_delete_handler(
 ) -> Json<ApiResponse> {
     match state.chat_db.delete_note(&note_id) {
         Ok(true) => {
-            // Cancel any running AI task in the room, then remove the room
+            // Cancel any running AI tasks in the room, then remove the room
             {
                 let rooms = state.rooms.read().await;
                 if let Some(room) = rooms.get(&note_id) {
-                    let guard = room.cancel_token.lock().unwrap();
-                    if let Some(ref token) = *guard {
-                        token.cancel();
-                    }
+                    room.cancel_all_tasks().await;
                 }
             }
             // Remove room from map
@@ -1696,13 +1752,14 @@ pub async fn restore_handler(
         Ok(_) => {
             let history = state
                 .chat_db
-                .load_recent_session_async(req.note_id.clone(), session_id, 100)
+                .load_recent_session_async(req.note_id.clone(), session_id.clone(), 100)
                 .await;
             let room = state.get_or_create_room(&req.note_id).await;
             let hist_msg = SseMsg::History { messages: history };
             broadcast_to_room(&room, &hist_msg);
             let status_msg = SseMsg::Status {
                 state: "idle".to_string(),
+                session_id: Some(session_id),
             };
             broadcast_to_room(&room, &status_msg);
             broadcast_session_list(&state, &req.note_id).await;
@@ -1945,18 +2002,9 @@ pub async fn goal_set_handler(
         *room.goal_model.write().await = req.model.clone();
     }
 
-    // Cancel any running task in the room
-    let new_token = CancellationToken::new();
-    {
-        let mut guard = room.cancel_token.lock().unwrap();
-        if let Some(old) = guard.replace(new_token.clone()) {
-            old.cancel();
-        }
-    }
-    {
-        let mut buf = room.streaming_tokens.write().await;
-        buf.clear();
-    }
+    // Cancel any running goal task in the room
+    let new_token = room.cancel_and_replace_session_token("__goal__").await;
+    room.clear_streaming_tokens("__goal__").await;
 
     // Broadcast the new goal status to the room
     broadcast_to_room(
@@ -1972,14 +2020,12 @@ pub async fn goal_set_handler(
     // Send thinking status to the room
     let thinking = SseMsg::Status {
         state: "thinking".to_string(),
+        session_id: Some("__goal__".to_string()),
     };
     broadcast_to_room(&room, &thinking);
 
-    // Mark room as active (for SSE reconnect recovery)
-    {
-        let mut status = room.active_status.write().await;
-        *status = "thinking".to_string();
-    }
+    // Mark goal as active (for SSE reconnect recovery)
+    room.set_session_status("__goal__", "thinking").await;
 
     // Spawn the LoopEngine run in the background
     let state_clone = state.clone();
@@ -1996,9 +2042,8 @@ pub async fn goal_set_handler(
                 let room = state_clone.get_or_create_room(&note_id).await;
                 {
                     *room.goal_status.write().await = Some("Failed".to_string());
-                    let mut status_guard = room.active_status.write().await;
-                    *status_guard = "idle".to_string();
                 }
+                room.set_session_status("__goal__", "idle").await;
                 broadcast_to_room(
                     &room,
                     &SseMsg::GoalStatus {
@@ -2013,6 +2058,7 @@ pub async fn goal_set_handler(
                     &room,
                     &SseMsg::Status {
                         state: "idle".to_string(),
+                        session_id: Some("__goal__".to_string()),
                     },
                 );
                 return;
@@ -2038,14 +2084,12 @@ pub async fn goal_set_handler(
             .await;
 
         let room = state_clone.get_or_create_room(&note_id).await;
-        {
-            let mut status_guard = room.active_status.write().await;
-            *status_guard = "idle".to_string();
-        }
+        room.set_session_status("__goal__", "idle").await;
         broadcast_to_room(
             &room,
             &SseMsg::Status {
                 state: "idle".to_string(),
+                session_id: Some("__goal__".to_string()),
             },
         );
 
@@ -2135,23 +2179,15 @@ pub async fn goal_clear_handler(
 
     let room = state.get_or_create_room(&note_id).await;
 
-    // Cancel current task
-    {
-        let mut guard = room.cancel_token.lock().unwrap();
-        if let Some(old) = guard.take() {
-            old.cancel();
-        }
-    }
+    // Cancel goal task
+    room.cancel_session_task("__goal__").await;
+    room.set_session_status("__goal__", "idle").await;
 
-    // Reset active status to idle
-    {
-        let mut status_guard = room.active_status.write().await;
-        *status_guard = "idle".to_string();
-    }
     broadcast_to_room(
         &room,
         &SseMsg::Status {
             state: "idle".to_string(),
+            session_id: Some("__goal__".to_string()),
         },
     );
 
@@ -2186,26 +2222,32 @@ pub async fn chat_cancel_handler(
     }
 
     let room = state.get_or_create_room(&note_id).await;
+    let session_id = params.get("session_id").cloned();
 
-    // Cancel current task
-    {
-        let mut guard = room.cancel_token.lock().unwrap();
-        if let Some(old) = guard.replace(CancellationToken::new()) {
-            old.cancel();
+    if let Some(ref sess) = session_id {
+        room.cancel_session_task(sess).await;
+        room.set_session_status(sess, "idle").await;
+        broadcast_to_room(
+            &room,
+            &SseMsg::Status {
+                state: "idle".to_string(),
+                session_id: Some(sess.clone()),
+            },
+        );
+    } else {
+        room.cancel_all_tasks().await;
+        {
+            let mut statuses = room.active_statuses.write().await;
+            statuses.clear();
         }
+        broadcast_to_room(
+            &room,
+            &SseMsg::Status {
+                state: "idle".to_string(),
+                session_id: None,
+            },
+        );
     }
-
-    // Reset active status to idle
-    {
-        let mut status_guard = room.active_status.write().await;
-        *status_guard = "idle".to_string();
-    }
-    broadcast_to_room(
-        &room,
-        &SseMsg::Status {
-            state: "idle".to_string(),
-        },
-    );
 
     // Broadcast loop_done if status was running
     let was_running = {
@@ -3363,8 +3405,10 @@ async fn handle_chat_message(
                 message: format!("Provider error: {}", e),
             };
             broadcast_to_room(&room, &err);
+            room.set_session_status(&session_id, "idle").await;
             let idle = SseMsg::Status {
                 state: "idle".to_string(),
+                session_id: Some(session_id.clone()),
             };
             broadcast_to_room(&room, &idle);
             return;
@@ -3377,7 +3421,7 @@ async fn handle_chat_message(
     // Token streaming callback — sends to room + accumulates for mid-stream reconnect
     let room_for_token = Arc::clone(&room);
     let streaming_buf = Arc::clone(&room.streaming_tokens);
-    let status_for_token = Arc::clone(&room.active_status);
+    let status_for_token = Arc::clone(&room.active_statuses);
     let sess_id_token = session_id.clone();
     let token_callback: Arc<dyn Fn(&str) + Send + Sync> = Arc::new(move |token: &str| {
         let msg = SseMsg::ChatToken {
@@ -3386,11 +3430,12 @@ async fn handle_chat_message(
         };
         broadcast_to_room(&room_for_token, &msg);
         // Accumulate for clients that reconnect mid-stream
-        if let Ok(mut buf) = streaming_buf.try_write() {
+        if let Ok(mut tokens) = streaming_buf.try_write() {
+            let buf = tokens.entry(sess_id_token.clone()).or_default();
             // Update status to "typing" on first token
             if buf.is_empty() {
-                if let Ok(mut s) = status_for_token.try_write() {
-                    *s = "typing".to_string();
+                if let Ok(mut statuses) = status_for_token.try_write() {
+                    statuses.insert(sess_id_token.clone(), "typing".to_string());
                 }
             }
             buf.push_str(token);
@@ -3458,21 +3503,23 @@ async fn handle_chat_message(
 
     // Tool status callback: broadcast tool start/end to room for UI indicator
     let room_for_tool = Arc::clone(&room);
-    let status_for_tool = Arc::clone(&room.active_status);
+    let status_for_tool = Arc::clone(&room.active_statuses);
+    let sess_id_tool = session_id.clone();
     agent.tool_status_callback = Some(Arc::new(move |tool_name: &str, state: &str| {
         let msg = SseMsg::ToolStatus {
             tool: tool_name.to_string(),
             state: state.to_string(),
+            session_id: Some(sess_id_tool.clone()),
         };
         broadcast_to_room(&room_for_tool, &msg);
-        // Update active_status for reconnect recovery
+        // Update active_statuses for reconnect recovery
         if state == "start" {
-            if let Ok(mut s) = status_for_tool.try_write() {
-                *s = format!("tool:{}", tool_name);
+            if let Ok(mut statuses) = status_for_tool.try_write() {
+                statuses.insert(sess_id_tool.clone(), format!("tool:{}", tool_name));
             }
         } else if state == "end" {
-            if let Ok(mut s) = status_for_tool.try_write() {
-                *s = "thinking".to_string();
+            if let Ok(mut statuses) = status_for_tool.try_write() {
+                statuses.insert(sess_id_tool.clone(), "thinking".to_string());
             }
         }
     }));
@@ -3544,10 +3591,7 @@ async fn handle_chat_message(
     let duration_ms = start_time.elapsed().as_millis() as u64;
 
     // Clear streaming buffer — response is complete (or failed)
-    {
-        let mut buf = room.streaming_tokens.write().await;
-        buf.clear();
-    }
+    room.clear_streaming_tokens(&session_id).await;
 
     let done = SseMsg::ChatDone {
         session_id: Some(session_id.clone()),
@@ -3681,28 +3725,16 @@ async fn handle_chat_message(
         _ => {}
     }
 
-    // Always reset room status to idle and broadcast to room users
-    if let Ok(mut s) = room.active_status.try_write() {
-        *s = "idle".to_string();
-    }
+    // Always reset session status to idle and broadcast to room users
+    room.set_session_status(&session_id, "idle").await;
     let idle_msg = SseMsg::Status {
         state: "idle".to_string(),
+        session_id: Some(session_id.clone()),
     };
     broadcast_to_room(&room, &idle_msg);
 
     // Broadcast updated file list to the room
     broadcast_file_list(&state, &note_id).await;
-
-    // Mark room as idle (for SSE reconnect recovery)
-    {
-        let mut status = room.active_status.write().await;
-        *status = "idle".to_string();
-    }
-
-    let idle = SseMsg::Status {
-        state: "idle".to_string(),
-    };
-    broadcast_to_room(&room, &idle);
 }
 
 // ─── Provider/Embedding builders (from ws.rs) ──────────────────────────────
@@ -5368,10 +5400,10 @@ mod integration_tests {
 
     #[tokio::test]
     async fn test_archive_chat_session_preserves_title() {
-        let (app, _tmp) = test_app();
+        let (app, tmp) = test_app();
         post_json(&app, "/api/notes", json!({"name": "line-archive-test"})).await;
 
-        let db = app_db(&app);
+        let db = ChatDb::open(&tmp.path().join("test.db")).unwrap();
         db.set_session_title("line-archive-test", "user:U999", Some("Alice"))
             .unwrap();
         db.insert_session("line-archive-test", "user:U999", "user", "Alice", "hello")
@@ -5936,22 +5968,35 @@ mod isolation_tests {
         let (state, _tmp) = make_state();
         let room = state.get_or_create_room("note-cancel").await;
 
-        let token1 = CancellationToken::new();
-        {
-            let mut guard = room.cancel_token.lock().unwrap();
-            *guard = Some(token1.clone());
-        }
+        let token1 = room.cancel_and_replace_session_token("main").await;
         assert!(!token1.is_cancelled());
 
-        let token2 = CancellationToken::new();
-        {
-            let mut guard = room.cancel_token.lock().unwrap();
-            if let Some(old) = guard.replace(token2.clone()) {
-                old.cancel();
-            }
-        }
+        let token2 = room.cancel_and_replace_session_token("main").await;
         assert!(token1.is_cancelled());
         assert!(!token2.is_cancelled());
+    }
+
+    #[tokio::test]
+    async fn test_per_session_cancel_isolation() {
+        let (state, _tmp) = make_state();
+        let room = state.get_or_create_room("note-multi-cancel").await;
+
+        let token_sess1 = room.cancel_and_replace_session_token("session-1").await;
+        let token_sess2 = room.cancel_and_replace_session_token("session-2").await;
+
+        assert!(!token_sess1.is_cancelled());
+        assert!(!token_sess2.is_cancelled());
+
+        // Cancel session-1 only
+        room.cancel_session_task("session-1").await;
+        assert!(token_sess1.is_cancelled());
+        // session-2 is NOT cancelled!
+        assert!(!token_sess2.is_cancelled());
+
+        // Triggering new task on session-2 replaces only session-2
+        let token_sess2_new = room.cancel_and_replace_session_token("session-2").await;
+        assert!(token_sess2.is_cancelled());
+        assert!(!token_sess2_new.is_cancelled());
     }
 
     #[tokio::test]
@@ -5959,25 +6004,20 @@ mod isolation_tests {
         let (state, _tmp) = make_state();
         let room = state.get_or_create_room("note-del").await;
 
-        let token = CancellationToken::new();
-        {
-            let mut guard = room.cancel_token.lock().unwrap();
-            *guard = Some(token.clone());
-        }
+        let token1 = room.cancel_and_replace_session_token("session-1").await;
+        let token2 = room.cancel_and_replace_session_token("session-2").await;
 
         // Simulate note deletion
         {
             let rooms = state.rooms.read().await;
             if let Some(r) = rooms.get("note-del") {
-                let g = r.cancel_token.lock().unwrap();
-                if let Some(ref t) = *g {
-                    t.cancel();
-                }
+                r.cancel_all_tasks().await;
             }
         }
         state.rooms.write().await.remove("note-del");
 
-        assert!(token.is_cancelled());
+        assert!(token1.is_cancelled());
+        assert!(token2.is_cancelled());
         assert!(state.rooms.read().await.get("note-del").is_none());
     }
 
@@ -5989,20 +6029,22 @@ mod isolation_tests {
         // Initially empty
         assert!(room.streaming_tokens.read().await.is_empty());
 
-        // Simulate token accumulation
-        {
-            let mut buf = room.streaming_tokens.write().await;
-            buf.push_str("Hello ");
-            buf.push_str("world");
-        }
-        assert_eq!(*room.streaming_tokens.read().await, "Hello world");
+        // Accumulate per session
+        room.append_streaming_token("session-1", "Hello ").await;
+        room.append_streaming_token("session-1", "world").await;
+        room.append_streaming_token("session-2", "Other stream")
+            .await;
 
-        // Clear on done
-        {
-            let mut buf = room.streaming_tokens.write().await;
-            buf.clear();
-        }
-        assert!(room.streaming_tokens.read().await.is_empty());
+        let tokens = room.streaming_tokens.read().await;
+        assert_eq!(tokens.get("session-1").unwrap(), "Hello world");
+        assert_eq!(tokens.get("session-2").unwrap(), "Other stream");
+        drop(tokens);
+
+        // Clear session-1 on done
+        room.clear_streaming_tokens("session-1").await;
+        let tokens2 = room.streaming_tokens.read().await;
+        assert!(!tokens2.contains_key("session-1"));
+        assert_eq!(tokens2.get("session-2").unwrap(), "Other stream");
     }
 
     #[tokio::test]
@@ -6011,40 +6053,34 @@ mod isolation_tests {
         let room = state.get_or_create_room("note-status").await;
 
         // Initially idle
-        assert_eq!(*room.active_status.read().await, "idle");
+        assert!(room.active_statuses.read().await.is_empty());
 
         // Set to thinking (simulates chat start)
-        {
-            let mut s = room.active_status.write().await;
-            *s = "thinking".to_string();
-        }
-        assert_eq!(*room.active_status.read().await, "thinking");
+        room.set_session_status("session-1", "thinking").await;
+        assert_eq!(
+            room.active_statuses.read().await.get("session-1").unwrap(),
+            "thinking"
+        );
 
         // Set to tool status (simulates tool execution)
+        room.set_session_status("session-1", "tool:fetch_url").await;
         {
-            let mut s = room.active_status.write().await;
-            *s = "tool:fetch_url".to_string();
-        }
-        // Verify strip_prefix works for reconnect logic
-        {
-            let status = room.active_status.read().await;
-            assert_eq!(*status, "tool:fetch_url");
+            let statuses = room.active_statuses.read().await;
+            let status = statuses.get("session-1").unwrap();
+            assert_eq!(status, "tool:fetch_url");
             assert_eq!(status.strip_prefix("tool:"), Some("fetch_url"));
         }
 
         // Set to typing (simulates token streaming)
-        {
-            let mut s = room.active_status.write().await;
-            *s = "typing".to_string();
-        }
-        assert_eq!(*room.active_status.read().await, "typing");
+        room.set_session_status("session-1", "typing").await;
+        assert_eq!(
+            room.active_statuses.read().await.get("session-1").unwrap(),
+            "typing"
+        );
 
         // Back to idle (simulates completion)
-        {
-            let mut s = room.active_status.write().await;
-            *s = "idle".to_string();
-        }
-        assert_eq!(*room.active_status.read().await, "idle");
+        room.set_session_status("session-1", "idle").await;
+        assert!(!room.active_statuses.read().await.contains_key("session-1"));
     }
 
     #[tokio::test]

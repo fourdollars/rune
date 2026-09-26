@@ -69,10 +69,10 @@ globalThis.handleMessage = function handleMessage(msg) {
         }
         case 'chat_token': {
             const tokenSess = msg.session_id || 'main';
+            if (getSessionStatus(tokenSess) !== 'typing') {
+                setSessionStatus(tokenSess, 'typing');
+            }
             if (tokenSess === currentSessionId) {
-                if (currentStatus !== 'typing') {
-                    setStatus('typing');
-                }
                 appendToLastAssistant(msg.content);
             }
             break;
@@ -90,21 +90,21 @@ globalThis.handleMessage = function handleMessage(msg) {
         }
         case 'chat_done': {
             const doneSess = msg.session_id || 'main';
+            setSessionStatus(doneSess, 'idle');
             if (doneSess === currentSessionId) {
                 finalizeAssistantMessage();
                 removeAllApprovalButtons();
-                setStatus('idle');
             }
             break;
         }
         case 'status':
-            setStatus(msg.state);
+            setSessionStatus(msg.session_id || 'main', msg.state);
             break;
         case 'tool_status':
             if (msg.state === 'start') {
-                setToolStatus(msg.tool);
+                setSessionToolStatus(msg.session_id || 'main', msg.tool);
             } else {
-                clearToolStatus();
+                clearSessionToolStatus(msg.session_id || 'main');
             }
             break;
         case 'file_list':
@@ -272,7 +272,23 @@ globalThis.handleMessage = function handleMessage(msg) {
             renderDirBrowser(msg.path, msg.parent, msg.entries || []);
             break;
         case 'system':
-            addPresenceSystemMessage(msg.content);
+            if (msg.session_id) {
+                const sysSess = msg.session_id;
+                if (sysSess === currentSessionId) {
+                    addPresenceSystemMessage(msg.content);
+                } else {
+                    if (typeof unreadSessions !== 'undefined' && unreadSessions && unreadSessions.add) {
+                        unreadSessions.add(sysSess);
+                    }
+                    updateSessionButton();
+                    const sessionModal = document.getElementById('session-modal');
+                    if (sessionModal && !sessionModal.classList.contains('hidden')) {
+                        renderSessionModal(document.getElementById('session-modal-search-input')?.value || '');
+                    }
+                }
+            } else {
+                addPresenceSystemMessage(msg.content);
+            }
             break;
         case 'history':
             replayHistory(msg.messages);
@@ -303,8 +319,13 @@ globalThis.handleMessage = function handleMessage(msg) {
         case 'error':
             addSystemMessage('Error: ' + (msg.message || 'Unknown error'));
             finalizeAssistantMessage();
-            clearToolStatus();
-            setStatus('idle');
+            if (msg.session_id) {
+                clearSessionToolStatus(msg.session_id);
+                setSessionStatus(msg.session_id, 'idle');
+            } else {
+                clearToolStatus();
+                setStatus('idle');
+            }
             updateChatInputState();
             break;
     }

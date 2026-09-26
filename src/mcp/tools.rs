@@ -508,14 +508,11 @@ pub async fn handle_tool_call(
             let _ = state.chat_db.ensure_persistent();
             match state.chat_db.delete_note(note_id) {
                 Ok(true) => {
-                    // Cancel any running AI task in the room, then remove the room
+                    // Cancel any running AI tasks in the room, then remove the room
                     {
                         let rooms = state.rooms.read().await;
                         if let Some(room) = rooms.get(note_id) {
-                            let guard = room.cancel_token.lock().unwrap();
-                            if let Some(ref token) = *guard {
-                                token.cancel();
-                            }
+                            room.cancel_all_tasks().await;
                         }
                     }
                     state.rooms.write().await.remove(note_id);

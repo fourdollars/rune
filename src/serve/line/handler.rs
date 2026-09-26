@@ -525,15 +525,13 @@ pub async fn process_webhook_payload_for_bot(
             };
             broadcast_to_room(&room, &user_msg);
 
-            // Set active status to thinking
-            {
-                let mut status = room.active_status.write().await;
-                *status = "thinking".to_string();
-            }
+            // Set active status to thinking for this session
+            room.set_session_status(&session_id, "thinking").await;
 
             // Send thinking status to room
             let thinking = SseMsg::Status {
                 state: "thinking".to_string(),
+                session_id: Some(session_id.clone()),
             };
             broadcast_to_room(&room, &thinking);
 
@@ -580,12 +578,10 @@ async fn execute_line_agent_and_reply(
                 message: format!("Provider error: {}", e),
             };
             broadcast_to_room(&room, &err);
-            {
-                let mut status = room.active_status.write().await;
-                *status = "idle".to_string();
-            }
+            room.set_session_status(&session_id, "idle").await;
             let idle = SseMsg::Status {
                 state: "idle".to_string(),
+                session_id: Some(session_id.clone()),
             };
             broadcast_to_room(&room, &idle);
             return;
@@ -618,7 +614,7 @@ async fn execute_line_agent_and_reply(
     // Token streaming callback — sends to room + accumulates for mid-stream reconnect
     let room_for_token = Arc::clone(&room);
     let streaming_buf = Arc::clone(&room.streaming_tokens);
-    let status_for_token = Arc::clone(&room.active_status);
+    let status_for_token = Arc::clone(&room.active_statuses);
     let sess_id_token = session_id.clone();
     let token_callback: Arc<dyn Fn(&str) + Send + Sync> = Arc::new(move |token: &str| {
         let msg = SseMsg::ChatToken {
@@ -627,11 +623,12 @@ async fn execute_line_agent_and_reply(
         };
         broadcast_to_room(&room_for_token, &msg);
         // Accumulate for clients that reconnect mid-stream
-        if let Ok(mut buf) = streaming_buf.try_write() {
+        if let Ok(mut tokens) = streaming_buf.try_write() {
+            let buf = tokens.entry(sess_id_token.clone()).or_default();
             // Update status to "typing" on first token
             if buf.is_empty() {
-                if let Ok(mut s) = status_for_token.try_write() {
-                    *s = "typing".to_string();
+                if let Ok(mut statuses) = status_for_token.try_write() {
+                    statuses.insert(sess_id_token.clone(), "typing".to_string());
                 }
             }
             buf.push_str(token);
@@ -641,21 +638,23 @@ async fn execute_line_agent_and_reply(
 
     // Tool status callback: broadcast tool start/end to room for UI indicator
     let room_for_tool = Arc::clone(&room);
-    let status_for_tool = Arc::clone(&room.active_status);
+    let status_for_tool = Arc::clone(&room.active_statuses);
+    let sess_id_tool = session_id.clone();
     agent.tool_status_callback = Some(Arc::new(move |tool_name: &str, state: &str| {
         let msg = SseMsg::ToolStatus {
             tool: tool_name.to_string(),
             state: state.to_string(),
+            session_id: Some(sess_id_tool.clone()),
         };
         broadcast_to_room(&room_for_tool, &msg);
-        // Update active_status for reconnect recovery
+        // Update active_statuses for reconnect recovery
         if state == "start" {
-            if let Ok(mut s) = status_for_tool.try_write() {
-                *s = format!("tool:{}", tool_name);
+            if let Ok(mut statuses) = status_for_tool.try_write() {
+                statuses.insert(sess_id_tool.clone(), format!("tool:{}", tool_name));
             }
         } else if state == "end" {
-            if let Ok(mut s) = status_for_tool.try_write() {
-                *s = "thinking".to_string();
+            if let Ok(mut statuses) = status_for_tool.try_write() {
+                statuses.insert(sess_id_tool.clone(), "thinking".to_string());
             }
         }
     }));
@@ -722,10 +721,7 @@ async fn execute_line_agent_and_reply(
     let duration_ms = start_time.elapsed().as_millis() as u64;
 
     // Clear streaming buffer — response is complete (or failed)
-    {
-        let mut buf = room.streaming_tokens.write().await;
-        buf.clear();
-    }
+    room.clear_streaming_tokens(&session_id).await;
 
     let done = SseMsg::ChatDone {
         session_id: Some(session_id.clone()),
@@ -827,13 +823,11 @@ async fn execute_line_agent_and_reply(
         }
     }
 
-    // Always reset room status to idle and broadcast to room users
-    {
-        let mut status = room.active_status.write().await;
-        *status = "idle".to_string();
-    }
+    // Always reset session status to idle and broadcast to room users
+    room.set_session_status(&session_id, "idle").await;
     let idle_msg = SseMsg::Status {
         state: "idle".to_string(),
+        session_id: Some(session_id.clone()),
     };
     broadcast_to_room(&room, &idle_msg);
 
@@ -1663,7 +1657,7 @@ mod tests {
     async fn test_execute_line_agent_status_reset_to_idle() {
         let state = create_test_state_with_line("secret123");
         let room = state.get_or_create_room("LineBot").await;
-        *room.active_status.write().await = "thinking".to_string();
+        room.set_session_status("main", "thinking").await;
 
         let client = LineClient::new("dummy_token".to_string());
         execute_line_agent_and_reply(
@@ -1677,8 +1671,8 @@ mod tests {
         )
         .await;
 
-        let status = room.active_status.read().await;
-        assert_eq!(*status, "idle");
+        let statuses = room.active_statuses.read().await;
+        assert_eq!(statuses.get("main"), None);
     }
 
     #[tokio::test]

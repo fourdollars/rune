@@ -11,8 +11,8 @@ globalThis.STATUS_EMOJI = {
 };
 
 const MIN_TOOL_DISPLAY_MS = 600;
-let toolStartTime = 0;
-let clearToolTimer = null;
+const toolStartTimes = new Map();
+const clearToolTimers = new Map();
 
 function paint(state, name, label) {
     ['status-indicator', 'mobile-status'].forEach(id => {
@@ -25,43 +25,124 @@ function paint(state, name, label) {
     });
 }
 
-globalThis.setStatus = function setStatus(state) {
+function refreshSessionModalIfOpen() {
+    const sessionModal = document.getElementById('session-modal');
+    if (sessionModal && !sessionModal.classList.contains('hidden')) {
+        const searchInput = document.getElementById('session-modal-search-input');
+        if (typeof renderSessionModal === 'function') {
+            renderSessionModal(searchInput?.value || '');
+        }
+    }
+}
+
+globalThis.getSessionStatus = function getSessionStatus(sessionId) {
+    const sess = sessionId || currentSessionId || 'main';
+    if (!sessionStatuses || !(sessionStatuses instanceof Map)) {
+        sessionStatuses = new Map();
+    }
+    return sessionStatuses.get(sess) || 'idle';
+};
+
+globalThis.setSessionStatus = function setSessionStatus(sessionId, state) {
+    const sess = sessionId || currentSessionId || 'main';
     if (state && typeof state === 'string' && state.startsWith('tool:')) {
-        setToolStatus(state.slice(5));
+        setSessionToolStatus(sess, state.slice(5));
         return;
     }
-    if (clearToolTimer) {
-        clearTimeout(clearToolTimer);
-        clearToolTimer = null;
+
+    if (clearToolTimers.has(sess)) {
+        clearTimeout(clearToolTimers.get(sess));
+        clearToolTimers.delete(sess);
     }
-    currentStatus = state;
-    paint(state, STATUS_EMOJI[state] || 'dot', state);
+
+    if (!sessionStatuses || !(sessionStatuses instanceof Map)) {
+        sessionStatuses = new Map();
+    }
+
+    if (!state || state === 'idle') {
+        sessionStatuses.delete(sess);
+    } else {
+        sessionStatuses.set(sess, state);
+    }
+
+    if (sess === (currentSessionId || 'main')) {
+        currentStatus = state || 'idle';
+        paint(currentStatus, STATUS_EMOJI[currentStatus] || 'dot', currentStatus);
+    }
+
+    refreshSessionModalIfOpen();
 };
 
-globalThis.setToolStatus = function setToolStatus(toolName) {
-    if (clearToolTimer) {
-        clearTimeout(clearToolTimer);
-        clearToolTimer = null;
+globalThis.setSessionToolStatus = function setSessionToolStatus(sessionId, toolName) {
+    const sess = sessionId || currentSessionId || 'main';
+    if (clearToolTimers.has(sess)) {
+        clearTimeout(clearToolTimers.get(sess));
+        clearToolTimers.delete(sess);
     }
-    currentStatus = 'tool';
-    toolStartTime = Date.now();
-    paint('tool', STATUS_EMOJI.tool, `tool: ${toolName}`);
+
+    if (!sessionStatuses || !(sessionStatuses instanceof Map)) {
+        sessionStatuses = new Map();
+    }
+
+    const stateKey = `tool:${toolName}`;
+    sessionStatuses.set(sess, stateKey);
+    toolStartTimes.set(sess, Date.now());
+
+    if (sess === (currentSessionId || 'main')) {
+        currentStatus = 'tool';
+        paint('tool', STATUS_EMOJI.tool, `tool: ${toolName}`);
+    }
+
+    refreshSessionModalIfOpen();
 };
 
-globalThis.clearToolStatus = function clearToolStatus() {
-    if (currentStatus !== 'tool') {
+globalThis.clearSessionToolStatus = function clearSessionToolStatus(sessionId) {
+    const sess = sessionId || currentSessionId || 'main';
+    const current = getSessionStatus(sess);
+    if (!current || !current.startsWith('tool')) {
         return;
     }
-    const elapsed = Date.now() - toolStartTime;
+
+    const startTime = toolStartTimes.get(sess) || 0;
+    const elapsed = Date.now() - startTime;
+
     if (elapsed < MIN_TOOL_DISPLAY_MS) {
-        if (clearToolTimer) clearTimeout(clearToolTimer);
-        clearToolTimer = setTimeout(() => {
-            clearToolTimer = null;
-            if (currentStatus === 'tool') {
-                setStatus('thinking');
+        if (clearToolTimers.has(sess)) {
+            clearTimeout(clearToolTimers.get(sess));
+        }
+        const timer = setTimeout(() => {
+            clearToolTimers.delete(sess);
+            if (getSessionStatus(sess).startsWith('tool')) {
+                setSessionStatus(sess, 'thinking');
             }
         }, MIN_TOOL_DISPLAY_MS - elapsed);
+        clearToolTimers.set(sess, timer);
     } else {
-        setStatus('thinking');
+        setSessionStatus(sess, 'thinking');
     }
+};
+
+globalThis.updateCurrentSessionStatus = function updateCurrentSessionStatus() {
+    const sess = currentSessionId || 'main';
+    const status = getSessionStatus(sess);
+    if (status && status.startsWith('tool:')) {
+        const toolName = status.slice(5);
+        currentStatus = 'tool';
+        paint('tool', STATUS_EMOJI.tool, `tool: ${toolName}`);
+    } else {
+        currentStatus = status || 'idle';
+        paint(currentStatus, STATUS_EMOJI[currentStatus] || 'dot', currentStatus);
+    }
+};
+
+globalThis.setStatus = function setStatus(state, sessionId) {
+    setSessionStatus(sessionId || currentSessionId || 'main', state);
+};
+
+globalThis.setToolStatus = function setToolStatus(toolName, sessionId) {
+    setSessionToolStatus(sessionId || currentSessionId || 'main', toolName);
+};
+
+globalThis.clearToolStatus = function clearToolStatus(sessionId) {
+    clearSessionToolStatus(sessionId || currentSessionId || 'main');
 };

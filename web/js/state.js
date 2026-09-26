@@ -43,6 +43,7 @@ const initial = {
     sessions: ['main'],
     sessionsMeta: [],
     unreadSessions: new Set(),
+    sessionStatuses: new Map(),
 };
 
 const listeners = new Set();

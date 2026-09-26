@@ -222,6 +222,26 @@ globalThis.renderSessionModal = function renderSessionModal(filter = '') {
 
         mainArea.appendChild(infoEl);
 
+        const status = (typeof getSessionStatus === 'function') ? getSessionStatus(sess) : 'idle';
+        if (status && status !== 'idle') {
+            const statusBadge = document.createElement('span');
+            if (status.startsWith('tool:')) {
+                statusBadge.className = 'session-row-badge tool';
+                statusBadge.textContent = status.slice(5);
+                statusBadge.title = `Running tool: ${status.slice(5)}`;
+            } else if (status === 'thinking') {
+                statusBadge.className = 'session-row-badge thinking';
+                statusBadge.textContent = 'Thinking';
+            } else if (status === 'typing') {
+                statusBadge.className = 'session-row-badge typing';
+                statusBadge.textContent = 'Typing';
+            } else {
+                statusBadge.className = `session-row-badge ${status}`;
+                statusBadge.textContent = status;
+            }
+            mainArea.appendChild(statusBadge);
+        }
+
         if (isCurrent) {
             const badge = document.createElement('span');
             badge.className = 'session-row-badge active';
@@ -352,6 +372,7 @@ globalThis.switchSession = async function switchSession(sessionId) {
     if (data.history && data.history.length) {
         replayHistory(data.history);
     }
+    updateCurrentSessionStatus();
     updateSessionButton();
     const sessionModal = document.getElementById('session-modal');
     if (sessionModal && !sessionModal.classList.contains('hidden')) {

@@ -550,6 +550,7 @@ async fn execute_cron_job_inner(
                 };
                 let sys_msg = SseMsg::System {
                     content: sys_content,
+                    session_id: Some("main".to_string()),
                 };
                 broadcast_to_room(room, &sys_msg);
 
