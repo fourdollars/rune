@@ -176,6 +176,16 @@ globalThis.handleMessage = function handleMessage(msg) {
             if (isAdmin) addSystemMessageOnce('You are connected as admin');
             if (isGuest) {
                 addSystemMessageOnce('Read-only guest mode');
+                if (localStorage.getItem('rune_panel_right_collapsed') === null) {
+                    const panelRight = document.getElementById('panel-right');
+                    if (panelRight && !panelRight.classList.contains('collapsed')) {
+                        panelRight.classList.add('collapsed');
+                        updateToggleIcon(panelRight, 'right');
+                        applyPanelSize(panelRight, 'right');
+                        const btnChat = document.getElementById('btn-chat');
+                        if (btnChat) setToggleState(btnChat, false);
+                    }
+                }
                 // Hide chat input, new-note button, and edit button
                 const chatInput = document.getElementById('chat-input');
                 if (chatInput) chatInput.closest('.chat-input-area').style.display = 'none';

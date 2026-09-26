@@ -53,6 +53,10 @@ globalThis.togglePanel = function togglePanel(side) {
     // Persist collapsed state
     try { localStorage.setItem('rune_panel_' + side + '_collapsed', panel.classList.contains('collapsed') ? '1' : '0'); } catch {}
     if (side === 'right') setToggleState(btnChat, !panel.classList.contains('collapsed'));
+    if (side === 'left') {
+        const btnTree = document.getElementById('btn-tree');
+        if (btnTree) setToggleState(btnTree, !panel.classList.contains('collapsed'));
+    }
 };
 
 globalThis.toggleNotesPanel = function toggleNotesPanel() {
@@ -130,8 +134,15 @@ document.addEventListener('keydown', (e) => {
 globalThis.initPanelResize = function initPanelResize() {
     ['left', 'right'].forEach(side => {
         const panel = document.getElementById('panel-' + side);
-        // Restore collapsed state
-        const wasCollapsed = localStorage.getItem('rune_panel_' + side + '_collapsed');
+        // Restore collapsed state (default: left panel collapsed on desktop/initial load; right panel follows role)
+        let wasCollapsed = localStorage.getItem('rune_panel_' + side + '_collapsed');
+        if (wasCollapsed === null) {
+            if (side === 'left') {
+                wasCollapsed = '1';
+            } else if (side === 'right') {
+                wasCollapsed = (typeof isGuest !== 'undefined' && isGuest) ? '1' : '0';
+            }
+        }
         if (wasCollapsed === '1' && !panel.classList.contains('collapsed')) {
             panel.classList.add('collapsed');
         } else if (wasCollapsed === '0' && panel.classList.contains('collapsed')) {
@@ -139,6 +150,14 @@ globalThis.initPanelResize = function initPanelResize() {
         }
         applyPanelSize(panel, side);
         updateToggleIcon(panel, side);
+        if (side === 'left') {
+            const btnTree = document.getElementById('btn-tree');
+            if (btnTree) setToggleState(btnTree, !panel.classList.contains('collapsed'));
+        }
+        if (side === 'right') {
+            const btnChat = document.getElementById('btn-chat');
+            if (btnChat) setToggleState(btnChat, !panel.classList.contains('collapsed'));
+        }
     });
     setupResizeHandle('resize-left',  'panel-left',  'left');
     setupResizeHandle('resize-right', 'panel-right', 'right');

@@ -1245,11 +1245,11 @@ pre.hljs-pre:hover .copy-btn {
 }
 
 .split-title-nav {
-    display: none;
+    display: flex;
 }
 
 .split-title-chat {
-    display: none;
+    display: flex;
 }
 
 .title-public-link {

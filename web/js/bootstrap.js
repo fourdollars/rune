@@ -45,6 +45,16 @@ globalThis.getSessionId = function getSessionId() {
             myNickname = data.login || '';
             isAdmin = data.role === 'admin';
             isGuest = data.role === 'guest';
+            if (isGuest && localStorage.getItem('rune_panel_right_collapsed') === null) {
+                const panelRight = document.getElementById('panel-right');
+                if (panelRight && !panelRight.classList.contains('collapsed')) {
+                    panelRight.classList.add('collapsed');
+                    updateToggleIcon(panelRight, 'right');
+                    applyPanelSize(panelRight, 'right');
+                    const btnChat = document.getElementById('btn-chat');
+                    if (btnChat) setToggleState(btnChat, false);
+                }
+            }
             personaFilesEnabled = !!data.persona_files_enabled;
             cronJobsEnabled = !!data.cron_jobs_enabled;
             // If URL contains a specific note/file, use it as the initial target

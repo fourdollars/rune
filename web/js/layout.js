@@ -64,9 +64,16 @@ globalThis.applyPanelLayout = function applyPanelLayout() {
     if (view.preview) renderPreview();
 
     // Split layout: side-by-side when both on
-    centerBody.classList.toggle('split-view', view.edit && view.preview);
+    const isSplit = view.edit && view.preview && !documentPanesExclusive();
+    centerBody.classList.toggle('split-view', isSplit);
     editorContainer.style.width  = '';
     previewContainer.style.width = '';
+
+    // Sync scroll button is only displayed in split-view
+    const btnSyncScroll = document.getElementById('btn-sync-scroll');
+    if (btnSyncScroll) {
+        btnSyncScroll.style.display = isSplit ? 'flex' : 'none';
+    }
 
     // Show split-title-bar whenever any panel is visible (editor or preview)
     const splitTitle = document.getElementById('split-title-bar');
