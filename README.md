@@ -234,6 +234,7 @@ allowed_paths_ro = ["/bin", "/usr", "/lib"]
 denied_paths = ["/root", "/etc/shadow"]
 max_memory_mb = 512
 max_pids = 64
+max_tmp_mb = 100              # isolated tmpfs size in MB (0 = disable tmpfs mount; useful in VPS/containers)
 
 # MCP client connections (optional) — Rune as MCP client connecting to external MCP servers
 # [[mcp]]
@@ -809,7 +810,6 @@ make check-all           # Both
 
 - Rust 1.78+ (tested on 1.94-nightly)
 - Linux kernel 5.13+ (Landlock ABI), 5.0+ (seccomp user notification)
-- `curl` on PATH (only needed inside sandbox for `fetch_url` tool) (only needed for sandboxed fetch_url tool)
 
 ## License
 

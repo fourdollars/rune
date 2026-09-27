@@ -82,6 +82,8 @@ pub struct ToolRegistry {
     serve_mode: bool,
     agent_skills: bool,
     policy_mode: String,
+    policy_allowed_tools: Vec<String>,
+    fetch_max_size_kb: Option<usize>,
     policy_allowed_commands: Vec<String>,
     policy_allowed_syscalls: Vec<String>,
     policy_denied_paths: Vec<String>,
@@ -105,6 +107,8 @@ impl ToolRegistry {
             allowed_dirs,
             allowed_domains: Vec::new(),
             policy_mode: "allowlist".to_string(),
+            policy_allowed_tools: Vec::new(),
+            fetch_max_size_kb: None,
             policy_allowed_commands: Vec::new(),
             policy_allowed_syscalls: Vec::new(),
             policy_denied_paths: Vec::new(),
@@ -129,7 +133,7 @@ impl ToolRegistry {
         self.serve_mode
     }
 
-    /// Enable general agent tools (read_file, write_file, execute_cmd, etc.) in serve mode.
+    /// Enable general agent tools and skills in serve mode.
     pub fn set_agent_skills(&mut self, enabled: bool) {
         self.agent_skills = enabled;
     }
@@ -137,6 +141,29 @@ impl ToolRegistry {
     /// Check if agent_skills is enabled in serve mode.
     pub fn agent_skills(&self) -> bool {
         self.agent_skills
+    }
+
+    /// Set allowed tools list.
+    pub fn set_allowed_tools(&mut self, tools: Vec<String>) {
+        self.policy_allowed_tools = tools;
+    }
+
+    /// Check if a tool is permitted to be defined or executed.
+    pub fn is_tool_allowed(&self, name: &str) -> bool {
+        if self.policy_mode == "unrestricted" {
+            return true;
+        }
+        if self.serve_mode {
+            match name {
+                "search_chat" | "list_markdown" | "read_markdown" | "write_markdown" => {
+                    return true
+                }
+                _ => {}
+            }
+        }
+        self.policy_allowed_tools
+            .iter()
+            .any(|t| t == "*" || t == name)
     }
 
     /// Set allowed network domains (for fetch_url / execute_cmd network access).
@@ -149,6 +176,16 @@ impl ToolRegistry {
         if !self.allowed_domains.iter().any(|d| d == domain) {
             self.allowed_domains.push(domain.to_string());
         }
+    }
+
+    /// Check if a domain is allowed under the current policy allowlist.
+    pub fn is_domain_allowed(&self, domain: &str) -> bool {
+        if self.allowed_domains.is_empty() {
+            return false;
+        }
+        self.allowed_domains
+            .iter()
+            .any(|d| d == domain || d == "*" || (d.starts_with("*.") && domain.ends_with(&d[1..])))
     }
 
     /// Add a single command to the runtime allowlist.
@@ -189,6 +226,8 @@ impl ToolRegistry {
     /// Set command execution policy.
     pub fn set_policy(&mut self, policy: &crate::config::PolicyConfig) {
         self.policy_mode = policy.mode.clone();
+        self.policy_allowed_tools = policy.allowed_tools.clone();
+        self.fetch_max_size_kb = policy.fetch_max_size_kb;
         self.policy_allowed_commands = policy.allowed_commands.clone();
         self.policy_allowed_syscalls = policy.allowed_syscalls.clone();
         self.policy_denied_paths = policy.denied_paths.clone();
@@ -437,17 +476,9 @@ stderr: {}",
 
     /// Dispatch a tool call by name.
     pub async fn execute(&self, name: &str, args: serde_json::Value) -> ToolOutput {
-        info!(tool = name, "executing tool (sandboxed)");
-        if self.serve_mode && !self.agent_skills {
-            match name {
-                "read_file" | "write_file" | "list_dir" | "execute_cmd" | "fetch_url" => {
-                    return ToolOutput::err(format!(
-                        "tool '{}' is disabled in notes mode; enable agent_skills = true in [notes] config to use",
-                        name
-                    ));
-                }
-                _ => {}
-            }
+        info!(tool = name, "executing tool");
+        if !self.is_tool_allowed(name) {
+            return ToolOutput::err(format!("BLOCKED: tool '{}' is not in allowed_tools", name));
         }
         match name {
             "read_file" => self.read_file(args).await,
@@ -463,7 +494,7 @@ stderr: {}",
     pub fn tool_definitions(&self) -> Vec<serde_json::Value> {
         let mut tools = Vec::new();
 
-        if !self.serve_mode || self.agent_skills {
+        if self.is_tool_allowed("read_file") {
             tools.push(serde_json::json!({
                 "type": "function",
                 "function": {
@@ -476,6 +507,8 @@ stderr: {}",
                     }
                 }
             }));
+        }
+        if self.is_tool_allowed("write_file") {
             tools.push(serde_json::json!({
                 "type": "function",
                 "function": {
@@ -491,6 +524,8 @@ stderr: {}",
                     }
                 }
             }));
+        }
+        if self.is_tool_allowed("list_dir") {
             tools.push(serde_json::json!({
                 "type": "function",
                 "function": {
@@ -503,6 +538,8 @@ stderr: {}",
                     }
                 }
             }));
+        }
+        if self.is_tool_allowed("execute_cmd") {
             tools.push(serde_json::json!({
                 "type": "function",
                 "function": {
@@ -519,14 +556,20 @@ stderr: {}",
                     }
                 }
             }));
+        }
+        if self.is_tool_allowed("fetch_url") {
             tools.push(serde_json::json!({
                 "type": "function",
                 "function": {
                     "name": "fetch_url",
-                    "description": "Fetch content from a URL (sandboxed, requires domain in allowlist).",
+                    "description": "Fetch content from a URL via HTTP/HTTPS. Supports HTML-to-Markdown purification, direct file download (save_to), and domain allowlist enforcement.",
                     "parameters": {
                         "type": "object",
-                        "properties": { "url": { "type": "string" } },
+                        "properties": {
+                            "url": { "type": "string", "description": "The HTTP or HTTPS URL to fetch." },
+                            "save_to": { "type": "string", "description": "Optional relative or absolute file path to save the response body directly to disk instead of returning it to context (ideal for large JSON, CSV, or binary files)." },
+                            "raw": { "type": "boolean", "description": "Optional flag (default: false). If true, disables HTML-to-Markdown conversion and returns the raw response body." }
+                        },
                         "required": ["url"]
                     }
                 }
@@ -733,43 +776,659 @@ stderr: {}",
 
     async fn fetch_url(&self, args: serde_json::Value) -> ToolOutput {
         let url = match args.get("url").and_then(|v| v.as_str()) {
-            Some(u) => u,
+            Some(u) => u.trim(),
             None => return ToolOutput::err("missing required argument: url"),
+        };
+        let save_to = args
+            .get("save_to")
+            .and_then(|v| v.as_str())
+            .map(|s| s.trim().to_string());
+        let raw = args.get("raw").and_then(|v| v.as_bool()).unwrap_or(false);
+
+        if !url.starts_with("http://") && !url.starts_with("https://") {
+            return ToolOutput::err("invalid URL: must start with http:// or https://");
+        }
+
+        let domain = match extract_domain(url) {
+            Some(d) => d,
+            None => return ToolOutput::err("invalid URL: could not extract domain"),
         };
 
         // Check domain allowlist (skipped in unrestricted mode)
         if self.policy_mode != "unrestricted" {
-            if let Some(domain) = extract_domain(url) {
-                let executor = self.sandbox(35);
-                if !executor.is_domain_allowed(&domain) {
-                    return ToolOutput::err(format!(
-                        "BLOCKED: domain '{}' is not in allowed_domains. \
+            if !self.is_domain_allowed(&domain) {
+                return ToolOutput::err(format!(
+                    "BLOCKED: domain '{}' is not in allowed_domains. \
                      Network access requires explicit allowlist configuration.",
-                        domain
-                    ));
+                    domain
+                ));
+            }
+
+            // SSRF Check: resolve hostname and verify it is not a private/restricted IP
+            let is_explicit_local =
+                (domain == "localhost" || domain == "127.0.0.1" || domain == "::1")
+                    && self.allowed_domains.iter().any(|d| d == &domain);
+
+            if !is_explicit_local {
+                let port = if url.starts_with("https://") { 443 } else { 80 };
+                let host_port = if domain.contains(':') {
+                    domain.clone()
+                } else {
+                    format!("{}:{}", domain, port)
+                };
+
+                if let Ok(mut addrs) = tokio::net::lookup_host(host_port).await {
+                    while let Some(addr) = addrs.next() {
+                        let ip = addr.ip();
+                        if is_private_or_restricted_ip(&ip) {
+                            return ToolOutput::err(format!(
+                                "BLOCKED: domain '{}' resolves to private/restricted IP ({}) which is prohibited by SSRF protection.",
+                                domain, ip
+                            ));
+                        }
+                    }
                 }
             }
         } // end unrestricted check
 
-        info!(url = %url, "fetch_url (sandboxed, domain allowed)");
-        let cmd = format!("curl -sS -L --max-time 30 '{}'", url.replace('\'', "'\\''"));
-        let result = self.sandboxed_cmd(&cmd, 35, None).await;
-        if result.is_error {
-            return result;
-        }
-        if result.content.len() > MAX_FILE_SIZE {
-            let mut o = ToolOutput::ok(format!(
-                "{}
-[Content Truncated at 32KB]",
-                &result.content[..MAX_FILE_SIZE]
+        info!(url = %url, "fetch_url (native in-process, domain allowed)");
+
+        let allowed_domains = self.allowed_domains.clone();
+        let is_unrestricted = self.policy_mode == "unrestricted";
+
+        // Custom redirect policy: ensure redirects stay within allowed_domains
+        let redirect_policy = reqwest::redirect::Policy::custom(move |attempt| {
+            if attempt.previous().len() >= 10 {
+                return attempt.error("too many redirects (max 10)");
+            }
+            if !is_unrestricted {
+                let next_url = attempt.url().as_str();
+                if !next_url.starts_with("http://") && !next_url.starts_with("https://") {
+                    return attempt.error("redirect to non-http/https URL is blocked");
+                }
+                if let Some(next_domain) = extract_domain(next_url) {
+                    let allowed = allowed_domains.iter().any(|d| {
+                        d == &next_domain
+                            || d == "*"
+                            || (d.starts_with("*.") && next_domain.ends_with(&d[1..]))
+                    });
+                    if !allowed {
+                        return attempt.error(format!(
+                            "BLOCKED: redirect to unauthorized domain '{}'",
+                            next_domain
+                        ));
+                    }
+                } else {
+                    return attempt.error("redirect URL has invalid domain");
+                }
+            }
+            attempt.follow()
+        });
+
+        let client = match reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(30))
+            .user_agent("Rune/0.1.0")
+            .redirect(redirect_policy)
+            .build()
+        {
+            Ok(c) => c,
+            Err(e) => return ToolOutput::err(format!("failed to create HTTP client: {}", e)),
+        };
+
+        let response = match client.get(url).send().await {
+            Ok(res) => res,
+            Err(e) => {
+                return ToolOutput::err(format!("HTTP request failed: {}", e));
+            }
+        };
+
+        use futures::StreamExt;
+        use tokio::io::AsyncWriteExt;
+
+        // If save_to is provided, stream directly to file
+        if let Some(target_path_str) = save_to {
+            if self.is_path_denied(&target_path_str) {
+                return ToolOutput::err(format!(
+                    "BLOCKED: cannot save to denied path '{}'",
+                    target_path_str
+                ));
+            }
+
+            let resolved_path = self.resolve_path(&target_path_str);
+            let dest_path = PathBuf::from(&resolved_path);
+
+            if self.policy_mode != "unrestricted" {
+                let is_in_rw = self
+                    .is_path_in_list(&target_path_str, &self.policy_allowed_paths_rw)
+                    || self.is_file_in_list(&target_path_str, &self.policy_allowed_files_rw);
+                let is_in_allowed_dirs = self.allowed_dirs.iter().any(|d| dest_path.starts_with(d));
+                let is_cwd = std::env::current_dir()
+                    .map(|cwd| dest_path.starts_with(cwd))
+                    .unwrap_or(false);
+                if !is_in_rw && !is_in_allowed_dirs && !is_cwd {
+                    return ToolOutput::err(format!(
+                        "BLOCKED: destination path '{}' is not in allowed write paths",
+                        target_path_str
+                    ));
+                }
+            }
+
+            if let Some(parent) = dest_path.parent() {
+                if let Err(e) = tokio::fs::create_dir_all(parent).await {
+                    return ToolOutput::err(format!(
+                        "failed to create parent directories for '{}': {}",
+                        target_path_str, e
+                    ));
+                }
+            }
+
+            let mut file = match tokio::fs::File::create(&dest_path).await {
+                Ok(f) => f,
+                Err(e) => {
+                    return ToolOutput::err(format!(
+                        "failed to create destination file '{}': {}",
+                        target_path_str, e
+                    ));
+                }
+            };
+
+            let max_download_size: usize = 10 * 1024 * 1024; // 10MB limit for file download
+            let mut total_bytes = 0usize;
+            let mut stream = response.bytes_stream();
+
+            while let Some(chunk_result) = stream.next().await {
+                match chunk_result {
+                    Ok(chunk) => {
+                        total_bytes += chunk.len();
+                        if total_bytes > max_download_size {
+                            let _ = tokio::fs::remove_file(&dest_path).await;
+                            return ToolOutput::err(
+                                "download exceeded maximum allowed size (10MB)".to_string(),
+                            );
+                        }
+                        if let Err(e) = file.write_all(&chunk).await {
+                            return ToolOutput::err(format!(
+                                "failed to write to file '{}': {}",
+                                target_path_str, e
+                            ));
+                        }
+                    }
+                    Err(e) => {
+                        return ToolOutput::err(format!("error reading response stream: {}", e));
+                    }
+                }
+            }
+
+            if let Err(e) = file.flush().await {
+                return ToolOutput::err(format!(
+                    "failed to flush destination file '{}': {}",
+                    target_path_str, e
+                ));
+            }
+
+            let mut output = ToolOutput::ok(format!(
+                "Successfully downloaded {} bytes to {}",
+                total_bytes, target_path_str
             ));
-            o.active_layers = result.active_layers.clone();
-            o.degraded = result.degraded;
-            o
+            output.active_layers = Some(vec!["native-fetch".to_string()]);
+            return output;
+        }
+
+        // Direct read to context
+        let content_type = response
+            .headers()
+            .get(reqwest::header::CONTENT_TYPE)
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("")
+            .to_lowercase();
+        let is_html = content_type.contains("text/html");
+
+        let max_size = self.fetch_max_size_kb.unwrap_or(128) * 1024;
+        let stream_limit = if is_html && !raw {
+            1024 * 1024 // 1MB buffer for HTML purification
         } else {
-            result
+            max_size
+        };
+
+        let mut stream = response.bytes_stream();
+        let mut body_bytes = Vec::new();
+        let mut stream_truncated = false;
+
+        while let Some(chunk_result) = stream.next().await {
+            match chunk_result {
+                Ok(chunk) => {
+                    let remaining = stream_limit.saturating_sub(body_bytes.len());
+                    if chunk.len() > remaining {
+                        body_bytes.extend_from_slice(&chunk[..remaining]);
+                        stream_truncated = true;
+                        break;
+                    } else {
+                        body_bytes.extend_from_slice(&chunk);
+                    }
+                }
+                Err(e) => {
+                    return ToolOutput::err(format!("error reading response stream: {}", e));
+                }
+            }
+        }
+
+        let raw_text = String::from_utf8_lossy(&body_bytes).to_string();
+        let processed_text = if is_html && !raw {
+            html_to_markdown(&raw_text)
+        } else {
+            raw_text
+        };
+
+        let final_content = if processed_text.len() > max_size {
+            let truncated_slice = &processed_text[..max_size];
+            format!(
+                "{}\n[Content Truncated at {}KB]",
+                truncated_slice,
+                max_size / 1024
+            )
+        } else if stream_truncated && (raw || !is_html) {
+            format!(
+                "{}\n[Content Truncated at {}KB]",
+                processed_text,
+                max_size / 1024
+            )
+        } else {
+            processed_text
+        };
+
+        let mut output = ToolOutput::ok(final_content);
+        output.active_layers = Some(vec!["native-fetch".to_string()]);
+        output
+    }
+}
+
+// ─── HTML to Markdown Purification ──────────────────────────────────────────
+
+/// Strip tag blocks like `<script ...>...</script>`, case-insensitively.
+fn strip_tag_blocks(mut input: String, tag: &str) -> String {
+    let open_prefix = format!("<{}", tag);
+    let close_tag = format!("</{}>", tag);
+    loop {
+        let lower = input.to_lowercase();
+        if let Some(start_idx) = lower.find(&open_prefix) {
+            let next_char = input[start_idx + open_prefix.len()..].chars().next();
+            if let Some(c) = next_char {
+                if c.is_whitespace() || c == '>' || c == '/' {
+                    if let Some(end_rel) = lower[start_idx..].find(&close_tag) {
+                        let end_idx = start_idx + end_rel + close_tag.len();
+                        input.drain(start_idx..end_idx);
+                        continue;
+                    } else if let Some(tag_end) = lower[start_idx..].find('>') {
+                        let end_idx = start_idx + tag_end + 1;
+                        input.drain(start_idx..end_idx);
+                        continue;
+                    }
+                }
+            }
+        }
+        break;
+    }
+    input
+}
+
+/// Strip HTML comments `<!-- ... -->`.
+fn strip_html_comments(mut input: String) -> String {
+    while let Some(start) = input.find("<!--") {
+        if let Some(end_rel) = input[start..].find("-->") {
+            input.drain(start..start + end_rel + 3);
+        } else {
+            input.truncate(start);
+            break;
         }
     }
+    input
+}
+
+/// Extract and format HTML tables as Markdown tables.
+fn format_html_tables(mut input: String) -> String {
+    let open_tag = "<table";
+    let close_tag = "</table>";
+    loop {
+        let lower = input.to_lowercase();
+        if let Some(start_idx) = lower.find(open_tag) {
+            if let Some(end_rel) = lower[start_idx..].find(close_tag) {
+                let end_idx = start_idx + end_rel + close_tag.len();
+                let table_html = &input[start_idx..end_idx];
+                let md_table = convert_single_table(table_html);
+                input.replace_range(start_idx..end_idx, &format!("\n\n{}\n\n", md_table));
+                continue;
+            }
+        }
+        break;
+    }
+    input
+}
+
+fn convert_single_table(html: &str) -> String {
+    let mut rows: Vec<Vec<String>> = Vec::new();
+    let lower = html.to_lowercase();
+    let mut tr_start = 0;
+    while let Some(tr_open) = lower[tr_start..].find("<tr") {
+        let actual_tr_open = tr_start + tr_open;
+        if let Some(tr_close) = lower[actual_tr_open..].find("</tr>") {
+            let actual_tr_close = actual_tr_open + tr_close;
+            let tr_content = &html[actual_tr_open..actual_tr_close];
+            let cells = extract_table_cells(tr_content);
+            if !cells.is_empty() {
+                rows.push(cells);
+            }
+            tr_start = actual_tr_close + 5;
+        } else {
+            break;
+        }
+    }
+
+    if rows.is_empty() {
+        return String::new();
+    }
+
+    let max_cols = rows.iter().map(|r| r.len()).max().unwrap_or(0);
+    if max_cols == 0 {
+        return String::new();
+    }
+
+    let mut out = String::new();
+    for (i, row) in rows.iter().enumerate() {
+        let mut padded = row.clone();
+        while padded.len() < max_cols {
+            padded.push(String::new());
+        }
+        out.push_str("| ");
+        out.push_str(&padded.join(" | "));
+        out.push_str(" |\n");
+        if i == 0 {
+            out.push_str("| ");
+            let sep: Vec<&str> = (0..max_cols).map(|_| "---").collect();
+            out.push_str(&sep.join(" | "));
+            out.push_str(" |\n");
+        }
+    }
+    out.trim_end().to_string()
+}
+
+fn extract_table_cells(tr_html: &str) -> Vec<String> {
+    let mut cells = Vec::new();
+    let lower = tr_html.to_lowercase();
+    let mut pos = 0;
+    while pos < tr_html.len() {
+        let th_pos = lower[pos..].find("<th");
+        let td_pos = lower[pos..].find("<td");
+        let (tag_type, found_pos) = match (th_pos, td_pos) {
+            (Some(th), Some(td)) => {
+                if th < td {
+                    ("th", pos + th)
+                } else {
+                    ("td", pos + td)
+                }
+            }
+            (Some(th), None) => ("th", pos + th),
+            (None, Some(td)) => ("td", pos + td),
+            (None, None) => break,
+        };
+        let tag_close_sym = format!("</{}>", tag_type);
+        if let Some(open_end) = lower[found_pos..].find('>') {
+            let content_start = found_pos + open_end + 1;
+            if let Some(close_pos) = lower[content_start..].find(&tag_close_sym) {
+                let cell_content = &tr_html[content_start..content_start + close_pos];
+                let clean_text = clean_html_cell(cell_content);
+                cells.push(clean_text);
+                pos = content_start + close_pos + tag_close_sym.len();
+            } else {
+                pos = content_start;
+            }
+        } else {
+            break;
+        }
+    }
+    cells
+}
+
+fn clean_html_cell(html: &str) -> String {
+    let stripped = strip_tags(html);
+    let decoded = decode_html_entities(&stripped);
+    decoded
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .replace('|', "\\|")
+}
+
+fn strip_tags(input: &str) -> String {
+    let mut out = String::with_capacity(input.len());
+    let mut in_tag = false;
+    for c in input.chars() {
+        if c == '<' {
+            in_tag = true;
+        } else if c == '>' {
+            in_tag = false;
+        } else if !in_tag {
+            out.push(c);
+        }
+    }
+    out
+}
+
+fn decode_html_entities(input: &str) -> String {
+    let mut res = input
+        .replace("&nbsp;", " ")
+        .replace("&amp;", "&")
+        .replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&quot;", "\"")
+        .replace("&#39;", "'")
+        .replace("&apos;", "'")
+        .replace("&copy;", "©")
+        .replace("&reg;", "®")
+        .replace("&mdash;", "—")
+        .replace("&ndash;", "–");
+
+    if res.contains("&#") {
+        let mut final_res = String::with_capacity(res.len());
+        let mut chars = res.chars().peekable();
+        while let Some(c) = chars.next() {
+            if c == '&' && chars.peek() == Some(&'#') {
+                chars.next(); // consume '#'
+                let mut num_str = String::new();
+                let is_hex = if chars.peek() == Some(&'x') || chars.peek() == Some(&'X') {
+                    chars.next();
+                    true
+                } else {
+                    false
+                };
+                while let Some(&nc) = chars.peek() {
+                    if nc == ';' {
+                        chars.next();
+                        break;
+                    } else if (is_hex && nc.is_ascii_hexdigit()) || (!is_hex && nc.is_ascii_digit())
+                    {
+                        num_str.push(nc);
+                        chars.next();
+                    } else {
+                        break;
+                    }
+                }
+                let code_point = if is_hex {
+                    u32::from_str_radix(&num_str, 16).ok()
+                } else {
+                    num_str.parse::<u32>().ok()
+                };
+                if let Some(ch) = code_point.and_then(char::from_u32) {
+                    final_res.push(ch);
+                } else {
+                    final_res.push_str("&#");
+                    if is_hex {
+                        final_res.push('x');
+                    }
+                    final_res.push_str(&num_str);
+                }
+            } else {
+                final_res.push(c);
+            }
+        }
+        res = final_res;
+    }
+    res
+}
+
+fn extract_href(tag: &str) -> Option<String> {
+    let lower = tag.to_lowercase();
+    if let Some(href_pos) = lower.find("href=") {
+        let after_href = tag[href_pos + 5..].trim_start();
+        let quote = after_href.chars().next()?;
+        if quote == '"' || quote == '\'' {
+            let rest = &after_href[1..];
+            if let Some(end_quote) = rest.find(quote) {
+                return Some(rest[..end_quote].to_string());
+            }
+        } else {
+            let end_pos = after_href
+                .find(|c: char| c.is_whitespace() || c == '>')
+                .unwrap_or(after_href.len());
+            return Some(after_href[..end_pos].to_string());
+        }
+    }
+    None
+}
+
+fn clean_markdown_whitespace(input: &str) -> String {
+    let mut lines = Vec::new();
+    let mut empty_count = 0;
+    for line in input.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            empty_count += 1;
+            if empty_count <= 1 && !lines.is_empty() {
+                lines.push("");
+            }
+        } else {
+            empty_count = 0;
+            lines.push(trimmed);
+        }
+    }
+    lines.join("\n").trim().to_string()
+}
+
+/// Convert HTML text to purified Markdown.
+pub fn html_to_markdown(html: &str) -> String {
+    let mut s = html.to_string();
+
+    // 1. Strip comments
+    s = strip_html_comments(s);
+
+    // 2. Strip noise blocks
+    for tag in &[
+        "script", "style", "svg", "noscript", "nav", "footer", "header", "iframe",
+    ] {
+        s = strip_tag_blocks(s, tag);
+    }
+
+    // 3. Format tables
+    s = format_html_tables(s);
+
+    // 4. Format headings h1..h6
+    for level in (1..=6).rev() {
+        let open_tag = format!("<h{}", level);
+        let close_tag = format!("</h{}>", level);
+        let hash = "#".repeat(level);
+        loop {
+            let lower = s.to_lowercase();
+            if let Some(start_idx) = lower.find(&open_tag) {
+                if let Some(close_rel) = lower[start_idx..].find(&close_tag) {
+                    let end_idx = start_idx + close_rel + close_tag.len();
+                    if let Some(tag_end) = lower[start_idx..].find('>') {
+                        let inner = &s[start_idx + tag_end + 1..start_idx + close_rel];
+                        let clean_inner =
+                            decode_html_entities(&strip_tags(inner)).trim().to_string();
+                        let replacement = format!("\n\n{} {}\n\n", hash, clean_inner);
+                        s.replace_range(start_idx..end_idx, &replacement);
+                        continue;
+                    }
+                }
+            }
+            break;
+        }
+    }
+
+    // 5. Format links `<a ...href="...">text</a>`
+    loop {
+        let lower = s.to_lowercase();
+        if let Some(start_idx) = lower.find("<a") {
+            if let Some(close_rel) = lower[start_idx..].find("</a>") {
+                let end_idx = start_idx + close_rel + 4;
+                if let Some(tag_end) = lower[start_idx..].find('>') {
+                    let a_tag = &s[start_idx..start_idx + tag_end + 1];
+                    let inner = &s[start_idx + tag_end + 1..start_idx + close_rel];
+                    let href = extract_href(a_tag);
+                    let clean_inner = decode_html_entities(&strip_tags(inner)).trim().to_string();
+                    let replacement = if let Some(href_url) = href {
+                        if clean_inner.is_empty() {
+                            format!(" {}", href_url)
+                        } else {
+                            format!(" [{}]({}) ", clean_inner, href_url)
+                        }
+                    } else {
+                        clean_inner
+                    };
+                    s.replace_range(start_idx..end_idx, &replacement);
+                    continue;
+                }
+            }
+        }
+        break;
+    }
+
+    // 6. Format lists
+    loop {
+        let lower = s.to_lowercase();
+        if let Some(start_idx) = lower.find("<li") {
+            if let Some(close_rel) = lower[start_idx..].find("</li>") {
+                let end_idx = start_idx + close_rel + 5;
+                if let Some(tag_end) = lower[start_idx..].find('>') {
+                    let inner = &s[start_idx + tag_end + 1..start_idx + close_rel];
+                    let clean_inner = decode_html_entities(&strip_tags(inner)).trim().to_string();
+                    let replacement = format!("\n- {}\n", clean_inner);
+                    s.replace_range(start_idx..end_idx, &replacement);
+                    continue;
+                }
+            }
+        }
+        break;
+    }
+
+    // 7. Format block breaks & paragraphs
+    s = s
+        .replace("<br>", "\n")
+        .replace("<br/>", "\n")
+        .replace("<br />", "\n")
+        .replace("<p>", "\n\n")
+        .replace("</p>", "\n\n")
+        .replace("<hr>", "\n\n---\n\n")
+        .replace("<hr/>", "\n\n---\n\n")
+        .replace("<hr />", "\n\n---\n\n")
+        .replace("<b>", "**")
+        .replace("</b>", "**")
+        .replace("<strong>", "**")
+        .replace("</strong>", "**")
+        .replace("<i>", "*")
+        .replace("</i>", "*")
+        .replace("<em>", "*")
+        .replace("</em>", "*")
+        .replace("<code>", "`")
+        .replace("</code>", "`");
+
+    // 8. Strip remaining tags
+    s = strip_tags(&s);
+
+    // 9. Decode HTML entities
+    s = decode_html_entities(&s);
+
+    // 10. Clean up whitespace
+    clean_markdown_whitespace(&s)
 }
 
 impl ToolRegistry {
@@ -982,6 +1641,90 @@ fn extract_domain(url: &str) -> Option<String> {
         None
     } else {
         Some(domain.to_string())
+    }
+}
+
+/// Check if an IP address is a private, loopback, link-local, or otherwise restricted address.
+fn is_private_or_restricted_ip(ip: &std::net::IpAddr) -> bool {
+    match ip {
+        std::net::IpAddr::V4(v4) => {
+            let octets = v4.octets();
+            // 0.0.0.0/8 (This host)
+            if octets[0] == 0 {
+                return true;
+            }
+            // 127.0.0.0/8 (Loopback)
+            if v4.is_loopback() {
+                return true;
+            }
+            // 10.0.0.0/8 (Private RFC 1918)
+            if octets[0] == 10 {
+                return true;
+            }
+            // 172.16.0.0/12 (Private RFC 1918)
+            if octets[0] == 172 && (16..=31).contains(&octets[1]) {
+                return true;
+            }
+            // 192.168.0.0/16 (Private RFC 1918)
+            if octets[0] == 192 && octets[1] == 168 {
+                return true;
+            }
+            // 169.254.0.0/16 (Link Local / Cloud Metadata 169.254.169.254)
+            if v4.is_link_local() || (octets[0] == 169 && octets[1] == 254) {
+                return true;
+            }
+            // 100.64.0.0/10 (Carrier-Grade NAT)
+            if octets[0] == 100 && (64..=127).contains(&octets[1]) {
+                return true;
+            }
+            // 192.0.0.0/24 (IETF Protocol)
+            if octets[0] == 192 && octets[1] == 0 && octets[2] == 0 {
+                return true;
+            }
+            // 192.0.2.0/24, 198.51.100.0/24, 203.0.113.0/24 (TEST-NET)
+            if (octets[0] == 192 && octets[1] == 0 && octets[2] == 2)
+                || (octets[0] == 198 && octets[1] == 51 && octets[2] == 100)
+                || (octets[0] == 203 && octets[1] == 0 && octets[2] == 113)
+            {
+                return true;
+            }
+            // 198.18.0.0/15 (Benchmarking)
+            if octets[0] == 198 && (18..=19).contains(&octets[1]) {
+                return true;
+            }
+            // 224.0.0.0/4 (Multicast)
+            if v4.is_multicast() || octets[0] >= 224 {
+                return true;
+            }
+            // 255.255.255.255/32 (Broadcast)
+            if v4.is_broadcast() {
+                return true;
+            }
+            false
+        }
+        std::net::IpAddr::V6(v6) => {
+            if v6.is_loopback() || v6.is_unspecified() || v6.is_multicast() {
+                return true;
+            }
+            let segments = v6.segments();
+            // IPv4-mapped IPv6: ::ffff:a.b.c.d
+            if let Some(v4) = v6.to_ipv4_mapped() {
+                return is_private_or_restricted_ip(&std::net::IpAddr::V4(v4));
+            }
+            // Unique Local Address (fc00::/7)
+            if (segments[0] & 0xfe00) == 0xfc00 {
+                return true;
+            }
+            // Link-local unicast (fe80::/10)
+            if (segments[0] & 0xffc0) == 0xfe80 {
+                return true;
+            }
+            // Documentation (2001:db8::/32)
+            if segments[0] == 0x2001 && segments[1] == 0x0db8 {
+                return true;
+            }
+            false
+        }
     }
 }
 
@@ -1625,42 +2368,112 @@ mod tests {
     }
 
     #[test]
-    fn test_serve_mode_with_agent_skills_has_cli_tools() {
+    fn test_serve_mode_with_allowed_tools_has_cli_tools() {
         let mut registry = ToolRegistry::new(vec![]);
         registry.set_serve_mode(true);
-        registry.set_agent_skills(true);
+        registry.set_allowed_tools(vec!["read_file".to_string(), "fetch_url".to_string()]);
         let schema = serde_json::to_string(&registry.tool_definitions()).unwrap();
         assert!(
             schema.contains("read_file"),
-            "agent_skills should enable read_file"
-        );
-        assert!(
-            schema.contains("write_file"),
-            "agent_skills should enable write_file"
-        );
-        assert!(
-            schema.contains("execute_cmd"),
-            "agent_skills should enable execute_cmd"
+            "allowed_tools should enable read_file in serve mode"
         );
         assert!(
             schema.contains("fetch_url"),
-            "agent_skills should enable fetch_url"
+            "allowed_tools should enable fetch_url in serve mode"
+        );
+        assert!(
+            !schema.contains("write_file"),
+            "unallowed tool write_file should not be in schema"
         );
         assert!(
             schema.contains("list_markdown"),
-            "agent_skills should keep list_markdown"
+            "serve mode should keep list_markdown"
         );
     }
 
     #[tokio::test]
-    async fn test_serve_mode_rejects_cli_tools_when_agent_skills_disabled() {
+    async fn test_serve_mode_rejects_unallowed_tools() {
         let mut registry = ToolRegistry::new(vec![]);
         registry.set_serve_mode(true);
+        // policy_allowed_tools is empty by default
         let out = registry
             .execute("execute_cmd", serde_json::json!({"cmd": "echo hi"}))
             .await;
         assert!(out.is_error);
-        assert!(out.content.contains("disabled in notes mode"));
+        assert!(out.content.contains("not in allowed_tools"));
+    }
+
+    #[test]
+    fn test_cli_allowed_tools_filtering() {
+        let mut registry = ToolRegistry::new(vec![]);
+        // default: empty
+        let defs_empty = registry.tool_definitions();
+        assert!(
+            defs_empty.is_empty(),
+            "default allowed_tools should produce 0 tools"
+        );
+
+        // allow specific
+        registry.set_allowed_tools(vec!["fetch_url".to_string()]);
+        let defs_partial = registry.tool_definitions();
+        assert_eq!(defs_partial.len(), 1);
+        let schema = serde_json::to_string(&defs_partial).unwrap();
+        assert!(schema.contains("fetch_url"));
+        assert!(!schema.contains("read_file"));
+
+        // allow wildcard
+        registry.set_allowed_tools(vec!["*".to_string()]);
+        let defs_all = registry.tool_definitions();
+        assert_eq!(defs_all.len(), 5);
+    }
+
+    #[test]
+    fn test_html_to_markdown_purification() {
+        let html = r#"
+            <!DOCTYPE html>
+            <html>
+            <head><title>Demo</title><style>body { font: red; }</style></head>
+            <body>
+                <script>console.log("noisy script");</script>
+                <nav><a href="/home">Home</a></nav>
+                <h1>Main Heading</h1>
+                <p>Hello <b>World</b>! Here is a <a href="https://example.com">link</a>.</p>
+                <table>
+                    <tr><th>ID</th><th>Symbol</th></tr>
+                    <tr><td>2330</td><td>TSMC</td></tr>
+                </table>
+                <footer>Copyright 2026</footer>
+            </body>
+            </html>
+        "#;
+        let md = html_to_markdown(html);
+        assert!(!md.contains("noisy script"));
+        assert!(!md.contains("font: red"));
+        assert!(!md.contains("Copyright 2026"));
+        assert!(md.contains("# Main Heading"));
+        assert!(md.contains("Hello **World**!"));
+        assert!(md.contains("[link](https://example.com)"));
+        assert!(md.contains("| ID | Symbol |"));
+        assert!(md.contains("| 2330 | TSMC |"));
+    }
+
+    #[tokio::test]
+    async fn test_fetch_url_save_to_denied_path() {
+        let mut registry = ToolRegistry::new(vec![]);
+        let mut policy = crate::config::PolicyConfig::default();
+        policy.denied_paths = vec!["/etc/shadow".to_string()];
+        policy.allowed_tools = vec!["fetch_url".to_string()];
+        policy.allowed_domains = vec!["example.com".to_string()];
+        registry.set_policy(&policy);
+
+        let out = registry
+            .fetch_url(serde_json::json!({
+                "url": "https://example.com",
+                "save_to": "/etc/shadow"
+            }))
+            .await;
+        assert!(out.is_error);
+        assert!(out.content.contains("BLOCKED: cannot save to denied path"));
     }
 
     #[test]
@@ -1842,5 +2655,113 @@ mod tests {
             .await;
         assert_eq!(l_res.is_error, false, "list_dir failed: {}", l_res.content);
         assert!(l_res.content.contains("alias_test.txt"));
+    }
+
+    #[test]
+    fn test_is_private_or_restricted_ip() {
+        use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+
+        // Private / Loopback / Restricted IPv4
+        assert!(is_private_or_restricted_ip(&IpAddr::V4(Ipv4Addr::new(
+            127, 0, 0, 1
+        ))));
+        assert!(is_private_or_restricted_ip(&IpAddr::V4(Ipv4Addr::new(
+            10, 0, 0, 1
+        ))));
+        assert!(is_private_or_restricted_ip(&IpAddr::V4(Ipv4Addr::new(
+            172, 16, 0, 1
+        ))));
+        assert!(is_private_or_restricted_ip(&IpAddr::V4(Ipv4Addr::new(
+            172, 31, 255, 255
+        ))));
+        assert!(is_private_or_restricted_ip(&IpAddr::V4(Ipv4Addr::new(
+            192, 168, 1, 1
+        ))));
+        assert!(is_private_or_restricted_ip(&IpAddr::V4(Ipv4Addr::new(
+            169, 254, 169, 254
+        ))));
+        assert!(is_private_or_restricted_ip(&IpAddr::V4(Ipv4Addr::new(
+            0, 0, 0, 0
+        ))));
+        assert!(is_private_or_restricted_ip(&IpAddr::V4(Ipv4Addr::new(
+            224, 0, 0, 1
+        ))));
+        assert!(is_private_or_restricted_ip(&IpAddr::V4(Ipv4Addr::new(
+            255, 255, 255, 255
+        ))));
+
+        // Public IPv4
+        assert!(!is_private_or_restricted_ip(&IpAddr::V4(Ipv4Addr::new(
+            8, 8, 8, 8
+        ))));
+        assert!(!is_private_or_restricted_ip(&IpAddr::V4(Ipv4Addr::new(
+            1, 1, 1, 1
+        ))));
+        assert!(!is_private_or_restricted_ip(&IpAddr::V4(Ipv4Addr::new(
+            203, 66, 1, 1
+        ))));
+
+        // IPv6
+        assert!(is_private_or_restricted_ip(&IpAddr::V6(
+            Ipv6Addr::LOCALHOST
+        )));
+        assert!(is_private_or_restricted_ip(&IpAddr::V6(
+            Ipv6Addr::UNSPECIFIED
+        )));
+        assert!(is_private_or_restricted_ip(&IpAddr::V6(
+            "fc00::1".parse().unwrap()
+        )));
+        assert!(is_private_or_restricted_ip(&IpAddr::V6(
+            "fe80::1".parse().unwrap()
+        )));
+        assert!(is_private_or_restricted_ip(&IpAddr::V6(
+            "::ffff:127.0.0.1".parse().unwrap()
+        )));
+        assert!(is_private_or_restricted_ip(&IpAddr::V6(
+            "::ffff:10.0.0.1".parse().unwrap()
+        )));
+        assert!(!is_private_or_restricted_ip(&IpAddr::V6(
+            "::ffff:8.8.8.8".parse().unwrap()
+        )));
+        assert!(!is_private_or_restricted_ip(&IpAddr::V6(
+            "2606:4700:4700::1111".parse().unwrap()
+        )));
+    }
+
+    #[tokio::test]
+    async fn test_fetch_url_policy_checks() {
+        let mut registry = ToolRegistry::new(vec![]);
+        registry.set_allowed_domains(vec!["example.com".to_string()]);
+
+        // Invalid scheme
+        let res = registry
+            .fetch_url(serde_json::json!({
+                "url": "file:///etc/passwd"
+            }))
+            .await;
+        assert!(res.is_error);
+        assert!(res.content.contains("must start with http:// or https://"));
+
+        // Unauthorized domain
+        let res = registry
+            .fetch_url(serde_json::json!({
+                "url": "https://unauthorized.org/data"
+            }))
+            .await;
+        assert!(res.is_error);
+        assert!(res
+            .content
+            .contains("BLOCKED: domain 'unauthorized.org' is not in allowed_domains"));
+
+        // SSRF attempt to local metadata
+        let mut ssrf_registry = ToolRegistry::new(vec![]);
+        ssrf_registry.set_allowed_domains(vec!["169.254.169.254".to_string()]);
+        let res = ssrf_registry
+            .fetch_url(serde_json::json!({
+                "url": "http://169.254.169.254/latest/meta-data"
+            }))
+            .await;
+        assert!(res.is_error);
+        assert!(res.content.contains("SSRF protection"));
     }
 }

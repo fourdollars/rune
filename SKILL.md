@@ -148,6 +148,7 @@ allowed_paths_ro = ["/bin", "/usr", "/lib"]
 allowed_files_ro = ["/home/user/.netrc"]
 allowed_files_rw = ["/tmp/data.json"]
 denied_paths = ["/root", "/etc/shadow"]
+max_tmp_mb = 100               # tmpfs size in MB (0 = disable tmpfs mount namespace)
 
 [notes]
 token_budget = 131072      # token budget for notes serve mode

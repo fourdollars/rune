@@ -35,6 +35,30 @@ All limits are **optional** — if not set, the agent runs without artificial ca
 
 Per-command sandbox timeout (default 30s) is separate and always enforced.
 
+### Policy & Sandbox Configuration
+
+```toml
+[policy]
+mode = "allowlist"             # allowlist | confirm | unrestricted
+allowed_tools = []             # [] (default: Default-Deny) | ["fetch_url", "read_file"] | ["*"] (all tools)
+fetch_max_size_kb = 128        # max fetch size in KB for fetch_url (default: 128)
+allowed_commands = ["ls", "cat", "curl"]
+allowed_domains = ["api.example.com"]
+allowed_paths_rw = ["/tmp", "/workspace"]
+allowed_paths_ro = ["/bin", "/usr", "/lib"]
+allowed_files_ro = []          # individual files with read-only access (e.g. ~/.netrc)
+allowed_files_rw = []          # individual files with read-write access
+denied_paths = ["/root", "/etc/shadow"]
+allowed_syscalls = []          # dangerous syscalls to allow through seccomp
+max_memory_mb = 512            # cgroup memory limit in MB (0 = no limit)
+max_pids = 64                  # cgroup max processes limit (0 = no limit)
+max_tmp_mb = 100               # sandbox /tmp tmpfs size in MB (0 = disable tmpfs mount namespace; set to 0 if container/VPS lacks root mount propagation permissions)
+
+# Sandbox filesystem mounts
+# mount_pwd = false            # mount current working directory as read-write
+# mount_home = "/path/to/home" # mount custom directory as HOME in sandbox
+```
+
 ### Embedding Configuration
 
 ```toml
@@ -52,7 +76,7 @@ port = 9527
 bind = "0.0.0.0"
 model = "openrouter/auto,deepseek/deepseek-chat" # single model or comma-separated allowed models
 thinking = "low"
-agent_skills = false # Opt-in: enable read_file, write_file, execute_cmd, fetch_url and skills
+agent_skills = false # Opt-in: enable +skills prompt injection and /api/skills in notes mode (tools controlled by [policy].allowed_tools)
 persona_files = false # Opt-in: auto-load AGENTS.md, BOOTSTRAP.md, IDENTITY.md, SOUL.md, TOOLS.md, USER.md into prompt
 title = "My Team Notes" # Optional custom page title
 desc = "My Notes Description" # Optional custom page description
@@ -121,7 +145,7 @@ guests = []
 | `write_file` | ✓ | ✓† | — |
 | `list_dir` | ✓ | ✗ | Always auto-approved |
 | `execute_cmd` | ✓ | ✓ | Per-cmd timeout, pipeline-aware policy |
-| `fetch_url` | ✓ | ✓ | Domain allowlist enforced |
+| `fetch_url` | Native | ✓ | In-process HTTP client, HTML-to-Markdown, `save_to` download, SSRF & domain protection |
 | `search_chat` | ✓ | ✗ | Semantic search over conversation history |
 | `list_markdown` | ✓ | ✗ | List notes/files in serve mode |
 | `read_markdown` | ✓ | ✓† | Read a markdown note file |

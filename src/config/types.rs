@@ -8,6 +8,10 @@ fn default_max_tmp_mb() -> u64 {
     100
 }
 
+fn default_allowed_tools() -> Vec<String> {
+    Vec::new()
+}
+
 /// Unified sandbox/security policy.
 #[derive(Debug, Clone, Deserialize)]
 pub struct PolicyConfig {
@@ -54,6 +58,13 @@ pub struct PolicyConfig {
     /// Dynamically mount working directory as read-write and set default sandbox pwd to CWD.
     #[serde(default)]
     pub mount_pwd: bool,
+    /// Tool whitelist: only tools listed here are exposed in Tools Schema and allowed to execute.
+    /// Default: [] (empty, Default-Deny). Set to ["*"] to allow all available tools.
+    #[serde(default = "default_allowed_tools", alias = "allow_tools")]
+    pub allowed_tools: Vec<String>,
+    /// Optional max fetch size in KB for fetch_url (default: 128 KB).
+    #[serde(default)]
+    pub fetch_max_size_kb: Option<usize>,
     /// Mount custom directory as HOME in sandbox.
     #[serde(default)]
     pub mount_home: Option<String>,
@@ -63,6 +74,8 @@ impl Default for PolicyConfig {
     fn default() -> Self {
         Self {
             mode: "allowlist".to_string(),
+            allowed_tools: Vec::new(),
+            fetch_max_size_kb: None,
             allowed_commands: Vec::new(),
             allowed_domains: Vec::new(),
             allowed_syscalls: Vec::new(),

@@ -40,7 +40,7 @@ Sandboxing is implemented by **re-exec'ing the same binary** with hidden subcomm
 | `_seccomp` | `src/sandbox/seccomp.rs` | Install seccomp-BPF filter, then exec |
 | `_net-guard` | `src/sandbox/net_guard.rs` | Seccomp user-notification network filter |
 
-`src/sandbox/mod.rs` (`SandboxExecutor`) composes up to 5 layers around each tool invocation: cgroups (`systemd-run --scope`), network isolation (`unshare --user --net` or net-guard), seccomp BPF, Landlock, DNS/domain allowlist. Layers are **best-effort** — if a kernel feature is missing the layer is skipped, not failed. When debugging "command works outside sandbox but fails inside," check which layers were actually applied (trace output / `/policy full`).
+`src/sandbox/mod.rs` (`SandboxExecutor`) composes up to 5 layers around each tool invocation: cgroups (`systemd-run --scope`), network isolation (`unshare --user --net` or net-guard), seccomp BPF, Landlock, DNS/domain allowlist. Layers are **best-effort** — if a kernel feature is missing the layer is skipped, not failed. When debugging "command works outside sandbox but fails inside," check which layers were actually applied (trace output / `/policy full`). Note: in restricted container/VPS environments where `unshare --mount` fails with root filesystem propagation errors, disable tmpfs mount isolation by setting `max_tmp_mb = 0` under `[policy]`.
 
 ## Agent Run Loop
 

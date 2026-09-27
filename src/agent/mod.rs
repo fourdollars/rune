@@ -2600,7 +2600,9 @@ impl Agent {
             "fetch_url" => {
                 if let Some(domain) = Self::extract_domain_from_args(tool_name, args) {
                     return self.config.policy.allowed_domains.iter().any(|d| {
-                        d == &domain || (d.starts_with("*.") && domain.ends_with(&d[1..]))
+                        d == &domain
+                            || d == "*"
+                            || (d.starts_with("*.") && domain.ends_with(&d[1..]))
                     });
                 }
                 false
@@ -5717,6 +5719,7 @@ read(3, "root:x:0:0:...", 4096) = 1234"#;
             ..Default::default()
         };
         config.policy.mode = "confirm".to_string();
+        config.policy.allowed_tools = vec!["*".to_string()];
         config.policy.allowed_commands = vec!["echo".to_string()];
 
         let mut registry = crate::provider::ProviderRegistry::new();
@@ -5810,6 +5813,7 @@ read(3, "root:x:0:0:...", 4096) = 1234"#;
             ..Default::default()
         };
         config.policy.mode = "confirm".to_string();
+        config.policy.allowed_tools = vec!["*".to_string()];
         config.policy.allowed_commands = vec!["echo".to_string()];
 
         let mut registry = crate::provider::ProviderRegistry::new();
