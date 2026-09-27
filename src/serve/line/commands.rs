@@ -41,15 +41,25 @@ pub async fn handle_slash_command(
             }
         }
         "/model" => {
-            if arg.is_empty() {
+            let raw_arg = if parts.len() > 1 {
+                parts[1..].join(" ")
+            } else {
+                String::new()
+            };
+
+            if raw_arg.is_empty() {
                 Some(format_model_command(state, note_id).await)
             } else if !is_admin {
                 Some("⛔ Permission denied: Admin access required.".to_string())
             } else {
                 let models = state.models.read().await;
-                let matched_model = models.iter().find(|m| m.id == arg);
+                let global_default = state.global_default_model.read().await;
+                let (target_model, requested_thinking) =
+                    parse_model_and_thinking(&raw_arg, &parts, &models, &global_default);
+
+                let matched_model = models.iter().find(|m| m.id == target_model);
                 if matched_model.is_none()
-                    && (!models.is_empty() || arg != *state.global_default_model.read().await)
+                    && (!models.is_empty() || target_model != *global_default)
                 {
                     let available_str = if !models.is_empty() {
                         format!(
@@ -61,62 +71,95 @@ pub async fn handle_slash_command(
                                 .join("\n")
                         )
                     } else {
-                        format!(
-                            "\n\n📋 Allowed Model:\n• {}",
-                            state.global_default_model.read().await
-                        )
+                        format!("\n\n📋 Allowed Model:\n• {}", *global_default)
                     };
                     return Some(format!(
                         "⛔ Invalid model '{}'. Please select an allowed model from [notes].{}",
-                        arg, available_str
+                        target_model, available_str
                     ));
                 }
-                let new_efforts = matched_model
+
+                let effort_list = matched_model
                     .map(|m| m.reasoning_efforts.clone())
                     .unwrap_or_default();
                 drop(models);
+                drop(global_default);
 
-                let room = state.get_or_create_room(note_id).await;
-                *room.model_override.write().await = Some(arg.to_string());
-                let _ = state.chat_db.set_note_model(note_id, Some(arg));
+                // Validate and determine effective thinking level
+                let is_auto = target_model.starts_with("openrouter/auto");
+                let effective_thinking = if let Some(ref t) = requested_thinking {
+                    let t_norm = if t.eq_ignore_ascii_case("none") {
+                        "off".to_string()
+                    } else {
+                        t.to_lowercase()
+                    };
 
-                let current_effective = state.effective_thinking(note_id).await;
-                let effective_thinking = if let Some(ref t) = current_effective {
-                    if t == "off" && arg.starts_with("openrouter/auto") {
-                        *room.thinking_override.write().await = Some("low".to_string());
-                        state.chat_db.set_note_thinking(note_id, Some("low"));
-                        "low".to_string()
-                    } else if t == "off" || new_efforts.contains(t) {
-                        t.clone()
-                    } else if arg.starts_with("openrouter/auto") {
-                        *room.thinking_override.write().await = Some("low".to_string());
-                        state.chat_db.set_note_thinking(note_id, Some("low"));
+                    let is_valid = if is_auto {
+                        matches!(
+                            t_norm.as_str(),
+                            "off" | "low" | "medium" | "high" | "xhigh" | "max"
+                        )
+                    } else {
+                        t_norm == "off"
+                            || effort_list.iter().any(|e| e.eq_ignore_ascii_case(&t_norm))
+                    };
+
+                    if !is_valid {
+                        let supported_desc = if is_auto {
+                            "• off\n• low\n• medium\n• high\n• xhigh\n• max".to_string()
+                        } else if !effort_list.is_empty() {
+                            let mut list = vec!["• off".to_string()];
+                            list.extend(effort_list.iter().map(|e| format!("• {}", e)));
+                            list.join("\n")
+                        } else {
+                            "• off (model does not support thinking/reasoning)".to_string()
+                        };
+                        return Some(format!(
+                            "⛔ Invalid thinking level '{}' for model '{}'.\n\n📋 Supported levels:\n{}",
+                            t, target_model, supported_desc
+                        ));
+                    }
+                    t_norm
+                } else {
+                    // Auto-adapt thinking if not explicitly specified
+                    let current_effective = state.effective_thinking(note_id).await;
+                    if let Some(ref t) = current_effective {
+                        if t == "off" && is_auto {
+                            "low".to_string()
+                        } else if t == "off" || effort_list.contains(t) {
+                            t.clone()
+                        } else if is_auto {
+                            "low".to_string()
+                        } else {
+                            "off".to_string()
+                        }
+                    } else if is_auto {
                         "low".to_string()
                     } else {
-                        *room.thinking_override.write().await = Some("off".to_string());
-                        state.chat_db.set_note_thinking(note_id, Some("off"));
                         "off".to_string()
                     }
-                } else if arg.starts_with("openrouter/auto") {
-                    *room.thinking_override.write().await = Some("low".to_string());
-                    state.chat_db.set_note_thinking(note_id, Some("low"));
-                    "low".to_string()
-                } else {
-                    "off".to_string()
                 };
+
+                let room = state.get_or_create_room(note_id).await;
+                *room.model_override.write().await = Some(target_model.clone());
+                let _ = state.chat_db.set_note_model(note_id, Some(&target_model));
+                *room.thinking_override.write().await = Some(effective_thinking.clone());
+                let _ = state
+                    .chat_db
+                    .set_note_thinking(note_id, Some(&effective_thinking));
 
                 let usage = state.provider_registry.read().await.usage();
                 broadcast_to_room(
                     &room,
                     &SseMsg::ModelChanged {
-                        model: arg.to_string(),
+                        model: target_model.clone(),
                         thinking: effective_thinking.clone(),
                         usage,
                     },
                 );
                 Some(format!(
                     "🧠 Switched model for [{}] to [{}] (thinking: {})",
-                    note_id, arg, effective_thinking
+                    note_id, target_model, effective_thinking
                 ))
             }
         }
@@ -308,12 +351,80 @@ pub fn format_help_command(is_admin: bool) -> String {
         out.push_str("• /usage — View LLM Provider usage and remaining credits/quota\n");
         out.push_str("• /archive — Archive and reset chat history for current notebook\n");
         out.push_str("• /clear — Alias for /archive\n");
-        out.push_str("• /model <name> — Switch LLM model for this notebook\n");
+        out.push_str("• /model <model_name> [thinking,cost] — Switch LLM model and optional thinking/cost tier\n");
     }
     out.push_str("• /context — Check conversation context token usage and limits\n");
     out.push_str("• /model — View current AI model and thinking configuration\n");
     out.push_str("• /help — Show this help message");
     out
+}
+
+/// Parses the model name and optional thinking/cost level from user input.
+///
+/// Supported syntax examples:
+/// - `/model openrouter/auto high` -> (`openrouter/auto`, `Some("high")`)
+/// - `/model openrouter/auto/high` -> (`openrouter/auto`, `Some("high")`)
+/// - `/model openrouter/auto:high` -> (`openrouter/auto`, `Some("high")`)
+/// - `/model deepseek/deepseek-chat` -> (`deepseek/deepseek-chat`, `None`)
+/// - `/model deepseek/deepseek-chat off` -> (`deepseek/deepseek-chat`, `Some("off")`)
+pub fn parse_model_and_thinking(
+    arg_full: &str,
+    parts: &[&str],
+    models: &[crate::serve::ModelInfo],
+    global_default: &str,
+) -> (String, Option<String>) {
+    // Case 1: Multiple arguments like "/model openrouter/auto high"
+    if parts.len() >= 3 {
+        let model_part = parts[1].trim();
+        let thinking_part = parts[2..].join(" ").trim().to_string();
+        return (
+            model_part.to_string(),
+            if thinking_part.is_empty() {
+                None
+            } else {
+                Some(thinking_part)
+            },
+        );
+    }
+
+    let raw = arg_full.trim();
+
+    // Case 2: Exact match in models (e.g. "openrouter/auto")
+    if models.iter().any(|m| m.id == raw) || (models.is_empty() && raw == global_default) {
+        return (raw.to_string(), None);
+    }
+
+    // Case 3: Suffix with ':' (e.g. "openrouter/auto:high")
+    if let Some((m, t)) = raw.rsplit_once(':') {
+        let m = m.trim();
+        let t = t.trim();
+        if !m.is_empty() && !t.is_empty() {
+            return (m.to_string(), Some(t.to_string()));
+        }
+    }
+
+    // Case 4: Suffix with '/' (e.g. "openrouter/auto/high" or "deepseek/deepseek-chat/off")
+    if let Some((m, t)) = raw.rsplit_once('/') {
+        let m = m.trim();
+        let t = t.trim();
+        if !m.is_empty()
+            && !t.is_empty()
+            && (models.iter().any(|model| model.id == m)
+                || m == global_default
+                || is_known_thinking_level(t))
+        {
+            return (m.to_string(), Some(t.to_string()));
+        }
+    }
+
+    (raw.to_string(), None)
+}
+
+fn is_known_thinking_level(s: &str) -> bool {
+    matches!(
+        s.to_lowercase().as_str(),
+        "off" | "none" | "low" | "medium" | "high" | "xhigh" | "max" | "minimal"
+    )
 }
 
 #[cfg(test)]
@@ -367,7 +478,7 @@ mod tests {
         let help_admin = format_help_command(true);
         assert!(help_admin.contains("/usage"));
         assert!(help_admin.contains("/archive"));
-        assert!(help_admin.contains("/model <name>"));
+        assert!(help_admin.contains("/model <model_name> [thinking,cost]"));
         assert!(help_admin.contains("/context"));
 
         let help_user = format_help_command(false);
@@ -435,6 +546,123 @@ mod tests {
             state.chat_db.get_note_model("AI"),
             Some("gpt-5".to_string())
         );
+    }
+
+    #[tokio::test]
+    async fn test_slash_command_model_with_thinking_tier() {
+        let state = create_test_state();
+        state.chat_db.create_note("AI", "AI Notes", None).unwrap();
+
+        *state.models.write().await = vec![
+            crate::serve::ModelInfo {
+                id: "openrouter/auto".to_string(),
+                provider: None,
+                context_window: Some(128000),
+                reasoning_efforts: vec![
+                    "low".to_string(),
+                    "medium".to_string(),
+                    "high".to_string(),
+                    "xhigh".to_string(),
+                    "max".to_string(),
+                ],
+                supported_endpoints: vec![],
+            },
+            crate::serve::ModelInfo {
+                id: "deepseek/deepseek-chat".to_string(),
+                provider: None,
+                context_window: Some(64000),
+                reasoning_efforts: vec![
+                    "low".to_string(),
+                    "medium".to_string(),
+                    "high".to_string(),
+                ],
+                supported_endpoints: vec![],
+            },
+            crate::serve::ModelInfo {
+                id: "simple-model".to_string(),
+                provider: None,
+                context_window: Some(32000),
+                reasoning_efforts: vec![],
+                supported_endpoints: vec![],
+            },
+        ];
+
+        // 1. Switch using slash separator: /model openrouter/auto/high
+        let reply =
+            handle_slash_command("/model openrouter/auto/high", &state, "AI", "U1234", true).await;
+        assert!(reply.is_some());
+        let msg = reply.unwrap();
+        assert!(msg.contains("Switched model for [AI] to [openrouter/auto] (thinking: high)"));
+        assert_eq!(
+            state.chat_db.get_note_model("AI"),
+            Some("openrouter/auto".to_string())
+        );
+        assert_eq!(
+            state.chat_db.get_note_thinking("AI"),
+            Some("high".to_string())
+        );
+
+        // 2. Switch using colon separator: /model deepseek/deepseek-chat:medium
+        let reply_colon = handle_slash_command(
+            "/model deepseek/deepseek-chat:medium",
+            &state,
+            "AI",
+            "U1234",
+            true,
+        )
+        .await;
+        assert!(reply_colon.is_some());
+        let msg_colon = reply_colon.unwrap();
+        assert!(msg_colon
+            .contains("Switched model for [AI] to [deepseek/deepseek-chat] (thinking: medium)"));
+        assert_eq!(
+            state.chat_db.get_note_model("AI"),
+            Some("deepseek/deepseek-chat".to_string())
+        );
+        assert_eq!(
+            state.chat_db.get_note_thinking("AI"),
+            Some("medium".to_string())
+        );
+
+        // 3. Switch using space separator: /model deepseek/deepseek-chat off
+        let reply_space = handle_slash_command(
+            "/model deepseek/deepseek-chat off",
+            &state,
+            "AI",
+            "U1234",
+            true,
+        )
+        .await;
+        assert!(reply_space.is_some());
+        let msg_space = reply_space.unwrap();
+        assert!(msg_space
+            .contains("Switched model for [AI] to [deepseek/deepseek-chat] (thinking: off)"));
+        assert_eq!(
+            state.chat_db.get_note_thinking("AI"),
+            Some("off".to_string())
+        );
+
+        // 4. Invalid thinking level for openrouter/auto
+        let reply_invalid_tier = handle_slash_command(
+            "/model openrouter/auto/super_ultra",
+            &state,
+            "AI",
+            "U1234",
+            true,
+        )
+        .await;
+        assert!(reply_invalid_tier.is_some());
+        let msg_invalid = reply_invalid_tier.unwrap();
+        assert!(msg_invalid.contains("⛔ Invalid thinking level 'super_ultra'"));
+        assert!(msg_invalid.contains("• high"));
+
+        // 5. Model without reasoning support reject non-off thinking
+        let reply_no_reason =
+            handle_slash_command("/model simple-model/high", &state, "AI", "U1234", true).await;
+        assert!(reply_no_reason.is_some());
+        let msg_no_reason = reply_no_reason.unwrap();
+        assert!(msg_no_reason.contains("⛔ Invalid thinking level 'high'"));
+        assert!(msg_no_reason.contains("does not support thinking"));
     }
 
     #[tokio::test]
