@@ -41,22 +41,15 @@ pub async fn handle_slash_command(
             }
         }
         "/model" => {
-            let raw_arg = if parts.len() > 1 {
-                parts[1..].join(" ")
-            } else {
-                String::new()
-            };
-
-            if raw_arg.is_empty() {
+            if parts.len() <= 1 {
                 Some(format_model_command(state, note_id).await)
             } else if !is_admin {
                 Some("⛔ Permission denied: Admin access required.".to_string())
             } else {
+                let (target_model, requested_thinking) = parse_model_and_thinking(&parts);
+
                 let models = state.models.read().await;
                 let global_default = state.global_default_model.read().await;
-                let (target_model, requested_thinking) =
-                    parse_model_and_thinking(&raw_arg, &parts, &models, &global_default);
-
                 let matched_model = models.iter().find(|m| m.id == target_model);
                 if matched_model.is_none()
                     && (!models.is_empty() || target_model != *global_default)
@@ -359,72 +352,28 @@ pub fn format_help_command(is_admin: bool) -> String {
     out
 }
 
-/// Parses the model name and optional thinking/cost level from user input.
+/// Parses the model name and optional thinking/cost level from user input arguments.
 ///
 /// Supported syntax examples:
-/// - `/model openrouter/auto high` -> (`openrouter/auto`, `Some("high")`)
-/// - `/model openrouter/auto/high` -> (`openrouter/auto`, `Some("high")`)
-/// - `/model openrouter/auto:high` -> (`openrouter/auto`, `Some("high")`)
-/// - `/model deepseek/deepseek-chat` -> (`deepseek/deepseek-chat`, `None`)
-/// - `/model deepseek/deepseek-chat off` -> (`deepseek/deepseek-chat`, `Some("off")`)
-pub fn parse_model_and_thinking(
-    arg_full: &str,
-    parts: &[&str],
-    models: &[crate::serve::ModelInfo],
-    global_default: &str,
-) -> (String, Option<String>) {
-    // Case 1: Multiple arguments like "/model openrouter/auto high"
+/// - `/model <model_name>` -> (`<model_name>`, `None`)
+/// - `/model <model_name> <thinking>` -> (`<model_name>`, `Some("<thinking>")`)
+pub fn parse_model_and_thinking(parts: &[&str]) -> (String, Option<String>) {
     if parts.len() >= 3 {
         let model_part = parts[1].trim();
         let thinking_part = parts[2..].join(" ").trim().to_string();
-        return (
+        (
             model_part.to_string(),
             if thinking_part.is_empty() {
                 None
             } else {
                 Some(thinking_part)
             },
-        );
+        )
+    } else if parts.len() == 2 {
+        (parts[1].trim().to_string(), None)
+    } else {
+        (String::new(), None)
     }
-
-    let raw = arg_full.trim();
-
-    // Case 2: Exact match in models (e.g. "openrouter/auto")
-    if models.iter().any(|m| m.id == raw) || (models.is_empty() && raw == global_default) {
-        return (raw.to_string(), None);
-    }
-
-    // Case 3: Suffix with ':' (e.g. "openrouter/auto:high")
-    if let Some((m, t)) = raw.rsplit_once(':') {
-        let m = m.trim();
-        let t = t.trim();
-        if !m.is_empty() && !t.is_empty() {
-            return (m.to_string(), Some(t.to_string()));
-        }
-    }
-
-    // Case 4: Suffix with '/' (e.g. "openrouter/auto/high" or "deepseek/deepseek-chat/off")
-    if let Some((m, t)) = raw.rsplit_once('/') {
-        let m = m.trim();
-        let t = t.trim();
-        if !m.is_empty()
-            && !t.is_empty()
-            && (models.iter().any(|model| model.id == m)
-                || m == global_default
-                || is_known_thinking_level(t))
-        {
-            return (m.to_string(), Some(t.to_string()));
-        }
-    }
-
-    (raw.to_string(), None)
-}
-
-fn is_known_thinking_level(s: &str) -> bool {
-    matches!(
-        s.to_lowercase().as_str(),
-        "off" | "none" | "low" | "medium" | "high" | "xhigh" | "max" | "minimal"
-    )
 }
 
 #[cfg(test)]
@@ -587,9 +536,9 @@ mod tests {
             },
         ];
 
-        // 1. Switch using slash separator: /model openrouter/auto/high
+        // 1. Switch using space separator: /model openrouter/auto high
         let reply =
-            handle_slash_command("/model openrouter/auto/high", &state, "AI", "U1234", true).await;
+            handle_slash_command("/model openrouter/auto high", &state, "AI", "U1234", true).await;
         assert!(reply.is_some());
         let msg = reply.unwrap();
         assert!(msg.contains("Switched model for [AI] to [openrouter/auto] (thinking: high)"));
@@ -602,18 +551,18 @@ mod tests {
             Some("high".to_string())
         );
 
-        // 2. Switch using colon separator: /model deepseek/deepseek-chat:medium
-        let reply_colon = handle_slash_command(
-            "/model deepseek/deepseek-chat:medium",
+        // 2. Switch model and thinking with space: /model deepseek/deepseek-chat medium
+        let reply_med = handle_slash_command(
+            "/model deepseek/deepseek-chat medium",
             &state,
             "AI",
             "U1234",
             true,
         )
         .await;
-        assert!(reply_colon.is_some());
-        let msg_colon = reply_colon.unwrap();
-        assert!(msg_colon
+        assert!(reply_med.is_some());
+        let msg_med = reply_med.unwrap();
+        assert!(msg_med
             .contains("Switched model for [AI] to [deepseek/deepseek-chat] (thinking: medium)"));
         assert_eq!(
             state.chat_db.get_note_model("AI"),
@@ -644,7 +593,7 @@ mod tests {
 
         // 4. Invalid thinking level for openrouter/auto
         let reply_invalid_tier = handle_slash_command(
-            "/model openrouter/auto/super_ultra",
+            "/model openrouter/auto super_ultra",
             &state,
             "AI",
             "U1234",
@@ -658,11 +607,19 @@ mod tests {
 
         // 5. Model without reasoning support reject non-off thinking
         let reply_no_reason =
-            handle_slash_command("/model simple-model/high", &state, "AI", "U1234", true).await;
+            handle_slash_command("/model simple-model high", &state, "AI", "U1234", true).await;
         assert!(reply_no_reason.is_some());
         let msg_no_reason = reply_no_reason.unwrap();
         assert!(msg_no_reason.contains("⛔ Invalid thinking level 'high'"));
         assert!(msg_no_reason.contains("does not support thinking"));
+
+        // 6. Slashes in model name are not split as thinking: /model openrouter/auto/high is treated as model name and rejected
+        let reply_slash_rejected =
+            handle_slash_command("/model openrouter/auto/high", &state, "AI", "U1234", true).await;
+        assert!(reply_slash_rejected.is_some());
+        assert!(reply_slash_rejected
+            .unwrap()
+            .contains("⛔ Invalid model 'openrouter/auto/high'"));
     }
 
     #[tokio::test]
