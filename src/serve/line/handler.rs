@@ -245,15 +245,6 @@ pub async fn process_webhook_payload_for_bot(
             None
         };
 
-        // Immediately persist session in DB (with auto title if available) and broadcast to connected WebUI clients
-        if session_id != "main" {
-            let _ = state
-                .chat_db
-                .set_session_title_async(note_id.clone(), session_id.clone(), auto_title.clone())
-                .await;
-            crate::serve::api::broadcast_session_list(&state, &note_id).await;
-        }
-
         let text = if event.event_type == "message" {
             if let Some(ref msg) = event.message {
                 if let Some(ref t) = msg.text {
@@ -412,8 +403,8 @@ pub async fn process_webhook_payload_for_bot(
                 continue;
             }
 
-            if is_guest {
-                debug!("Group sender is guest, skipping AI response");
+            if is_guest || (!is_admin && !is_user) {
+                debug!("Group sender is guest or unregistered, skipping AI response");
                 continue;
             }
         } else {
@@ -438,6 +429,17 @@ pub async fn process_webhook_payload_for_bot(
 
         // Check if slash command
         if is_slash_command(&text) {
+            if session_id != "main" {
+                let _ = state
+                    .chat_db
+                    .set_session_title_async(
+                        note_id.clone(),
+                        session_id.clone(),
+                        auto_title.clone(),
+                    )
+                    .await;
+                crate::serve::api::broadcast_session_list(&state, &note_id).await;
+            }
             if let Some(reply_text) =
                 handle_slash_command(&text, &state, &note_id, user_id, is_admin).await
             {
@@ -479,21 +481,14 @@ pub async fn process_webhook_payload_for_bot(
         };
 
         tokio::spawn(async move {
-            // Show loading animation in LINE chat
-            if chat_id != "unknown" {
-                let _ = client_clone
-                    .start_loading_animation(&chat_id, Some(60))
-                    .await;
-            }
-
             // Save auto title from LINE API
-            if let Some(ref t) = auto_title {
+            if session_id != "main" {
                 let _ = state_clone
                     .chat_db
                     .set_session_title_async(
                         note_id_clone.clone(),
                         session_id.clone(),
-                        Some(t.clone()),
+                        auto_title.clone(),
                     )
                     .await;
             }
@@ -530,6 +525,13 @@ pub async fn process_webhook_payload_for_bot(
                 session_id: Some(session_id.clone()),
             };
             broadcast_to_room(&room, &thinking);
+
+            // Show loading animation in LINE chat
+            if chat_id != "unknown" {
+                let _ = client_clone
+                    .start_loading_animation(&chat_id, Some(60))
+                    .await;
+            }
 
             // Run Agent & reply
             execute_line_agent_and_reply(
@@ -1756,7 +1758,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_line_webhook_auto_session_title() {
-        let state = create_test_state_with_line("secret123");
+        let mut state = create_test_state_with_line("secret123");
+        state.config.notes.line[0].groups = vec!["C12345678".to_string()];
         state
             .chat_db
             .create_note("LineBot", "LineBot", None)
@@ -1833,6 +1836,158 @@ mod tests {
             .unwrap();
         assert_eq!(group_session.title, Some("DevOps Team".to_string()));
         assert_eq!(group_session.custom_title, None);
+    }
+
+    #[tokio::test]
+    async fn test_process_webhook_group_unregistered_user_skipped() {
+        let mut state = create_test_state_with_line("secret123");
+        state.config.notes.line[0].groups = vec!["C_WHITELIST_GROUP".to_string()];
+        state.config.notes.line[0].keywords = vec!["@bot".to_string()];
+        state.config.notes.line[0].admins = vec!["U_REGISTERED_ADMIN".to_string()];
+        state.config.notes.line[0].users = vec!["U_REGISTERED_USER".to_string()];
+        state.config.notes.line[0].guests = vec!["U_REGISTERED_GUEST".to_string()];
+        state
+            .chat_db
+            .create_note("LineBot", "LineBot", None)
+            .unwrap();
+
+        let payload = WebhookPayload {
+            destination: Some("U_BOT".to_string()),
+            events: vec![
+                // 1. Unregistered member in group mentions @bot -> skipped
+                WebhookEvent {
+                    event_type: "message".to_string(),
+                    source: Some(EventSource {
+                        source_type: "group".to_string(),
+                        group_id: Some("C_WHITELIST_GROUP".to_string()),
+                        user_id: Some("U_ANONYMOUS_MEMBER".to_string()),
+                        ..Default::default()
+                    }),
+                    reply_token: Some("dummy1".to_string()),
+                    message: Some(EventMessage {
+                        id: "msg1".to_string(),
+                        message_type: "text".to_string(),
+                        text: Some("@bot hello from anonymous".to_string()),
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                },
+                // 2. Guest member in group mentions @bot -> skipped
+                WebhookEvent {
+                    event_type: "message".to_string(),
+                    source: Some(EventSource {
+                        source_type: "group".to_string(),
+                        group_id: Some("C_WHITELIST_GROUP".to_string()),
+                        user_id: Some("U_REGISTERED_GUEST".to_string()),
+                        ..Default::default()
+                    }),
+                    reply_token: Some("dummy2".to_string()),
+                    message: Some(EventMessage {
+                        id: "msg2".to_string(),
+                        message_type: "text".to_string(),
+                        text: Some("@bot hello from guest".to_string()),
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                },
+            ],
+        };
+
+        process_webhook_payload(state.clone(), payload, ProfileCache::default()).await;
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+        let messages = state
+            .chat_db
+            .load_recent_session_async(
+                "LineBot".to_string(),
+                "group:C_WHITELIST_GROUP".to_string(),
+                10,
+            )
+            .await;
+        assert_eq!(
+            messages.len(),
+            0,
+            "Anonymous and guest messages in group should not trigger AI chat"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_unauthorized_events_do_not_create_sessions_or_leak_metadata() {
+        let mut state = create_test_state_with_line("secret123");
+        state.config.notes.line[0].groups = vec!["C_ALLOWED".to_string()];
+        state.config.notes.line[0].keywords = vec!["@bot".to_string()];
+        state.config.notes.line[0].admins = vec!["U_ADMIN".to_string()];
+        state
+            .chat_db
+            .create_note("LineBot", "LineBot", None)
+            .unwrap();
+
+        let cache = ProfileCache::default();
+        cache
+            .insert("U_STRANGER".to_string(), "Stranger Name".to_string())
+            .await;
+        cache
+            .insert_group("C_BLOCKED".to_string(), "Blocked Group".to_string())
+            .await;
+
+        let payload = WebhookPayload {
+            destination: Some("U_BOT".to_string()),
+            events: vec![
+                // 1. Rejected 1-on-1 stranger
+                WebhookEvent {
+                    event_type: "message".to_string(),
+                    source: Some(EventSource {
+                        source_type: "user".to_string(),
+                        user_id: Some("U_STRANGER".to_string()),
+                        ..Default::default()
+                    }),
+                    reply_token: Some("tok1".to_string()),
+                    message: Some(EventMessage {
+                        id: "m1".to_string(),
+                        message_type: "text".to_string(),
+                        text: Some("hello".to_string()),
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                },
+                // 2. Unauthorized group
+                WebhookEvent {
+                    event_type: "message".to_string(),
+                    source: Some(EventSource {
+                        source_type: "group".to_string(),
+                        group_id: Some("C_BLOCKED".to_string()),
+                        user_id: Some("U_SOMEONE".to_string()),
+                        ..Default::default()
+                    }),
+                    reply_token: Some("tok2".to_string()),
+                    message: Some(EventMessage {
+                        id: "m2".to_string(),
+                        message_type: "text".to_string(),
+                        text: Some("@bot test in blocked group".to_string()),
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                },
+            ],
+        };
+
+        process_webhook_payload(state.clone(), payload, cache).await;
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+        let meta_list = state
+            .chat_db
+            .list_chat_sessions_meta_async("LineBot".to_string())
+            .await
+            .unwrap();
+
+        assert!(
+            !meta_list.iter().any(|s| s.session_id == "user:U_STRANGER"),
+            "Stranger 1-on-1 must not create a session entry in chat_sessions"
+        );
+        assert!(
+            !meta_list.iter().any(|s| s.session_id == "group:C_BLOCKED"),
+            "Unauthorized group must not create a session entry in chat_sessions"
+        );
     }
 
     #[tokio::test]
