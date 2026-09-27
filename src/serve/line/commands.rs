@@ -46,13 +46,65 @@ pub async fn handle_slash_command(
             } else if !is_admin {
                 Some("⛔ Permission denied: Admin access required.".to_string())
             } else {
+                let models = state.models.read().await;
+                let matched_model = models.iter().find(|m| m.id == arg);
+                if matched_model.is_none()
+                    && (!models.is_empty() || arg != *state.global_default_model.read().await)
+                {
+                    let available_str = if !models.is_empty() {
+                        format!(
+                            "\n\n📋 Allowed Models:\n{}",
+                            models
+                                .iter()
+                                .map(|m| format!("• {}", m.id))
+                                .collect::<Vec<_>>()
+                                .join("\n")
+                        )
+                    } else {
+                        format!(
+                            "\n\n📋 Allowed Model:\n• {}",
+                            state.global_default_model.read().await
+                        )
+                    };
+                    return Some(format!(
+                        "⛔ Invalid model '{}'. Please select an allowed model from [notes].{}",
+                        arg, available_str
+                    ));
+                }
+                let new_efforts = matched_model
+                    .map(|m| m.reasoning_efforts.clone())
+                    .unwrap_or_default();
+                drop(models);
+
                 let room = state.get_or_create_room(note_id).await;
                 *room.model_override.write().await = Some(arg.to_string());
                 let _ = state.chat_db.set_note_model(note_id, Some(arg));
-                let effective_thinking = state
-                    .effective_thinking(note_id)
-                    .await
-                    .unwrap_or_else(|| "off".to_string());
+
+                let current_effective = state.effective_thinking(note_id).await;
+                let effective_thinking = if let Some(ref t) = current_effective {
+                    if t == "off" && arg.starts_with("openrouter/auto") {
+                        *room.thinking_override.write().await = Some("low".to_string());
+                        state.chat_db.set_note_thinking(note_id, Some("low"));
+                        "low".to_string()
+                    } else if t == "off" || new_efforts.contains(t) {
+                        t.clone()
+                    } else if arg.starts_with("openrouter/auto") {
+                        *room.thinking_override.write().await = Some("low".to_string());
+                        state.chat_db.set_note_thinking(note_id, Some("low"));
+                        "low".to_string()
+                    } else {
+                        *room.thinking_override.write().await = Some("off".to_string());
+                        state.chat_db.set_note_thinking(note_id, Some("off"));
+                        "off".to_string()
+                    }
+                } else if arg.starts_with("openrouter/auto") {
+                    *room.thinking_override.write().await = Some("low".to_string());
+                    state.chat_db.set_note_thinking(note_id, Some("low"));
+                    "low".to_string()
+                } else {
+                    "off".to_string()
+                };
+
                 let usage = state.provider_registry.read().await.usage();
                 broadcast_to_room(
                     &room,
@@ -237,7 +289,16 @@ pub async fn format_model_command(state: &ServerState, note_id: &str) -> String 
         .effective_thinking(note_id)
         .await
         .unwrap_or_else(|| "default".to_string());
-    format!("🧠 Current Model: {} (thinking: {})", model, thinking)
+    let models = state.models.read().await;
+    let mut out = format!("🧠 Current Model: {} (thinking: {})", model, thinking);
+    if !models.is_empty() {
+        out.push_str("\n\n📋 Allowed Models:");
+        for m in models.iter() {
+            let active_marker = if m.id == model { " (active)" } else { "" };
+            out.push_str(&format!("\n• {}{}", m.id, active_marker));
+        }
+    }
+    out
 }
 
 /// Format the `/help` command output based on user role.
@@ -321,10 +382,31 @@ mod tests {
         let state = create_test_state();
         state.chat_db.create_note("AI", "AI Notes", None).unwrap();
 
+        // Populate allowed models list (e.g. from [notes].model)
+        *state.models.write().await = vec![
+            crate::serve::ModelInfo {
+                id: "test-model".to_string(),
+                provider: None,
+                context_window: Some(128000),
+                reasoning_efforts: vec![],
+                supported_endpoints: vec![],
+            },
+            crate::serve::ModelInfo {
+                id: "gpt-5".to_string(),
+                provider: None,
+                context_window: Some(200000),
+                reasoning_efforts: vec![],
+                supported_endpoints: vec![],
+            },
+        ];
+
         // Query model (allowed for user)
         let reply = handle_slash_command("/model", &state, "AI", "U1234", false).await;
         assert!(reply.is_some());
-        assert!(reply.unwrap().contains("test-model"));
+        let reply_str = reply.unwrap();
+        assert!(reply_str.contains("test-model"));
+        assert!(reply_str.contains("Allowed Models:"));
+        assert!(reply_str.contains("• gpt-5"));
 
         // Switch model as user (forbidden)
         let reply_user_switch =
@@ -334,7 +416,17 @@ mod tests {
             Some("⛔ Permission denied: Admin access required.".to_string())
         );
 
-        // Switch model as admin (allowed)
+        // Switch to invalid/unauthorized model as admin (forbidden)
+        let reply_invalid_switch =
+            handle_slash_command("/model unauthorized-model-xyz", &state, "AI", "U1234", true)
+                .await;
+        assert!(reply_invalid_switch.is_some());
+        let invalid_msg = reply_invalid_switch.unwrap();
+        assert!(invalid_msg.contains("⛔ Invalid model 'unauthorized-model-xyz'"));
+        assert!(invalid_msg.contains("• test-model"));
+        assert!(invalid_msg.contains("• gpt-5"));
+
+        // Switch to valid allowed model as admin (allowed)
         let reply_admin_switch =
             handle_slash_command("/model gpt-5", &state, "AI", "U1234", true).await;
         assert!(reply_admin_switch.is_some());
