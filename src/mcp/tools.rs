@@ -60,7 +60,7 @@ pub fn get_available_tools(role: Role) -> Vec<McpToolInfo> {
     if role == Role::User || role == Role::Admin {
         tools.push(McpToolInfo {
             name: "write_note_file".to_string(),
-            description: "Create or update a markdown file in a notebook".to_string(),
+            description: "Create a new markdown file or completely overwrite an existing file in a notebook. For large files (>15KB), write the initial section with write_note_file and use append_note_file for subsequent chunks to prevent token truncation.".to_string(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -69,6 +69,36 @@ pub fn get_available_tools(role: Role) -> Vec<McpToolInfo> {
                     "content": { "type": "string", "description": "Markdown content" }
                 },
                 "required": ["note_id", "filename", "content"]
+            }),
+        });
+
+        tools.push(McpToolInfo {
+            name: "append_note_file".to_string(),
+            description: "Append markdown content to the end of a note file in a notebook (creates the file if it does not exist). Recommended for chunked streaming of large documents to prevent token truncation.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "note_id": { "type": "string", "description": "Notebook ID" },
+                    "filename": { "type": "string", "description": "Filename" },
+                    "content": { "type": "string", "description": "Markdown content chunk to append" }
+                },
+                "required": ["note_id", "filename", "content"]
+            }),
+        });
+
+        tools.push(McpToolInfo {
+            name: "patch_note_file".to_string(),
+            description: "Replace a specific section or snippet of text within an existing markdown note file without rewriting the entire file.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "note_id": { "type": "string", "description": "Notebook ID" },
+                    "filename": { "type": "string", "description": "Filename" },
+                    "target_content": { "type": "string", "description": "Exact text snippet to find and replace" },
+                    "replacement_content": { "type": "string", "description": "New replacement text" },
+                    "replace_all": { "type": "boolean", "description": "If true, replace all occurrences; if false (default), replace only the first occurrence" }
+                },
+                "required": ["note_id", "filename", "target_content", "replacement_content"]
             }),
         });
 
@@ -293,6 +323,10 @@ pub async fn handle_tool_call(
                 .and_then(|v| v.as_str())
                 .ok_or("Missing content")?;
 
+            if !crate::serve::api::is_valid_filename(filename) {
+                return Err(format!("Invalid filename: {}", filename));
+            }
+
             let md_dir = state.note_markdown_dir(note_id);
             tokio::fs::create_dir_all(&md_dir)
                 .await
@@ -316,6 +350,137 @@ pub async fn handle_tool_call(
                 "content": [{
                     "type": "text",
                     "text": format!("Successfully saved {}/{}", note_id, filename)
+                }]
+            }))
+        }
+        "append_note_file" => {
+            if role == Role::Guest {
+                return Err("Guest role is not permitted to mutate files".to_string());
+            }
+            let note_id = args
+                .get("note_id")
+                .and_then(|v| v.as_str())
+                .ok_or("Missing note_id")?;
+            let filename = args
+                .get("filename")
+                .and_then(|v| v.as_str())
+                .ok_or("Missing filename")?;
+            let content = args
+                .get("content")
+                .and_then(|v| v.as_str())
+                .ok_or("Missing content")?;
+
+            if !crate::serve::api::is_valid_filename(filename) {
+                return Err(format!("Invalid filename: {}", filename));
+            }
+
+            let md_dir = state.note_markdown_dir(note_id);
+            tokio::fs::create_dir_all(&md_dir)
+                .await
+                .map_err(|e| format!("Failed to create dir: {}", e))?;
+
+            let file_path = md_dir.join(filename);
+            use tokio::io::AsyncWriteExt;
+            let mut file = tokio::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&file_path)
+                .await
+                .map_err(|e| format!("Failed to open file for append: {}", e))?;
+
+            file.write_all(content.as_bytes())
+                .await
+                .map_err(|e| format!("Failed to append to file: {}", e))?;
+            file.flush()
+                .await
+                .map_err(|e| format!("Failed to flush file: {}", e))?;
+
+            let full_content = tokio::fs::read_to_string(&file_path)
+                .await
+                .unwrap_or_default();
+
+            let room = state.get_or_create_room(note_id).await;
+            let fc = crate::serve::api::SseMsg::FileContent {
+                note_id: note_id.to_string(),
+                filename: filename.to_string(),
+                content: full_content,
+            };
+            crate::serve::api::broadcast_to_room(&room, &fc);
+            crate::serve::api::broadcast_file_list(state, note_id).await;
+
+            Ok(json!({
+                "content": [{
+                    "type": "text",
+                    "text": format!("Successfully appended to {}/{}", note_id, filename)
+                }]
+            }))
+        }
+        "patch_note_file" => {
+            if role == Role::Guest {
+                return Err("Guest role is not permitted to mutate files".to_string());
+            }
+            let note_id = args
+                .get("note_id")
+                .and_then(|v| v.as_str())
+                .ok_or("Missing note_id")?;
+            let filename = args
+                .get("filename")
+                .and_then(|v| v.as_str())
+                .ok_or("Missing filename")?;
+            let target_content = args
+                .get("target_content")
+                .and_then(|v| v.as_str())
+                .ok_or("Missing target_content")?;
+            let replacement_content = args
+                .get("replacement_content")
+                .and_then(|v| v.as_str())
+                .ok_or("Missing replacement_content")?;
+            let replace_all = args
+                .get("replace_all")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+
+            if !crate::serve::api::is_valid_filename(filename) {
+                return Err(format!("Invalid filename: {}", filename));
+            }
+
+            let md_dir = state.note_markdown_dir(note_id);
+            let file_path = md_dir.join(filename);
+            if !file_path.exists() {
+                return Err(format!("File not found: {}/{}", note_id, filename));
+            }
+
+            let existing = tokio::fs::read_to_string(&file_path)
+                .await
+                .map_err(|e| format!("Failed to read file: {}", e))?;
+
+            if !existing.contains(target_content) {
+                return Err("Target content not found in file".to_string());
+            }
+
+            let new_content = if replace_all {
+                existing.replace(target_content, replacement_content)
+            } else {
+                existing.replacen(target_content, replacement_content, 1)
+            };
+
+            tokio::fs::write(&file_path, &new_content)
+                .await
+                .map_err(|e| format!("Failed to write patched file: {}", e))?;
+
+            let room = state.get_or_create_room(note_id).await;
+            let fc = crate::serve::api::SseMsg::FileContent {
+                note_id: note_id.to_string(),
+                filename: filename.to_string(),
+                content: new_content,
+            };
+            crate::serve::api::broadcast_to_room(&room, &fc);
+            crate::serve::api::broadcast_file_list(state, note_id).await;
+
+            Ok(json!({
+                "content": [{
+                    "type": "text",
+                    "text": format!("Successfully patched {}/{}", note_id, filename)
                 }]
             }))
         }
@@ -666,6 +831,8 @@ mod tests {
                 "read_note_file",
                 "search_notes",
                 "write_note_file",
+                "append_note_file",
+                "patch_note_file",
                 "rename_note_file",
                 "delete_note_file"
             ]
@@ -897,5 +1064,120 @@ mod tests {
             }
         }
         assert!(got_note_list, "delete_notebook should broadcast note_list");
+    }
+
+    #[tokio::test]
+    async fn test_mcp_append_and_patch_note_file() {
+        let tmp = TempDir::new().unwrap();
+        let state = test_state(&tmp);
+
+        state.chat_db.create_note("note-1", "note-1", None).unwrap();
+        let room = state.get_or_create_room("note-1").await;
+        let mut rx = room.broadcast_tx.subscribe();
+
+        // 1. Guest permission check
+        let guest_res = handle_tool_call(
+            &state,
+            "append_note_file",
+            json!({"note_id": "note-1", "filename": "doc.md", "content": "test"}),
+            Role::Guest,
+        )
+        .await;
+        assert!(guest_res.is_err());
+
+        let guest_patch = handle_tool_call(
+            &state,
+            "patch_note_file",
+            json!({"note_id": "note-1", "filename": "doc.md", "target_content": "a", "replacement_content": "b"}),
+            Role::Guest,
+        )
+        .await;
+        assert!(guest_patch.is_err());
+
+        // 2. append_note_file creates file if missing
+        let append_args_1 = json!({
+            "note_id": "note-1",
+            "filename": "stream.md",
+            "content": "# Section 1\nHello"
+        });
+        let res1 = handle_tool_call(&state, "append_note_file", append_args_1, Role::User).await;
+        assert!(res1.is_ok());
+
+        let file_path = state.note_markdown_dir("note-1").join("stream.md");
+        let content1 = tokio::fs::read_to_string(&file_path).await.unwrap();
+        assert_eq!(content1, "# Section 1\nHello");
+
+        // 3. append_note_file appends to existing file
+        let append_args_2 = json!({
+            "note_id": "note-1",
+            "filename": "stream.md",
+            "content": "\n\n# Section 2\nWorld"
+        });
+        let res2 = handle_tool_call(&state, "append_note_file", append_args_2, Role::User).await;
+        assert!(res2.is_ok());
+
+        let content2 = tokio::fs::read_to_string(&file_path).await.unwrap();
+        assert_eq!(content2, "# Section 1\nHello\n\n# Section 2\nWorld");
+
+        // Drain broadcast messages to verify SSE
+        let mut got_file_content = false;
+        for _ in 0..5 {
+            if let Ok(msg) = rx.try_recv() {
+                if msg.contains("file_content") && msg.contains("Section 2") {
+                    got_file_content = true;
+                }
+            }
+        }
+        assert!(
+            got_file_content,
+            "append_note_file should broadcast file_content"
+        );
+
+        // 4. patch_note_file replaces single target snippet
+        let patch_args_1 = json!({
+            "note_id": "note-1",
+            "filename": "stream.md",
+            "target_content": "Hello",
+            "replacement_content": "Greetings"
+        });
+        let pres1 = handle_tool_call(&state, "patch_note_file", patch_args_1, Role::User).await;
+        assert!(pres1.is_ok());
+
+        let content3 = tokio::fs::read_to_string(&file_path).await.unwrap();
+        assert_eq!(content3, "# Section 1\nGreetings\n\n# Section 2\nWorld");
+
+        // 5. patch_note_file target not found returns error
+        let patch_args_missing = json!({
+            "note_id": "note-1",
+            "filename": "stream.md",
+            "target_content": "NonExistentSnippet",
+            "replacement_content": "Replaced"
+        });
+        let pres_missing =
+            handle_tool_call(&state, "patch_note_file", patch_args_missing, Role::User).await;
+        assert!(pres_missing.is_err());
+        assert!(pres_missing.unwrap_err().contains("not found"));
+
+        // 6. patch_note_file with replace_all = true
+        let append_args_3 = json!({
+            "note_id": "note-1",
+            "filename": "stream.md",
+            "content": "\nGreetings again"
+        });
+        let _ = handle_tool_call(&state, "append_note_file", append_args_3, Role::User).await;
+
+        let patch_args_all = json!({
+            "note_id": "note-1",
+            "filename": "stream.md",
+            "target_content": "Greetings",
+            "replacement_content": "Hi",
+            "replace_all": true
+        });
+        let pres_all =
+            handle_tool_call(&state, "patch_note_file", patch_args_all, Role::User).await;
+        assert!(pres_all.is_ok());
+
+        let content4 = tokio::fs::read_to_string(&file_path).await.unwrap();
+        assert_eq!(content4, "# Section 1\nHi\n\n# Section 2\nWorld\nHi again");
     }
 }
