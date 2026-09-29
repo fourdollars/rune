@@ -72,7 +72,8 @@ globalThis.connect = function connect(noteId) {
         'chat_token', 'chat_done', 'chat_meta', 'chat_message',
         'status', 'tool_status', 'system', 'users_update', 'error',
         'model_changed', 'thinking_changed', 'approval_request', 'archive_done',
-        'search_results', 'dir_browse_result', 'auth_error'
+        'search_results', 'dir_browse_result', 'auth_error', 'session_list',
+        'cron_job_status'
     ];
 
     eventTypes.forEach(type => {

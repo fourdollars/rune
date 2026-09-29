@@ -293,7 +293,7 @@ rune notes --bind 0.0.0.0
 
 The serve mode uses the following SSE event types:
 
-`auth_result` · `model_list` · `model_changed` · `note_list` · `note_switched` · `history` · `file_list` · `file_content` · `file_deleted` · `chat_token` · `chat_done` · `chat_meta` · `chat_message` · `status` · `system` · `users_update` · `error` · `auth_error` · `approval_request` · `archive_done` · `search_results` · `dir_browse_result`
+`auth_result` · `model_list` · `model_changed` · `note_list` · `note_switched` · `history` · `file_list` · `file_content` · `file_deleted` · `chat_token` · `chat_done` · `chat_meta` · `chat_message` · `status` · `tool_status` · `system` · `users_update` · `error` · `auth_error` · `approval_request` · `archive_done` · `search_results` · `dir_browse_result` · `session_list` · `cron_job_status`
 
 ## File Map
 

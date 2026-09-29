@@ -44,13 +44,16 @@ globalThis.handleMessage = function handleMessage(msg) {
             }
             if (msg.session_title && !meta.title) {
                 meta.title = msg.session_title;
-            } else if (!meta.title && msg.nickname) {
-                // If nickname is formatted like "LineBot (Alice)", extract "Alice"
+            } else if (!meta.title && msg.nickname && msgSess.startsWith('user:')) {
+                // For 1-on-1 user sessions, fallback to sender nickname if available and not a raw user ID
                 const match = msg.nickname.match(/\(([^)]+)\)/);
                 if (match && match[1]) {
                     meta.title = match[1].trim();
-                } else if (!msg.nickname.startsWith('line:U') && !msg.nickname.startsWith('LineBot')) {
-                    meta.title = msg.nickname;
+                } else if (msg.nickname.startsWith('line:')) {
+                    const name = msg.nickname.slice(5).trim();
+                    if (name && !name.startsWith('U')) {
+                        meta.title = name;
+                    }
                 }
             }
             if (msgSess === currentSessionId) {
