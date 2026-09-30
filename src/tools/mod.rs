@@ -1505,6 +1505,7 @@ fn extract_command_binaries(cmd: &str) -> Vec<String> {
     let mut in_single = false;
     let mut in_double = false;
     let mut escaped = false;
+    let mut paren_depth: usize = 0;
 
     while let Some(ch) = chars.next() {
         if escaped {
@@ -1528,36 +1529,50 @@ fn extract_command_binaries(cmd: &str) -> Vec<String> {
             continue;
         }
         if !in_single && !in_double {
-            match ch {
-                ';' => {
-                    segments.push(std::mem::take(&mut current));
-                    continue;
-                }
-                '|' => {
-                    // || is a separator too, consume second |
-                    if chars.peek() == Some(&'|') {
-                        chars.next();
-                    }
-                    segments.push(std::mem::take(&mut current));
-                    continue;
-                }
-                '&' => {
-                    // Check if this is part of a redirect (>&, &>, 2>&1, etc.)
-                    let prev_is_redirect = current.ends_with('>') || current.ends_with('<');
-                    let next_is_redirect = chars.peek() == Some(&'>');
-                    if prev_is_redirect || next_is_redirect {
-                        // Part of a redirect operator, not a separator
-                        current.push(ch);
+            if ch == '(' && chars.peek() == Some(&'(') {
+                current.push('(');
+                current.push(chars.next().unwrap());
+                paren_depth += 1;
+                continue;
+            }
+            if ch == ')' && chars.peek() == Some(&')') && paren_depth > 0 {
+                current.push(')');
+                current.push(chars.next().unwrap());
+                paren_depth -= 1;
+                continue;
+            }
+            if paren_depth == 0 {
+                match ch {
+                    ';' => {
+                        segments.push(std::mem::take(&mut current));
                         continue;
                     }
-                    // && is a separator, single & (background) is also a separator
-                    if chars.peek() == Some(&'&') {
-                        chars.next();
+                    '|' => {
+                        // || is a separator too, consume second |
+                        if chars.peek() == Some(&'|') {
+                            chars.next();
+                        }
+                        segments.push(std::mem::take(&mut current));
+                        continue;
                     }
-                    segments.push(std::mem::take(&mut current));
-                    continue;
+                    '&' => {
+                        // Check if this is part of a redirect (>&, &>, 2>&1, etc.)
+                        let prev_is_redirect = current.ends_with('>') || current.ends_with('<');
+                        let next_is_redirect = chars.peek() == Some(&'>');
+                        if prev_is_redirect || next_is_redirect {
+                            // Part of a redirect operator, not a separator
+                            current.push(ch);
+                            continue;
+                        }
+                        // && is a separator, single & (background) is also a separator
+                        if chars.peek() == Some(&'&') {
+                            chars.next();
+                        }
+                        segments.push(std::mem::take(&mut current));
+                        continue;
+                    }
+                    _ => {}
                 }
-                _ => {}
             }
         }
         current.push(ch);
@@ -1579,20 +1594,81 @@ fn extract_command_binaries(cmd: &str) -> Vec<String> {
 }
 
 fn extract_primary_binary(segment: &str) -> Option<String> {
-    for token in segment.split_whitespace() {
-        let token = token
-            .trim_start_matches(|c: char| matches!(c, '(' | ')' | '{' | '}' | '[' | ']' | '!'));
+    let mut tokens = segment.split_whitespace().peekable();
+    while let Some(raw_token) = tokens.next() {
         let token =
-            token.trim_end_matches(|c: char| matches!(c, '(' | ')' | '{' | '}' | '[' | ']'));
+            raw_token.trim_start_matches(|c: char| matches!(c, '(' | ')' | '{' | '}' | '!'));
+        let token = token.trim_end_matches(|c: char| matches!(c, '(' | ')' | '{' | '}' | '!'));
         if token.is_empty() {
             continue;
         }
-        if is_shell_assignment(token) || is_shell_keyword(token) {
+        if is_shell_assignment(token) {
+            continue;
+        }
+        if token == "for" || token == "select" {
+            // A `for` or `select` loop header has the syntax:
+            //   for VAR [in WORDS...] [; or \n] [do ...]
+            // or
+            //   for (( EXPR... )) [; or \n] [do ...]
+            // The tokens in the loop header (variable name, "in", values, arithmetic)
+            // are not executable commands. Skip all tokens until "do" (if present in the same segment).
+            while let Some(next_tok) = tokens.peek() {
+                let cleaned = next_tok
+                    .trim_start_matches(|c: char| matches!(c, '(' | ')' | '{' | '}' | '!'))
+                    .trim_end_matches(|c: char| matches!(c, '(' | ')' | '{' | '}' | '!'));
+                if cleaned == "do" {
+                    break;
+                }
+                tokens.next();
+            }
+            continue;
+        }
+        if token == "case" {
+            // `case WORD in [PATTERN)] [CMD...]`
+            // Skip until "in", and if the next token is a pattern like `pat)` or `(pat)`, skip it too.
+            while let Some(next_tok) = tokens.next() {
+                let cleaned = next_tok
+                    .trim_start_matches(|c: char| matches!(c, '(' | ')' | '{' | '}' | '!'))
+                    .trim_end_matches(|c: char| matches!(c, '(' | ')' | '{' | '}' | '!'));
+                if cleaned == "in" {
+                    if let Some(pat_tok) = tokens.peek() {
+                        if pat_tok.ends_with(')') {
+                            tokens.next();
+                        }
+                    }
+                    break;
+                }
+            }
+            continue;
+        }
+        if token == "[" || token == "[[" || token == "test" {
+            // Conditional/test construct: `[ EXPR ]`, `[[ EXPR ]]`, or `test EXPR`.
+            // Arguments and flags (-f, -d, -z, strings, numbers) are test operands, not commands.
+            // Skip until closing "]" / "]]" or end of segment.
+            while let Some(next_tok) = tokens.next() {
+                let cleaned = next_tok
+                    .trim_start_matches(|c: char| matches!(c, '(' | ')' | '{' | '}' | '!'))
+                    .trim_end_matches(|c: char| matches!(c, '(' | ')' | '{' | '}' | '!'));
+                if cleaned == "]" || cleaned == "]]" {
+                    break;
+                }
+            }
+            continue;
+        }
+        if is_shell_keyword(token) {
+            continue;
+        }
+        // Case pattern labels like `py)` or `*.rs)` that end a pattern branch
+        if raw_token.ends_with(')') && !raw_token.starts_with('(') {
+            continue;
+        }
+        // Option/flag arguments like -f, -la, --quiet are not command binaries.
+        if token.starts_with('-') {
             continue;
         }
         let binary = token.rsplit('/').next().unwrap_or(token);
-        let binary = binary.trim_matches(|c: char| matches!(c, '(' | ')' | '{' | '}' | '[' | ']'));
-        if !binary.is_empty() {
+        let binary = binary.trim_matches(|c: char| matches!(c, '(' | ')' | '{' | '}' | '!'));
+        if !binary.is_empty() && !binary.starts_with('-') {
             return Some(binary.to_string());
         }
     }
@@ -1623,8 +1699,13 @@ fn is_shell_keyword(token: &str) -> bool {
             | "while"
             | "until"
             | "for"
+            | "select"
             | "in"
             | "time"
+            | "["
+            | "]"
+            | "[["
+            | "]]"
     )
 }
 
@@ -1966,6 +2047,67 @@ mod tests {
         assert_eq!(
             extract_command_binaries("git clone repo || (rm -rf /tmp/foo)"),
             vec!["git", "rm"]
+        );
+    }
+
+    #[test]
+    fn test_extract_binaries_for_loops() {
+        // Basic for loop with semicolon
+        assert_eq!(
+            extract_command_binaries("for f in a b c; do echo $f; done"),
+            vec!["echo"]
+        );
+        // For loop with pipeline inside
+        assert_eq!(
+            extract_command_binaries("for f in *.txt; do cat \"$f\" | grep pattern; done"),
+            vec!["cat", "grep"]
+        );
+        // For loop without semicolon before do
+        assert_eq!(
+            extract_command_binaries("for f in a b c do echo $f; done"),
+            vec!["echo"]
+        );
+        // C-style arithmetic for loop
+        assert_eq!(
+            extract_command_binaries("for ((i=0; i<10; i++)); do echo $i; done"),
+            vec!["echo"]
+        );
+        // Real-world user scenario: cd && for ... do if cmp ... then echo ... else echo ... fi done
+        let real_world = "cd /home/u/rune && for f in sashiko_v16.json runtime_pm_src.c pm_runtime_h.txt spi-pxa2xx-mainline.c clk-fixed-rate.c pci-driver.c dpm-main.c pci-core.c clk-core.c irq-pm.c spi-pxa2xx-pci-mainline.c; do if cmp -s \"$f\" \"/home/u/spi-research/$f\"; then echo \"SAME $f\"; else echo \"DIFF-or-missing $f\"; fi; done";
+        assert_eq!(
+            extract_command_binaries(real_world),
+            vec!["cd", "cmp", "echo", "echo"]
+        );
+    }
+
+    #[test]
+    fn test_extract_binaries_conditionals_and_tests() {
+        // if [ -f file ]
+        assert_eq!(
+            extract_command_binaries("if [ -f file.txt ]; then cat file.txt; fi"),
+            vec!["cat"]
+        );
+        // if [[ -d dir ]]
+        assert_eq!(
+            extract_command_binaries("if [[ -d /tmp/dir ]]; then ls /tmp/dir; fi"),
+            vec!["ls"]
+        );
+        // test -f file
+        assert_eq!(
+            extract_command_binaries("test -f file.txt && rm file.txt"),
+            vec!["rm"]
+        );
+        // case statement
+        assert_eq!(
+            extract_command_binaries(
+                "case \"$ext\" in rs) cargo check ;; py) python3 main.py ;; esac"
+            ),
+            vec!["cargo", "python3"]
+        );
+        // while loop
+        assert_eq!(
+            extract_command_binaries("while read -r line; do echo \"$line\"; done"),
+            vec!["read", "echo"]
         );
     }
 
