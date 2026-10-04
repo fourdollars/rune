@@ -31,14 +31,20 @@ browser-extension/
                             rendering, page-context-aware prompt composition)
 ```
 
-## Quick start (development)
+## Installation
 
-### Chrome
+### Chrome Web Store (Recommended)
+
+Install directly from the official [Chrome Web Store: ᚱᚢᚾᛖ Chat](https://chromewebstore.google.com/detail/%E1%9A%B1%E1%9A%A2%E1%9A%BE%E1%9B%96-chat/hpfpllfbdjkhpoefeepmbcoieooinioc).
+
+### Development / Unpacked Build
+
+#### Chrome
 1. `node build.js chrome` to produce `dist/chrome/`
 2. Open `chrome://extensions`
 3. Click "Load unpacked" and select `dist/chrome/`
 
-### Firefox
+#### Firefox
 1. `node build.js firefox` to produce `dist/firefox/`
 2. Open `about:debugging#/runtime/this-firefox`
 3. Click "Load Temporary Add-on…" and select `dist/firefox/manifest.json`

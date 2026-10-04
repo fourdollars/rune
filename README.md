@@ -564,6 +564,7 @@ Rune includes a first-party browser extension located in `browser-extension/`:
 - **Side Panel UI** — Chat with your Rune server about the webpage you're viewing without leaving the tab.
 - **Chrome MV3 & Firefox MV3** — Shared codebase using WebExtension standards.
 - **OAuth 2.1 PKCE** — Secure authentication flow directly to your Rune Notes server.
+- **Install (Chrome)** — Available on the [Chrome Web Store: ᚱᚢᚾᛖ Chat](https://chromewebstore.google.com/detail/%E1%9A%B1%E1%9A%A2%E1%9A%BE%E1%9B%96-chat/hpfpllfbdjkhpoefeepmbcoieooinioc).
 - **Build**:
   ```bash
   node browser-extension/build.js
