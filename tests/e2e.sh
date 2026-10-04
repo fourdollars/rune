@@ -230,6 +230,13 @@ if command -v node >/dev/null 2>&1; then
         red "  ✗ settings persona and cron jobs tests failed"
         FAIL=$((FAIL + 1))
     fi
+    if node tests/vendor_assets.test.js >/dev/null 2>&1; then
+        green "  ✓ vendor assets integration tests passed"
+        PASS=$((PASS + 1))
+    else
+        red "  ✗ vendor assets integration tests failed"
+        FAIL=$((FAIL + 1))
+    fi
 else
     dim "  (skipped: node not available)"
 fi

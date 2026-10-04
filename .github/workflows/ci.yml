@@ -66,6 +66,9 @@ jobs:
           path: lcov.info
           retention-days: 30
 
+      - name: Install UPX
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends upx-ucl
+
       - name: Build release
         run: |
           cargo build --release
@@ -78,6 +81,11 @@ jobs:
         run: |
           cargo build --release --features notes
           cp target/release/rune target/release/rune-notes
+
+      - name: Compress binaries with UPX
+        run: |
+          upx --best --lzma target/release/rune-base
+          upx --best --lzma target/release/rune-notes
 
       - name: Binary size
         run: |

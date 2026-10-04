@@ -3,13 +3,14 @@ FROM rust:alpine AS builder
 WORKDIR /app
 
 RUN rustup target add x86_64-unknown-linux-musl
-RUN apk add --no-cache build-base musl-dev
+RUN apk add --no-cache build-base musl-dev upx
 
 COPY Cargo.toml Cargo.lock ./
 COPY build.rs ./
 COPY src ./src
 COPY web ./web
-RUN cargo build --release --locked --features notes --target x86_64-unknown-linux-musl
+RUN cargo build --release --locked --features notes --target x86_64-unknown-linux-musl \
+    && upx --best --lzma /app/target/x86_64-unknown-linux-musl/release/rune
 
 FROM alpine:latest
 RUN apk add --no-cache ca-certificates curl strace

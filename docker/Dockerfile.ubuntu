@@ -2,11 +2,21 @@
 FROM rust:bookworm AS builder
 WORKDIR /app
 
+RUN ARCH=$(uname -m) \
+    && case "$ARCH" in \
+         x86_64) UPX_ARCH="amd64" ;; \
+         aarch64) UPX_ARCH="arm64" ;; \
+         *) echo "Unsupported arch: $ARCH" && exit 1 ;; \
+       esac \
+    && curl -sL "https://github.com/upx/upx/releases/download/v4.2.4/upx-4.2.4-${UPX_ARCH}_linux.tar.xz" \
+       | tar -xJf - -C /usr/local/bin --strip-components=1 "upx-4.2.4-${UPX_ARCH}_linux/upx"
+
 COPY Cargo.toml Cargo.lock ./
 COPY build.rs ./
 COPY src ./src
 COPY web ./web
-RUN cargo build --release --locked --features notes
+RUN cargo build --release --locked --features notes \
+    && upx --best --lzma /app/target/release/rune
 
 FROM ubuntu:latest
 ENV DEBIAN_FRONTEND=noninteractive
