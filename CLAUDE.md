@@ -15,7 +15,8 @@ Rune is a single-binary Rust application that is **three things in one**, chosen
 ## Build, Test, Lint
 
 ```bash
-cargo build --release           # release binary (~12MB, opt-level=z, LTO, strip)
+cargo build --release           # release binary (~4.3MB raw, ~1.6MB UPX; with notes ~8.4MB raw, ~4.0MB UPX)
+./scripts/release.sh            # build & UPX-compress release binary
 cargo test --all --no-fail-fast # unit tests
 cargo fmt --all                 # required before every commit (CI enforces --check)
 cargo clippy --all-targets -- -D warnings  # CI fails on any warning

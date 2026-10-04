@@ -801,9 +801,10 @@ web/
 ## Development
 
 ```bash
-cargo build --release    # Single binary (~12MB)
-cargo test               # Unit tests (762)
-./tests/e2e.sh           # E2E tests (26)
+cargo build --release    # Single binary (~4.3MB raw / ~1.6MB UPX; with notes: ~8.4MB raw / ~4.0MB UPX)
+./scripts/release.sh     # Build & UPX-compress release binary
+cargo test               # Unit tests (766)
+./tests/e2e.sh           # E2E tests (31)
 make check-all           # Both
 ```
 

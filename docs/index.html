@@ -525,8 +525,8 @@
                 <div class="feature-icon">🏰</div>
                 <h3 data-lang="en">Single Binary</h3>
                 <h3 data-lang="zh">單一二進位檔</h3>
-                <p data-lang="en">Zero runtime dependencies on Linux. A single process serves the full web UI, built-in AI assistant, MCP server endpoint (<code>POST /mcp</code>), and REST API.</p>
-                <p data-lang="zh">在 Linux 下完全零依賴。單一程序即可提供完整 Web UI、內建 AI 助理、MCP 伺服器端點（<code>POST /mcp</code>）以及 REST API。</p>
+                <p data-lang="en">Zero runtime dependencies on Linux. Ultra-compact single binary (~1.6MB / ~4.0MB UPX compressed). A single process serves the full web UI, built-in AI assistant, MCP server endpoint (<code>POST /mcp</code>), and REST API.</p>
+                <p data-lang="zh">在 Linux 下完全零依賴。極致輕量二進位檔（UPX 壓縮後僅 ~1.6MB / ~4.0MB）。單一程序即可提供完整 Web UI、內建 AI 助理、MCP 伺服器端點（<code>POST /mcp</code>）以及 REST API。</p>
             </div>
             <div class="feature-card fade-in">
                 <div class="feature-icon">🔌</div>
@@ -637,7 +637,7 @@ docker run -d --name rune-notes \
             <div class="code-block">
                 <div class="code-header" data-lang="en">Available Images</div>
                 <div class="code-header" data-lang="zh">可用映像檔版本</div>
-                <pre><code># Alpine — smallest image (~15 MB), musl-based
+                <pre><code># Alpine — smallest image (~12 MB), musl-based
 docker pull ghcr.io/fourdollars/rune:alpine
 
 # Debian (Bookworm) — glibc-based, broad compatibility
@@ -695,7 +695,7 @@ alias rune='docker run -it --rm \
                 <div class="code-header" data-lang="zh">原始碼編譯與安裝</div>
                 <pre><code>git clone https://github.com/fourdollars/rune.git
 cd rune
-cargo build --release
+./scripts/release.sh    # Builds and compresses binary with UPX
 cp target/release/rune ~/.local/bin/</code></pre>
             </div>
             <div class="code-block">

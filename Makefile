@@ -24,11 +24,10 @@ clean:
 	cargo clean
 	rm -f /tmp/rune_*
 
-# Release build with optimizations
+# Release build with optimizations and UPX compression
 release:
-	cargo build --release
-	strip target/release/rune
-	@echo "Binary: target/release/rune ($$(ls -lh target/release/rune | awk '{print $$5}'))"
+	@chmod +x scripts/release.sh
+	@./scripts/release.sh
 
 # Docker builds
 build-debian:

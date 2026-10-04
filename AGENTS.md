@@ -379,10 +379,11 @@ resource_types:
 ## Testing
 
 ```bash
-cargo test                    # 762 unit tests
-./tests/e2e.sh               # 26 E2E integration tests
+cargo test                    # 766 unit tests (1,108 with notes,line)
+./tests/e2e.sh               # 31 E2E integration tests
 cargo llvm-cov --summary-only # coverage report
-cargo build --release         # release build (~12MB)
+cargo build --release         # release build (~4.3MB raw / ~1.6MB UPX; notes: ~8.4MB raw / ~4.0MB UPX)
+./scripts/release.sh          # build & UPX-compress release binary
 ```
 
 CI runs: `fmt` → `clippy` → `test+coverage` → `build` → `e2e`.
