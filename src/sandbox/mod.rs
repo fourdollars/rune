@@ -376,11 +376,20 @@ unsafe fn setup_tmpfs_pre_exec(
         std::ptr::null(),
     );
 
+    libc::mkdir(b"/tmp/.etc/pki\0".as_ptr() as *const _, 0o755);
+    libc::mount(
+        b"/etc/pki\0".as_ptr() as *const _,
+        b"/tmp/.etc/pki\0".as_ptr() as *const _,
+        std::ptr::null(),
+        libc::MS_BIND | libc::MS_REC,
+        std::ptr::null(),
+    );
+
     libc::mount(
         b"/tmp/.etc\0".as_ptr() as *const _,
         b"/etc\0".as_ptr() as *const _,
         std::ptr::null(),
-        libc::MS_BIND,
+        libc::MS_BIND | libc::MS_REC,
         std::ptr::null(),
     );
 
@@ -1631,6 +1640,77 @@ mod tests {
             "landlock args should contain real home in --rw when mount_home is set, got: {}",
             w
         );
+    }
+
+    #[tokio::test]
+    async fn test_sandbox_ca_certificates_accessible() {
+        let executor = SandboxExecutor::with_defaults();
+        let result = executor
+            .run_shell_command(
+                "ls -la /etc/ssl; ls -la /etc/ssl/certs; head -n 5 /etc/ssl/certs/ca-certificates.crt 2>&1",
+                None,
+                None,
+            )
+            .await
+            .expect("should succeed");
+        println!("SSL stdout:\n{}", result.stdout);
+        println!("SSL stderr:\n{}", result.stderr);
+        assert!(result.stdout.contains("BEGIN CERTIFICATE"));
+    }
+
+    #[tokio::test]
+    async fn test_sandbox_tls_verification() {
+        let config = SandboxConfig {
+            allowed_domains: vec!["github.com".to_string()],
+            ..SandboxConfig::default()
+        };
+        let executor = SandboxExecutor::new(config);
+        let result = executor
+            .run_shell_command("curl -sSfI https://github.com 2>&1", None, None)
+            .await
+            .expect("should succeed");
+        println!("TLS stdout: {}", result.stdout);
+        println!("TLS stderr: {}", result.stderr);
+        assert_eq!(
+            result.exit_code, 0,
+            "curl should succeed with code 0: {}",
+            result.stdout
+        );
+        assert!(
+            result.stdout.contains("HTTP/2 200")
+                || result.stdout.contains("HTTP/1.1 200")
+                || result.stdout.contains("HTTP/2 301")
+                || result.stdout.contains("HTTP/1.1 301")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_sandbox_jira_cli_tls() {
+        if std::path::Path::new("/home/linuxbrew/.linuxbrew/bin/jira").exists() {
+            let config = SandboxConfig {
+                allowed_domains: vec!["warthogs.atlassian.net".to_string()],
+                read_only_paths: vec![
+                    PathBuf::from("/bin"),
+                    PathBuf::from("/usr"),
+                    PathBuf::from("/lib"),
+                    PathBuf::from("/lib64"),
+                    PathBuf::from("/etc"),
+                    PathBuf::from("/home/linuxbrew"),
+                ],
+                ..SandboxConfig::default()
+            };
+            let executor = SandboxExecutor::new(config);
+            let res = executor
+                .run_shell_command("/home/linuxbrew/.linuxbrew/bin/jira me 2>&1", None, None)
+                .await
+                .expect("should run");
+            println!("jira me stdout: {}", res.stdout);
+            println!("jira me exit_code: {}", res.exit_code);
+            // It should NOT fail with "certificate signed by unknown authority"
+            assert!(!res
+                .stdout
+                .contains("certificate signed by unknown authority"));
+        }
     }
 
     #[tokio::test]
