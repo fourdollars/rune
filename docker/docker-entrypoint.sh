@@ -1,6 +1,6 @@
 #!/bin/sh
 # Docker entrypoint: drops privileges to rune user (uid 1000) for normal usage.
-# Concourse invokes /opt/resource/{check,in,out} directly (hard links to rune binary),
+# Concourse invokes /opt/resource/{check,in,out} directly (symlinks to rune binary),
 # bypassing this entrypoint entirely, and runs as root for volume write access.
 if [ "$(id -u)" = "0" ]; then
     # Running as root in docker run — drop to rune user

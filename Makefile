@@ -34,7 +34,7 @@ build-debian:
 	docker build -f docker/Dockerfile.debian -t rune:debian .
 
 build-alpine:
-	docker build -f docker/Dockerfile.alpine -t rune:alpine .
+	docker build -f docker/Dockerfile.alpine -t rune:alpine -t rune:latest .
 
 build-ubuntu:
 	docker build -f docker/Dockerfile.ubuntu -t rune:ubuntu .

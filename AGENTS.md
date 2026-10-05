@@ -325,7 +325,7 @@ web/                 — Frontend assets for serve mode (HTML/CSS/JS, embedded a
 
 ## Container Deployment
 
-The container image `ghcr.io/fourdollars/rune` packages all binaries in a Debian-slim base with `curl` and `ca-certificates`.
+The container image `ghcr.io/fourdollars/rune` packages all binaries in an Alpine base with `ca-certificates`.
 
 ```bash
 # First-time setup — creates config at ~/.rune/rune.toml

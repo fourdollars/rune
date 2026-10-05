@@ -13,23 +13,21 @@ RUN cargo build --release --locked --features notes --target x86_64-unknown-linu
     && upx --best --lzma /app/target/x86_64-unknown-linux-musl/release/rune
 
 FROM alpine:latest
-RUN apk add --no-cache ca-certificates curl strace
+RUN apk add --no-cache ca-certificates
 
 RUN addgroup -g 1000 rune \
     && adduser -D -u 1000 -G rune -h /home/rune rune
 
-COPY --from=builder /app/target/x86_64-unknown-linux-musl/release/rune /usr/local/bin/rune
-RUN chmod 0755 /usr/local/bin/rune
+COPY --chmod=0755 --from=builder /app/target/x86_64-unknown-linux-musl/release/rune /usr/local/bin/rune
 
-# Concourse resource type: hard links preserve argv[0] for mode detection
+# Concourse resource type: symlinks preserve argv[0] for mode detection
 RUN mkdir -p /opt/resource \
-    && ln /usr/local/bin/rune /opt/resource/check \
-    && ln /usr/local/bin/rune /opt/resource/in \
-    && ln /usr/local/bin/rune /opt/resource/out
+    && ln -s /usr/local/bin/rune /opt/resource/check \
+    && ln -s /usr/local/bin/rune /opt/resource/in \
+    && ln -s /usr/local/bin/rune /opt/resource/out
 
 # Entrypoint drops to rune user for normal docker run
-COPY docker/docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
-RUN chmod 0755 /usr/local/bin/docker-entrypoint.sh
+COPY --chmod=0755 docker/docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 
 WORKDIR /home/rune
 ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]

@@ -98,7 +98,7 @@ docker run --rm -it \
 ```
 
 
-Available tags: `latest` (Debian-based, built from main branch), `<sha>` (specific commit).
+Available tags: `latest` (Alpine-based, built from main branch), `<sha>` (specific commit).
 
 ## Vim / Neovim Integration
 

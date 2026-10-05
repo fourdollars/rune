@@ -22,23 +22,21 @@ FROM ubuntu:latest
 ENV DEBIAN_FRONTEND=noninteractive
 
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates curl strace \
+    && apt-get install -y --no-install-recommends ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
 RUN useradd --create-home --home-dir /home/rune --shell /usr/sbin/nologin rune
 
-COPY --from=builder /app/target/release/rune /usr/local/bin/rune
-RUN chmod 0755 /usr/local/bin/rune
+COPY --chmod=0755 --from=builder /app/target/release/rune /usr/local/bin/rune
 
-# Concourse resource type: hard links preserve argv[0] for mode detection
+# Concourse resource type: symlinks preserve argv[0] for mode detection
 RUN mkdir -p /opt/resource \
-    && ln /usr/local/bin/rune /opt/resource/check \
-    && ln /usr/local/bin/rune /opt/resource/in \
-    && ln /usr/local/bin/rune /opt/resource/out
+    && ln -s /usr/local/bin/rune /opt/resource/check \
+    && ln -s /usr/local/bin/rune /opt/resource/in \
+    && ln -s /usr/local/bin/rune /opt/resource/out
 
 # Entrypoint drops to rune user for normal docker run
-COPY docker/docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
-RUN chmod 0755 /usr/local/bin/docker-entrypoint.sh
+COPY --chmod=0755 docker/docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 
 WORKDIR /home/rune
 ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]

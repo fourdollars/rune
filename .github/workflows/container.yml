@@ -25,13 +25,13 @@ jobs:
         include:
           - variant: debian
             file: docker/Dockerfile.debian
-            tags_extra: latest
+            tags_extra: ""
           - variant: ubuntu
             file: docker/Dockerfile.ubuntu
             tags_extra: ""
           - variant: alpine
             file: docker/Dockerfile.alpine
-            tags_extra: ""
+            tags_extra: latest
 
     steps:
       - uses: actions/checkout@v6
