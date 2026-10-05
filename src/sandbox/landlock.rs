@@ -6,8 +6,11 @@
 //! Restricts filesystem access to only the specified paths.
 
 use std::env;
+use std::os::unix::io::RawFd;
 use std::os::unix::process::CommandExt;
+use std::path::PathBuf;
 use std::process::Command;
+use std::sync::OnceLock;
 
 // Landlock syscall numbers (x86_64)
 const SYS_LANDLOCK_CREATE_RULESET: libc::c_long = 444;
@@ -18,7 +21,7 @@ const SYS_LANDLOCK_RESTRICT_SELF: libc::c_long = 446;
 const LANDLOCK_CREATE_RULESET_VERSION: u32 = 1 << 0;
 
 // Access rights for files
-const LANDLOCK_ACCESS_FS_EXECUTE: u64 = 1 << 0;
+pub const LANDLOCK_ACCESS_FS_EXECUTE: u64 = 1 << 0;
 const LANDLOCK_ACCESS_FS_WRITE_FILE: u64 = 1 << 1;
 const LANDLOCK_ACCESS_FS_READ_FILE: u64 = 1 << 2;
 const LANDLOCK_ACCESS_FS_READ_DIR: u64 = 1 << 3;
@@ -37,11 +40,11 @@ const LANDLOCK_ACCESS_FS_TRUNCATE: u64 = 1 << 14;
 const LANDLOCK_RULE_PATH_BENEATH: u32 = 1;
 
 // All read-only access rights
-const ACCESS_RO: u64 =
+pub const ACCESS_RO: u64 =
     LANDLOCK_ACCESS_FS_EXECUTE | LANDLOCK_ACCESS_FS_READ_FILE | LANDLOCK_ACCESS_FS_READ_DIR;
 
 // All read-write access rights
-const ACCESS_RW: u64 = ACCESS_RO
+pub const ACCESS_RW: u64 = ACCESS_RO
     | LANDLOCK_ACCESS_FS_WRITE_FILE
     | LANDLOCK_ACCESS_FS_REMOVE_DIR
     | LANDLOCK_ACCESS_FS_REMOVE_FILE
@@ -70,7 +73,181 @@ struct LandlockPathBeneathAttr {
     parent_fd: i32,
 }
 
-/// Entry point when invoked as `rune _landlock` / `_seccomp` / `_net-guard` subcommand.
+static LANDLOCK_ABI_VERSION: OnceLock<i32> = OnceLock::new();
+
+/// Query the Landlock ABI version supported by the running kernel, cached statically.
+pub fn get_landlock_abi() -> i32 {
+    *LANDLOCK_ABI_VERSION.get_or_init(|| {
+        let abi = unsafe {
+            libc::syscall(
+                SYS_LANDLOCK_CREATE_RULESET,
+                std::ptr::null::<u8>(),
+                0usize,
+                LANDLOCK_CREATE_RULESET_VERSION,
+            )
+        };
+        abi as i32
+    })
+}
+
+/// An open Landlock ruleset ready to be enforced.
+pub struct LandlockRuleset {
+    ruleset_fd: RawFd,
+}
+
+impl LandlockRuleset {
+    pub fn fd(&self) -> RawFd {
+        self.ruleset_fd
+    }
+
+    /// Create an empty ruleset FD.
+    pub fn create_empty() -> Option<Self> {
+        let abi = get_landlock_abi();
+        if abi < 1 {
+            return None;
+        }
+
+        let ruleset_attr = LandlockRulesetAttr {
+            handled_access_fs: ACCESS_ALL,
+            handled_access_net: 0,
+        };
+
+        let ruleset_fd = unsafe {
+            libc::syscall(
+                SYS_LANDLOCK_CREATE_RULESET,
+                &ruleset_attr as *const LandlockRulesetAttr,
+                std::mem::size_of::<LandlockRulesetAttr>(),
+                0u32,
+            ) as RawFd
+        };
+
+        if ruleset_fd < 0 {
+            return None;
+        }
+
+        Some(Self { ruleset_fd })
+    }
+
+    /// Add a path rule in child/pre_exec using raw C pointer. Async-signal safe.
+    pub unsafe fn add_path_rule_raw(
+        ruleset_fd: RawFd,
+        c_path: *const libc::c_char,
+        access: u64,
+    ) -> bool {
+        if ruleset_fd < 0 || c_path.is_null() {
+            return false;
+        }
+
+        let fd = libc::open(c_path, libc::O_PATH | libc::O_CLOEXEC);
+        if fd < 0 {
+            return false;
+        }
+
+        let mut st: libc::stat = std::mem::zeroed();
+        let is_dir = if libc::fstat(fd, &mut st) == 0 {
+            (st.st_mode & libc::S_IFMT) == libc::S_IFDIR
+        } else {
+            false
+        };
+
+        let effective_access = if !is_dir {
+            access
+                & (LANDLOCK_ACCESS_FS_EXECUTE
+                    | LANDLOCK_ACCESS_FS_READ_FILE
+                    | LANDLOCK_ACCESS_FS_WRITE_FILE
+                    | LANDLOCK_ACCESS_FS_TRUNCATE)
+        } else {
+            access
+        };
+
+        let path_beneath = LandlockPathBeneathAttr {
+            allowed_access: effective_access,
+            parent_fd: fd,
+        };
+
+        let ret = libc::syscall(
+            SYS_LANDLOCK_ADD_RULE,
+            ruleset_fd,
+            LANDLOCK_RULE_PATH_BENEATH,
+            &path_beneath as *const LandlockPathBeneathAttr,
+            0u32,
+        );
+
+        libc::close(fd);
+        ret == 0
+    }
+
+    /// Build a Landlock ruleset in the parent process.
+    /// Opens the allowed paths with `O_PATH` and adds path rules to the ruleset FD.
+    /// Returns `None` if Landlock is unsupported or ruleset creation fails.
+    pub fn build(
+        read_write_paths: &[PathBuf],
+        read_only_paths: &[PathBuf],
+        traverse_paths: &[PathBuf],
+    ) -> Option<Self> {
+        let ruleset = Self::create_empty()?;
+        let ruleset_fd = ruleset.ruleset_fd;
+
+        for path in read_write_paths {
+            if let Some(path_str) = path.to_str() {
+                let _ = add_path_rule(ruleset_fd, path_str, ACCESS_RW);
+            }
+        }
+
+        for path in read_only_paths {
+            if let Some(path_str) = path.to_str() {
+                let _ = add_path_rule(ruleset_fd, path_str, ACCESS_RO);
+            }
+        }
+
+        for path in traverse_paths {
+            if let Some(path_str) = path.to_str() {
+                let _ = add_path_rule(ruleset_fd, path_str, LANDLOCK_ACCESS_FS_EXECUTE);
+            }
+        }
+
+        Some(ruleset)
+    }
+
+    /// Apply Landlock in the child process (inside `pre_exec`).
+    ///
+    /// # Safety
+    /// Must only call async-signal-safe functions (no heap allocations, formatting, or stdio).
+    pub unsafe fn apply_fd_pre_exec(ruleset_fd: RawFd) -> std::io::Result<()> {
+        if ruleset_fd < 0 {
+            return Ok(());
+        }
+        if libc::prctl(libc::PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) != 0 {
+            return Err(std::io::Error::last_os_error());
+        }
+        let ret = libc::syscall(SYS_LANDLOCK_RESTRICT_SELF, ruleset_fd, 0u32);
+        if ret != 0 {
+            return Err(std::io::Error::last_os_error());
+        }
+        libc::close(ruleset_fd);
+        Ok(())
+    }
+
+    /// Apply Landlock in the current process using `self.ruleset_fd`.
+    ///
+    /// # Safety
+    /// Must only call async-signal-safe functions.
+    pub unsafe fn apply_pre_exec(&self) -> std::io::Result<()> {
+        Self::apply_fd_pre_exec(self.ruleset_fd)
+    }
+}
+
+impl Drop for LandlockRuleset {
+    fn drop(&mut self) {
+        if self.ruleset_fd >= 0 {
+            unsafe {
+                libc::close(self.ruleset_fd);
+            }
+        }
+    }
+}
+
+/// Entry point when invoked as `rune _landlock` subcommand.
 pub fn run() {
     let all_args: Vec<String> = env::args().collect();
     let args: Vec<String> = all_args[1..].to_vec(); // skip binary name, keep subcommand as args[0]
@@ -119,104 +296,31 @@ pub fn run() {
         std::process::exit(1);
     }
 
-    // Check Landlock ABI version
-    let abi_version = unsafe {
-        libc::syscall(
-            SYS_LANDLOCK_CREATE_RULESET,
-            std::ptr::null::<u8>(),
-            0usize,
-            LANDLOCK_CREATE_RULESET_VERSION,
-        )
-    };
-    if abi_version < 1 {
-        eprintln!(
-            "rune _landlock: Landlock not supported (ABI version: {})",
-            abi_version
-        );
-        // Graceful degradation: just exec without restriction
-        let err = Command::new(&args[cmd_start])
-            .args(&args[cmd_start + 1..])
-            .exec();
-        eprintln!("rune _landlock: exec failed: {}", err);
-        std::process::exit(1);
-    }
+    let rw_paths_pb: Vec<PathBuf> = rw_paths.iter().map(PathBuf::from).collect();
+    let ro_paths_pb: Vec<PathBuf> = ro_paths.iter().map(PathBuf::from).collect();
+    let traverse_paths_pb: Vec<PathBuf> = traverse_paths.iter().map(PathBuf::from).collect();
 
-    // Create ruleset
-    let ruleset_attr = LandlockRulesetAttr {
-        handled_access_fs: ACCESS_ALL,
-        handled_access_net: 0,
-    };
-
-    let ruleset_fd = unsafe {
-        libc::syscall(
-            SYS_LANDLOCK_CREATE_RULESET,
-            &ruleset_attr as *const LandlockRulesetAttr,
-            std::mem::size_of::<LandlockRulesetAttr>(),
-            0u32,
-        )
-    };
-    if ruleset_fd < 0 {
-        eprintln!(
-            "rune _landlock: landlock_create_ruleset failed: {}",
-            std::io::Error::last_os_error()
-        );
-        std::process::exit(1);
-    }
-
-    // Add RW rules
-    for path in &rw_paths {
-        if let Err(e) = add_path_rule(ruleset_fd as i32, path, ACCESS_RW) {
+    let ruleset = match LandlockRuleset::build(&rw_paths_pb, &ro_paths_pb, &traverse_paths_pb) {
+        Some(rs) => rs,
+        None => {
             eprintln!(
-                "rune _landlock: warning: failed to add rw rule for {}: {}",
-                path, e
+                "rune _landlock: Landlock not supported (ABI version: {})",
+                get_landlock_abi()
             );
-        }
-    }
-
-    // Add RO rules
-    for path in &ro_paths {
-        if let Err(e) = add_path_rule(ruleset_fd as i32, path, ACCESS_RO) {
-            eprintln!(
-                "rune _landlock: warning: failed to add ro rule for {}: {}",
-                path, e
-            );
-        }
-    }
-
-    // Add traverse-only rules (EXECUTE only — for directory path traversal)
-    for path in &traverse_paths {
-        if let Err(e) = add_path_rule(ruleset_fd as i32, path, LANDLOCK_ACCESS_FS_EXECUTE) {
-            eprintln!(
-                "rune _landlock: warning: failed to add traverse rule for {}: {}",
-                path, e
-            );
-        }
-    }
-
-    // Set no_new_privs (required)
-    unsafe {
-        if libc::prctl(libc::PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) != 0 {
-            eprintln!(
-                "rune _landlock: prctl(NO_NEW_PRIVS) failed: {}",
-                std::io::Error::last_os_error()
-            );
+            // Graceful degradation: just exec without restriction
+            let err = Command::new(&args[cmd_start])
+                .args(&args[cmd_start + 1..])
+                .exec();
+            eprintln!("rune _landlock: exec failed: {}", err);
             std::process::exit(1);
         }
-    }
+    };
 
-    // Restrict self
-    let ret = unsafe { libc::syscall(SYS_LANDLOCK_RESTRICT_SELF, ruleset_fd, 0u32) };
-    if ret != 0 {
-        eprintln!(
-            "rune _landlock: landlock_restrict_self failed: {}",
-            std::io::Error::last_os_error()
-        );
-        std::process::exit(1);
-    }
-
-    // Close ruleset fd
     unsafe {
-        libc::close(ruleset_fd as i32);
+        if let Err(e) = ruleset.apply_pre_exec() {
+            eprintln!("rune _landlock: landlock restrict failed: {}", e);
+            std::process::exit(1);
+        }
     }
 
     // Exec
@@ -596,5 +700,29 @@ mod tests_extra {
         // Path with null byte should fail CString::new
         let result = add_path_rule(0, "/tmp/bad\0path", ACCESS_RO);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_get_landlock_abi() {
+        let abi = get_landlock_abi();
+        // On modern Linux kernels (5.13+), abi >= 1; on older kernels, abi <= 0 (e.g. -1 for ENOSYS)
+        // Calling get_landlock_abi should be consistent across calls
+        assert_eq!(abi, get_landlock_abi());
+    }
+
+    #[test]
+    fn test_landlock_ruleset_build() {
+        let abi = get_landlock_abi();
+        let rw = vec![PathBuf::from("/tmp")];
+        let ro = vec![PathBuf::from("/bin"), PathBuf::from("/usr")];
+        let traverse = vec![PathBuf::from("/dev")];
+        let rs = LandlockRuleset::build(&rw, &ro, &traverse);
+        if abi >= 1 {
+            assert!(rs.is_some(), "Landlock ruleset should build when ABI >= 1");
+            let ruleset = rs.unwrap();
+            assert!(ruleset.fd() >= 0);
+        } else {
+            assert!(rs.is_none(), "Landlock ruleset should be None when ABI < 1");
+        }
     }
 }

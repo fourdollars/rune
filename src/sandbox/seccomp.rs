@@ -7,6 +7,7 @@
 use std::env;
 use std::os::unix::process::CommandExt;
 use std::process::Command;
+use std::sync::OnceLock;
 
 const OFFSET_NR: u32 = 0;
 const OFFSET_ARCH: u32 = 4;
@@ -38,20 +39,155 @@ const SYS_RECVMSG: u32 = 47;
 const SYS_BIND: u32 = 49;
 const SYS_LISTEN: u32 = 50;
 
-#[repr(C)]
-struct SockFilter {
-    code: u16,
-    jt: u8,
-    jf: u8,
-    k: u32,
-}
-#[repr(C)]
-struct SockFprog {
-    len: u16,
-    filter: *const SockFilter,
+static SECCOMP_SUPPORTED: OnceLock<bool> = OnceLock::new();
+
+/// Probe whether prctl(PR_SET_SECCOMP, SECCOMP_MODE_FILTER) is permitted, cached statically.
+pub fn is_seccomp_supported() -> bool {
+    *SECCOMP_SUPPORTED.get_or_init(|| {
+        // Probe via a safe fork to test prctl(PR_SET_SECCOMP) directly
+        // Avoids self-execve and avoids SIGTRAP in Crostini/LXC
+        unsafe {
+            let pid = libc::fork();
+            if pid < 0 {
+                return false;
+            }
+            if pid == 0 {
+                let filter = [bpf_stmt(BPF_RET | BPF_K, SECCOMP_RET_ALLOW)];
+                let prog = SockFprog {
+                    len: 1,
+                    filter: filter.as_ptr(),
+                };
+                if libc::prctl(libc::PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) != 0 {
+                    libc::_exit(1);
+                }
+                let ret = libc::prctl(
+                    libc::PR_SET_SECCOMP,
+                    2,
+                    &prog as *const SockFprog as libc::c_ulong,
+                    0,
+                    0,
+                );
+                libc::_exit(if ret == 0 { 0 } else { 1 });
+            }
+            let mut status = 0;
+            libc::waitpid(pid, &mut status, 0);
+            libc::WIFEXITED(status) && libc::WEXITSTATUS(status) == 0
+        }
+    })
 }
 
-fn bpf_stmt(code: u16, k: u32) -> SockFilter {
+#[derive(Clone, Copy, Debug)]
+#[repr(C)]
+pub struct SockFilter {
+    pub code: u16,
+    pub jt: u8,
+    pub jf: u8,
+    pub k: u32,
+}
+
+#[repr(C)]
+pub struct SockFprog {
+    pub len: u16,
+    pub filter: *const SockFilter,
+}
+
+#[derive(Clone, Debug)]
+pub struct SeccompFilter {
+    filter: Vec<SockFilter>,
+}
+
+impl SeccompFilter {
+    /// Build a Seccomp BPF filter in the parent process.
+    pub fn build(allowed_syscalls: &[String], block_net: bool) -> Option<Self> {
+        if !is_seccomp_supported() {
+            return None;
+        }
+
+        let all_dangerous = vec![
+            SYS_PTRACE,
+            SYS_MOUNT,
+            SYS_UNSHARE,
+            SYS_KEXEC_LOAD,
+            SYS_BPF,
+            SYS_SETNS,
+        ];
+
+        let wildcard = allowed_syscalls.iter().any(|s| s == "*");
+
+        let mut blocked: Vec<u32> = if wildcard {
+            Vec::new()
+        } else {
+            all_dangerous
+                .into_iter()
+                .filter(|&nr| {
+                    !allowed_syscalls
+                        .iter()
+                        .any(|name| syscall_name_to_nr(name) == Some(nr))
+                })
+                .collect()
+        };
+
+        if block_net {
+            blocked.push(SYS_SOCKET);
+            blocked.push(SYS_CONNECT);
+            blocked.push(SYS_ACCEPT);
+            blocked.push(SYS_BIND);
+            blocked.push(SYS_LISTEN);
+        }
+
+        let num_blocked = blocked.len();
+        let mut filter: Vec<SockFilter> = Vec::new();
+        filter.push(bpf_stmt(BPF_LD | BPF_W | BPF_ABS, OFFSET_ARCH));
+        filter.push(bpf_jump(
+            BPF_JMP | BPF_JEQ | BPF_K,
+            AUDIT_ARCH_X86_64,
+            0,
+            (num_blocked + 2) as u8,
+        ));
+        filter.push(bpf_stmt(BPF_LD | BPF_W | BPF_ABS, OFFSET_NR));
+
+        for (i, &nr) in blocked.iter().enumerate() {
+            let jump_to_deny = (num_blocked - i) as u8;
+            filter.push(bpf_jump(BPF_JMP | BPF_JEQ | BPF_K, nr, jump_to_deny, 0));
+        }
+
+        filter.push(bpf_stmt(BPF_RET | BPF_K, SECCOMP_RET_ALLOW));
+        filter.push(bpf_stmt(BPF_RET | BPF_K, SECCOMP_RET_ERRNO | EPERM));
+
+        Some(Self { filter })
+    }
+
+    /// Apply Seccomp filter in the child process (inside `pre_exec`).
+    ///
+    /// # Safety
+    /// Must only call async-signal-safe functions (no heap allocations, formatting, or stdio).
+    pub unsafe fn apply_pre_exec(&self) -> std::io::Result<()> {
+        let prog = SockFprog {
+            len: self.filter.len() as u16,
+            filter: self.filter.as_ptr(),
+        };
+
+        if libc::prctl(libc::PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) != 0 {
+            return Err(std::io::Error::last_os_error());
+        }
+
+        let ret = libc::prctl(
+            libc::PR_SET_SECCOMP,
+            2,
+            &prog as *const SockFprog as libc::c_ulong,
+            0,
+            0,
+        );
+
+        if ret != 0 {
+            return Err(std::io::Error::last_os_error());
+        }
+
+        Ok(())
+    }
+}
+
+pub fn bpf_stmt(code: u16, k: u32) -> SockFilter {
     SockFilter {
         code,
         jt: 0,
@@ -59,7 +195,8 @@ fn bpf_stmt(code: u16, k: u32) -> SockFilter {
         k,
     }
 }
-fn bpf_jump(code: u16, k: u32, jt: u8, jf: u8) -> SockFilter {
+
+pub fn bpf_jump(code: u16, k: u32, jt: u8, jf: u8) -> SockFilter {
     SockFilter { code, jt, jf, k }
 }
 
@@ -80,7 +217,7 @@ fn syscall_name_to_nr(name: &str) -> Option<u32> {
     }
 }
 
-/// Entry point when invoked as `rune _landlock` / `_seccomp` / `_net-guard` subcommand.
+/// Entry point when invoked as `rune _seccomp` subcommand.
 pub fn run() {
     let all_args: Vec<String> = env::args().collect();
     let args: Vec<String> = all_args[1..].to_vec(); // skip binary name, keep subcommand as args[0]
@@ -116,79 +253,21 @@ pub fn run() {
         std::process::exit(1);
     }
 
-    // Build blocked list: all dangerous syscalls EXCEPT those in allowed_syscalls
-    let all_dangerous = vec![
-        SYS_PTRACE,
-        SYS_MOUNT,
-        SYS_UNSHARE,
-        SYS_KEXEC_LOAD,
-        SYS_BPF,
-        SYS_SETNS,
-    ];
-
-    // If allowed_syscalls contains "*", block nothing
-    let wildcard = allowed_syscalls.iter().any(|s| s == "*");
-
-    let mut blocked: Vec<u32> = if wildcard {
-        Vec::new()
-    } else {
-        all_dangerous
-            .into_iter()
-            .filter(|&nr| {
-                // Keep in blocked list only if NOT in allowed_syscalls
-                !allowed_syscalls
-                    .iter()
-                    .any(|name| syscall_name_to_nr(name) == Some(nr))
-            })
-            .collect()
-    };
-
-    if block_net {
-        blocked.push(SYS_SOCKET);
-        blocked.push(SYS_CONNECT);
-        blocked.push(SYS_ACCEPT);
-        blocked.push(SYS_BIND);
-        blocked.push(SYS_LISTEN);
-    }
-    let num_blocked = blocked.len();
-
-    let mut filter: Vec<SockFilter> = Vec::new();
-    filter.push(bpf_stmt(BPF_LD | BPF_W | BPF_ABS, OFFSET_ARCH));
-    filter.push(bpf_jump(
-        BPF_JMP | BPF_JEQ | BPF_K,
-        AUDIT_ARCH_X86_64,
-        0,
-        (num_blocked + 2) as u8,
-    ));
-    filter.push(bpf_stmt(BPF_LD | BPF_W | BPF_ABS, OFFSET_NR));
-
-    for (i, &nr) in blocked.iter().enumerate() {
-        let jump_to_deny = (num_blocked - i) as u8;
-        filter.push(bpf_jump(BPF_JMP | BPF_JEQ | BPF_K, nr, jump_to_deny, 0));
-    }
-
-    filter.push(bpf_stmt(BPF_RET | BPF_K, SECCOMP_RET_ALLOW));
-    filter.push(bpf_stmt(BPF_RET | BPF_K, SECCOMP_RET_ERRNO | EPERM));
-
-    let prog = SockFprog {
-        len: filter.len() as u16,
-        filter: filter.as_ptr(),
+    let filter = match SeccompFilter::build(&allowed_syscalls, block_net) {
+        Some(f) => f,
+        None => {
+            eprintln!("rune _seccomp: Seccomp not supported on this host");
+            let err = Command::new(&args[cmd_idx])
+                .args(&args[cmd_idx + 1..])
+                .exec();
+            eprintln!("rune _seccomp: exec failed: {}", err);
+            std::process::exit(1);
+        }
     };
 
     unsafe {
-        if libc::prctl(libc::PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) != 0 {
-            eprintln!("rune _seccomp: prctl(NO_NEW_PRIVS) failed");
-            std::process::exit(1);
-        }
-        let ret = libc::prctl(
-            libc::PR_SET_SECCOMP,
-            2,
-            &prog as *const SockFprog as libc::c_ulong,
-            0,
-            0,
-        );
-        if ret != 0 {
-            eprintln!("rune _seccomp: prctl(SET_SECCOMP) failed");
+        if let Err(e) = filter.apply_pre_exec() {
+            eprintln!("rune _seccomp: apply failed: {}", e);
             std::process::exit(1);
         }
     }
@@ -436,5 +515,19 @@ mod tests {
     fn test_sockfilter_size() {
         // SockFilter: u16 + u8 + u8 + u32 = 8 bytes (repr C)
         assert_eq!(std::mem::size_of::<SockFilter>(), 8);
+    }
+
+    #[test]
+    fn test_is_seccomp_supported() {
+        let supp = is_seccomp_supported();
+        assert_eq!(supp, is_seccomp_supported());
+    }
+
+    #[test]
+    fn test_seccomp_filter_build() {
+        let filter = SeccompFilter::build(&[], false);
+        if is_seccomp_supported() {
+            assert!(filter.is_some());
+        }
     }
 }

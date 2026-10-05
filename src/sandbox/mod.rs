@@ -2,9 +2,14 @@ pub mod landlock;
 pub mod net_guard;
 pub mod seccomp;
 
+pub use landlock::LandlockRuleset;
+pub use seccomp::SeccompFilter;
+
 use anyhow::{Context, Result};
 use std::collections::HashMap;
+use std::ffi::CString;
 use std::path::PathBuf;
+use std::sync::OnceLock;
 use tokio::process::Command;
 use tracing::{debug, info, warn};
 
@@ -52,6 +57,7 @@ impl Default for SandboxConfig {
             read_write_paths: vec![
                 PathBuf::from("/tmp"),
                 PathBuf::from("/dev/null"),
+                PathBuf::from("/dev/zero"),
                 PathBuf::from("/dev/urandom"),
             ],
             read_only_paths: ["/bin", "/usr", "/lib", "/lib64", "/etc"]
@@ -97,6 +103,311 @@ pub struct SandboxResult {
     pub active_layers: Vec<String>,
 }
 
+static PROBE_UNSHARE: OnceLock<bool> = OnceLock::new();
+static PROBE_SYSTEMD_RUN: OnceLock<bool> = OnceLock::new();
+
+pub fn probe_has_unshare() -> bool {
+    *PROBE_UNSHARE.get_or_init(|| {
+        std::process::Command::new("unshare")
+            .args(["--user", "--net", "--", "true"])
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false)
+    })
+}
+
+pub fn probe_has_systemd_run() -> bool {
+    *PROBE_SYSTEMD_RUN.get_or_init(|| {
+        std::process::Command::new("which")
+            .arg("systemd-run")
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false)
+    })
+}
+
+unsafe fn copy_file_safe(src: &[u8], dst: &[u8]) -> bool {
+    let src_fd = libc::open(src.as_ptr() as *const libc::c_char, libc::O_RDONLY);
+    if src_fd < 0 {
+        return false;
+    }
+    let dst_fd = libc::open(
+        dst.as_ptr() as *const libc::c_char,
+        libc::O_WRONLY | libc::O_CREAT | libc::O_TRUNC,
+        0o644,
+    );
+    if dst_fd < 0 {
+        libc::close(src_fd);
+        return false;
+    }
+    let mut buf = [0u8; 4096];
+    loop {
+        let n = libc::read(src_fd, buf.as_mut_ptr() as *mut libc::c_void, buf.len());
+        if n <= 0 {
+            break;
+        }
+        libc::write(dst_fd, buf.as_ptr() as *const libc::c_void, n as usize);
+    }
+    libc::close(src_fd);
+    libc::close(dst_fd);
+    true
+}
+
+fn format_id_map(buf: &mut [u8; 64], id: u32) -> usize {
+    let prefix = b"0 ";
+    let suffix = b" 1\n";
+    let mut pos = 0;
+    buf[pos..pos + prefix.len()].copy_from_slice(prefix);
+    pos += prefix.len();
+    let num_bytes = format_u32(id, &mut buf[pos..pos + 12]);
+    pos += num_bytes;
+    buf[pos..pos + suffix.len()].copy_from_slice(suffix);
+    pos += suffix.len();
+    pos
+}
+
+fn format_tmpfs_size(buf: &mut [u8; 32], size_mb: u64) -> usize {
+    let prefix = b"size=";
+    let suffix = b"M,mode=1777\0";
+    let mut pos = 0;
+    buf[pos..pos + prefix.len()].copy_from_slice(prefix);
+    pos += prefix.len();
+    let num_bytes = format_u64(size_mb, &mut buf[pos..pos + 12]);
+    pos += num_bytes;
+    buf[pos..pos + suffix.len()].copy_from_slice(suffix);
+    pos += suffix.len();
+    pos
+}
+
+fn format_u32(mut n: u32, buf: &mut [u8]) -> usize {
+    if n == 0 {
+        buf[0] = b'0';
+        return 1;
+    }
+    let mut tmp = [0u8; 10];
+    let mut i = 0;
+    while n > 0 {
+        tmp[i] = b'0' + (n % 10) as u8;
+        n /= 10;
+        i += 1;
+    }
+    for j in 0..i {
+        buf[j] = tmp[i - 1 - j];
+    }
+    i
+}
+
+fn format_u64(mut n: u64, buf: &mut [u8]) -> usize {
+    if n == 0 {
+        buf[0] = b'0';
+        return 1;
+    }
+    let mut tmp = [0u8; 20];
+    let mut i = 0;
+    while n > 0 {
+        tmp[i] = b'0' + (n % 10) as u8;
+        n /= 10;
+        i += 1;
+    }
+    for j in 0..i {
+        buf[j] = tmp[i - 1 - j];
+    }
+    i
+}
+
+unsafe fn setup_tmpfs_pre_exec(
+    tmp_size_mb: u64,
+    uid: u32,
+    gid: u32,
+    isolate_net: bool,
+    session_tmp_dir: Option<&std::ffi::CStr>,
+    custom_home: Option<&std::ffi::CStr>,
+    real_home: Option<&std::ffi::CStr>,
+    overlay_mounts: &[(std::ffi::CString, std::ffi::CString)],
+    target_cwd: Option<&std::ffi::CStr>,
+) {
+    if libc::unshare(libc::CLONE_NEWUSER) != 0 {
+        return;
+    }
+
+    // Write uid_map: "0 <uid> 1\n"
+    let uid_fd = libc::open(b"/proc/self/uid_map\0".as_ptr() as *const _, libc::O_WRONLY);
+    if uid_fd >= 0 {
+        let mut buf = [0u8; 64];
+        let len = format_id_map(&mut buf, uid);
+        libc::write(uid_fd, buf.as_ptr() as *const _, len);
+        libc::close(uid_fd);
+    }
+
+    // Write setgroups: "deny\n"
+    let sg_fd = libc::open(
+        b"/proc/self/setgroups\0".as_ptr() as *const _,
+        libc::O_WRONLY,
+    );
+    if sg_fd >= 0 {
+        libc::write(sg_fd, b"deny\n".as_ptr() as *const _, 5);
+        libc::close(sg_fd);
+    }
+
+    // Write gid_map: "0 <gid> 1\n"
+    let gid_fd = libc::open(b"/proc/self/gid_map\0".as_ptr() as *const _, libc::O_WRONLY);
+    if gid_fd >= 0 {
+        let mut buf = [0u8; 64];
+        let len = format_id_map(&mut buf, gid);
+        libc::write(gid_fd, buf.as_ptr() as *const _, len);
+        libc::close(gid_fd);
+    }
+
+    let mut ns_flags = libc::CLONE_NEWNS;
+    if isolate_net {
+        ns_flags |= libc::CLONE_NEWNET;
+    }
+    if libc::unshare(ns_flags) != 0 {
+        return;
+    }
+
+    // Make mount propagation private so mounts don't leak or conflict with parent MS_SHARED
+    libc::mount(
+        std::ptr::null(),
+        b"/\0".as_ptr() as *const _,
+        std::ptr::null(),
+        libc::MS_REC | libc::MS_PRIVATE,
+        std::ptr::null(),
+    );
+
+    // Mount /tmp
+    if let Some(session_dir) = session_tmp_dir {
+        libc::mount(
+            session_dir.as_ptr(),
+            b"/tmp\0".as_ptr() as *const _,
+            std::ptr::null(),
+            libc::MS_BIND,
+            std::ptr::null(),
+        );
+    } else {
+        let mut opt = [0u8; 32];
+        format_tmpfs_size(&mut opt, tmp_size_mb);
+        libc::mount(
+            b"tmpfs\0".as_ptr() as *const _,
+            b"/tmp\0".as_ptr() as *const _,
+            b"tmpfs\0".as_ptr() as *const _,
+            0,
+            opt.as_ptr() as *const libc::c_void,
+        );
+    }
+
+    // Mount custom home if requested
+    if let (Some(ch), Some(rh)) = (custom_home, real_home) {
+        // Phase 1: Stash handle to real home
+        libc::mkdir(b"/tmp/.orig_home\0".as_ptr() as *const _, 0o700);
+        libc::mount(
+            rh.as_ptr(),
+            b"/tmp/.orig_home\0".as_ptr() as *const _,
+            std::ptr::null(),
+            libc::MS_BIND,
+            std::ptr::null(),
+        );
+        // Phase 2: Bind custom_home over real_home
+        libc::mount(
+            ch.as_ptr(),
+            rh.as_ptr(),
+            std::ptr::null(),
+            libc::MS_BIND,
+            std::ptr::null(),
+        );
+        // Phase 3: Bind whitelisted items back from /tmp/.orig_home to real_home
+        for (source, dest) in overlay_mounts {
+            libc::mount(
+                source.as_ptr(),
+                dest.as_ptr(),
+                std::ptr::null(),
+                libc::MS_BIND,
+                std::ptr::null(),
+            );
+        }
+    }
+
+    // Filtered /etc: isolate sensitive files like /etc/passwd and /etc/hostname
+    libc::mkdir(b"/tmp/.etc\0".as_ptr() as *const _, 0o755);
+    if !copy_file_safe(
+        b"/run/systemd/resolve/resolv.conf\0",
+        b"/tmp/.etc/resolv.conf\0",
+    ) {
+        copy_file_safe(b"/etc/resolv.conf\0", b"/tmp/.etc/resolv.conf\0");
+    }
+    copy_file_safe(b"/etc/ld.so.cache\0", b"/tmp/.etc/ld.so.cache\0");
+    copy_file_safe(b"/etc/ld.so.conf\0", b"/tmp/.etc/ld.so.conf\0");
+    copy_file_safe(b"/etc/nsswitch.conf\0", b"/tmp/.etc/nsswitch.conf\0");
+    copy_file_safe(b"/etc/locale.alias\0", b"/tmp/.etc/locale.alias\0");
+
+    libc::mkdir(b"/tmp/.etc/ssl\0".as_ptr() as *const _, 0o755);
+    libc::mount(
+        b"/etc/ssl\0".as_ptr() as *const _,
+        b"/tmp/.etc/ssl\0".as_ptr() as *const _,
+        std::ptr::null(),
+        libc::MS_BIND | libc::MS_REC,
+        std::ptr::null(),
+    );
+
+    libc::mkdir(b"/tmp/.etc/ca-certificates\0".as_ptr() as *const _, 0o755);
+    libc::mount(
+        b"/etc/ca-certificates\0".as_ptr() as *const _,
+        b"/tmp/.etc/ca-certificates\0".as_ptr() as *const _,
+        std::ptr::null(),
+        libc::MS_BIND | libc::MS_REC,
+        std::ptr::null(),
+    );
+
+    libc::mkdir(b"/tmp/.etc/alternatives\0".as_ptr() as *const _, 0o755);
+    libc::mount(
+        b"/etc/alternatives\0".as_ptr() as *const _,
+        b"/tmp/.etc/alternatives\0".as_ptr() as *const _,
+        std::ptr::null(),
+        libc::MS_BIND | libc::MS_REC,
+        std::ptr::null(),
+    );
+
+    libc::mkdir(b"/tmp/.etc/ld.so.conf.d\0".as_ptr() as *const _, 0o755);
+    libc::mount(
+        b"/etc/ld.so.conf.d\0".as_ptr() as *const _,
+        b"/tmp/.etc/ld.so.conf.d\0".as_ptr() as *const _,
+        std::ptr::null(),
+        libc::MS_BIND | libc::MS_REC,
+        std::ptr::null(),
+    );
+
+    libc::mount(
+        b"/tmp/.etc\0".as_ptr() as *const _,
+        b"/etc\0".as_ptr() as *const _,
+        std::ptr::null(),
+        libc::MS_BIND,
+        std::ptr::null(),
+    );
+
+    // Mount empty tmpfs on /var/run to block access to docker.sock and dbus socket
+    libc::mount(
+        b"tmpfs\0".as_ptr() as *const _,
+        b"/var/run\0".as_ptr() as *const _,
+        b"tmpfs\0".as_ptr() as *const _,
+        0,
+        b"size=0\0".as_ptr() as *const libc::c_void,
+    );
+
+    // Mount proc
+    libc::mount(
+        b"proc\0".as_ptr() as *const _,
+        b"/proc\0".as_ptr() as *const _,
+        b"proc\0".as_ptr() as *const _,
+        0,
+        std::ptr::null(),
+    );
+
+    // Change directory to target_cwd if requested
+    if let Some(cwd) = target_cwd {
+        libc::chdir(cwd.as_ptr());
+    }
+}
+
 /// Executor that wraps shell commands with best-effort Linux isolation.
 pub struct SandboxExecutor {
     config: SandboxConfig,
@@ -136,43 +447,11 @@ impl SandboxExecutor {
 
         let mut degraded = false;
         let mut active_layers: Vec<String> = Vec::new();
-        let mut wrapper_parts: Vec<String> = Vec::new();
 
         // Layer 1: Resource limits via systemd-run (cgroups v2)
-        if has_systemd_run && (self.config.memory_limit > 0 || self.config.max_pids > 0) {
-            let mut systemd_args = vec![
-                "systemd-run".to_string(),
-                "--quiet".to_string(),
-                "--scope".to_string(),
-                "--user".to_string(),
-            ];
-            if self.config.memory_limit > 0 {
-                systemd_args.push(format!("-p MemoryMax={}", self.config.memory_limit));
-            }
-            if self.config.max_pids > 0 {
-                systemd_args.push(format!("-p TasksMax={}", self.config.max_pids));
-            }
-            systemd_args.push("--".to_string());
+        let use_systemd_run = false;
 
-            // Test if systemd-run --user works
-            let test = Command::new("systemd-run")
-                .args(["--quiet", "--scope", "--user", "--", "true"])
-                .output()
-                .await;
-            if test.map(|o| o.status.success()).unwrap_or(false) {
-                wrapper_parts.push(systemd_args.join(" "));
-                active_layers.push(format!(
-                    "cgroups(mem={}MB,pids={})",
-                    self.config.memory_limit / 1024 / 1024,
-                    self.config.max_pids
-                ));
-                info!("sandbox: cgroups via systemd-run --scope --user");
-            } else {
-                debug!("sandbox: systemd-run --user not available, skipping cgroups");
-            }
-        }
-
-        // Layer 2: Tmpfs isolation + Network isolation (combined in one unshare call)
+        // Layer 2: Tmpfs isolation + Network isolation
         let use_tmpfs = self.config.tmp_size_mb > 0 && has_unshare;
         let mut use_net_guard_empty = false;
         let mut use_unshare_net = false;
@@ -200,56 +479,30 @@ impl SandboxExecutor {
             info!("sandbox: net-guard blocking all (empty allowlist, unshare unavailable)");
         }
 
-        // Build combined unshare command (mount + optional net)
-        if has_unshare && (use_tmpfs || use_unshare_net) {
-            let mut flags = vec!["unshare"];
-            flags.push("--user");
-            if use_tmpfs {
-                flags.push("--map-root-user");
-                flags.push("--mount");
-                flags.push("--pid");
-                flags.push("--fork");
-                active_layers.push(format!("tmpfs(/tmp,{}MB)", self.config.tmp_size_mb));
-                info!(
-                    size_mb = self.config.tmp_size_mb,
-                    "sandbox: isolated tmpfs enabled"
-                );
-            }
-            if use_unshare_net {
-                flags.push("--net");
-            }
-            flags.push("--");
-            wrapper_parts.push(flags.join(" "));
+        if use_tmpfs {
+            active_layers.push(format!("tmpfs(/tmp,{}MB)", self.config.tmp_size_mb));
+            info!(
+                size_mb = self.config.tmp_size_mb,
+                "sandbox: isolated tmpfs enabled"
+            );
         }
 
-        let (mount_exe_cmd, rune_exe_inside) = if use_tmpfs && Self::is_rune_binary() {
-            if let Ok(exe_path) = std::env::current_exe() {
-                let escaped_exe = shell_escape(&exe_path.to_string_lossy());
-                (
-                    format!(" && {{ touch /tmp/.rune-exe 2>/dev/null || true; mount --bind {} /tmp/.rune-exe 2>/dev/null || true; }}", escaped_exe),
-                    "/tmp/.rune-exe".to_string(),
-                )
-            } else {
-                (String::new(), "rune".to_string())
-            }
-        } else {
-            let self_exe = std::env::current_exe()
-                .ok()
-                .and_then(|p| p.to_str().map(|s| s.to_string()))
-                .unwrap_or_else(|| "rune".to_string());
-            (String::new(), self_exe)
-        };
+        let self_exe = std::env::current_exe()
+            .ok()
+            .and_then(|p| p.to_str().map(|s| s.to_string()))
+            .unwrap_or_else(|| "rune".to_string());
 
-        // Layer 3: Seccomp filter via _seccomp subcommand
-        let seccomp_wrapper = self.build_seccomp_wrapper(&rune_exe_inside, false).await;
-        if let Some(ref sw) = seccomp_wrapper {
+        // Layer 3: Seccomp filter (In-process via pre_exec)
+        let seccomp_filter = self.build_seccomp_filter(use_unshare_net);
+        if seccomp_filter.is_some() {
             active_layers.push("seccomp(ptrace,mount,kexec,bpf)".to_string());
             debug!("sandbox: seccomp filter active");
         }
 
-        // Layer 4: Landlock filesystem restriction
-        let landlock_wrapper = self.build_landlock_wrapper(&rune_exe_inside).await;
-        if let Some(ref lw) = landlock_wrapper {
+        // Layer 4: Landlock filesystem restriction (In-process via pre_exec)
+        let (landlock_ruleset, landlock_paths) = self.prepare_landlock();
+        let landlock_fd = landlock_ruleset.as_ref().map(|l| l.fd()).unwrap_or(-1);
+        if landlock_ruleset.is_some() {
             active_layers.push(format!(
                 "landlock(rw={},ro={})",
                 self.config.read_write_paths.len(),
@@ -261,10 +514,7 @@ impl SandboxExecutor {
         // Network guard layer (skip if not running as rune binary)
         let mut net_guard_wrapper: Option<String> = None;
         if use_net_guard_empty && Self::is_rune_binary() {
-            net_guard_wrapper = Some(format!(
-                "'{}' _net-guard --allow-domains \"\" --",
-                rune_exe_inside
-            ));
+            net_guard_wrapper = Some(format!("'{}' _net-guard --allow-domains \"\" --", self_exe));
         }
         if !self.config.allowed_domains.is_empty()
             && !self.config.allowed_domains.iter().any(|d| d == "*")
@@ -273,51 +523,16 @@ impl SandboxExecutor {
             let domains = self.config.allowed_domains.join(",");
             net_guard_wrapper = Some(format!(
                 "'{}' _net-guard --allow-domains {} --",
-                rune_exe_inside, domains
+                self_exe, domains
             ));
         }
-
-        // Build the final command
-        // Chain wrappers: net-guard (outermost) -> landlock -> seccomp -> sh -c "cmd"
-        // net-guard must be outermost because it forks and uses SECCOMP_USER_NOTIF
-        // which would be blocked by _seccomp inner filter
-        let mut inner_cmd_parts = Vec::new();
-
-        if let Some(ng) = net_guard_wrapper {
-            inner_cmd_parts.push(ng);
-        }
-        if let Some(lw) = landlock_wrapper {
-            inner_cmd_parts.push(lw);
-        }
-        if let Some(sw) = seccomp_wrapper {
-            inner_cmd_parts.push(sw);
-        }
-
-        inner_cmd_parts.push(format!("sh -c {}", shell_escape(cmd)));
-
-        let inner_cmd = inner_cmd_parts.join(" ");
 
         let mut cleanup_files: Vec<PathBuf> = Vec::new();
         let mut cleanup_dirs: Vec<PathBuf> = Vec::new();
+        let mut overlay_mounts: Vec<(CString, CString)> = Vec::new();
 
-        let (mount_home_cmd, target_home, target_home_raw) = if let Some(ref custom_home) =
-            self.config.mount_home
-        {
+        let (target_home, target_home_raw) = if let Some(ref custom_home) = self.config.mount_home {
             let real_home = std::env::var("HOME").unwrap_or_else(|_| "/root".to_string());
-            let escaped_real_home = shell_escape(&real_home);
-            let escaped_custom_home = shell_escape(&custom_home.to_string_lossy());
-
-            // Phase 1: Stash a handle to the real original HOME, then bind custom_home over real_home
-            let mut cmd = format!(
-                " && {{ mkdir -p /tmp/.orig_home 2>/dev/null || true; mount --bind {} /tmp/.orig_home 2>/dev/null || true; }}",
-                escaped_real_home
-            );
-            cmd.push_str(&format!(
-                " && {{ mkdir -p {} 2>/dev/null || true; mount --bind {} {} 2>/dev/null || true; }}",
-                escaped_real_home, escaped_custom_home, escaped_real_home
-            ));
-
-            // Phase 2: Overlay whitelist items (from rune.toml, skills, and -M/-m) that reside under real_home
             let real_home_path = std::path::Path::new(&real_home);
             let custom_home_canon =
                 std::fs::canonicalize(custom_home).unwrap_or_else(|_| custom_home.clone());
@@ -329,7 +544,6 @@ impl SandboxExecutor {
                 .chain(self.config.read_only_paths.iter())
             {
                 let p_canon = std::fs::canonicalize(p).unwrap_or_else(|_| p.clone());
-                // Skip custom_home itself to prevent recursive self-mounts like notes-home/notes-home
                 if p.starts_with(real_home_path)
                     && p_canon != custom_home_canon
                     && !overlay_paths.contains(p)
@@ -364,28 +578,20 @@ impl SandboxExecutor {
                     }
 
                     let rel_str = rel.to_string_lossy();
-                    let orig_source = format!("/tmp/.orig_home/{}", rel_str);
-                    let target_dest = p.to_string_lossy().to_string();
-                    let esc_source = shell_escape(&orig_source);
-                    let esc_dest = shell_escape(&target_dest);
-
-                    if p.is_dir() {
-                        cmd.push_str(&format!(
-                            " && if [ -d {} ]; then mkdir -p {} 2>/dev/null && mount --bind {} {} 2>/dev/null || true; fi",
-                            esc_source, esc_dest, esc_source, esc_dest
-                        ));
-                    } else {
-                        cmd.push_str(&format!(
-                            " && if [ -f {} ]; then mkdir -p $(dirname {}) 2>/dev/null && touch {} 2>/dev/null && mount --bind {} {} 2>/dev/null || true; fi",
-                            esc_source, esc_dest, esc_dest, esc_source, esc_dest
-                        ));
+                    let orig_source = format!("/tmp/.orig_home/{}\0", rel_str);
+                    let target_dest = format!("{}\0", p.to_string_lossy());
+                    if let (Ok(s), Ok(d)) = (
+                        CString::from_vec_with_nul(orig_source.into_bytes()),
+                        CString::from_vec_with_nul(target_dest.into_bytes()),
+                    ) {
+                        overlay_mounts.push((s, d));
                     }
                 }
             }
 
-            (cmd, escaped_real_home, real_home)
+            (shell_escape(&real_home), real_home)
         } else {
-            (String::new(), "'/tmp'".to_string(), "/tmp".to_string())
+            ("'/tmp'".to_string(), "/tmp".to_string())
         };
 
         let target_cwd = cwd.unwrap_or(if self.config.mount_home.is_some() {
@@ -393,77 +599,97 @@ impl SandboxExecutor {
         } else {
             "/tmp"
         });
-        let escaped_target_cwd = shell_escape(target_cwd);
 
-        let mount_tmp = if let Some(ref session_dir) = self.config.session_tmp_dir {
-            let escaped_session_dir = shell_escape(&session_dir.to_string_lossy());
+        let session_tmp_dir_cstr = self
+            .config
+            .session_tmp_dir
+            .as_ref()
+            .and_then(|p| CString::new(p.to_string_lossy().as_bytes()).ok());
+        let custom_home_cstr = self
+            .config
+            .mount_home
+            .as_ref()
+            .and_then(|p| CString::new(p.to_string_lossy().as_bytes()).ok());
+        let real_home_cstr = CString::new(target_home_raw.as_bytes()).ok();
+        let target_cwd_cstr = CString::new(target_cwd.as_bytes()).ok();
+
+        let cmd_to_exec = if use_systemd_run {
             format!(
-                "mkdir -p {} && mount --bind {} /tmp",
-                escaped_session_dir, escaped_session_dir
+                "unset INVOCATION_ID JOURNAL_STREAM SYSTEMD_EXEC_PID MANAGERPID DBUS_SESSION_BUS_ADDRESS XDG_RUNTIME_DIR PWD 2>/dev/null; exec {}",
+                cmd
             )
         } else {
-            format!(
-                "mount -t tmpfs -o size={}M,mode=1777 tmpfs /tmp",
-                self.config.tmp_size_mb
-            )
+            cmd.to_string()
         };
 
-        // If tmpfs isolation is active, mount tmpfs/session_dir + isolate /etc and /proc
-        let inner_cmd = if use_tmpfs {
-            // Build the full script that runs inside the mount namespace.
-            // unshare -- needs a single command, so wrap in sh -c "script"
-            let mount_setup = format!(
-                concat!(
-                    "{mount_tmp}",
-                    "{mount_exe_cmd}",
-                    "{mount_home_cmd}",
-                    // cd re-resolves CWD through the new mount so that Landlock's
-                    // inode-based rule matches the process's CWD inode.
-                    " && cd {target_cwd}",
-                    " && mkdir -p /tmp/.etc",
-                    " && {{ cp /etc/ld.so.cache /tmp/.etc/ 2>/dev/null;",
-                    " cp /etc/ld.so.conf /tmp/.etc/ 2>/dev/null;",
-                    " cp -a /etc/ld.so.conf.d /tmp/.etc/ 2>/dev/null;",
-                    " cp /etc/nsswitch.conf /tmp/.etc/ 2>/dev/null;",
-                    " cp /run/systemd/resolve/resolv.conf /tmp/.etc/resolv.conf 2>/dev/null || cp /etc/resolv.conf /tmp/.etc/ 2>/dev/null;",
-                    " cp -a /etc/ssl /tmp/.etc/ 2>/dev/null;",
-                    " cp -a /etc/ca-certificates /tmp/.etc/ 2>/dev/null;",
-                    " cp -a /etc/alternatives /tmp/.etc/ 2>/dev/null;",
-                    " cp /etc/locale.alias /tmp/.etc/ 2>/dev/null;",
-                    " true; }}",
-                    " && mount --bind /tmp/.etc /etc",
-                    " && mount -t proc proc /proc",
-                    " && mount -t tmpfs -o size=0 tmpfs /var/run",
-                    " && unset INVOCATION_ID JOURNAL_STREAM SYSTEMD_EXEC_PID MANAGERPID DBUS_SESSION_BUS_ADDRESS XDG_RUNTIME_DIR PWD && export PWD={target_cwd} HOME={target_home} && exec {cmd}",
-                ),
-                mount_tmp = mount_tmp,
-                mount_exe_cmd = mount_exe_cmd,
-                mount_home_cmd = mount_home_cmd,
-                target_cwd = escaped_target_cwd,
-                target_home = target_home,
-                cmd = inner_cmd,
-            );
-            // The mount_setup becomes the single arg to "sh -c" under unshare
-            format!("sh -c {}", shell_escape(&mount_setup))
+        let final_sh_cmd = if let Some(ng) = net_guard_wrapper {
+            format!("{} sh -c {}", ng, shell_escape(&cmd_to_exec))
         } else {
-            inner_cmd
+            cmd_to_exec
         };
 
-        let final_cmd = if wrapper_parts.is_empty() {
-            if !degraded {
-                degraded = true;
+        let systemd_args: Vec<String> = Vec::new();
+        let mut command = if use_systemd_run {
+            let mut c = Command::new("systemd-run");
+            for arg in &systemd_args {
+                c.arg(arg);
             }
-            warn!("sandbox: running in fully degraded mode (no isolation)");
-            inner_cmd.clone()
+            c.arg("sh");
+            c.arg("-c");
+            c.arg(&final_sh_cmd);
+            c
         } else {
-            format!("{} {}", wrapper_parts.join(" "), inner_cmd)
+            let mut c = Command::new("sh");
+            c.arg("-c");
+            c.arg(&final_sh_cmd);
+            c
         };
+
+        let tmp_size_mb = self.config.tmp_size_mb;
+        let actual_uid = unsafe { libc::getuid() };
+        let actual_gid = unsafe { libc::getgid() };
+        let isolate_net = use_unshare_net;
+
+        unsafe {
+            command.pre_exec(move || {
+                if use_tmpfs {
+                    setup_tmpfs_pre_exec(
+                        tmp_size_mb,
+                        actual_uid,
+                        actual_gid,
+                        isolate_net,
+                        session_tmp_dir_cstr.as_deref(),
+                        custom_home_cstr.as_deref(),
+                        real_home_cstr.as_deref(),
+                        &overlay_mounts,
+                        target_cwd_cstr.as_deref(),
+                    );
+                } else if isolate_net && has_unshare {
+                    let _ = libc::unshare(libc::CLONE_NEWUSER | libc::CLONE_NEWNET);
+                }
+
+                if landlock_fd >= 0 {
+                    for (path, access) in &landlock_paths {
+                        LandlockRuleset::add_path_rule_raw(landlock_fd, path.as_ptr(), *access);
+                    }
+                    LandlockRuleset::apply_fd_pre_exec(landlock_fd)?;
+                }
+
+                if let Some(ref sc) = seccomp_filter {
+                    sc.apply_pre_exec()?;
+                }
+
+                Ok(())
+            });
+        }
+
+        if active_layers.is_empty() {
+            degraded = true;
+            warn!("sandbox: running in fully degraded mode (no isolation)");
+        }
 
         info!(layers = ?active_layers, timeout = self.config.timeout_secs, "sandbox: executing");
-        debug!(final_cmd = %final_cmd, "sandbox: full command");
-
-        let mut command = Command::new("sh");
-        command.arg("-c").arg(&final_cmd);
+        debug!(cmd = %cmd, "sandbox: full command");
 
         // Clear environment to prevent info leaks (P2: env disclosure)
         // Only pass minimal safe set + user-provided overrides
@@ -473,20 +699,17 @@ impl SandboxExecutor {
         command.env("LANG", "C.UTF-8");
         command.env("TERM", "dumb");
         // systemd-run --user needs XDG_RUNTIME_DIR and DBUS_SESSION_BUS_ADDRESS
-        if let Ok(v) = std::env::var("XDG_RUNTIME_DIR") {
-            command.env("XDG_RUNTIME_DIR", v);
-        }
-        if let Ok(v) = std::env::var("DBUS_SESSION_BUS_ADDRESS") {
-            command.env("DBUS_SESSION_BUS_ADDRESS", v);
-        }
-
-        // Default cwd to /tmp to prevent PWD leaking real working dir (P2)
-        command.current_dir("/tmp");
-        if let Some(dir) = cwd {
-            if std::path::Path::new(dir).is_dir() {
-                command.current_dir(dir);
+        if use_systemd_run {
+            if let Ok(v) = std::env::var("XDG_RUNTIME_DIR") {
+                command.env("XDG_RUNTIME_DIR", v);
+            }
+            if let Ok(v) = std::env::var("DBUS_SESSION_BUS_ADDRESS") {
+                command.env("DBUS_SESSION_BUS_ADDRESS", v);
             }
         }
+
+        // Default cwd to target_cwd
+        command.current_dir(target_cwd);
         if let Some(envs) = env {
             for (k, v) in envs {
                 command.env(k, v);
@@ -564,6 +787,91 @@ impl SandboxExecutor {
             .unwrap_or(false)
     }
 
+    /// Prepare an empty Landlock ruleset FD and collect the CString paths with their access rights.
+    /// The ruleset FD is opened in parent, and paths are attached inside `pre_exec` after mount setup.
+    pub fn prepare_landlock(&self) -> (Option<LandlockRuleset>, Vec<(CString, u64)>) {
+        let ruleset = match LandlockRuleset::create_empty() {
+            Some(r) => r,
+            None => return (None, Vec::new()),
+        };
+
+        let custom_home_canon = self
+            .config
+            .mount_home
+            .as_ref()
+            .map(|h| std::fs::canonicalize(h).unwrap_or_else(|_| h.clone()));
+        let real_home_pb = std::env::var("HOME").ok().map(PathBuf::from);
+
+        let is_custom_home_path = |p: &PathBuf| -> bool {
+            if let Some(ref ch) = custom_home_canon {
+                let p_canon = std::fs::canonicalize(p).unwrap_or_else(|_| p.clone());
+                p == ch || &p_canon == ch || p.starts_with(ch) || p_canon.starts_with(ch)
+            } else {
+                false
+            }
+        };
+
+        let mut paths = Vec::new();
+        let mut has_real_home_rw = false;
+
+        for p in &self.config.read_write_paths {
+            if is_custom_home_path(p) {
+                continue;
+            }
+            if let Some(ref rh) = real_home_pb {
+                if p == rh {
+                    has_real_home_rw = true;
+                }
+            }
+            if let Ok(c) = CString::new(p.to_string_lossy().as_bytes()) {
+                paths.push((c, landlock::ACCESS_RW));
+            }
+        }
+        if self.config.mount_home.is_some() && !has_real_home_rw {
+            if let Some(ref rh) = real_home_pb {
+                if let Ok(c) = CString::new(rh.to_string_lossy().as_bytes()) {
+                    paths.push((c, landlock::ACCESS_RW));
+                }
+            }
+        }
+        for p in &self.config.read_only_paths {
+            if is_custom_home_path(p) {
+                continue;
+            }
+            if let Ok(c) = CString::new(p.to_string_lossy().as_bytes()) {
+                paths.push((c, landlock::ACCESS_RO));
+            }
+        }
+        for p in &self.config.traverse_paths {
+            if is_custom_home_path(p) {
+                continue;
+            }
+            if let Ok(c) = CString::new(p.to_string_lossy().as_bytes()) {
+                paths.push((c, landlock::LANDLOCK_ACCESS_FS_EXECUTE));
+            }
+        }
+
+        (Some(ruleset), paths)
+    }
+
+    /// Build an in-process Landlock ruleset configured with the sandbox paths.
+    pub fn build_landlock_ruleset(&self) -> Option<LandlockRuleset> {
+        let (ruleset, paths) = self.prepare_landlock();
+        if let Some(ref r) = ruleset {
+            for (p, access) in paths {
+                unsafe {
+                    LandlockRuleset::add_path_rule_raw(r.fd(), p.as_ptr(), access);
+                }
+            }
+        }
+        ruleset
+    }
+
+    /// Build an in-process Seccomp filter configured for the sandbox.
+    pub fn build_seccomp_filter(&self, block_net: bool) -> Option<SeccompFilter> {
+        SeccompFilter::build(&self.config.allowed_syscalls, block_net)
+    }
+
     async fn build_seccomp_wrapper(&self, self_exe: &str, block_net: bool) -> Option<String> {
         // Use self-exe _seccomp subcommand (always available — single binary)
         if !Self::is_rune_binary() {
@@ -571,22 +879,7 @@ impl SandboxExecutor {
             return None;
         }
 
-        // Probe whether prctl(PR_SET_SECCOMP, SECCOMP_MODE_FILTER) is permitted.
-        // Some container runtimes (e.g. ChromeOS Crostini / LXC) block this via
-        // SECCOMP_RET_TRAP, which kills the child with SIGTRAP (exit 133) before
-        // any useful work happens.  Run a trivial allow-all filter test first; if it
-        // fails we degrade gracefully rather than crashing every tool invocation.
-        let probe_exe = std::env::current_exe()
-            .ok()
-            .and_then(|p| p.to_str().map(|s| s.to_string()))
-            .unwrap_or_else(|| "rune".to_string());
-        let seccomp_available = Command::new(&probe_exe)
-            .args(["_seccomp", "--allow-syscalls", "*", "true"])
-            .output()
-            .await
-            .map(|o| o.status.success())
-            .unwrap_or(false);
-        if !seccomp_available {
+        if !seccomp::is_seccomp_supported() {
             warn!(
                 "sandbox: prctl(PR_SET_SECCOMP) not available on this host, skipping seccomp layer"
             );
@@ -727,12 +1020,69 @@ mod tests {
     use super::*;
 
     #[tokio::test]
+    async fn test_pre_exec_setup_tmpfs() {
+        let mut cmd = Command::new("id");
+        unsafe {
+            cmd.pre_exec(move || {
+                let uid = libc::getuid();
+                let gid = libc::getgid();
+                setup_tmpfs_pre_exec(10, uid, gid, true, None, None, None, &[], None);
+                Ok(())
+            });
+        }
+        let output = cmd.output().await.expect("cmd should execute");
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        println!("output stdout: {}", stdout);
+        assert!(output.status.success());
+    }
+
+    #[tokio::test]
+    async fn test_pre_exec_full_isolation() {
+        let landlock = LandlockRuleset::build(
+            &[PathBuf::from("/tmp"), PathBuf::from("/dev/null")],
+            &[
+                PathBuf::from("/bin"),
+                PathBuf::from("/usr"),
+                PathBuf::from("/lib"),
+                PathBuf::from("/lib64"),
+                PathBuf::from("/etc"),
+            ],
+            &[PathBuf::from("/dev")],
+        );
+        let seccomp = SeccompFilter::build(&[], true);
+        let landlock_fd = landlock.as_ref().map(|l| l.fd()).unwrap_or(-1);
+
+        let mut cmd = Command::new("sh");
+        cmd.args(["-c", "test -r /bin/sh && echo OK; cat /etc/shadow 2>&1"]);
+        unsafe {
+            cmd.pre_exec(move || {
+                let uid = libc::getuid();
+                let gid = libc::getgid();
+                setup_tmpfs_pre_exec(10, uid, gid, true, None, None, None, &[], None);
+                if landlock_fd >= 0 {
+                    LandlockRuleset::apply_fd_pre_exec(landlock_fd)?;
+                }
+                if let Some(ref sc) = seccomp {
+                    sc.apply_pre_exec()?;
+                }
+                Ok(())
+            });
+        }
+        let output = cmd.output().await.expect("cmd should execute");
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        println!("output stdout: {}", stdout);
+        assert!(stdout.contains("OK"));
+        assert!(stdout.contains("Permission denied") || stdout.contains("No such file"));
+    }
+
+    #[tokio::test]
     async fn test_sandbox_basic_command() {
         let executor = SandboxExecutor::with_defaults();
         let result = executor
             .run_shell_command("echo hello", None, None)
             .await
             .expect("should succeed");
+        println!("active layers: {:?}", result.active_layers);
         assert!(result.stdout.trim().contains("hello"));
         assert_eq!(result.exit_code, 0);
         assert!(!result.timed_out);
@@ -1281,5 +1631,59 @@ mod tests {
             "landlock args should contain real home in --rw when mount_home is set, got: {}",
             w
         );
+    }
+
+    #[tokio::test]
+    async fn test_benchmark_in_process_sandbox_50_samples() {
+        // Baseline: unsandboxed sh -c true
+        let mut base_samples = Vec::new();
+        for _ in 0..50 {
+            let start = std::time::Instant::now();
+            let _ = tokio::process::Command::new("sh")
+                .arg("-c")
+                .arg("true")
+                .output()
+                .await;
+            base_samples.push(start.elapsed().as_micros() as f64);
+        }
+        let base_avg = (base_samples.iter().sum::<f64>() / 50.0) / 1000.0;
+
+        // In-Process pre_exec sandboxed execution
+        let executor = SandboxExecutor::with_defaults();
+        for _ in 0..3 {
+            let _ = executor.run_shell_command("true", None, None).await;
+        }
+
+        let mut samples_us = Vec::new();
+        for _ in 0..50 {
+            let start = std::time::Instant::now();
+            let res = executor
+                .run_shell_command("true", None, None)
+                .await
+                .expect("cmd ok");
+            assert_eq!(res.exit_code, 0);
+            samples_us.push(start.elapsed().as_micros() as f64);
+        }
+
+        let avg_ms = (samples_us.iter().sum::<f64>() / 50.0) / 1000.0;
+        let mut sorted = samples_us.clone();
+        sorted.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        let p50_ms = sorted[25] / 1000.0;
+        let min_ms = sorted[0] / 1000.0;
+        let max_ms = sorted[49] / 1000.0;
+
+        println!("\n==========================================");
+        println!("     IN-PROCESS SANDBOX BENCHMARK         ");
+        println!("==========================================");
+        println!("Baseline unsandboxed (sh -c true): {:.2} ms", base_avg);
+        println!("In-Process Sandboxed (mean 50 runs): {:.2} ms", avg_ms);
+        println!("In-Process Sandboxed (p50 median):   {:.2} ms", p50_ms);
+        println!("In-Process Sandboxed (min):          {:.2} ms", min_ms);
+        println!("In-Process Sandboxed (max):          {:.2} ms", max_ms);
+        println!(
+            "Sandbox Overhead:                  +{:.2} ms",
+            avg_ms - base_avg
+        );
+        println!("==========================================\n");
     }
 }
