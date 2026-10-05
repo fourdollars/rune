@@ -13,9 +13,9 @@ use super::super::{LlmFunction, LlmMessage, LlmRequest, LlmResponse, LlmToolCall
 /// Returns None for "off"/"none"/unknown → no thinking block sent.
 fn thinking_effort(level: &str) -> Option<&'static str> {
     match level.to_lowercase().as_str() {
-        "low" => Some("low"),
+        "minimal" | "low" => Some("low"),
         "medium" => Some("medium"),
-        "high" => Some("high"),
+        "high" | "xhigh" | "max" => Some("high"),
         _ => None,
     }
 }
@@ -149,12 +149,12 @@ pub fn build_anthropic_payload(req: &LlmRequest, stream: bool) -> Result<Value> 
 
     let messages = collapse_messages(messages);
 
-    let mut max_tokens = req.max_tokens.unwrap_or(8192);
-    if req.thinking.is_some() && max_tokens <= 8192 {
-        // Thinking models consume output tokens for reasoning; allocate more max_tokens
-        // to prevent tool call JSON arguments from being truncated mid-stream.
-        max_tokens = 16384;
-    }
+    let thinking_active = req.thinking.as_deref().and_then(thinking_effort).is_some();
+    let max_tokens = match req.max_tokens {
+        Some(m) => m,
+        None if thinking_active => 64000,
+        None => 8192,
+    };
 
     let mut payload = json!({
         "model": req.model,
@@ -210,6 +210,12 @@ pub fn parse_anthropic_response(v: &Value) -> Result<LlmResponse> {
         .and_then(|m| m.as_str())
         .unwrap_or("unknown")
         .to_string();
+
+    if let Some(sr) = v.get("stop_reason").and_then(|s| s.as_str()) {
+        if sr == "max_tokens" {
+            warn!("Anthropic response reached max_tokens limit");
+        }
+    }
 
     let usage = if let Some(u) = v.get("usage") {
         let input_tokens = u.get("input_tokens").and_then(|x| x.as_u64()).unwrap_or(0)
@@ -308,6 +314,7 @@ pub async fn stream_anthropic_messages(
         std::collections::BTreeMap::new();
     let mut input_tokens: u32 = 0;
     let mut output_tokens: u32 = 0;
+    let mut stop_reason: Option<String> = None;
 
     while let Some(chunk) = stream.next().await {
         let chunk = chunk?;
@@ -421,6 +428,17 @@ pub async fn stream_anthropic_messages(
                             output_tokens = ot as u32;
                         }
                     }
+                    if let Some(delta) = data.get("delta") {
+                        if let Some(sr) = delta.get("stop_reason").and_then(|s| s.as_str()) {
+                            stop_reason = Some(sr.to_string());
+                            if sr == "max_tokens" {
+                                warn!(
+                                    "Anthropic stream reached max_tokens limit (output_tokens={})",
+                                    output_tokens
+                                );
+                            }
+                        }
+                    }
                 }
                 "message_stop" | "content_block_stop" | "ping" => {}
                 _ => {
@@ -434,10 +452,17 @@ pub async fn stream_anthropic_messages(
     for (_idx, (id, name, args)) in tool_call_map {
         if !args.is_empty() {
             if let Err(e) = serde_json::from_str::<serde_json::Value>(&args) {
-                warn!(
-                    "dropping Anthropic tool_call with invalid JSON arguments: tool={}, error={}, args={}",
-                    name, e, crate::config::safe_truncate(&args, 200)
-                );
+                if stop_reason.as_deref() == Some("max_tokens") {
+                    warn!(
+                        "dropping Anthropic tool_call because stream was truncated by max_tokens limit: tool={}, error={}, args={}",
+                        name, e, crate::config::safe_truncate(&args, 200)
+                    );
+                } else {
+                    warn!(
+                        "dropping Anthropic tool_call with invalid JSON arguments: tool={}, error={}, args={}",
+                        name, e, crate::config::safe_truncate(&args, 200)
+                    );
+                }
                 continue;
             }
         }
@@ -538,6 +563,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_stream_anthropic_messages_utf8_split_across_chunks() {
+        crate::provider::init_crypto_provider();
         use std::io::{Read, Write};
         use std::net::TcpListener;
         use std::thread;
@@ -598,5 +624,110 @@ mod tests {
             streamed.push_str(&tok);
         }
         assert_eq!(streamed, test_text);
+    }
+
+    #[test]
+    fn test_build_anthropic_payload_max_tokens_with_thinking() {
+        let make_req = |thinking: Option<&str>, max_tokens: Option<u32>| LlmRequest {
+            model: "claude-sonnet-5.5".to_string(),
+            messages: vec![LlmMessage {
+                role: "user".to_string(),
+                name: None,
+                content: Some("hi".to_string()),
+                tool_calls: None,
+                tool_call_id: None,
+                content_parts: None,
+            }],
+            tools: None,
+            max_tokens,
+            thinking: thinking.map(|s| s.to_string()),
+        };
+
+        // When thinking is active, default max_tokens should be 64000
+        let req_thinking = make_req(Some("medium"), None);
+        let payload = build_anthropic_payload(&req_thinking, false).unwrap();
+        assert_eq!(payload["max_tokens"], 64000);
+        assert_eq!(payload["thinking"]["type"], "adaptive");
+        assert_eq!(payload["output_config"]["effort"], "medium");
+
+        // When thinking is off, default max_tokens should be 8192
+        let req_off = make_req(Some("off"), None);
+        let payload_off = build_anthropic_payload(&req_off, false).unwrap();
+        assert_eq!(payload_off["max_tokens"], 8192);
+        assert!(payload_off.get("thinking").is_none());
+
+        // When thinking is none, default max_tokens should be 8192
+        let req_none = make_req(None, None);
+        let payload_none = build_anthropic_payload(&req_none, false).unwrap();
+        assert_eq!(payload_none["max_tokens"], 8192);
+
+        // Explicit max_tokens is respected
+        let req_explicit = make_req(Some("high"), Some(4096));
+        let payload_explicit = build_anthropic_payload(&req_explicit, false).unwrap();
+        assert_eq!(payload_explicit["max_tokens"], 4096);
+        assert_eq!(payload_explicit["output_config"]["effort"], "high");
+    }
+
+    #[test]
+    fn test_thinking_effort_mapping() {
+        assert_eq!(thinking_effort("minimal"), Some("low"));
+        assert_eq!(thinking_effort("low"), Some("low"));
+        assert_eq!(thinking_effort("medium"), Some("medium"));
+        assert_eq!(thinking_effort("high"), Some("high"));
+        assert_eq!(thinking_effort("xhigh"), Some("high"));
+        assert_eq!(thinking_effort("max"), Some("high"));
+        assert_eq!(thinking_effort("off"), None);
+        assert_eq!(thinking_effort("none"), None);
+        assert_eq!(thinking_effort("unknown"), None);
+    }
+
+    #[tokio::test]
+    async fn test_stream_anthropic_messages_truncated_tool_call_at_max_tokens() {
+        crate::provider::init_crypto_provider();
+        use std::io::{Read, Write};
+        use std::net::TcpListener;
+        use std::thread;
+
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let url = format!("http://{}/v1/messages", addr);
+
+        let event_block = concat!(
+            "event: message_start\n",
+            "data: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_1\",\"model\":\"claude-sonnet-5.5\",\"role\":\"assistant\",\"usage\":{\"input_tokens\":100}}}\n\n",
+            "event: content_block_start\n",
+            "data: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"tool_use\",\"id\":\"toolu_1\",\"name\":\"write_markdown\"}}\n\n",
+            "event: content_block_delta\n",
+            "data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"{\\\"filename\\\": \\\"test.md\\\"\"}}\n\n",
+            "event: message_delta\n",
+            "data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"max_tokens\"},\"usage\":{\"output_tokens\":16384}}\n\n",
+            "event: message_stop\n",
+            "data: {\"type\":\"message_stop\"}\n\n"
+        );
+        let sse_bytes = event_block.as_bytes().to_vec();
+
+        thread::spawn(move || {
+            if let Ok((mut stream, _)) = listener.accept() {
+                let mut buf = [0; 1024];
+                let _ = stream.read(&mut buf);
+
+                let header = "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nConnection: close\r\n\r\n";
+                let _ = stream.write_all(header.as_bytes());
+                let _ = stream.write_all(&sse_bytes);
+                let _ = stream.flush();
+            }
+        });
+
+        let client = reqwest::Client::new();
+        let builder = client.post(&url);
+        let (tx, _rx) = tokio::sync::mpsc::channel::<String>(100);
+
+        let res = stream_anthropic_messages(builder, tx)
+            .await
+            .expect("stream should succeed");
+        // Incomplete tool call was dropped cleanly
+        assert_eq!(res.tool_calls.len(), 0);
+        assert_eq!(res.usage.completion_tokens, 16384);
+        assert_eq!(res.usage.prompt_tokens, 100);
     }
 }
