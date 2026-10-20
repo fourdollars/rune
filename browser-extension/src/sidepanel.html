@@ -19,6 +19,10 @@
       <span id="status-indicator" class="status disconnected" title="disconnected" aria-label="Connection status"></span>
     </h3>
     <div id="model-indicator" class="model-indicator" style="display:none">
+      <button type="button" id="session-btn" class="session-btn" title="Switch or manage sessions" aria-label="Switch or manage sessions">
+        <span id="session-btn-icon">💬</span>
+        <span id="session-btn-label">main</span>
+      </button>
       <span id="model-name" class="model-name" role="button" tabindex="0" title="Switch model"></span>
       <div class="thinking-switcher" id="thinking-switcher" style="display:none">
         <button type="button" class="thinking-btn" id="thinking-btn" title="Thinking level" aria-label="Thinking level" aria-haspopup="listbox" aria-expanded="false">
@@ -43,6 +47,46 @@
           <path d="M10 12.5h4"></path>
         </svg>
       </button>
+    </div>
+  </div>
+
+  <!-- Session switcher modal -->
+  <div id="session-modal" class="modal-overlay hidden">
+    <div class="modal modal-session" role="dialog" aria-modal="true" aria-labelledby="session-modal-title">
+      <div class="session-modal-header">
+        <h2 id="session-modal-title">Manage Chat Sessions</h2>
+        <div class="session-modal-header-actions">
+          <button type="button" class="session-add-icon-btn" id="session-modal-add-btn" title="New Session" aria-label="New Session">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M12 5v14"></path>
+              <path d="M5 12h14"></path>
+            </svg>
+          </button>
+          <button type="button" class="session-close-icon-btn" id="session-modal-close-btn" title="Close" aria-label="Close">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="m6 6 12 12"></path>
+              <path d="M18 6 6 18"></path>
+            </svg>
+          </button>
+        </div>
+      </div>
+      <div class="session-modal-search">
+        <input type="text" id="session-modal-search-input" placeholder="Search sessions..." autocomplete="off" aria-label="Search sessions" />
+      </div>
+      <div id="session-modal-list" class="session-modal-list"></div>
+    </div>
+  </div>
+
+  <!-- New session dialog -->
+  <div id="new-session-modal" class="modal-overlay hidden">
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="new-session-modal-title">
+      <h2 id="new-session-modal-title">New Chat Session</h2>
+      <p style="margin: 0.25rem 0 0.5rem; color: var(--text-secondary); font-size: 12px;">Enter session name (e.g. #research, topic):</p>
+      <input type="text" id="new-session-input" class="model-search-input" placeholder="research" autocomplete="off" aria-label="Session name" />
+      <div class="modal-actions">
+        <button type="button" class="btn-secondary" id="new-session-cancel">Cancel</button>
+        <button type="button" class="btn-primary" id="new-session-confirm">Create</button>
+      </div>
     </div>
   </div>
 

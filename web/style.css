@@ -14,6 +14,7 @@
     --success: #a6e3a1;
     --warning: #f9e2af;
     --error: #f38ba8;
+    --danger: #dc3545;
     --panel-width: 280px;
     --chat-input-height: 80px;
     --drawer-width: min(310px, 84vw);
@@ -42,6 +43,7 @@
         --success: #1a7f37;
         --warning: #9a6700;
         --error: #cf222e;
+        --danger: #cf222e;
         --scrim: rgba(20, 24, 30, 0.42);
         --overlay-shadow: 0 12px 32px rgba(31, 35, 40, 0.18);
     }
@@ -580,8 +582,15 @@ body {
 }
 
 #chat-send.stop-mode {
-    background: var(--danger);
-    color: #fff;
+    display: flex !important;
+    background: var(--danger, #dc3545) !important;
+    color: #ffffff !important;
+    box-shadow: 0 1px 3px rgba(220, 53, 69, 0.4);
+}
+
+#chat-send.stop-mode:hover {
+    background: #bb2d3b !important;
+    opacity: 0.95;
 }
 
 #chat-send:hover { opacity: 0.85; }
@@ -2577,8 +2586,9 @@ pre.hljs-pre:hover .copy-btn {
     display: none;
 }
 
-/* Hide context overlay when chat input contains text */
-#chat-input:not(:placeholder-shown) ~ #context-overlay {
+/* Hide context overlay when chat input contains text or when stop button is active */
+#chat-input:not(:placeholder-shown) ~ #context-overlay,
+.chat-input-area:has(#chat-send.stop-mode) #context-overlay {
     display: none !important;
 }
 

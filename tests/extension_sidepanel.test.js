@@ -859,6 +859,177 @@ async function runTests() {
     console.log('✓ Test 15 passed: runtime.onMessage rune:fillChatInput fills chat input');
   }
 
+  // ── Test 16: Multi-session modal, switchSession, confirmNewSession, deleteSession ──
+  {
+    const fixture = setupSidepanelContext();
+    const { elements, sentMessages } = fixture;
+    const $sessionBtnLabel = elements['session-btn-label'];
+    const $sessionModal = elements['session-modal'];
+    const $sessionList = elements['session-modal-list'];
+    const $newSessionModal = elements['new-session-modal'];
+    const $newSessionInput = elements['new-session-input'];
+
+    fixture.setActiveNoteId('note-1');
+
+    // Simulate session_list SSE broadcast
+    fixture.exec(`
+      handleSseEvent({
+        event: 'session_list',
+        data: JSON.stringify({
+          note_id: 'note-1',
+          sessions: ['main', 'debug-branch'],
+          sessions_meta: [
+            { session_id: 'main', title: null, custom_title: null },
+            { session_id: 'debug-branch', title: 'Debugging issue', custom_title: null }
+          ]
+        })
+      });
+    `);
+
+    assert.strictEqual($sessionBtnLabel.textContent, 'main', 'Session button label should show main');
+    assert.strictEqual(fixture.exec('sessions.length'), 2);
+
+    // Open session modal and verify rendered items
+    fixture.exec('showSessionModal()');
+    assert.strictEqual($sessionModal.classList.contains('hidden'), false, 'Session modal should be visible');
+    assert.strictEqual($sessionList.children.length, 2, 'Session list should have 2 rows');
+
+    // Switch session to debug-branch
+    sentMessages.length = 0;
+    await fixture.exec('switchSession("debug-branch")');
+    assert.strictEqual(fixture.exec('currentSessionId'), 'debug-branch', 'currentSessionId should be debug-branch');
+    assert.strictEqual($sessionBtnLabel.textContent, 'Debugging issue', 'Session button label should update to Debugging issue');
+    const loadMsg = sentMessages.find((m) => m.type === 'rune:loadSession');
+    assert(loadMsg, 'Should send rune:loadSession when switching session');
+    assert.strictEqual(loadMsg.sessionId, 'debug-branch', 'rune:loadSession should pass sessionId=debug-branch');
+
+    // Create a new session via confirmNewSession
+    fixture.exec('showNewSessionModal()');
+    assert.strictEqual($newSessionModal.classList.contains('hidden'), false, 'New session modal should open');
+    $newSessionInput.value = 'feature-x';
+    await fixture.exec('confirmNewSession()');
+    assert.strictEqual($newSessionModal.classList.contains('hidden'), true, 'New session modal should close');
+    assert.strictEqual(fixture.exec('currentSessionId'), 'feature-x', 'Should switch to newly created session feature-x');
+    assert.strictEqual(fixture.exec('sessions.includes("feature-x")'), true, 'sessions list should include feature-x');
+
+    // Delete session debug-branch
+    sentMessages.length = 0;
+    await fixture.exec('deleteSession("debug-branch")');
+    const delMsg = sentMessages.find((m) => m.type === 'rune:archiveChat' && m.deleteSession === true);
+    assert(delMsg, 'deleteSession should send rune:archiveChat with deleteSession=true');
+    assert.strictEqual(delMsg.sessionId, 'debug-branch');
+    assert.strictEqual(fixture.exec('sessions.includes("debug-branch")'), false, 'debug-branch should be removed from sessions');
+
+    console.log('✓ Test 16 passed: Multi-session modal, switchSession, confirmNewSession, and deleteSession');
+  }
+
+  // ── Test 17: Per-session SSE stream isolation & unread indicator ──────────
+  {
+    const fixture = setupSidepanelContext();
+    const { elements } = fixture;
+    const $messages = elements['messages'];
+    const $sessionBtn = elements['session-btn'];
+
+    fixture.setActiveNoteId('note-1');
+    fixture.exec(`
+      currentSessionId = 'main';
+      sessions = ['main', 'bg-task'];
+      $messages.innerHTML = '';
+      $messages.children.length = 0;
+    `);
+
+    // 1. chat_token for non-active session 'bg-task' should NOT render in 'main'
+    fixture.exec(`
+      handleSseEvent({
+        event: 'chat_token',
+        data: JSON.stringify({ note_id: 'note-1', session_id: 'bg-task', content: 'Secret background token' })
+      });
+    `);
+    assert.strictEqual($messages.children.length, 0, 'chat_token for bg-task must not render in active session main');
+    assert.strictEqual(fixture.exec('getSessionStatus("bg-task")'), 'typing', 'bg-task status should be tracked as typing');
+
+    // 2. chat_message for non-active session 'bg-task' should NOT render in 'main', but marks unread
+    fixture.exec(`
+      handleSseEvent({
+        event: 'chat_message',
+        data: JSON.stringify({ note_id: 'note-1', session_id: 'bg-task', role: 'user', content: 'Background prompt', nickname: 'bob' })
+      });
+    `);
+    assert.strictEqual($messages.children.length, 0, 'chat_message for bg-task must not render in active session main');
+    assert.strictEqual(fixture.exec('unreadSessions.has("bg-task")'), true, 'bg-task should be marked unread');
+    assert.strictEqual($sessionBtn.classList.contains('has-unread'), true, '#session-btn should have .has-unread class');
+
+    // 3. chat_done for non-active session 'bg-task' marks unread and sets bg-task idle
+    fixture.exec(`
+      handleSseEvent({
+        event: 'chat_done',
+        data: JSON.stringify({ note_id: 'note-1', session_id: 'bg-task', content: 'Background reply done' })
+      });
+    `);
+    assert.strictEqual($messages.children.length, 0, 'chat_done for bg-task must not render in active session main');
+    assert.strictEqual(fixture.exec('getSessionStatus("bg-task")'), 'idle', 'bg-task status should become idle');
+
+    // 4. Switching to 'bg-task' clears unread state for 'bg-task'
+    await fixture.exec('switchSession("bg-task")');
+    assert.strictEqual(fixture.exec('unreadSessions.has("bg-task")'), false, 'Switching to bg-task should clear its unread badge');
+    assert.strictEqual($sessionBtn.classList.contains('has-unread'), false, '#session-btn .has-unread should be removed when all read');
+
+    console.log('✓ Test 17 passed: Per-session SSE stream isolation and unread indicator');
+  }
+
+  // ── Test 18: Stop button (#chat-send.stop-mode) and rune:cancelChat ───────
+  {
+    const fixture = setupSidepanelContext();
+    const { elements, sentMessages } = fixture;
+    const $input = elements['input'];
+    const $sendBtn = elements['chat-send'];
+    const $form = elements['composer'];
+
+    fixture.setActiveNoteId('note-1');
+    fixture.exec(`
+      currentSessionId = 'main';
+      myRole = 'user';
+      $input.value = '';
+    `);
+
+    // Initially idle -> normal Send button
+    fixture.exec('setStatus("idle", "main")');
+    assert.strictEqual($sendBtn.classList.contains('stop-mode'), false, 'Should not be in stop-mode when idle');
+
+    // Active session becomes 'thinking' while input is empty -> switches to Stop button
+    fixture.exec('setStatus("thinking", "main")');
+    assert.strictEqual($sendBtn.classList.contains('stop-mode'), true, 'Should enter stop-mode when session is thinking and input is empty');
+    assert.strictEqual($sendBtn.title, 'Stop generating (Ctrl+Enter)', 'Tooltip should be Stop generating (Ctrl+Enter)');
+
+    // User types text into input while session is thinking -> switches back to Send button
+    $input.value = 'Follow-up question';
+    $input._trigger('input');
+    assert.strictEqual($sendBtn.classList.contains('stop-mode'), false, 'Should switch back to Send mode when input is non-empty');
+    assert.strictEqual($sendBtn.title, 'Send message (Ctrl+Enter)', 'Tooltip should revert to Send message');
+
+    // User clears input while session is still thinking -> returns to Stop button
+    $input.value = '';
+    $input._trigger('input');
+    assert.strictEqual($sendBtn.classList.contains('stop-mode'), true, 'Should return to stop-mode when input is cleared');
+
+    // Guest role should never see Stop button
+    fixture.exec('myRole = "guest"; updateChatActionBtn();');
+    assert.strictEqual($sendBtn.classList.contains('stop-mode'), false, 'Guest should not see stop-mode');
+    fixture.exec('myRole = "admin"; updateChatActionBtn();');
+    assert.strictEqual($sendBtn.classList.contains('stop-mode'), true, 'Admin should see stop-mode');
+
+    // Submitting form when in stop-mode and input is empty triggers stopChatSession (rune:cancelChat)
+    sentMessages.length = 0;
+    $form._trigger('submit');
+    await new Promise((r) => setTimeout(r, 20));
+    const cancelMsg = sentMessages.find((m) => m.type === 'rune:cancelChat');
+    assert(cancelMsg, 'Submitting form with empty input in stop-mode should send rune:cancelChat');
+    assert.strictEqual(cancelMsg.noteId, 'note-1');
+    assert.strictEqual(cancelMsg.sessionId, 'main');
+
+    console.log('✓ Test 18 passed: Stop button (#chat-send.stop-mode) and rune:cancelChat');
+  }
+
   console.log("All extension sidepanel tests passed successfully! 🎉");
 }
 

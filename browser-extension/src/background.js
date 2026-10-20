@@ -259,9 +259,29 @@ browser.runtime.onMessage.addListener((message, sender, sendResponse) => {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
               note_id: message.noteId,
+              session_id: message.sessionId || 'main',
               content: message.content,
               nickname: message.nickname ?? null,
             }),
+          });
+          if (!resp.ok) {
+            const text = await resp.text().catch(() => '');
+            sendResponse({ ok: false, error: `HTTP ${resp.status} ${text}`.trim() });
+            break;
+          }
+          const body = await resp.json().catch(() => ({}));
+          sendResponse({ ok: body.ok !== false, error: body.error });
+        } catch (e) {
+          sendResponse({ ok: false, error: String(e?.message ?? e) });
+        }
+        break;
+      }
+      case 'rune:cancelChat': {
+        try {
+          const noteId = encodeURIComponent(message.noteId || '');
+          const sessId = encodeURIComponent(message.sessionId || 'main');
+          const resp = await apiFetch(`/api/chat?note_id=${noteId}&session_id=${sessId}`, {
+            method: 'DELETE',
           });
           if (!resp.ok) {
             const text = await resp.text().catch(() => '');
@@ -284,7 +304,10 @@ browser.runtime.onMessage.addListener((message, sender, sendResponse) => {
           const resp = await apiFetch('/api/session', {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ note: message.noteId }),
+            body: JSON.stringify({
+              note: message.noteId,
+              session_id: message.sessionId || 'main',
+            }),
           });
           if (!resp.ok) {
             sendResponse({ ok: false, error: `HTTP ${resp.status}` });
@@ -292,6 +315,28 @@ browser.runtime.onMessage.addListener((message, sender, sendResponse) => {
           }
           const body = await resp.json().catch(() => ({}));
           sendResponse({ ok: true, data: body });
+        } catch (e) {
+          sendResponse({ ok: false, error: String(e?.message ?? e) });
+        }
+        break;
+      }
+      case 'rune:renameSession': {
+        try {
+          const resp = await apiFetch('/api/chat/session/rename', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              note_id: message.noteId,
+              session_id: message.sessionId || 'main',
+              custom_title: message.customTitle ?? '',
+            }),
+          });
+          if (!resp.ok) {
+            sendResponse({ ok: false, error: `HTTP ${resp.status}` });
+            break;
+          }
+          const body = await resp.json().catch(() => ({}));
+          sendResponse({ ok: body.ok !== false, data: body, error: body.error });
         } catch (e) {
           sendResponse({ ok: false, error: String(e?.message ?? e) });
         }
@@ -317,10 +362,17 @@ browser.runtime.onMessage.addListener((message, sender, sendResponse) => {
       }
       case 'rune:archiveChat': {
         try {
+          const payload = {
+            note_id: message.noteId,
+            session_id: message.sessionId || 'main',
+          };
+          if (message.deleteSession !== undefined) {
+            payload.delete_session = Boolean(message.deleteSession);
+          }
           const resp = await apiFetch('/api/chat/archive', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ note_id: message.noteId }),
+            body: JSON.stringify(payload),
           });
           if (!resp.ok) {
             sendResponse({ ok: false, error: `HTTP ${resp.status}` });

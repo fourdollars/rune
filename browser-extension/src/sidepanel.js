@@ -35,6 +35,19 @@ const $archiveModal = document.getElementById('archive-modal');
 const $archiveModalCancel = document.getElementById('archive-modal-cancel');
 const $archiveModalConfirm = document.getElementById('archive-modal-confirm');
 const $autocomplete = document.getElementById('chat-autocomplete');
+const $sessionBtn = document.getElementById('session-btn');
+const $sessionBtnIcon = document.getElementById('session-btn-icon');
+const $sessionBtnLabel = document.getElementById('session-btn-label');
+const $sessionModal = document.getElementById('session-modal');
+const $sessionModalAddBtn = document.getElementById('session-modal-add-btn');
+const $sessionModalCloseBtn = document.getElementById('session-modal-close-btn');
+const $sessionModalSearchInput = document.getElementById('session-modal-search-input');
+const $sessionModalList = document.getElementById('session-modal-list');
+const $newSessionModal = document.getElementById('new-session-modal');
+const $newSessionInput = document.getElementById('new-session-input');
+const $newSessionCancel = document.getElementById('new-session-cancel');
+const $newSessionConfirm = document.getElementById('new-session-confirm');
+const $chatSend = document.getElementById('chat-send');
 
 let cachedSkills = [];
 let cachedNoteFiles = [];
@@ -442,10 +455,21 @@ let activeModel = '';
 let currentThinking = 'off';
 // The note the SSE stream is currently subscribed to.
 let activeNoteId = '';
+// Active chat session within the current note.
+let currentSessionId = 'main';
+let sessions = ['main'];
+let sessionsMeta = [];
+const sessionStatuses = new Map();
+const unreadSessions = new Set();
 // Whether we've already replayed history for the current activeNoteId session.
 let historyLoaded = false;
-// Authenticated user login name resolved from server credentials.
+// Authenticated user login name and role resolved from server credentials.
 let myLogin = '';
+let myRole = 'user';
+
+const SEND_ICON_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 3 10.5 13.5"></path><path d="M21 3 14.4 21.2 10.5 13.5 2.8 9.6Z"></path></svg>';
+const STOP_ICON_SVG = '<svg viewBox="0 0 24 24" fill="currentColor" stroke="none" aria-hidden="true"><path d="M5.5 5.5h13a1.5 1.5 0 0 1 1.5 1.5v13a1.5 1.5 0 0 1-1.5 1.5h-13a1.5 1.5 0 0 1-1.5-1.5v-13a1.5 1.5 0 0 1 1.5-1.5Z"></path></svg>';
+const TRASH_ICON_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.8 6.8h16.4"></path><path d="M10 11v6.5"></path><path d="M14 11v6.5"></path><path d="M6.2 6.8 7.1 20a1.4 1.4 0 0 0 1.4 1.3h7a1.4 1.4 0 0 0 1.4-1.3l.9-13.2"></path><path d="M9.2 6.8V4.6a1.6 1.6 0 0 1 1.6-1.6h2.4a1.6 1.6 0 0 1 1.6 1.6v2.2"></path></svg>';
 
 function getFriendlyProviderName(models = availableModels) {
   const currentModelObj = models.find((m) => (m.id || m) === activeModel && m.provider);
@@ -1039,8 +1063,8 @@ const STATUS_ICONS = {
 
 let currentStatus = 'disconnected';
 const MIN_TOOL_DISPLAY_MS = 600;
-let toolStartTime = 0;
-let clearToolTimer = null;
+const toolStartTimes = new Map();
+const clearToolTimers = new Map();
 
 function paintStatus(state, label) {
   if (!$statusIndicator) return;
@@ -1050,46 +1074,496 @@ function paintStatus(state, label) {
   $statusIndicator.innerHTML = STATUS_ICONS[state] || STATUS_ICONS.idle;
 }
 
-function setStatus(state) {
+function getSessionStatus(sessionId) {
+  const sess = sessionId || currentSessionId || 'main';
+  return sessionStatuses.get(sess) || 'idle';
+}
+
+function updateChatActionBtn() {
+  if (!$chatSend) return;
+  const hasText = Boolean($input && $input.value.trim().length > 0);
+  const sess = currentSessionId || 'main';
+  const status = getSessionStatus(sess);
+  const isBusy = Boolean(
+    currentStatus !== 'disconnected' &&
+    status &&
+    status !== 'idle' &&
+    status !== 'disconnected'
+  );
+  const isGuestRole = myRole === 'guest';
+
+  if (!isGuestRole && isBusy && !hasText) {
+    if (!$chatSend.classList.contains('stop-mode')) {
+      $chatSend.classList.add('stop-mode');
+      $chatSend.innerHTML = STOP_ICON_SVG;
+      $chatSend.title = 'Stop generating (Ctrl+Enter)';
+      $chatSend.setAttribute('aria-label', 'Stop generating');
+    }
+  } else {
+    if ($chatSend.classList.contains('stop-mode')) {
+      $chatSend.classList.remove('stop-mode');
+      $chatSend.innerHTML = SEND_ICON_SVG;
+      $chatSend.title = 'Send message (Ctrl+Enter)';
+      $chatSend.setAttribute('aria-label', 'Send message');
+    }
+  }
+}
+
+async function stopChatSession() {
+  if (!activeNoteId || myRole === 'guest') return;
+  const sess = currentSessionId || 'main';
+  await browser.runtime.sendMessage({
+    type: 'rune:cancelChat',
+    noteId: activeNoteId,
+    sessionId: sess,
+  });
+}
+
+function refreshSessionModalIfOpen() {
+  if ($sessionModal && !$sessionModal.classList.contains('hidden')) {
+    renderSessionModal($sessionModalSearchInput?.value || '');
+  }
+}
+
+function setStatus(state, sessionId) {
+  if (state === 'disconnected') {
+    currentStatus = 'disconnected';
+    paintStatus('disconnected', 'disconnected');
+    updateChatActionBtn();
+    return;
+  }
+
+  const sess = sessionId || currentSessionId || 'main';
   if (state && typeof state === 'string' && state.startsWith('tool:')) {
-    setToolStatus(state.slice(5));
+    setToolStatus(state.slice(5), sess);
     return;
   }
-  if (clearToolTimer) {
-    clearTimeout(clearToolTimer);
-    clearToolTimer = null;
+
+  if (clearToolTimers.has(sess)) {
+    clearTimeout(clearToolTimers.get(sess));
+    clearToolTimers.delete(sess);
   }
-  currentStatus = state;
-  paintStatus(state, state);
+
+  if (!state || state === 'idle') {
+    sessionStatuses.delete(sess);
+  } else {
+    sessionStatuses.set(sess, state);
+  }
+
+  if (sess === (currentSessionId || 'main')) {
+    currentStatus = state || 'idle';
+    paintStatus(currentStatus, currentStatus);
+    updateChatActionBtn();
+  }
+
+  refreshSessionModalIfOpen();
 }
 
-function setToolStatus(toolName) {
-  if (clearToolTimer) {
-    clearTimeout(clearToolTimer);
-    clearToolTimer = null;
+function setToolStatus(toolName, sessionId) {
+  const sess = sessionId || currentSessionId || 'main';
+  if (clearToolTimers.has(sess)) {
+    clearTimeout(clearToolTimers.get(sess));
+    clearToolTimers.delete(sess);
   }
-  currentStatus = 'tool';
-  toolStartTime = Date.now();
-  paintStatus('tool', `tool: ${toolName}`);
+
+  sessionStatuses.set(sess, `tool:${toolName}`);
+  toolStartTimes.set(sess, Date.now());
+
+  if (sess === (currentSessionId || 'main')) {
+    currentStatus = 'tool';
+    paintStatus('tool', `tool: ${toolName}`);
+    updateChatActionBtn();
+  }
+
+  refreshSessionModalIfOpen();
 }
 
-function clearToolStatus() {
-  if (currentStatus !== 'tool') {
-    setStatus('thinking');
+function clearToolStatus(sessionId) {
+  const sess = sessionId || currentSessionId || 'main';
+  const current = getSessionStatus(sess);
+  if (!current || !current.startsWith('tool')) {
+    if (sess === (currentSessionId || 'main') && currentStatus === 'tool') {
+      setStatus('thinking', sess);
+    }
     return;
   }
-  const elapsed = Date.now() - toolStartTime;
+
+  const startTime = toolStartTimes.get(sess) || 0;
+  const elapsed = Date.now() - startTime;
   if (elapsed < MIN_TOOL_DISPLAY_MS) {
-    if (clearToolTimer) clearTimeout(clearToolTimer);
-    clearToolTimer = setTimeout(() => {
-      clearToolTimer = null;
-      if (currentStatus === 'tool') {
-        setStatus('thinking');
+    if (clearToolTimers.has(sess)) clearTimeout(clearToolTimers.get(sess));
+    const timer = setTimeout(() => {
+      clearToolTimers.delete(sess);
+      if (getSessionStatus(sess).startsWith('tool')) {
+        setStatus('thinking', sess);
       }
     }, MIN_TOOL_DISPLAY_MS - elapsed);
+    clearToolTimers.set(sess, timer);
   } else {
-    setStatus('thinking');
+    setStatus('thinking', sess);
   }
+}
+
+function updateCurrentSessionStatus() {
+  const sess = currentSessionId || 'main';
+  const status = getSessionStatus(sess);
+  if (status && status.startsWith('tool:')) {
+    const toolName = status.slice(5);
+    currentStatus = 'tool';
+    paintStatus('tool', `tool: ${toolName}`);
+  } else {
+    currentStatus = status || 'idle';
+    paintStatus(currentStatus, currentStatus);
+  }
+  updateChatActionBtn();
+}
+
+function updateSessionButton() {
+  if (!$sessionBtn || !$sessionBtnLabel) return;
+  const sess = currentSessionId || 'main';
+  let icon = '#';
+  let label = sess;
+  if (sess.startsWith('user:')) {
+    icon = '👤';
+    label = sess.slice(5);
+  } else if (sess.startsWith('group:')) {
+    icon = '👥';
+    label = sess.slice(6);
+  } else if (sess === 'main') {
+    icon = '💬';
+    label = 'main';
+  }
+
+  const meta = Array.isArray(sessionsMeta) ? sessionsMeta.find((m) => m.session_id === sess) : null;
+  if (meta && meta.custom_title && meta.custom_title.trim()) {
+    label = meta.custom_title.trim();
+  } else if (meta && meta.title && meta.title.trim()) {
+    label = meta.title.trim();
+  }
+
+  if ($sessionBtnIcon) $sessionBtnIcon.textContent = icon;
+  $sessionBtnLabel.textContent = label;
+  $sessionBtn.title = `Current session: ${label} (${sess}) (Click to manage sessions)`;
+
+  if (unreadSessions.size > 0) {
+    $sessionBtn.classList.add('has-unread');
+  } else {
+    $sessionBtn.classList.remove('has-unread');
+  }
+}
+
+async function showSessionModal() {
+  if (!$sessionModal) return;
+  $sessionModal.classList.remove('hidden');
+  if ($sessionModalSearchInput) {
+    $sessionModalSearchInput.value = '';
+    setTimeout(() => $sessionModalSearchInput.focus(), 50);
+  }
+  renderSessionModal('');
+
+  if (activeNoteId) {
+    try {
+      const resp = await browser.runtime.sendMessage({
+        type: 'rune:loadSession',
+        noteId: activeNoteId,
+        sessionId: currentSessionId || 'main',
+      });
+      if (resp?.ok && resp.data) {
+        if (Array.isArray(resp.data.sessions)) {
+          sessions = resp.data.sessions.length > 0 ? resp.data.sessions : ['main'];
+          if (!sessions.includes('main')) sessions.unshift('main');
+        }
+        if (Array.isArray(resp.data.sessions_meta)) {
+          sessionsMeta = resp.data.sessions_meta;
+        }
+        if (!$sessionModal.classList.contains('hidden')) {
+          renderSessionModal($sessionModalSearchInput?.value || '');
+        }
+        updateSessionButton();
+      }
+    } catch (_) {}
+  }
+}
+
+function hideSessionModal() {
+  if ($sessionModal) $sessionModal.classList.add('hidden');
+}
+
+function renderSessionModal(filter = '') {
+  if (!$sessionModalList) return;
+  $sessionModalList.replaceChildren();
+
+  const sessList = Array.isArray(sessions) && sessions.length > 0 ? sessions : ['main'];
+  const normalizedFilter = (filter || '').toLowerCase().trim();
+  const filteredSessions = sessList.filter((s) => {
+    if (!normalizedFilter) return true;
+    const meta = Array.isArray(sessionsMeta) ? sessionsMeta.find((m) => m.session_id === s) : null;
+    const customTitle = (meta?.custom_title || '').toLowerCase();
+    const title = (meta?.title || '').toLowerCase();
+    return s.toLowerCase().includes(normalizedFilter) || customTitle.includes(normalizedFilter) || title.includes(normalizedFilter);
+  });
+
+  if (filteredSessions.length === 0) {
+    const emptyDiv = document.createElement('div');
+    emptyDiv.className = 'session-card-empty';
+    emptyDiv.textContent = 'No matching sessions found';
+    $sessionModalList.appendChild(emptyDiv);
+    return;
+  }
+
+  filteredSessions.forEach((sess) => {
+    const isCurrent = sess === currentSessionId;
+    const meta = Array.isArray(sessionsMeta) ? sessionsMeta.find((m) => m.session_id === sess) : null;
+    const row = document.createElement('div');
+    row.className = `session-row${isCurrent ? ' is-active' : ''}`;
+
+    const mainArea = document.createElement('div');
+    mainArea.className = 'session-row-main';
+    mainArea.addEventListener('click', () => {
+      switchSession(sess);
+      hideSessionModal();
+    });
+
+    let icon = '#';
+    let defaultName = sess;
+    if (sess.startsWith('user:')) {
+      icon = '👤';
+      defaultName = sess.slice(5);
+    } else if (sess.startsWith('group:')) {
+      icon = '👥';
+      defaultName = sess.slice(6);
+    } else if (sess === 'main') {
+      icon = '💬';
+      defaultName = 'main';
+    }
+
+    let displayTitle = defaultName;
+    if (meta && meta.custom_title && meta.custom_title.trim()) {
+      displayTitle = meta.custom_title.trim();
+    } else if (meta && meta.title && meta.title.trim()) {
+      displayTitle = meta.title.trim();
+    }
+
+    const iconEl = document.createElement('span');
+    iconEl.className = 'session-row-icon';
+    iconEl.textContent = icon;
+    mainArea.appendChild(iconEl);
+
+    const infoEl = document.createElement('div');
+    infoEl.className = 'session-row-info';
+
+    const titleEl = document.createElement('span');
+    titleEl.className = 'session-row-title';
+    titleEl.textContent = displayTitle;
+    titleEl.title = `${displayTitle} (${sess}) — Double-click to rename`;
+
+    titleEl.addEventListener('dblclick', (e) => {
+      e.stopPropagation();
+      const input = document.createElement('input');
+      input.type = 'text';
+      input.className = 'session-row-title-input';
+      input.value = meta && meta.custom_title ? meta.custom_title : (displayTitle === sess ? '' : displayTitle);
+      input.placeholder = meta && meta.title ? meta.title : defaultName;
+
+      titleEl.textContent = '';
+      titleEl.classList.add('is-editing');
+      titleEl.appendChild(input);
+      input.focus();
+      input.select?.();
+
+      let finished = false;
+      const finishEdit = async (save) => {
+        if (finished) return;
+        finished = true;
+        titleEl.classList.remove('is-editing');
+        if (save && activeNoteId) {
+          const newCustom = input.value.trim();
+          const resp = await browser.runtime.sendMessage({
+            type: 'rune:renameSession',
+            noteId: activeNoteId,
+            sessionId: sess,
+            customTitle: newCustom,
+          });
+          if (resp?.ok) {
+            let entry = Array.isArray(sessionsMeta) ? sessionsMeta.find((m) => m.session_id === sess) : null;
+            if (!entry) {
+              entry = { session_id: sess, title: null, custom_title: newCustom || null };
+              sessionsMeta.push(entry);
+            } else {
+              entry.custom_title = newCustom || null;
+            }
+            updateSessionButton();
+          }
+        }
+        renderSessionModal($sessionModalSearchInput?.value || '');
+      };
+
+      input.addEventListener('click', (ev) => ev.stopPropagation());
+      input.addEventListener('keydown', (ev) => {
+        if (ev.key === 'Enter') {
+          ev.preventDefault();
+          finishEdit(true);
+        } else if (ev.key === 'Escape') {
+          ev.preventDefault();
+          finishEdit(false);
+        }
+      });
+      input.addEventListener('blur', () => finishEdit(true));
+    });
+
+    infoEl.appendChild(titleEl);
+    if (sess !== 'main' && displayTitle !== sess) {
+      const subtitleEl = document.createElement('span');
+      subtitleEl.className = 'session-row-subtitle';
+      subtitleEl.textContent = sess;
+      infoEl.appendChild(subtitleEl);
+    }
+    mainArea.appendChild(infoEl);
+
+    const status = getSessionStatus(sess);
+    if (status && status !== 'idle') {
+      const statusBadge = document.createElement('span');
+      if (status.startsWith('tool:')) {
+        statusBadge.className = 'session-row-badge tool';
+        statusBadge.textContent = status.slice(5);
+        statusBadge.title = `Running tool: ${status.slice(5)}`;
+      } else if (status === 'thinking') {
+        statusBadge.className = 'session-row-badge thinking';
+        statusBadge.textContent = 'Thinking';
+      } else if (status === 'typing') {
+        statusBadge.className = 'session-row-badge typing';
+        statusBadge.textContent = 'Typing';
+      } else {
+        statusBadge.className = `session-row-badge ${status}`;
+        statusBadge.textContent = status;
+      }
+      mainArea.appendChild(statusBadge);
+    }
+
+    if (isCurrent) {
+      const badge = document.createElement('span');
+      badge.className = 'session-row-badge active';
+      badge.textContent = 'Active';
+      mainArea.appendChild(badge);
+    } else if (unreadSessions.has(sess)) {
+      const badge = document.createElement('span');
+      badge.className = 'session-row-badge unread';
+      badge.textContent = 'Unread';
+      mainArea.appendChild(badge);
+    }
+
+    row.appendChild(mainArea);
+
+    if (sess !== 'main') {
+      const delBtn = document.createElement('button');
+      delBtn.type = 'button';
+      delBtn.className = 'session-row-delete';
+      delBtn.title = `Delete & archive session "${sess}"`;
+      delBtn.setAttribute('aria-label', `Delete session ${sess}`);
+      delBtn.innerHTML = TRASH_ICON_SVG;
+      delBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        deleteSession(sess);
+      });
+      row.appendChild(delBtn);
+    }
+
+    $sessionModalList.appendChild(row);
+  });
+}
+
+async function switchSession(sessionId) {
+  if (!sessionId || !activeNoteId) return;
+  if (sessionId === currentSessionId) return;
+  currentSessionId = sessionId;
+  unreadSessions.delete(sessionId);
+  updateSessionButton();
+
+  $messages.innerHTML = '';
+  currentAssistantEl = null;
+  currentAssistantText = '';
+  currentAssistantDiv = null;
+  currentLoadedHistoryRaw = null;
+  const overlay = document.getElementById('context-overlay');
+  if (overlay) overlay.classList.add('hidden');
+
+  const resp = await browser.runtime.sendMessage({
+    type: 'rune:loadSession',
+    noteId: activeNoteId,
+    sessionId,
+  });
+  if (resp?.ok && resp.data) {
+    if (Array.isArray(resp.data.sessions)) {
+      sessions = resp.data.sessions.length > 0 ? resp.data.sessions : ['main'];
+      if (!sessions.includes('main')) sessions.unshift('main');
+    }
+    if (Array.isArray(resp.data.sessions_meta)) {
+      sessionsMeta = resp.data.sessions_meta;
+    }
+    if (resp.data.current_model) {
+      activeModel = resp.data.current_model;
+      updateModelIndicator();
+    }
+    if (resp.data.current_thinking) {
+      currentThinking = resp.data.current_thinking;
+      updateThinkingSelect();
+    }
+    if (resp.data.history?.length) {
+      replayHistory(resp.data.history);
+    }
+  }
+
+  updateCurrentSessionStatus();
+  updateSessionButton();
+  refreshSessionModalIfOpen();
+}
+
+async function deleteSession(sessionId) {
+  if (!sessionId || !activeNoteId || sessionId === 'main') return;
+  const resp = await browser.runtime.sendMessage({
+    type: 'rune:archiveChat',
+    noteId: activeNoteId,
+    sessionId,
+    deleteSession: true,
+  });
+  if (resp?.ok) {
+    unreadSessions.delete(sessionId);
+    sessions = sessions.filter((s) => s !== sessionId);
+    if (!sessions.includes('main')) sessions.unshift('main');
+    sessionsMeta = sessionsMeta.filter((m) => m.session_id !== sessionId);
+    appendSystem(`Session "${sessionId}" deleted and archived.`);
+    if (currentSessionId === sessionId) {
+      await switchSession('main');
+    }
+    updateSessionButton();
+    refreshSessionModalIfOpen();
+  }
+}
+
+function showNewSessionModal() {
+  if (!$newSessionModal) return;
+  if ($newSessionInput) {
+    $newSessionInput.value = '';
+    setTimeout(() => $newSessionInput.focus(), 50);
+  }
+  $newSessionModal.classList.remove('hidden');
+}
+
+function hideNewSessionModal() {
+  if ($newSessionModal) $newSessionModal.classList.add('hidden');
+}
+
+async function confirmNewSession() {
+  if (!activeNoteId || !$newSessionInput) return;
+  let cleanName = $newSessionInput.value.trim();
+  if (cleanName.startsWith('#')) cleanName = cleanName.slice(1).trim();
+  if (!cleanName) return;
+  hideNewSessionModal();
+  hideSessionModal();
+  if (!sessions.includes(cleanName)) {
+    sessions.push(cleanName);
+  }
+  await switchSession(cleanName);
 }
 
 /**
@@ -1107,9 +1581,18 @@ async function loadNoteHistory(noteId) {
     const resp = await browser.runtime.sendMessage({
       type: 'rune:loadSession',
       noteId,
+      sessionId: currentSessionId || 'main',
     });
     if (noteId !== activeNoteId) return;
     if (resp?.ok && resp.data) {
+      if (Array.isArray(resp.data.sessions)) {
+        sessions = resp.data.sessions.length > 0 ? resp.data.sessions : ['main'];
+        if (!sessions.includes('main')) sessions.unshift('main');
+      }
+      if (Array.isArray(resp.data.sessions_meta)) {
+        sessionsMeta = resp.data.sessions_meta;
+      }
+      updateSessionButton();
       if (resp.data.current_model) {
         activeModel = resp.data.current_model;
         updateModelIndicator();
@@ -1270,70 +1753,129 @@ function handleSseEvent(rec) {
     return;
   }
   switch (rec.event) {
-    case 'chat_token':
-      if (currentStatus !== 'typing') {
-        setStatus('typing');
+    case 'session_list':
+      if (!payload.note_id || payload.note_id === activeNoteId) {
+        if (Array.isArray(payload.sessions)) {
+          sessions = payload.sessions.length > 0 ? payload.sessions : ['main'];
+          if (!sessions.includes('main')) sessions.unshift('main');
+        }
+        if (Array.isArray(payload.sessions_meta)) {
+          sessionsMeta = payload.sessions_meta;
+        }
+        updateSessionButton();
+        refreshSessionModalIfOpen();
       }
-      if (!currentAssistantEl) {
-        const { div, body } = appendMessage('assistant', '');
-        currentAssistantDiv = div;
-        currentAssistantEl = body;
+      break;
+    case 'chat_token': {
+      const tokenSess = payload.session_id || 'main';
+      if (getSessionStatus(tokenSess) !== 'typing') {
+        setStatus('typing', tokenSess);
+      }
+      if (tokenSess === currentSessionId) {
+        if (!currentAssistantEl) {
+          const { div, body } = appendMessage('assistant', '');
+          currentAssistantDiv = div;
+          currentAssistantEl = body;
+          currentAssistantText = '';
+        }
+        currentAssistantText += payload.content ?? '';
+        if (typeof marked !== 'undefined') {
+          currentAssistantEl.replaceChildren(markdownFragment(currentAssistantText));
+        } else {
+          currentAssistantEl.textContent = currentAssistantText;
+        }
+        $messages.scrollTop = $messages.scrollHeight;
+      }
+      break;
+    }
+    case 'chat_meta': {
+      const metaSess = payload.session_id || 'main';
+      if (metaSess === currentSessionId) {
+        attachMetaToLastAssistant(
+          payload.model,
+          payload.tokens_in,
+          payload.tokens_out,
+          payload.context_tokens,
+          payload.context_window,
+          payload.steps,
+          payload.tool_calls,
+          payload.thinking
+        );
+      }
+      break;
+    }
+    case 'chat_done': {
+      if (!payload.session_id) {
+        sessionStatuses.clear();
+      }
+      const doneSess = payload.session_id || currentSessionId || 'main';
+      setStatus('idle', doneSess);
+      if (!payload.session_id || doneSess === currentSessionId) {
+        if (currentAssistantEl && typeof marked !== 'undefined') {
+          currentAssistantEl.replaceChildren(markdownFragment(currentAssistantText));
+          renderMermaidBlocks(currentAssistantEl);
+          attachCodeCopyButtons(currentAssistantEl);
+        }
+        currentAssistantEl = null;
         currentAssistantText = '';
-      }
-      currentAssistantText += payload.content ?? '';
-      if (typeof marked !== 'undefined') {
-        currentAssistantEl.replaceChildren(markdownFragment(currentAssistantText));
+        currentAssistantDiv = null;
       } else {
-        currentAssistantEl.textContent = currentAssistantText;
+        unreadSessions.add(doneSess);
+        updateSessionButton();
+        refreshSessionModalIfOpen();
       }
-      $messages.scrollTop = $messages.scrollHeight;
       break;
-    case 'chat_meta':
-      attachMetaToLastAssistant(
-        payload.model,
-        payload.tokens_in,
-        payload.tokens_out,
-        payload.context_tokens,
-        payload.context_window,
-        payload.steps,
-        payload.tool_calls,
-        payload.thinking
-      );
-      break;
-    case 'chat_done':
-      if (currentAssistantEl && typeof marked !== 'undefined') {
-        currentAssistantEl.replaceChildren(markdownFragment(currentAssistantText));
-        renderMermaidBlocks(currentAssistantEl);
-        attachCodeCopyButtons(currentAssistantEl);
-      }
-      currentAssistantEl = null;
-      currentAssistantText = '';
-      currentAssistantDiv = null;
-      setStatus('idle');
-      break;
+    }
     case 'auth_result':
       if (payload.login) {
         myLogin = payload.login;
       }
+      if (payload.role) {
+        myRole = payload.role;
+        updateChatActionBtn();
+      }
       break;
     case 'chat_message': {
-      // Another participant's message (multi-user room); skip our own echo.
-      const isMe = payload.nickname && myLogin && payload.nickname === myLogin;
-      if (!isMe && payload.content) {
-        appendMessage('user', payload.content, {
-          senderLabel: payload.nickname || 'user',
-        });
+      const msgSess = payload.session_id || 'main';
+      if (!sessions.includes(msgSess)) {
+        sessions.push(msgSess);
       }
+      if (payload.session_title) {
+        const existingMeta = sessionsMeta.find((m) => m.session_id === msgSess);
+        if (existingMeta) {
+          if (!existingMeta.title) existingMeta.title = payload.session_title;
+        } else {
+          sessionsMeta.push({ session_id: msgSess, title: payload.session_title, custom_title: null });
+        }
+      }
+      if (msgSess === currentSessionId) {
+        // Another participant's message (multi-user room); skip our own echo.
+        const isMe = payload.nickname && myLogin && payload.nickname === myLogin;
+        if (!isMe && payload.content) {
+          appendMessage('user', payload.content, {
+            senderLabel: payload.nickname || 'user',
+          });
+        }
+      } else {
+        unreadSessions.add(msgSess);
+      }
+      updateSessionButton();
+      refreshSessionModalIfOpen();
       break;
     }
     case 'status':
-      setStatus(payload.state);
+      if (!payload.session_id && payload.state === 'idle') {
+        sessionStatuses.clear();
+        setStatus('idle', currentSessionId || 'main');
+      } else {
+        setStatus(payload.state, payload.session_id || 'main');
+      }
       break;
     case 'tool_status':
       if (payload.state === 'start') {
-        setToolStatus(payload.tool);
+        setToolStatus(payload.tool, payload.session_id || 'main');
       } else {
-        clearToolStatus();
+        clearToolStatus(payload.session_id || 'main');
       }
       break;
     case 'error': {
@@ -1363,8 +1905,13 @@ function handleSseEvent(rec) {
       currentAssistantEl = null;
       currentAssistantText = '';
       currentAssistantDiv = null;
-      clearToolStatus();
-      setStatus('idle');
+      if (payload.session_id) {
+        clearToolStatus(payload.session_id);
+        setStatus('idle', payload.session_id);
+      } else {
+        clearToolStatus();
+        setStatus('idle');
+      }
       break;
     }
     case 'auth_error': {
@@ -1738,6 +2285,12 @@ function switchToNote(noteId) {
   currentLoadedHistoryRaw = null;
   historyLoaded = false;
   cachedNoteFiles = [];
+  currentSessionId = 'main';
+  sessions = ['main'];
+  sessionsMeta = [];
+  sessionStatuses.clear();
+  unreadSessions.clear();
+  updateSessionButton();
   const overlay = document.getElementById('context-overlay');
   if (overlay) overlay.classList.add('hidden');
 
@@ -1757,7 +2310,10 @@ $input.addEventListener('keydown', (e) => {
   }
 });
 
-$input.addEventListener('input', () => updateAutocomplete());
+$input.addEventListener('input', () => {
+  updateAutocomplete();
+  updateChatActionBtn();
+});
 $input.addEventListener('keyup', (e) => {
   if (['ArrowDown', 'ArrowUp', 'Enter', 'Tab', 'Escape'].includes(e.key)) return;
   updateAutocomplete();
@@ -1770,8 +2326,14 @@ $input.addEventListener('blur', () => {
 $form.addEventListener('submit', async (e) => {
   e.preventDefault();
   const text = $input.value.trim();
-  if (!text) return;
+  if (!text) {
+    if ($chatSend && $chatSend.classList.contains('stop-mode')) {
+      await stopChatSession();
+    }
+    return;
+  }
   $input.value = '';
+  updateChatActionBtn();
   appendMessage('user', text);
 
   const pageContext = await getActiveTabPageContext();
@@ -1800,6 +2362,7 @@ $form.addEventListener('submit', async (e) => {
   const resp = await browser.runtime.sendMessage({
     type: 'rune:sendChat',
     noteId: activeNoteId,
+    sessionId: currentSessionId || 'main',
     content: outgoing,
   });
   if (!resp?.ok) {
@@ -1837,6 +2400,8 @@ document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') {
     closeAllDropdowns();
     hideModelDialog();
+    hideSessionModal();
+    hideNewSessionModal();
     $archiveModal?.classList.add('hidden');
   }
 });
@@ -1880,12 +2445,27 @@ $runeTitle?.addEventListener('click', async (e) => {
   }
 });
 
-// Model indicator & thinking listeners
+// Model indicator, session & thinking listeners
 $modelName?.addEventListener('click', showModelDialog);
 $modelSearchInput?.addEventListener('input', (e) => {
   renderModelList(e.target.value.trim());
 });
 $modelModalCancel?.addEventListener('click', hideModelDialog);
+
+$sessionBtn?.addEventListener('click', showSessionModal);
+$sessionModalAddBtn?.addEventListener('click', showNewSessionModal);
+$sessionModalCloseBtn?.addEventListener('click', hideSessionModal);
+$sessionModalSearchInput?.addEventListener('input', (e) => {
+  renderSessionModal(e.target.value);
+});
+$newSessionCancel?.addEventListener('click', hideNewSessionModal);
+$newSessionConfirm?.addEventListener('click', confirmNewSession);
+$newSessionInput?.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') {
+    e.preventDefault();
+    confirmNewSession();
+  }
+});
 
 // Archive dialog listeners
 $btnArchive?.addEventListener('click', () => {
@@ -1896,14 +2476,19 @@ $archiveModalCancel?.addEventListener('click', () => {
 });
 $archiveModalConfirm?.addEventListener('click', async () => {
   $archiveModal?.classList.add('hidden');
+  const sid = currentSessionId || 'main';
   const resp = await browser.runtime.sendMessage({
     type: 'rune:archiveChat',
     noteId: activeNoteId,
+    sessionId: sid,
   });
   if (resp?.ok) {
     $messages.innerHTML = '';
     currentLoadedHistoryRaw = null;
-    browser.storage.local.remove(`rune_cached_history_${activeNoteId}`).catch(() => {});
+    browser.storage.local.remove([
+      `rune_cached_history_${activeNoteId}_${sid}`,
+      `rune_cached_history_${activeNoteId}`,
+    ]).catch(() => {});
     appendSystem('Chat archived.');
     const overlay = document.getElementById('context-overlay');
     if (overlay) overlay.classList.add('hidden');
@@ -1976,6 +2561,10 @@ async function initOrReconnect() {
         if (data?.ok && data.login) {
           myLogin = data.login;
         }
+        if (data?.ok && data.role) {
+          myRole = data.role;
+          updateChatActionBtn();
+        }
       }
     } catch (_) {}
 
@@ -2014,6 +2603,7 @@ async function initOrReconnect() {
         $input.value = pending.text;
         $input.focus();
         $input.setSelectionRange?.(pending.text.length, pending.text.length);
+        updateChatActionBtn();
       }
     }
   } catch (_) {}
@@ -2027,6 +2617,7 @@ browser.runtime.onMessage.addListener((message, sender, sendResponse) => {
         $input.value = message.text;
         $input.focus();
         $input.setSelectionRange?.(message.text.length, message.text.length);
+        updateChatActionBtn();
       } else {
         $input.focus();
       }
