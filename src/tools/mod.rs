@@ -1809,13 +1809,32 @@ fn is_private_or_restricted_ip(ip: &std::net::IpAddr) -> bool {
     }
 }
 
+struct TempFileGuard {
+    path: std::path::PathBuf,
+    armed: bool,
+}
+
+impl Drop for TempFileGuard {
+    fn drop(&mut self) {
+        if self.armed {
+            let _ = std::fs::remove_file(&self.path);
+        }
+    }
+}
+
 /// Atomically writes bytes or string content to a file by writing to a sibling temporary file first
 /// and then renaming it over the destination path. This guarantees atomic, torn-read-free file updates.
+/// Uses a RAII drop guard (`TempFileGuard`) so that if the future is cancelled (dropped at an `.await`
+/// point) or encounters an I/O error before the rename completes, the temporary file is automatically removed.
 pub async fn atomic_write_file<P: AsRef<std::path::Path>, C: AsRef<[u8]>>(
     file_path: P,
     content: C,
 ) -> std::io::Result<()> {
+    use std::sync::atomic::{AtomicU64, Ordering};
     use tokio::io::AsyncWriteExt;
+
+    static TMP_SEQ: AtomicU64 = AtomicU64::new(0);
+
     let file_path = file_path.as_ref();
     let parent = file_path
         .parent()
@@ -1832,34 +1851,27 @@ pub async fn atomic_write_file<P: AsRef<std::path::Path>, C: AsRef<[u8]>>(
         .unwrap_or_default()
         .as_nanos();
     let pid = std::process::id();
-    let tmp_path = parent.join(format!(".{}.{}_{}.tmp", filename, nanos, pid));
+    let seq = TMP_SEQ.fetch_add(1, Ordering::Relaxed);
+    let tmp_path = parent.join(format!(".{}.{}_{}_{}.tmp", filename, nanos, pid, seq));
 
-    let mut file = match tokio::fs::OpenOptions::new()
+    let mut file = tokio::fs::OpenOptions::new()
         .write(true)
         .create(true)
         .truncate(true)
         .open(&tmp_path)
-        .await
-    {
-        Ok(f) => f,
-        Err(e) => return Err(e),
+        .await?;
+
+    let mut guard = TempFileGuard {
+        path: tmp_path.clone(),
+        armed: true,
     };
 
-    if let Err(e) = file.write_all(content.as_ref()).await {
-        let _ = tokio::fs::remove_file(&tmp_path).await;
-        return Err(e);
-    }
-
-    if let Err(e) = file.sync_all().await {
-        let _ = tokio::fs::remove_file(&tmp_path).await;
-        return Err(e);
-    }
+    file.write_all(content.as_ref()).await?;
+    file.sync_all().await?;
     drop(file);
 
-    if let Err(e) = tokio::fs::rename(&tmp_path, file_path).await {
-        let _ = tokio::fs::remove_file(&tmp_path).await;
-        return Err(e);
-    }
+    tokio::fs::rename(&tmp_path, file_path).await?;
+    guard.armed = false;
 
     Ok(())
 }

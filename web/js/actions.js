@@ -111,6 +111,9 @@ export function initActions() {
         if (target && actions[target.dataset.action]) actions[target.dataset.action](target, event);
     });
     document.addEventListener('input', event => {
+        if (event.target.id === 'chat-input') {
+            if (typeof updateChatActionBtn === 'function') updateChatActionBtn();
+        }
         if (event.target.id === 'file-search-input') renderNoteList();
         if (event.target.id === 'model-search-input') filterModels(event.target.value);
         if (event.target.id === 'emoji-search-input') filterEmojis(event.target.value);

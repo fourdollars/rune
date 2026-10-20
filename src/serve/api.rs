@@ -123,10 +123,10 @@ impl NoteRoom {
             .push_str(token);
     }
 
-    /// Clear streaming tokens for a session.
-    pub async fn clear_streaming_tokens(&self, session_id: &str) {
+    /// Clear streaming tokens for a session and return any accumulated partial content.
+    pub async fn clear_streaming_tokens(&self, session_id: &str) -> Option<String> {
         let mut tokens = self.streaming_tokens.write().await;
-        tokens.remove(session_id);
+        tokens.remove(session_id)
     }
 }
 
@@ -2214,19 +2214,58 @@ pub async fn goal_clear_handler(
 
 pub async fn chat_cancel_handler(
     State(state): State<ServerState>,
+    req_ext: Option<axum::extract::Extension<crate::serve::AuthenticatedUser>>,
     Query(params): Query<std::collections::HashMap<String, String>>,
 ) -> Json<ApiResponse> {
+    if let Some(axum::extract::Extension(ref user)) = req_ext {
+        if user.role == crate::serve::oauth::Role::Guest {
+            return Json(ApiResponse::err("Guest access is read-only"));
+        }
+    }
+
     let note_id = params.get("note_id").cloned().unwrap_or_default();
     if note_id.is_empty() {
         return Json(ApiResponse::err("No note selected"));
     }
 
     let room = state.get_or_create_room(&note_id).await;
-    let session_id = params.get("session_id").cloned();
+    let session_id = params
+        .get("session_id")
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty());
 
     if let Some(ref sess) = session_id {
         room.cancel_session_task(sess).await;
         room.set_session_status(sess, "idle").await;
+        if let Some(partial) = room.clear_streaming_tokens(sess).await {
+            if !partial.trim().is_empty() {
+                let stopped_suffix = "\n\n*(Stopped)*";
+                broadcast_to_room(
+                    &room,
+                    &SseMsg::ChatToken {
+                        content: stopped_suffix.to_string(),
+                        session_id: Some(sess.clone()),
+                    },
+                );
+                let final_partial = format!("{}{}", partial, stopped_suffix);
+                state
+                    .chat_db
+                    .insert_session_async(
+                        note_id.clone(),
+                        sess.clone(),
+                        "assistant".to_string(),
+                        "ᚱᚢᚾᛖ".to_string(),
+                        final_partial,
+                    )
+                    .await;
+            }
+        }
+        broadcast_to_room(
+            &room,
+            &SseMsg::ChatDone {
+                session_id: Some(sess.clone()),
+            },
+        );
         broadcast_to_room(
             &room,
             &SseMsg::Status {
@@ -2240,6 +2279,11 @@ pub async fn chat_cancel_handler(
             let mut statuses = room.active_statuses.write().await;
             statuses.clear();
         }
+        {
+            let mut tokens = room.streaming_tokens.write().await;
+            tokens.clear();
+        }
+        broadcast_to_room(&room, &SseMsg::ChatDone { session_id: None });
         broadcast_to_room(
             &room,
             &SseMsg::Status {
@@ -2249,33 +2293,36 @@ pub async fn chat_cancel_handler(
         );
     }
 
-    // Broadcast loop_done if status was running
-    let was_running = {
-        let status = room.goal_status.read().await;
-        status.as_deref() == Some("Running")
-    };
-    if was_running {
-        {
-            *room.goal_status.write().await = Some("Paused".to_string());
+    // Broadcast loop_done only if cancelling __goal__ or cancelling all tasks
+    let affects_goal = session_id.is_none() || session_id.as_deref() == Some("__goal__");
+    if affects_goal {
+        let was_running = {
+            let status = room.goal_status.read().await;
+            status.as_deref() == Some("Running")
+        };
+        if was_running {
+            {
+                *room.goal_status.write().await = Some("Paused".to_string());
+            }
+            let condition = room.goal_condition.read().await.clone();
+            let model = room.goal_model.read().await.clone();
+            broadcast_to_room(
+                &room,
+                &SseMsg::GoalStatus {
+                    note_id: note_id.clone(),
+                    condition,
+                    status: Some("Paused".to_string()),
+                    model,
+                },
+            );
+            broadcast_to_room(
+                &room,
+                &SseMsg::LoopDone {
+                    status: "cancel".to_string(),
+                    output: "Loop paused by user".to_string(),
+                },
+            );
         }
-        let condition = room.goal_condition.read().await.clone();
-        let model = room.goal_model.read().await.clone();
-        broadcast_to_room(
-            &room,
-            &SseMsg::GoalStatus {
-                note_id: note_id.clone(),
-                condition,
-                status: Some("Paused".to_string()),
-                model,
-            },
-        );
-        broadcast_to_room(
-            &room,
-            &SseMsg::LoopDone {
-                status: "cancel".to_string(),
-                output: "Loop paused by user".to_string(),
-            },
-        );
     }
 
     Json(ApiResponse::success())
@@ -8021,5 +8068,90 @@ mod isolation_tests {
             .as_array()
             .unwrap();
         assert_eq!(running_ids2.len(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_chat_cancel_handler_rbac_scope_and_partial_persistence() {
+        use axum::extract::{Query, State};
+        let (state, _tmp) = make_state();
+        let note_id = "cancel-test-note";
+        let room = state.get_or_create_room(note_id).await;
+        let mut rx = room.broadcast_tx.subscribe();
+
+        // 1. Guest role is rejected by chat_cancel_handler
+        let mut params = std::collections::HashMap::new();
+        params.insert("note_id".to_string(), note_id.to_string());
+        params.insert("session_id".to_string(), "main".to_string());
+        let guest_ext = Some(axum::extract::Extension(crate::serve::AuthenticatedUser {
+            login: "guest-user".to_string(),
+            role: crate::serve::oauth::Role::Guest,
+        }));
+        let guest_res = crate::serve::api::chat_cancel_handler(
+            State(state.clone()),
+            guest_ext,
+            Query(params.clone()),
+        )
+        .await;
+        assert!(!guest_res.0.ok);
+        assert_eq!(
+            guest_res.0.error.as_deref(),
+            Some("Guest access is read-only")
+        );
+
+        // 2. Setup active sessions ("main" and "other") + running Goal + partial tokens on "main"
+        let token_main = room.cancel_and_replace_session_token("main").await;
+        let token_other = room.cancel_and_replace_session_token("other").await;
+        room.set_session_status("main", "typing").await;
+        room.set_session_status("other", "thinking").await;
+        room.append_streaming_token("main", "Partial AI response")
+            .await;
+        {
+            *room.goal_status.write().await = Some("Running".to_string());
+        }
+
+        // 3. User cancels only "main"
+        let user_ext = Some(axum::extract::Extension(crate::serve::AuthenticatedUser {
+            login: "alice".to_string(),
+            role: crate::serve::oauth::Role::User,
+        }));
+        let res =
+            crate::serve::api::chat_cancel_handler(State(state.clone()), user_ext, Query(params))
+                .await;
+        assert!(res.0.ok);
+
+        // "main" is cancelled, "other" and "__goal__" are untouched
+        assert!(token_main.is_cancelled());
+        assert!(!token_other.is_cancelled());
+        assert_eq!(
+            room.goal_status.read().await.as_deref(),
+            Some("Running"),
+            "Cancelling a single chat session must not pause background goal"
+        );
+
+        // Partial tokens for "main" were persisted with *(Stopped)* suffix
+        let history = state
+            .chat_db
+            .load_recent_session(note_id, "main", 10)
+            .unwrap();
+        assert_eq!(history.len(), 1);
+        assert_eq!(history[0].role, "assistant");
+        assert_eq!(history[0].content, "Partial AI response\n\n*(Stopped)*");
+
+        // Verify ChatDone and Status(idle) were broadcast for "main"
+        let mut saw_chat_done = false;
+        let mut saw_idle = false;
+        while let Ok(msg) = rx.try_recv() {
+            if msg.contains(r#""type":"chat_done""#) && msg.contains(r#""session_id":"main""#) {
+                saw_chat_done = true;
+            }
+            if msg.contains(r#""type":"status""#)
+                && msg.contains(r#""state":"idle""#)
+                && msg.contains(r#""session_id":"main""#)
+            {
+                saw_idle = true;
+            }
+        }
+        assert!(saw_chat_done, "Expected chat_done broadcast for main");
+        assert!(saw_idle, "Expected status:idle broadcast for main");
     }
 }

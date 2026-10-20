@@ -1,14 +1,65 @@
 import './state.js';
 // --- Chat ---
+globalThis.stopChatSession = async function stopChatSession() {
+    if (!isConnected || !currentNoteId) return;
+    if (typeof isGuest !== 'undefined' && isGuest) return;
+    const sessId = (typeof currentSessionId !== 'undefined' && currentSessionId) ? currentSessionId : 'main';
+    try {
+        await fetch(`/api/chat?note_id=${encodeURIComponent(currentNoteId)}&session_id=${encodeURIComponent(sessId)}`, {
+            method: 'DELETE',
+            credentials: 'same-origin',
+        });
+    } catch (err) {
+        console.error('Failed to cancel chat:', err);
+    }
+};
+
+globalThis.updateChatActionBtn = function updateChatActionBtn() {
+    const btn = document.getElementById('chat-send');
+    if (!btn) return;
+    const inputEl = document.getElementById('chat-input');
+    const hasText = Boolean(inputEl && inputEl.value.trim().length > 0);
+    const sess = (typeof currentSessionId !== 'undefined' && currentSessionId) ? currentSessionId : 'main';
+    const status = (typeof getSessionStatus === 'function') ? getSessionStatus(sess) : 'idle';
+    const isBusy = Boolean(status && status !== 'idle' && status !== 'disconnected');
+    const guest = typeof isGuest !== 'undefined' && isGuest;
+
+    if (!guest && isBusy && !hasText) {
+        if (!btn.classList.contains('stop-mode')) {
+            btn.classList.add('stop-mode');
+            btn.dataset.icon = 'stop';
+            if (typeof setRuneIcon === 'function') setRuneIcon(btn, 'stop');
+            btn.title = 'Stop generating (Ctrl+Enter)';
+            btn.setAttribute('aria-label', 'Stop generating');
+        }
+    } else {
+        if (btn.classList.contains('stop-mode')) {
+            btn.classList.remove('stop-mode');
+            btn.dataset.icon = 'send';
+            if (typeof setRuneIcon === 'function') setRuneIcon(btn, 'send');
+            btn.title = 'Send message (Ctrl+Enter)';
+            btn.setAttribute('aria-label', 'Send message');
+        }
+    }
+};
+
 globalThis.sendMessage = function sendMessage() {
     const text = chatInput.value.trim();
-    if (!text || !isConnected || !currentNoteId) return;
+    if (!text) {
+        const btn = document.getElementById('chat-send');
+        if (btn && btn.classList.contains('stop-mode')) {
+            stopChatSession();
+        }
+        return;
+    }
+    if (!isConnected || !currentNoteId) return;
 
     const sessId = typeof currentSessionId !== 'undefined' && currentSessionId ? currentSessionId : 'main';
     // Send to server — do NOT optimistic render; wait for broadcast echo
     api('chat', { note_id: currentNoteId, session_id: sessId, content: text, nickname: myNickname });
     chatInput.value = '';
     chatInput.style.height = 'auto';
+    updateChatActionBtn();
 };
 
 globalThis.updateSessionButton = function updateSessionButton() {
@@ -395,6 +446,7 @@ globalThis.updateChatInputState = function updateChatInputState() {
         chatInput.placeholder = 'Type a message...';
     }
     if (typeof renderSessionBar === 'function') renderSessionBar();
+    if (typeof updateChatActionBtn === 'function') updateChatActionBtn();
     applyNoNoteLayout();
 };
 

@@ -333,7 +333,7 @@ pub async fn handle_tool_call(
                 .map_err(|e| format!("Failed to create dir: {}", e))?;
 
             let file_path = md_dir.join(filename);
-            tokio::fs::write(&file_path, content)
+            crate::tools::atomic_write_file(&file_path, content)
                 .await
                 .map_err(|e| format!("Failed to write file: {}", e))?;
 
@@ -380,24 +380,20 @@ pub async fn handle_tool_call(
                 .map_err(|e| format!("Failed to create dir: {}", e))?;
 
             let file_path = md_dir.join(filename);
-            use tokio::io::AsyncWriteExt;
-            let mut file = tokio::fs::OpenOptions::new()
-                .create(true)
-                .append(true)
-                .open(&file_path)
-                .await
-                .map_err(|e| format!("Failed to open file for append: {}", e))?;
+            let existing = if file_path.exists() {
+                tokio::fs::read_to_string(&file_path)
+                    .await
+                    .map_err(|e| format!("Failed to read existing file for append: {}", e))?
+            } else {
+                String::new()
+            };
+            let mut full_content = String::with_capacity(existing.len() + content.len());
+            full_content.push_str(&existing);
+            full_content.push_str(content);
 
-            file.write_all(content.as_bytes())
+            crate::tools::atomic_write_file(&file_path, &full_content)
                 .await
                 .map_err(|e| format!("Failed to append to file: {}", e))?;
-            file.flush()
-                .await
-                .map_err(|e| format!("Failed to flush file: {}", e))?;
-
-            let full_content = tokio::fs::read_to_string(&file_path)
-                .await
-                .unwrap_or_default();
 
             let room = state.get_or_create_room(note_id).await;
             let fc = crate::serve::api::SseMsg::FileContent {
@@ -464,7 +460,7 @@ pub async fn handle_tool_call(
                 existing.replacen(target_content, replacement_content, 1)
             };
 
-            tokio::fs::write(&file_path, &new_content)
+            crate::tools::atomic_write_file(&file_path, &new_content)
                 .await
                 .map_err(|e| format!("Failed to write patched file: {}", e))?;
 
@@ -1179,5 +1175,18 @@ mod tests {
 
         let content4 = tokio::fs::read_to_string(&file_path).await.unwrap();
         assert_eq!(content4, "# Section 1\nHi\n\n# Section 2\nWorld\nHi again");
+
+        // 7. Verify no temporary (.tmp) files are left behind in the notebook directory
+        let mut entries = tokio::fs::read_dir(state.note_markdown_dir("note-1"))
+            .await
+            .unwrap();
+        while let Some(entry) = entries.next_entry().await.unwrap() {
+            let name = entry.file_name().to_string_lossy().to_string();
+            assert!(
+                !name.ends_with(".tmp"),
+                "Unexpected leftover temp file: {}",
+                name
+            );
+        }
     }
 }

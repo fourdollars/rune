@@ -574,8 +574,14 @@ body {
 }
 
 #chat-input:not(:placeholder-shown) + #chat-send,
-#chat-input:not(:placeholder-shown) ~ #chat-send {
+#chat-input:not(:placeholder-shown) ~ #chat-send,
+#chat-send.stop-mode {
     display: flex;
+}
+
+#chat-send.stop-mode {
+    background: var(--danger);
+    color: #fff;
 }
 
 #chat-send:hover { opacity: 0.85; }

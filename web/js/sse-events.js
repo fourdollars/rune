@@ -92,7 +92,16 @@ globalThis.handleMessage = function handleMessage(msg) {
             break;
         }
         case 'chat_done': {
-            const doneSess = msg.session_id || 'main';
+            if (!msg.session_id) {
+                if (typeof sessionStatuses !== 'undefined' && sessionStatuses instanceof Map) {
+                    sessionStatuses.clear();
+                }
+                setSessionStatus(currentSessionId || 'main', 'idle');
+                finalizeAssistantMessage();
+                removeAllApprovalButtons();
+                break;
+            }
+            const doneSess = msg.session_id;
             setSessionStatus(doneSess, 'idle');
             if (doneSess === currentSessionId) {
                 finalizeAssistantMessage();
@@ -101,7 +110,14 @@ globalThis.handleMessage = function handleMessage(msg) {
             break;
         }
         case 'status':
-            setSessionStatus(msg.session_id || 'main', msg.state);
+            if (!msg.session_id && msg.state === 'idle') {
+                if (typeof sessionStatuses !== 'undefined' && sessionStatuses instanceof Map) {
+                    sessionStatuses.clear();
+                }
+                setSessionStatus(currentSessionId || 'main', 'idle');
+            } else {
+                setSessionStatus(msg.session_id || 'main', msg.state);
+            }
             break;
         case 'tool_status':
             if (msg.state === 'start') {

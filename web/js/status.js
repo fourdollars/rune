@@ -68,6 +68,7 @@ globalThis.setSessionStatus = function setSessionStatus(sessionId, state) {
     if (sess === (currentSessionId || 'main')) {
         currentStatus = state || 'idle';
         paint(currentStatus, STATUS_EMOJI[currentStatus] || 'dot', currentStatus);
+        if (typeof updateChatActionBtn === 'function') updateChatActionBtn();
     }
 
     refreshSessionModalIfOpen();
@@ -91,6 +92,7 @@ globalThis.setSessionToolStatus = function setSessionToolStatus(sessionId, toolN
     if (sess === (currentSessionId || 'main')) {
         currentStatus = 'tool';
         paint('tool', STATUS_EMOJI.tool, `tool: ${toolName}`);
+        if (typeof updateChatActionBtn === 'function') updateChatActionBtn();
     }
 
     refreshSessionModalIfOpen();
@@ -133,6 +135,7 @@ globalThis.updateCurrentSessionStatus = function updateCurrentSessionStatus() {
         currentStatus = status || 'idle';
         paint(currentStatus, STATUS_EMOJI[currentStatus] || 'dot', currentStatus);
     }
+    if (typeof updateChatActionBtn === 'function') updateChatActionBtn();
 };
 
 globalThis.setStatus = function setStatus(state, sessionId) {
