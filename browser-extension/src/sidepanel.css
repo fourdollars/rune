@@ -591,12 +591,14 @@ body {
 .mermaid-block svg {
     max-width: 100%;
     height: auto;
+    display: inline-block;
+    margin: 0 auto;
 }
 .mermaid-block foreignObject {
     overflow: visible;
 }
 .chat-msg .mermaid-block foreignObject p {
-    margin: 1em 0;
+    margin: 0;
 }
 
 .chat-msg .body th, .chat-msg .body td {

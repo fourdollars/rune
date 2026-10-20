@@ -1134,9 +1134,12 @@ pre.hljs-pre:hover .copy-btn {
     overflow-x: auto;
     text-align: center;
 }
-.mermaid-block svg {
+.mermaid-block svg,
+.mermaid svg {
     max-width: 100%;
     height: auto;
+    display: inline-block;
+    margin: 0 auto;
 }
 /* foreignObject clips HTML content (white-space:nowrap divs) when Mermaid's
    internal text measurement underestimates the rendered width. Allow overflow
@@ -1145,23 +1148,20 @@ pre.hljs-pre:hover .copy-btn {
 .mermaid foreignObject {
     overflow: visible;
 }
-/* Mermaid measures label height (getBoundingClientRect on the div) while its
-   temporary SVG lives in <body> outside #preview, so <p> gets the browser
-   default margin (1em 0 ≈ 16px).  After we inject the SVG into #preview the
-   rule "#preview p { margin: 0.6em 0 }" fires and shrinks each <p> by ~12.8px
-   total.  The foreignObject height was fixed at measurement time, so the div
-   now only fills the top portion, shifting nodeLabel ~6px above center.
-   We need #preview in the selector to reach specificity (1,1,2)=112 and beat
-   "#preview p" at (1,0,1)=101; without it our rule loses silently. */
+/* Mermaid v12 injects "#<svg-id> p { margin: 0 }" in its internal stylesheet
+   and measures foreignObject label height with zero <p> margin while rendering
+   in <body>.  Explicitly keep margin: 0 inside #preview and .chat-msg so that
+   container paragraph rules ("#preview p { margin: 0.6em 0 }") never add vertical
+   margins that push nodeLabel / edgeLabel off-center. */
 #preview .mermaid-block foreignObject p,
 #preview .mermaid foreignObject p,
 .chat-msg .mermaid-block foreignObject p,
 .chat-msg .mermaid foreignObject p {
-    margin: 1em 0;
+    margin: 0;
 }
 
 /* --- Inline SVG in preview --- */
-#preview svg:not(.katex svg):not(.rune-icon):not(.copy-btn svg) {
+#preview svg:not(.katex svg):not(.rune-icon):not(.copy-btn svg):not(.mermaid-block svg):not(.mermaid svg) {
     max-width: 100%;
     height: auto;
     display: block;

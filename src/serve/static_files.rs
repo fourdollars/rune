@@ -820,4 +820,21 @@ mod tests {
         );
         assert!(js.contains("formatCredits"), "missing formatCredits");
     }
+
+    #[test]
+    fn test_style_css_mermaid_foreign_object_alignment() {
+        let css = get("style.css").unwrap();
+        let fo_pos = css
+            .find("#preview .mermaid-block foreignObject p")
+            .expect("style.css missing Mermaid foreignObject p rule");
+        let block = &css[fo_pos..fo_pos + 220];
+        assert!(
+            block.contains("margin: 0;"),
+            "Mermaid foreignObject p must use margin: 0 to match Mermaid v12 measurement"
+        );
+        assert!(
+            css.contains(":not(.mermaid-block svg):not(.mermaid svg)"),
+            "#preview svg block rule must exclude Mermaid SVGs so diagrams remain centered"
+        );
+    }
 }
