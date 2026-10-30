@@ -274,6 +274,10 @@ pub async fn handle_mcp_post(
                 }
             }
         }
+        "resources/templates/list" => {
+            let resp = McpJsonRpcResponse::success(req.id, json!({ "resourceTemplates": [] }));
+            json_response(resp)
+        }
         _ => {
             let resp = McpJsonRpcResponse::error(
                 req.id,
@@ -281,12 +285,7 @@ pub async fn handle_mcp_post(
                 format!("Method not found: {}", req.method),
                 None,
             );
-            (
-                StatusCode::NOT_FOUND,
-                [("content-type", "application/json")],
-                serde_json::to_string(&resp).unwrap_or_default(),
-            )
-                .into_response()
+            json_response(resp)
         }
     }
 }
@@ -519,5 +518,90 @@ mod tests {
 
         tokio::time::sleep(Duration::from_millis(50)).await;
         assert!(!sessions.get(&session_id).await.unwrap().sse_open);
+    }
+
+    #[tokio::test]
+    async fn test_handle_mcp_post_templates_and_unknown_method_return_ok() {
+        use axum::extract::State;
+        use axum::http::HeaderValue;
+        use http_body_util::BodyExt;
+        use std::sync::Arc;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let (admin_broadcast_tx, _) = tokio::sync::broadcast::channel(256);
+        let db_path = tmp.path().join("test.db");
+        let db = crate::serve::ChatDb::open(&db_path).unwrap();
+        let state = ServerState {
+            config: crate::config::RuneConfig::default(),
+            sessions: crate::serve::oauth::SessionStore::new(),
+            files: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
+            active_file: Arc::new(tokio::sync::RwLock::new(String::new())),
+            models: Arc::new(tokio::sync::RwLock::new(vec![])),
+            rooms: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
+            global_default_model: Arc::new(tokio::sync::RwLock::new("gpt-5-mini".into())),
+            admin_broadcast_tx,
+            chat_db: db,
+            data_dir: tmp.path().join(".rune"),
+            oauth_codes: crate::serve::oauth_pkce::AuthCodeStore::new(),
+            oauth_tokens: crate::serve::oauth_pkce::OAuthTokenStore::new(),
+            oauth_providers: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
+            mcp_sessions: crate::mcp::mcp_session::McpSessionStore::new(),
+            provider_registry: Arc::new(tokio::sync::RwLock::new(
+                crate::provider::ProviderRegistry::new(),
+            )),
+            running_cron_jobs: Arc::new(tokio::sync::RwLock::new(std::collections::HashSet::new())),
+        };
+
+        let session = crate::serve::oauth::Session {
+            id: "test_sid".to_string(),
+            login: "testuser".to_string(),
+            role: crate::serve::oauth::Role::Admin,
+            avatar_url: "".to_string(),
+            expires_at: (std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_secs()
+                + 3600) as i64,
+        };
+        state.sessions.insert(session).await;
+
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            "cookie",
+            HeaderValue::from_str("rune_sid=test_sid").unwrap(),
+        );
+
+        // 1. Test resources/templates/list returns 200 OK with empty template list
+        let req_body = serde_json::to_vec(&json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "resources/templates/list",
+            "params": {}
+        }))
+        .unwrap();
+
+        let response =
+            handle_mcp_post(State(state.clone()), headers.clone(), req_body.into()).await;
+        assert_eq!(response.status(), StatusCode::OK);
+        let body_bytes = response.into_body().collect().await.unwrap().to_bytes();
+        let body: Value = serde_json::from_slice(&body_bytes).unwrap();
+        assert_eq!(body["id"], 1);
+        assert_eq!(body["result"]["resourceTemplates"], json!([]));
+
+        // 2. Test unknown method returns 200 OK with JSON-RPC error -32601 (not 404)
+        let unknown_body = serde_json::to_vec(&json!({
+            "jsonrpc": "2.0",
+            "id": 2,
+            "method": "non_existent_method",
+            "params": {}
+        }))
+        .unwrap();
+
+        let response = handle_mcp_post(State(state), headers, unknown_body.into()).await;
+        assert_eq!(response.status(), StatusCode::OK);
+        let body_bytes = response.into_body().collect().await.unwrap().to_bytes();
+        let body: Value = serde_json::from_slice(&body_bytes).unwrap();
+        assert_eq!(body["id"], 2);
+        assert_eq!(body["error"]["code"], -32601);
     }
 }
