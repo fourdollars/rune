@@ -1,7 +1,15 @@
 import './state.js';
 globalThis.switchNote = async function switchNote(sessionId, forceFile = null) {
     if (sessionId === currentNoteId && !forceFile && specContent) return;
+    clearTimeout(debounceTimer);
+    debounceTimer = null;
+    editorDirty = false;
     currentNoteId = sessionId;
+    if (forceFile) {
+        currentFilename = forceFile;
+    } else {
+        currentFilename = '';
+    }
     localStorage.setItem('rune_note', sessionId);
     renderNoteList();
     updateChatInputState();

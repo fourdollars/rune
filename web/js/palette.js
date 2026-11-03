@@ -16,6 +16,7 @@ const COMMANDS = [
     // Files & Notes
     { label: 'New file', icon: 'file-plus', admin: true, section: 'Files & Notes', run: () => createFile() },
     { label: 'Rename current file', icon: 'pencil', admin: true, section: 'Files & Notes', run: renameCurrent },
+    { label: 'Move current file', icon: 'swap', admin: true, section: 'Files & Notes', run: () => moveCurrentFile() },
     { label: 'Delete current file', icon: 'trash', admin: true, section: 'Files & Notes', run: () => deleteCurrentFile() },
     { label: 'New note', icon: 'plus', admin: true, section: 'Files & Notes', run: () => showNewNoteDialog() },
     { label: 'Open note settings', icon: 'settings', admin: true, section: 'Files & Notes', run: () => showNoteSettings(currentNoteId) },

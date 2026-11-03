@@ -92,6 +92,9 @@ globalThis.deleteCurrentFile = async function deleteCurrentFile() {
 };
 
 globalThis.switchFile = async function switchFile(name) {
+    clearTimeout(debounceTimer);
+    debounceTimer = null;
+    editorDirty = false;
     const data = await api('session', { note: currentNoteId, file: name }, 'PUT');
     if (!data || !data.ok) return;
     currentFilename = data.current_file || name;
@@ -117,4 +120,70 @@ globalThis.renameCurrentFile = function renameCurrentFile(newName) {
     if (!clean.endsWith('.md')) { addSystemMessage('Error: filename must end in .md'); return; }
     if (!/^[\p{L}\p{N}_\-\.]+\.md$/u.test(clean)) { addSystemMessage('Error: invalid filename'); return; }
     api('notes/' + encodeURIComponent(currentNoteId) + '/files/' + encodeURIComponent(currentFilename), { name: clean }, 'PATCH');
+};
+
+globalThis.moveFile = async function moveFile(srcNoteId, filename) {
+    if (!srcNoteId || !filename) return;
+    const targets = (notes || []).filter(n => n.id !== srcNoteId);
+    if (targets.length === 0) {
+        if (typeof addSystemMessage === 'function') {
+            addSystemMessage('No other notes available to move file to');
+        }
+        return;
+    }
+
+    const options = targets.map(n => ({
+        value: n.id,
+        label: (n.icon ? n.icon + ' ' : '') + (n.name || n.id),
+    }));
+
+    const targetNoteId = await showDialog({
+        title: 'Move File',
+        message: 'Select destination note for "' + filename + '":',
+        select: true,
+        options,
+        selectedValue: targets[0].id,
+        okLabel: 'Move',
+    });
+
+    if (!targetNoteId) return;
+
+    const targetNote = targets.find(n => n.id === targetNoteId);
+    const targetFiles = targetNote ? (targetNote.files || []) : [];
+    let overwrite = false;
+    if (targetFiles.includes(filename)) {
+        const destName = targetNote ? targetNote.name : targetNoteId;
+        const confirmOverwrite = await showDialog({
+            title: 'File Conflict',
+            message: 'A file named "' + filename + '" already exists in "' + destName + '". Do you want to overwrite it?',
+            danger: true,
+            okLabel: 'Overwrite',
+        });
+        if (!confirmOverwrite) return;
+        overwrite = true;
+    }
+
+    const isCurrent = (srcNoteId === currentNoteId && filename === currentFilename);
+    if (isCurrent) {
+        pendingNoteId = targetNoteId;
+        pendingFile = filename;
+    }
+
+    const res = await api('notes/' + encodeURIComponent(srcNoteId) + '/files/' + encodeURIComponent(filename), {
+        target_note: targetNoteId,
+        overwrite,
+    }, 'PATCH');
+
+    if (res && res.ok) {
+        if (isCurrent) {
+            await switchNote(targetNoteId, filename);
+        }
+    }
+    pendingNoteId = null;
+    pendingFile = null;
+};
+
+globalThis.moveCurrentFile = async function moveCurrentFile() {
+    if (!currentNoteId || !currentFilename) return;
+    await moveFile(currentNoteId, currentFilename);
 };

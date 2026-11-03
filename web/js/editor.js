@@ -122,14 +122,17 @@ globalThis.initEditor = function initEditor() {
     if (mq.addEventListener) mq.addEventListener('change', onSchemeChange);
     else if (mq.addListener) mq.addListener(onSchemeChange); // Safari <14 fallback
 
-    editorInstance.on('change', () => {
+    editorInstance.on('change', (_cm, changeObj) => {
+        if (changeObj && changeObj.origin === 'setValue') return;
         specContent = editorInstance.getValue();
         editorDirty = true;
         clearTimeout(debounceTimer);
+        const targetNote = currentNoteId;
+        const targetFile = currentFilename;
         debounceTimer = setTimeout(() => {
             if (showPreview) renderPreview();
-            if (editorDirty && currentNoteId && currentFilename) {
-                api('notes/' + encodeURIComponent(currentNoteId) + '/files/' + encodeURIComponent(currentFilename), { content: specContent }, 'PUT');
+            if (editorDirty && targetNote && targetFile && targetNote === currentNoteId && targetFile === currentFilename) {
+                api('notes/' + encodeURIComponent(targetNote) + '/files/' + encodeURIComponent(targetFile), { content: specContent }, 'PUT');
                 editorDirty = false;
             }
         }, 300);
@@ -142,6 +145,9 @@ globalThis.initEditor = function initEditor() {
 
 globalThis.setEditorValue = function setEditorValue(text) {
     specContent = text;
+    clearTimeout(debounceTimer);
+    debounceTimer = null;
+    editorDirty = false;
     if (editorInstance) {
         if (editorInstance.getValue() !== text) {
             const cursor = editorInstance.getCursor();
@@ -149,4 +155,5 @@ globalThis.setEditorValue = function setEditorValue(text) {
             editorInstance.setCursor(cursor);
         }
     }
-}
+    editorDirty = false;
+};

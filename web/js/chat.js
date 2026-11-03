@@ -535,13 +535,15 @@ globalThis.addChatMessage = function addChatMessage(nickname, content) {
 
 
 // --- Generic Dialog (replaces native prompt/confirm) ---
-globalThis.showDialog = function showDialog({ title, message, input, inputValue, placeholder, danger, okLabel }) {
+globalThis.showDialog = function showDialog({ title, message, input, inputValue, placeholder, danger, okLabel, select, options, selectedValue }) {
     return new Promise((resolve) => {
         const modal = document.getElementById('generic-dialog-modal');
         const titleEl = document.getElementById('generic-dialog-title');
         const msgEl = document.getElementById('generic-dialog-message');
         const inputGroup = document.getElementById('generic-dialog-input-group');
         const inputEl = document.getElementById('generic-dialog-input');
+        const selectGroup = document.getElementById('generic-dialog-select-group');
+        const selectEl = document.getElementById('generic-dialog-select');
         const okBtn = document.getElementById('generic-dialog-ok');
         const dangerBtn = document.getElementById('generic-dialog-danger');
         const cancelBtn = document.getElementById('generic-dialog-cancel');
@@ -557,6 +559,22 @@ globalThis.showDialog = function showDialog({ title, message, input, inputValue,
             inputEl.focus();
         } else {
             inputGroup.style.display = 'none';
+        }
+
+        if (select && selectGroup && selectEl) {
+            selectGroup.style.display = '';
+            selectEl.replaceChildren();
+            (options || []).forEach(opt => {
+                const optEl = document.createElement('option');
+                optEl.value = opt.value ?? opt;
+                optEl.textContent = opt.label ?? opt.value ?? opt;
+                if ((opt.value ?? opt) === selectedValue) {
+                    optEl.selected = true;
+                }
+                selectEl.appendChild(optEl);
+            });
+        } else if (selectGroup) {
+            selectGroup.style.display = 'none';
         }
 
         if (danger) {
@@ -575,15 +593,26 @@ globalThis.showDialog = function showDialog({ title, message, input, inputValue,
             dangerBtn.onclick = null;
             cancelBtn.onclick = null;
             inputEl.onkeydown = null;
+            if (selectEl) selectEl.onkeydown = null;
         }
 
-        okBtn.onclick = () => { cleanup(); resolve(input ? inputEl.value.trim() : true); };
-        dangerBtn.onclick = () => { cleanup(); resolve(input ? inputEl.value.trim() : true); };
-        cancelBtn.onclick = () => { cleanup(); resolve(input ? null : false); };
-        inputEl.onkeydown = (e) => { if (e.key === 'Enter') { cleanup(); resolve(inputEl.value.trim()); } };
+        function getValue() {
+            if (select && selectEl) return selectEl.value;
+            if (input) return inputEl.value.trim();
+            return true;
+        }
+
+        okBtn.onclick = () => { const v = getValue(); cleanup(); resolve(v); };
+        dangerBtn.onclick = () => { const v = getValue(); cleanup(); resolve(v); };
+        cancelBtn.onclick = () => { cleanup(); resolve(select || input ? null : false); };
+        inputEl.onkeydown = (e) => { if (e.key === 'Enter') { const v = inputEl.value.trim(); cleanup(); resolve(v); } };
+        if (selectEl) {
+            selectEl.onkeydown = (e) => { if (e.key === 'Enter') { const v = selectEl.value; cleanup(); resolve(v); } };
+        }
 
         modal.classList.remove('hidden');
-        if (input) setTimeout(() => inputEl.focus(), 50);
+        if (select && selectEl) setTimeout(() => selectEl.focus(), 50);
+        else if (input) setTimeout(() => inputEl.focus(), 50);
     });
 };
 

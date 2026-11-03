@@ -149,7 +149,10 @@ globalThis.handleMessage = function handleMessage(msg) {
                 const targetFile = (savedFile && fileList.includes(savedFile)) ? savedFile : fileList[0];
                 switchFile(targetFile);
             } else if (currentFilename && !fileList.includes(currentFilename)) {
-                // Current file was deleted — fall back
+                // Current file was deleted — fall back unless actively being moved
+                if (pendingFile && pendingNoteId) {
+                    break;
+                }
                 if (fileList.length > 0) {
                     switchFile(fileList[0]);
                 } else {

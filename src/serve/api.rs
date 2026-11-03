@@ -418,6 +418,8 @@ pub struct FileUpdateReq {
 pub struct FilePatchReq {
     pub name: Option<String>,
     pub public: Option<bool>,
+    pub target_note: Option<String>,
+    pub overwrite: Option<bool>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1176,13 +1178,87 @@ pub async fn file_patch_handler(
     Json(req): Json<FilePatchReq>,
 ) -> Json<ApiResponse> {
     let mut changed = false;
-    if let Some(new_name) = req.name {
-        if !is_valid_filename(&new_name) {
+    let mut moved_target_note: Option<String> = None;
+
+    if let Some(target_note) = req.target_note {
+        let target_note = target_note.trim().to_string();
+        if target_note.is_empty()
+            || target_note.contains("..")
+            || target_note.contains('/')
+            || target_note.contains('\\')
+        {
+            return Json(ApiResponse::err("Invalid target note"));
+        }
+
+        let notes = state.chat_db.list_notes().unwrap_or_default();
+        if !notes.iter().any(|n| n.id == target_note) {
+            return Json(ApiResponse::err(format!(
+                "Target note not found: {}",
+                target_note
+            )));
+        }
+
+        let dest_name = if let Some(ref new_name) = req.name {
+            if !is_valid_filename(new_name) {
+                return Json(ApiResponse::err(format!("Invalid filename: {}", new_name)));
+            }
+            new_name.clone()
+        } else {
+            name.clone()
+        };
+
+        if target_note == note_id && dest_name == name {
+            // Moving to same note with same name: no-op
+        } else {
+            let src_dir = state.note_markdown_dir(&note_id);
+            let src_path = src_dir.join(&name);
+            if !src_path.exists() {
+                return Json(ApiResponse::err(format!("Source file not found: {}", name)));
+            }
+
+            let dst_dir = state.note_markdown_dir(&target_note);
+            if let Err(e) = tokio::fs::create_dir_all(&dst_dir).await {
+                return Json(ApiResponse::err(format!(
+                    "Failed to create target directory: {}",
+                    e
+                )));
+            }
+            let dst_path = dst_dir.join(&dest_name);
+            if dst_path.exists() && req.overwrite != Some(true) {
+                return Json(ApiResponse::err(format!(
+                    "File already exists in target note: {}",
+                    dest_name
+                )));
+            }
+
+            // Move the file
+            if let Err(e) = tokio::fs::rename(&src_path, &dst_path).await {
+                if let Err(copy_err) = tokio::fs::copy(&src_path, &dst_path).await {
+                    return Json(ApiResponse::err(format!(
+                        "Failed to move file: {} (copy fallback error: {})",
+                        e, copy_err
+                    )));
+                }
+                let _ = tokio::fs::remove_file(&src_path).await;
+            }
+
+            // Transfer visibility
+            let is_pub = state.chat_db.is_file_public(&note_id, &name);
+            let _ = state.chat_db.remove_file_visibility(&note_id, &name);
+            let _ = state
+                .chat_db
+                .set_file_public(&target_note, &dest_name, is_pub);
+
+            changed = true;
+            moved_target_note = Some(target_note);
+        }
+    } else if let Some(ref new_name) = req.name {
+        if !is_valid_filename(new_name) {
             return Json(ApiResponse::err(format!("Invalid filename: {}", new_name)));
         }
 
         let md_dir = state.note_markdown_dir(&note_id);
-        let new_path = md_dir.join(&new_name);
+        let new_path = md_dir.join(new_name);
         if new_path.exists() {
             return Json(ApiResponse::err(format!(
                 "File already exists: {}",
@@ -1193,12 +1269,22 @@ pub async fn file_patch_handler(
         let old_path = md_dir.join(&name);
         if old_path.exists() {
             tokio::fs::rename(&old_path, &new_path).await.ok();
+            let is_pub = state.chat_db.is_file_public(&note_id, &name);
+            let _ = state.chat_db.remove_file_visibility(&note_id, &name);
+            let _ = state.chat_db.set_file_public(&note_id, new_name, is_pub);
             changed = true;
         }
     }
 
     if let Some(public) = req.public {
-        if let Err(e) = state.chat_db.set_file_public(&note_id, &name, public) {
+        let (v_note, v_file) = if let Some(ref tn) = moved_target_note {
+            (tn.as_str(), req.name.as_deref().unwrap_or(&name))
+        } else if let Some(ref nn) = req.name {
+            (note_id.as_str(), nn.as_str())
+        } else {
+            (note_id.as_str(), name.as_str())
+        };
+        if let Err(e) = state.chat_db.set_file_public(v_note, v_file, public) {
             return Json(ApiResponse::err(format!("Failed to set visibility: {}", e)));
         }
         changed = true;
@@ -1206,6 +1292,12 @@ pub async fn file_patch_handler(
 
     if changed {
         broadcast_file_list(&state, &note_id).await;
+        if let Some(ref tn) = moved_target_note {
+            if tn != &note_id {
+                broadcast_file_list(&state, tn).await;
+            }
+            broadcast_note_list(&state).await;
+        }
     }
     Json(ApiResponse::success())
 }
@@ -5337,6 +5429,188 @@ mod integration_tests {
         .await;
         assert_eq!(body["ok"], false);
         assert!(body["error"].as_str().unwrap().contains("exists"));
+    }
+
+    #[tokio::test]
+    async fn test_file_move_success() {
+        let (app, tmp) = test_app();
+        post_json(&app, "/api/notes", json!({"name": "move_src"})).await;
+        post_json(&app, "/api/notes", json!({"name": "move_dst"})).await;
+        post_json(&app, "/api/notes/move_src/files", json!({"name": "doc.md"})).await;
+        request_json(
+            &app,
+            "PUT",
+            "/api/notes/move_src/files/doc.md",
+            Some(json!({"content": "# Moved Content\n"})),
+        )
+        .await;
+
+        let (_, body) = request_json(
+            &app,
+            "PATCH",
+            "/api/notes/move_src/files/doc.md",
+            Some(json!({"target_note": "move_dst"})),
+        )
+        .await;
+        assert_eq!(body["ok"], true);
+
+        // Verify source file no longer exists
+        let src_file = tmp.path().join(".rune/notes/move_src/markdown/doc.md");
+        assert!(!src_file.exists());
+
+        // Verify dest file exists with original content
+        let dst_file = tmp.path().join(".rune/notes/move_dst/markdown/doc.md");
+        assert!(dst_file.exists());
+        let content = std::fs::read_to_string(dst_file).unwrap();
+        assert_eq!(content, "# Moved Content\n");
+    }
+
+    #[tokio::test]
+    async fn test_file_move_conflict_rejected() {
+        let (app, _tmp) = test_app();
+        post_json(&app, "/api/notes", json!({"name": "c_src"})).await;
+        post_json(&app, "/api/notes", json!({"name": "c_dst"})).await;
+        post_json(&app, "/api/notes/c_src/files", json!({"name": "clash.md"})).await;
+        post_json(&app, "/api/notes/c_dst/files", json!({"name": "clash.md"})).await;
+
+        let (_, body) = request_json(
+            &app,
+            "PATCH",
+            "/api/notes/c_src/files/clash.md",
+            Some(json!({"target_note": "c_dst"})),
+        )
+        .await;
+        assert_eq!(body["ok"], false);
+        assert!(body["error"].as_str().unwrap().contains("already exists"));
+    }
+
+    #[tokio::test]
+    async fn test_file_move_conflict_overwrite() {
+        let (app, tmp) = test_app();
+        post_json(&app, "/api/notes", json!({"name": "ow_src"})).await;
+        post_json(&app, "/api/notes", json!({"name": "ow_dst"})).await;
+        post_json(&app, "/api/notes/ow_src/files", json!({"name": "ow.md"})).await;
+        request_json(
+            &app,
+            "PUT",
+            "/api/notes/ow_src/files/ow.md",
+            Some(json!({"content": "new version"})),
+        )
+        .await;
+        post_json(&app, "/api/notes/ow_dst/files", json!({"name": "ow.md"})).await;
+        request_json(
+            &app,
+            "PUT",
+            "/api/notes/ow_dst/files/ow.md",
+            Some(json!({"content": "old version"})),
+        )
+        .await;
+
+        let (_, body) = request_json(
+            &app,
+            "PATCH",
+            "/api/notes/ow_src/files/ow.md",
+            Some(json!({"target_note": "ow_dst", "overwrite": true})),
+        )
+        .await;
+        assert_eq!(body["ok"], true);
+
+        let dst_file = tmp.path().join(".rune/notes/ow_dst/markdown/ow.md");
+        assert!(dst_file.exists());
+        let content = std::fs::read_to_string(dst_file).unwrap();
+        assert_eq!(content, "new version");
+    }
+
+    #[tokio::test]
+    async fn test_file_move_with_rename() {
+        let (app, tmp) = test_app();
+        post_json(&app, "/api/notes", json!({"name": "ren_src"})).await;
+        post_json(&app, "/api/notes", json!({"name": "ren_dst"})).await;
+        post_json(&app, "/api/notes/ren_src/files", json!({"name": "orig.md"})).await;
+
+        let (_, body) = request_json(
+            &app,
+            "PATCH",
+            "/api/notes/ren_src/files/orig.md",
+            Some(json!({"target_note": "ren_dst", "name": "dest_renamed.md"})),
+        )
+        .await;
+        assert_eq!(body["ok"], true);
+
+        let dst_file = tmp
+            .path()
+            .join(".rune/notes/ren_dst/markdown/dest_renamed.md");
+        assert!(dst_file.exists());
+        let src_file = tmp.path().join(".rune/notes/ren_src/markdown/orig.md");
+        assert!(!src_file.exists());
+    }
+
+    #[tokio::test]
+    async fn test_file_move_invalid_target_note() {
+        let (app, _tmp) = test_app();
+        post_json(&app, "/api/notes", json!({"name": "inv_src"})).await;
+        post_json(&app, "/api/notes/inv_src/files", json!({"name": "doc.md"})).await;
+
+        let (_, body) = request_json(
+            &app,
+            "PATCH",
+            "/api/notes/inv_src/files/doc.md",
+            Some(json!({"target_note": "does_not_exist"})),
+        )
+        .await;
+        assert_eq!(body["ok"], false);
+        assert!(body["error"]
+            .as_str()
+            .unwrap()
+            .contains("Target note not found"));
+    }
+
+    #[tokio::test]
+    async fn test_file_move_visibility_transferred() {
+        let (app, tmp) = test_app();
+        post_json(&app, "/api/notes", json!({"name": "vis_src"})).await;
+        post_json(&app, "/api/notes", json!({"name": "vis_dst"})).await;
+        post_json(&app, "/api/notes/vis_src/files", json!({"name": "pub.md"})).await;
+
+        // Set public in source note
+        request_json(
+            &app,
+            "PATCH",
+            "/api/notes/vis_src/files/pub.md",
+            Some(json!({"public": true})),
+        )
+        .await;
+
+        // Move to destination note
+        let (_, body) = request_json(
+            &app,
+            "PATCH",
+            "/api/notes/vis_src/files/pub.md",
+            Some(json!({"target_note": "vis_dst"})),
+        )
+        .await;
+        assert_eq!(body["ok"], true);
+
+        // Check db directly
+        let db_path = tmp.path().join("test.db");
+        let conn = rusqlite::Connection::open(&db_path).unwrap();
+        let pub_count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM file_visibility WHERE note_id = 'vis_dst' AND filename = 'pub.md' AND public = 1",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(pub_count, 1);
+
+        let old_count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM file_visibility WHERE note_id = 'vis_src' AND filename = 'pub.md'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(old_count, 0);
     }
 
     #[tokio::test]

@@ -10,6 +10,7 @@ const ITEMS = {
     ],
     file: [
         { action: 'rename-file', label: 'Rename', icon: 'pencil' },
+        { action: 'move-file', label: 'Move', icon: 'swap' },
         { action: 'delete-file', label: 'Delete', icon: 'trash', danger: true },
     ],
 };

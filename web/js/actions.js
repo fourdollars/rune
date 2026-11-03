@@ -68,6 +68,7 @@ const actions = {
     'note-settings': element => showNoteSettings(element.dataset.note),
     'toggle-file-visibility': element => toggleFileVisibility(element),
     'rename-file': element => renameFileFromTree(element),
+    'move-file': element => moveFileFromTree(element),
     'delete-file': element => deleteFileFromTree(element),
     'switch-file': element => switchFileFromTree(element),
     'emoji-category': element => scrollEmojiCategory(element.dataset.category),

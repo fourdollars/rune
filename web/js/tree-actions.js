@@ -57,6 +57,14 @@ globalThis.renameFileFromTree = async function renameFileFromTree(button) {
     }
 };
 
+globalThis.moveFileFromTree = async function moveFileFromTree(button) {
+    const note = button.dataset.note;
+    const file = button.dataset.file;
+    if (note && file && typeof globalThis.moveFile === 'function') {
+        await globalThis.moveFile(note, file);
+    }
+};
+
 globalThis.deleteFileFromTree = async function deleteFileFromTree(button) {
     const ok = await showDialog({ title: 'Delete File', message: 'Delete "' + button.dataset.file + '"?', danger: true });
     if (ok) api('notes/' + encodeURIComponent(button.dataset.note) + '/files/' + encodeURIComponent(button.dataset.file), undefined, 'DELETE');

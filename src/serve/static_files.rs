@@ -430,6 +430,11 @@ mod tests {
             "app.js missing renameCurrentFile"
         );
         assert!(
+            js.contains("moveCurrentFile"),
+            "app.js missing moveCurrentFile"
+        );
+        assert!(js.contains("moveFile"), "app.js missing moveFile");
+        assert!(
             js.contains("currentFilename"),
             "app.js missing currentFilename state"
         );
