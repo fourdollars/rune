@@ -1,8 +1,10 @@
 globalThis.toggleNoteRow = function toggleNoteRow(row) {
     const children = row.closest('.explorer-section').querySelector('.explorer-children');
     const chevron = row.querySelector('.chevron');
-    children.classList.toggle('collapsed');
-    chevron.classList.toggle('open', !children.classList.contains('collapsed'));
+    const isCollapsed = children.classList.toggle('collapsed');
+    chevron.classList.toggle('open', !isCollapsed);
+    row.setAttribute('aria-expanded', String(!isCollapsed));
+    if (typeof setNoteFolded === 'function') setNoteFolded(row.dataset.note, isCollapsed);
     switchNote(row.dataset.note);
 };
 

@@ -63,6 +63,7 @@ const actions = {
     'restore-search': element => restoreSearchResult(element),
     'switch-model': element => { switchModel(element.dataset.model); hideModelDialog(); },
     'toggle-note': element => toggleNoteRow(element),
+    'toggle-fold-all': () => toggleFoldAllNotes(),
     'toggle-note-visibility': element => toggleNoteVisibility(element),
     'create-file': element => createFileForNote(element),
     'note-settings': element => showNoteSettings(element.dataset.note),

@@ -2,6 +2,69 @@ import './state.js';
 import { icon } from './icons.js';
 // --- Note Management ---
 
+const FOLDED_NOTES_KEY = 'rune_folded_notes';
+
+function getFoldedNotes() {
+    try {
+        const raw = localStorage.getItem(FOLDED_NOTES_KEY);
+        if (!raw) return new Set();
+        const parsed = JSON.parse(raw);
+        return Array.isArray(parsed) ? new Set(parsed.filter(id => typeof id === 'string')) : new Set();
+    } catch {
+        return new Set();
+    }
+}
+
+function saveFoldedNotes(folded) {
+    try {
+        if (folded.size === 0) localStorage.removeItem(FOLDED_NOTES_KEY);
+        else localStorage.setItem(FOLDED_NOTES_KEY, JSON.stringify([...folded]));
+    } catch {}
+}
+
+function areAllNotesFolded(folded = getFoldedNotes()) {
+    return notes.length > 0 && notes.every(note => folded.has(note.id));
+}
+
+function updateFoldAllButton(folded = getFoldedNotes()) {
+    const btn = document.getElementById('btn-toggle-fold-all');
+    if (!btn) return;
+    btn.disabled = notes.length === 0;
+    const allFolded = areAllNotesFolded(folded);
+    const label = allFolded ? 'Unfold all notebooks' : 'Fold all notebooks';
+    const iconName = allFolded ? 'unfold-all' : 'fold-all';
+    btn.dataset.icon = iconName;
+    btn.title = label;
+    btn.setAttribute('aria-label', label);
+    btn.setAttribute('aria-pressed', String(allFolded));
+    if (typeof setRuneIcon === 'function') setRuneIcon(btn, iconName);
+}
+
+globalThis.setNoteFolded = function setNoteFolded(noteId, isFolded) {
+    if (!noteId) return;
+    const folded = getFoldedNotes();
+    if (isFolded) folded.add(noteId);
+    else folded.delete(noteId);
+    saveFoldedNotes(folded);
+    updateFoldAllButton(folded);
+};
+
+globalThis.foldAllNotes = function foldAllNotes() {
+    const folded = new Set(notes.map(note => note.id).filter(Boolean));
+    saveFoldedNotes(folded);
+    renderNoteList();
+};
+
+globalThis.unfoldAllNotes = function unfoldAllNotes() {
+    saveFoldedNotes(new Set());
+    renderNoteList();
+};
+
+globalThis.toggleFoldAllNotes = function toggleFoldAllNotes() {
+    if (areAllNotesFolded(getFoldedNotes())) unfoldAllNotes();
+    else foldAllNotes();
+};
+
 function typeIcon(name, emoji) {
     const span = document.createElement('span');
     span.className = 'icon icon-type';
@@ -86,14 +149,15 @@ function fileRow(note, fname) {
     return row;
 }
 
-function folderRow(note) {
+function folderRow(note, isFolded = false) {
     const row = document.createElement('div');
     row.className = 'explorer-row' + (note.id === currentNoteId && !(note.files || []).length ? ' active' : '');
     row.dataset.action = 'toggle-note';
     row.dataset.note = note.id;
+    row.setAttribute('aria-expanded', String(!isFolded));
 
     const chevron = document.createElement('span');
-    chevron.className = 'chevron open';
+    chevron.className = 'chevron' + (isFolded ? '' : ' open');
     chevron.textContent = '›';
     chevron.setAttribute('aria-hidden', 'true');
 
@@ -116,25 +180,29 @@ globalThis.renderNoteList = function renderNoteList() {
     tree.replaceChildren();
     if (notes.length === 0) {
         emptyTree(tree);
+        updateFoldAllButton(new Set());
         return;
     }
 
     const searchInput = document.getElementById('file-search-input');
     if (searchInput) searchInput.style.display = '';
     const query = searchInput ? searchInput.value.toLowerCase().trim() : '';
+    const foldedNotes = getFoldedNotes();
+    updateFoldAllButton(foldedNotes);
 
     notes.forEach(note => {
         const files = (note.files || []).filter(fname => !query || fname.toLowerCase().includes(query));
         if (query && files.length === 0 && !note.name.toLowerCase().includes(query)) return;
 
+        // When searching, auto-expand all sections so results are visible
+        const isFolded = !query && foldedNotes.has(note.id);
+
         const section = document.createElement('div');
         section.className = 'explorer-section';
-        section.appendChild(folderRow(note));
+        section.appendChild(folderRow(note, isFolded));
 
         const children = document.createElement('div');
-        children.className = 'explorer-children';
-        // When searching, auto-expand all sections so results are visible
-        if (query) children.classList.remove('collapsed');
+        children.className = 'explorer-children' + (isFolded ? ' collapsed' : '');
         files.forEach(fname => children.appendChild(fileRow(note, fname)));
         section.appendChild(children);
         tree.appendChild(section);

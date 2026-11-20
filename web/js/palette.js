@@ -19,6 +19,8 @@ const COMMANDS = [
     { label: 'Move current file', icon: 'swap', admin: true, section: 'Files & Notes', run: () => moveCurrentFile() },
     { label: 'Delete current file', icon: 'trash', admin: true, section: 'Files & Notes', run: () => deleteCurrentFile() },
     { label: 'New note', icon: 'plus', admin: true, section: 'Files & Notes', run: () => showNewNoteDialog() },
+    { label: 'Fold all notebooks', icon: 'fold-all', section: 'Files & Notes', run: () => foldAllNotes() },
+    { label: 'Unfold all notebooks', icon: 'unfold-all', section: 'Files & Notes', run: () => unfoldAllNotes() },
     { label: 'Open note settings', icon: 'settings', admin: true, section: 'Files & Notes', run: () => showNoteSettings(currentNoteId) },
     { label: 'Toggle note visibility', icon: 'globe', admin: true, section: 'Files & Notes', run: toggleCurrentNoteVisibility },
 

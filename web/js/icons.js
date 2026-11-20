@@ -57,6 +57,8 @@ const PATHS = {
     'battery-charging': ['M3 7h15a2 2 0 0 1 2 2v6a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2Z', 'M23 11v2', 'M11 9.5 8 13.5h3.5L10 16.5'],
     brain: ['M12 5a3 3 0 1 0-5.997.125 4 4 0 0 0-2.526 5.77 4 4 0 0 0 .556 6.588A4 4 0 1 0 12 18Z', 'M12 5a3 3 0 1 1 5.997.125 4 4 0 0 1 2.526 5.77 4 4 0 0 1-.556 6.588A4 4 0 1 1 12 18Z', 'M12 5v13'],
     'rotate-ccw': ['M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8', 'M3 3v5h5'],
+    'fold-all': ['m7 4 5 5 5-5', 'm7 20 5-5 5 5'],
+    'unfold-all': ['m7 15 5 5 5-5', 'm7 9 5-5 5 5'],
 };
 
 /** Builds a standalone <svg> node for `name`; unknown names fall back to a dot. */
