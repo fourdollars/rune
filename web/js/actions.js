@@ -87,6 +87,16 @@ const actions = {
     'row-menu': element => toggleRowMenu(element),
     'open-command-palette': () => openCommandPalette(),
     'run-command': element => runCommand(element),
+    'show-admin-settings': () => showAdminSettings(),
+    'hide-admin-settings': () => hideAdminSettings(),
+    'switch-admin-tab': element => switchAdminSettingsTab(element.dataset.adminTab),
+    'toggle-admin-auth-sections': () => toggleAdminAuthSections(),
+    'admin-provider-change': () => updateAdminCopilotVisibility(),
+    'start-admin-copilot': () => startAdminCopilotFlow(),
+    'cancel-admin-copilot': () => cancelAdminCopilotFlow(),
+    'copy-admin-copilot-code': () => copyAdminCopilotCode(),
+    'detect-admin-models': () => detectAdminModels(),
+    'save-admin-settings': () => saveAdminSettings(),
 };
 
 export function initActions() {
@@ -120,6 +130,7 @@ export function initActions() {
         if (event.target.id === 'model-search-input') filterModels(event.target.value);
         if (event.target.id === 'emoji-search-input') filterEmojis(event.target.value);
         if (event.target.id === 'session-modal-search-input') renderSessionModal(event.target.value);
+        if (event.target.id === 'admin-model-search' && typeof renderAdminModelList === 'function') renderAdminModelList();
     });
     document.addEventListener('keydown', event => {
         if (event.key === 'Escape') {

@@ -418,7 +418,8 @@ async fn execute_cron_job_inner(
         state.effective_model(&note_id).await
     };
 
-    let mut agent_cfg = state.config.clone();
+    let mut agent_cfg = state.config_snapshot();
+    let agent_skills_enabled = agent_cfg.notes.agent_skills;
     agent_cfg.model = active_model.clone();
     // Resolve active thinking: Job override > Note override > Global default
     let effective_thinking_level = if let Some(ref t) = job.thinking {
@@ -466,7 +467,7 @@ async fn execute_cron_job_inner(
 
     let mut agent = crate::agent::Agent::new(agent_cfg, provider, true, embedding);
     agent.set_serve_mode(true);
-    agent.set_agent_skills(state.config.notes.agent_skills);
+    agent.set_agent_skills(agent_skills_enabled);
     agent.user_name = Some(format!("cron:{}", job.name));
 
     agent.markdown_dir = Some(state.note_markdown_dir(&note_id));
@@ -610,13 +611,8 @@ async fn execute_cron_job_inner(
     log_entry
 }
 
-/// Spawns the background cron worker loop if `config.notes.cron_jobs` is enabled.
+/// Spawns the background cron worker loop; dynamically checks `config.notes.cron_jobs` each tick.
 pub fn start_cron_scheduler(state: ServerState, cancel_token: CancellationToken) {
-    if !state.config.notes.cron_jobs {
-        info!("Cron jobs worker is disabled (config.notes.cron_jobs = false)");
-        return;
-    }
-
     info!("Starting Rune Notes background Cron Scheduler worker");
 
     tokio::spawn(async move {
@@ -628,6 +624,9 @@ pub fn start_cron_scheduler(state: ServerState, cancel_token: CancellationToken)
                     break;
                 }
                 _ = interval.tick() => {
+                    if !state.config_snapshot().notes.cron_jobs {
+                        continue;
+                    }
                     let now_secs = crate::serve::db::now_secs();
                     if let Ok(jobs) = state.chat_db.list_all_enabled_cron_jobs_async().await {
                         for job in jobs {

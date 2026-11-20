@@ -7,7 +7,10 @@ pub mod util;
 mod tests;
 
 // Re-export core types and functions to maintain 100% backward compatibility
-pub use loader::{apply_mount_flags, load, load_without_clap, load_without_clap_path};
+pub use loader::{
+    apply_mount_flags, load, load_without_clap, load_without_clap_from_file,
+    load_without_clap_path, validate_toml_str,
+};
 pub use persist::{
     persist_command, persist_domain, persist_path_ro, persist_path_rw, persist_policy_array,
     persist_policy_array_at,

@@ -6,6 +6,7 @@
 //!   - SSE endpoint for server→client push + REST API for client→server
 //!   - Token auth required for non-localhost connections
 
+pub mod admin_config;
 pub mod api;
 pub mod cron;
 pub mod db;
@@ -72,10 +73,79 @@ pub fn format_duration_ms(ms: u64) -> String {
     res
 }
 
+/// CLI sandbox mount overrides preserved across config hot-reloads.
+#[derive(Clone, Default, Debug)]
+pub struct MountOverrides {
+    pub mount_home: Option<String>,
+    pub mount_rw: Vec<String>,
+    pub mount_ro: Vec<String>,
+}
+
+/// Runtime metadata for config file persistence, first-run setup, and reload.
+pub struct ConfigMeta {
+    pub config_path: PathBuf,
+    pub needs_setup: std::sync::atomic::AtomicBool,
+    pub setup_token: Option<String>,
+    pub bind_is_loopback: bool,
+    pub mount_overrides: MountOverrides,
+}
+
+impl Default for ConfigMeta {
+    fn default() -> Self {
+        Self {
+            config_path: data_dir().join("rune.toml"),
+            needs_setup: std::sync::atomic::AtomicBool::new(false),
+            setup_token: None,
+            bind_is_loopback: true,
+            mount_overrides: MountOverrides::default(),
+        }
+    }
+}
+
+/// Extract the hostname portion of an HTTP `Host` header (stripping optional `:port` and IPv6 brackets).
+fn extract_host_name(host: &str) -> &str {
+    let host = host.trim();
+    if let Some(rest) = host.strip_prefix('[') {
+        rest.split(']').next().unwrap_or(host)
+    } else {
+        host.split(':').next().unwrap_or(host)
+    }
+}
+
+/// Returns true if an incoming request during initial setup requires the one-time console setup token.
+/// Required whenever bound to a non-loopback address OR accessed through a reverse proxy / non-localhost Host
+/// (e.g., Tailscale Serve, Nginx, Caddy).
+pub fn request_requires_setup_token(state: &ServerState, headers: &axum::http::HeaderMap) -> bool {
+    if !state.needs_setup() || state.config_meta.setup_token.is_none() {
+        return false;
+    }
+    if !state.config_meta.bind_is_loopback {
+        return true;
+    }
+    for proxy_hdr in [
+        "x-forwarded-for",
+        "x-forwarded-host",
+        "x-real-ip",
+        "forwarded",
+    ] {
+        if headers.contains_key(proxy_hdr) {
+            return true;
+        }
+    }
+    if let Some(host) = headers.get(header::HOST).and_then(|v| v.to_str().ok()) {
+        let name = extract_host_name(host).to_ascii_lowercase();
+        if !matches!(name.as_str(), "localhost" | "127.0.0.1" | "::1") {
+            return true;
+        }
+    }
+    false
+}
+
 /// Shared server state.
 #[derive(Clone)]
 pub struct ServerState {
-    pub config: RuneConfig,
+    pub config: Arc<std::sync::RwLock<RuneConfig>>,
+    pub config_meta: Arc<ConfigMeta>,
     /// GitHub OAuth session store.
     pub sessions: oauth::SessionStore,
     /// All markdown files: filename → content.
@@ -108,6 +178,92 @@ pub struct ServerState {
 }
 
 impl ServerState {
+    /// Snapshot the current runtime configuration.
+    pub fn config_snapshot(&self) -> RuneConfig {
+        self.config
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
+    }
+
+    /// Whether the server is awaiting first-run Web UI setup (no `rune.toml` existed at startup).
+    pub fn needs_setup(&self) -> bool {
+        self.config_meta
+            .needs_setup
+            .load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    /// Reload configuration from `self.config_meta.config_path`, re-applying CLI mount
+    /// overrides and refreshing provider registry, models, and third-party OAuth providers.
+    pub async fn reload_config(&self) -> Result<admin_config::ReloadResult, String> {
+        let mut new_cfg = crate::config::load_without_clap_from_file(&self.config_meta.config_path)
+            .map_err(|e| format!("Failed to load config: {}", e))?;
+
+        crate::config::apply_mount_flags(
+            &mut new_cfg.policy,
+            self.config_meta.mount_overrides.mount_home.as_deref(),
+            &self.config_meta.mount_overrides.mount_rw,
+            &self.config_meta.mount_overrides.mount_ro,
+        );
+
+        let old_cfg = self.config_snapshot();
+        let restart_required =
+            old_cfg.notes.port != new_cfg.notes.port || old_cfg.notes.bind != new_cfg.notes.bind;
+
+        let (models, first_model, registry) = discover_models_and_registry(&new_cfg).await;
+        let models_count = models.len();
+
+        let resolved_oauth = oauth::resolve_oauth_providers(&new_cfg.notes.oauth).await;
+        let oauth_map: HashMap<String, oauth::ResolvedOAuthProvider> = resolved_oauth
+            .into_iter()
+            .map(|p| (p.name.clone(), p))
+            .collect();
+
+        {
+            let mut guard = self.config.write().unwrap_or_else(|e| e.into_inner());
+            *guard = new_cfg;
+        }
+        *self.provider_registry.write().await = registry;
+        *self.models.write().await = models.clone();
+        *self.global_default_model.write().await = first_model;
+        *self.oauth_providers.write().await = oauth_map;
+        self.config_meta
+            .needs_setup
+            .store(false, std::sync::atomic::Ordering::SeqCst);
+
+        // Broadcast updated model list to all connected rooms
+        let rooms = self.rooms.read().await;
+        for (_, room) in rooms.iter() {
+            let model_entries: Vec<crate::serve::api::ModelListEntry> = models
+                .iter()
+                .map(|m| crate::serve::api::ModelListEntry {
+                    id: m.id.clone(),
+                    provider: m.provider.clone(),
+                    context_window: m.context_window,
+                    reasoning_efforts: m.reasoning_efforts.clone(),
+                })
+                .collect();
+            let active = self.effective_model(&room.note_id).await;
+            let thinking = self
+                .effective_thinking(&room.note_id)
+                .await
+                .unwrap_or_else(|| "off".to_string());
+            let usage = self.provider_registry.read().await.usage();
+            let msg = crate::serve::api::SseMsg::ModelList {
+                models: model_entries,
+                active,
+                thinking,
+                usage,
+            };
+            crate::serve::api::broadcast_to_room(room, &msg);
+        }
+
+        Ok(admin_config::ReloadResult {
+            restart_required,
+            models_count,
+        })
+    }
+
     /// Returns the markdown directory for a given note session.
     pub fn note_markdown_dir(&self, session: &str) -> PathBuf {
         self.data_dir.join("notes").join(session).join("markdown")
@@ -166,7 +322,7 @@ impl ServerState {
         if let Some(ref t) = *override_val {
             return Some(t.clone());
         }
-        if let Some(ref t) = self.config.thinking {
+        if let Some(ref t) = self.config_snapshot().thinking {
             return Some(t.clone());
         }
         let effective_model = self.effective_model(note_id).await;
@@ -214,6 +370,8 @@ impl ServerState {
 pub struct NotesOptions {
     pub port: u16,
     pub bind: IpAddr,
+    pub config_path: PathBuf,
+    pub mount_overrides: MountOverrides,
 }
 
 impl Default for NotesOptions {
@@ -221,6 +379,8 @@ impl Default for NotesOptions {
         Self {
             port: 9527,
             bind: IpAddr::V4(Ipv4Addr::LOCALHOST),
+            config_path: data_dir().join("rune.toml"),
+            mount_overrides: MountOverrides::default(),
         }
     }
 }
@@ -271,45 +431,10 @@ async fn auto_detect_openrouter_model() -> String {
     "openrouter/auto".to_string()
 }
 
-/// Start the serve mode.
-pub async fn run(config: RuneConfig, opts: NotesOptions) {
-    // GitHub OAuth replaces token auth — no early token check needed.
-
-    // Files are loaded per-session on client connect/switch; start empty
-    let initial_files = std::collections::HashMap::new();
-
-    let (admin_broadcast_tx, _) = broadcast::channel(64);
-
-    let db_path = data_dir().join("chat.db");
-    let chat_db = ChatDb::open_lazy(&db_path).unwrap_or_else(|e| {
-        eprintln!("warning: failed to open chat db: {}", e);
-        // Fallback: pure in-memory without deferred path
-        ChatDb::open(std::path::Path::new(":memory:")).expect("in-memory db failed")
-    });
-
-    // Auto-discover notes: scan ~/.rune/notes/ and register any missing sessions.
-    // Only register if markdown/ subdirectory exists and contains at least one file.
-    {
-        let notes_root = data_dir().join("notes");
-        if let Ok(entries) = std::fs::read_dir(&notes_root) {
-            for entry in entries.flatten() {
-                if entry.file_type().map(|t| t.is_dir()).unwrap_or(false) {
-                    let note_id = entry.file_name().to_string_lossy().to_string();
-                    let md_dir = entry.path().join("markdown");
-                    let has_files = std::fs::read_dir(&md_dir)
-                        .map(|mut rd| rd.next().is_some())
-                        .unwrap_or(false);
-                    if has_files {
-                        let _ = chat_db.create_note(&note_id, &note_id, None);
-                    }
-                }
-            }
-        }
-        // Persist DB to disk if any notes were discovered
-        let _ = chat_db.ensure_persistent();
-    }
-
-    // Determine the serve model, auto-detecting from OpenRouter if it is empty/none
+/// Build the provider registry and discover/enrich available models from `config`.
+async fn discover_models_and_registry(
+    config: &RuneConfig,
+) -> (Vec<ModelInfo>, String, crate::provider::ProviderRegistry) {
     let serve_model = if let Some(ref m) = config.notes.model {
         if m.is_empty() {
             auto_detect_openrouter_model().await
@@ -320,8 +445,6 @@ pub async fn run(config: RuneConfig, opts: NotesOptions) {
         auto_detect_openrouter_model().await
     };
 
-    // When base_url is set with provider openai (or no provider), automatically populate
-    // Ollama-compatible thinking levels for every configured model.
     let default_reasoning_efforts: Vec<String> = {
         let is_custom_openai = !matches!(
             config.provider.as_deref(),
@@ -343,7 +466,6 @@ pub async fn run(config: RuneConfig, opts: NotesOptions) {
         }
     };
 
-    // Parse comma-separated model list from serve_model
     let mut models: Vec<ModelInfo> = if config
         .notes
         .model
@@ -380,9 +502,6 @@ pub async fn run(config: RuneConfig, opts: NotesOptions) {
             .collect()
     };
 
-    // Always query the provider for model metadata (reasoning_efforts, context_window).
-    // If models were explicitly configured, use discovery only to enrich their metadata.
-    // If no models were configured, use the discovered list or fall back to the default.
     let mut config_for_discovery = config.clone();
     config_for_discovery.model = serve_model.clone();
     let initial_registry = match crate::serve::api::build_provider_pub(&config_for_discovery) {
@@ -393,9 +512,6 @@ pub async fn run(config: RuneConfig, opts: NotesOptions) {
                         eprintln!("  ✓ Discovered {} models from provider", discovered.len());
                         models = discovered;
                     } else {
-                        // Enrich reasoning_efforts for each configured model.
-                        // All models from a custom endpoint share the same efforts list,
-                        // so fall back to the first discovered entry when there's no exact match.
                         let fallback_efforts = discovered[0].reasoning_efforts.clone();
                         for model in &mut models {
                             if let Some(found) = discovered.iter().find(|d| d.id == model.id) {
@@ -486,7 +602,7 @@ pub async fn run(config: RuneConfig, opts: NotesOptions) {
                     supported_endpoints: vec![],
                 }];
             }
-            crate::serve::api::build_provider_pub(&config)
+            crate::serve::api::build_provider_pub(config)
                 .unwrap_or_else(|_| crate::provider::ProviderRegistry::new())
         }
     };
@@ -496,6 +612,64 @@ pub async fn run(config: RuneConfig, opts: NotesOptions) {
         .map(|m| m.id.clone())
         .unwrap_or_else(|| serve_model.clone());
 
+    (models, first_model, initial_registry)
+}
+
+/// Start the serve mode.
+pub async fn run(config: RuneConfig, opts: NotesOptions) {
+    // GitHub OAuth replaces token auth — no early token check needed.
+
+    // Files are loaded per-session on client connect/switch; start empty
+    let initial_files = std::collections::HashMap::new();
+
+    let (admin_broadcast_tx, _) = broadcast::channel(64);
+
+    let db_path = data_dir().join("chat.db");
+    let chat_db = ChatDb::open_lazy(&db_path).unwrap_or_else(|e| {
+        eprintln!("warning: failed to open chat db: {}", e);
+        // Fallback: pure in-memory without deferred path
+        ChatDb::open(std::path::Path::new(":memory:")).expect("in-memory db failed")
+    });
+
+    // Auto-discover notes: scan ~/.rune/notes/ and register any missing sessions.
+    // Only register if markdown/ subdirectory exists and contains at least one file.
+    {
+        let notes_root = data_dir().join("notes");
+        if let Ok(entries) = std::fs::read_dir(&notes_root) {
+            for entry in entries.flatten() {
+                if entry.file_type().map(|t| t.is_dir()).unwrap_or(false) {
+                    let note_id = entry.file_name().to_string_lossy().to_string();
+                    let md_dir = entry.path().join("markdown");
+                    let has_files = std::fs::read_dir(&md_dir)
+                        .map(|mut rd| rd.next().is_some())
+                        .unwrap_or(false);
+                    if has_files {
+                        let _ = chat_db.create_note(&note_id, &note_id, None);
+                    }
+                }
+            }
+        }
+        // Persist DB to disk if any notes were discovered
+        let _ = chat_db.ensure_persistent();
+    }
+
+    let needs_setup = !opts.config_path.exists();
+    let setup_token = if needs_setup {
+        Some(oauth::generate_session_id())
+    } else {
+        None
+    };
+
+    let (models, first_model, initial_registry) = if needs_setup {
+        (
+            Vec::new(),
+            String::new(),
+            crate::provider::ProviderRegistry::new(),
+        )
+    } else {
+        discover_models_and_registry(&config).await
+    };
+
     let provider_registry = Arc::new(tokio::sync::RwLock::new(initial_registry));
     let resolved_oauth = oauth::resolve_oauth_providers(&config.notes.oauth).await;
     let oauth_providers = resolved_oauth
@@ -504,7 +678,14 @@ pub async fn run(config: RuneConfig, opts: NotesOptions) {
         .collect::<HashMap<_, _>>();
 
     let state = ServerState {
-        config: config.clone(),
+        config: Arc::new(std::sync::RwLock::new(config.clone())),
+        config_meta: Arc::new(ConfigMeta {
+            config_path: opts.config_path.clone(),
+            needs_setup: std::sync::atomic::AtomicBool::new(needs_setup),
+            setup_token: setup_token.clone(),
+            bind_is_loopback: opts.bind.is_loopback(),
+            mount_overrides: opts.mount_overrides.clone(),
+        }),
         sessions: oauth::SessionStore::new_with_db(Some(chat_db.clone())),
         files: Arc::new(RwLock::new(initial_files)),
         active_file: Arc::new(RwLock::new(String::new())),
@@ -561,22 +742,24 @@ pub async fn run(config: RuneConfig, opts: NotesOptions) {
     }
 
     // Background model refresh (every 30 minutes, only when notes model is not explicitly configured)
-    let has_configured_notes_model = config
-        .notes
-        .model
-        .as_ref()
-        .map(|m| !m.trim().is_empty())
-        .unwrap_or(false);
-
-    if !has_configured_notes_model {
+    {
         let state_clone = state.clone();
-        let config_clone = config.clone();
         tokio::spawn(async move {
             let mut interval = tokio::time::interval(std::time::Duration::from_secs(1800));
             interval.tick().await; // skip first immediate tick
             loop {
                 interval.tick().await;
-                if let Ok(registry) = crate::serve::api::build_provider_pub(&config_clone) {
+                let current_cfg = state_clone.config_snapshot();
+                let has_configured_notes_model = current_cfg
+                    .notes
+                    .model
+                    .as_ref()
+                    .map(|m| !m.trim().is_empty())
+                    .unwrap_or(false);
+                if has_configured_notes_model || state_clone.needs_setup() {
+                    continue;
+                }
+                if let Ok(registry) = crate::serve::api::build_provider_pub(&current_cfg) {
                     if let Ok(new_models) = registry.list_models().await {
                         if !new_models.is_empty() {
                             eprintln!("  ✓ Model refresh: {} models discovered", new_models.len());
@@ -805,6 +988,27 @@ pub async fn run(config: RuneConfig, opts: NotesOptions) {
         .route("/api/approval", post(api::approval_handler))
         .route("/api/dirs", get(api::dir_browse_handler))
         .route("/api/skills", get(api::skills_handler))
+        // Admin configuration & hot-reload
+        .route(
+            "/api/admin/config",
+            get(admin_config::admin_config_get_handler).put(admin_config::admin_config_put_handler),
+        )
+        .route(
+            "/api/admin/config/reload",
+            post(admin_config::admin_config_reload_handler),
+        )
+        .route(
+            "/api/admin/copilot/start",
+            post(admin_config::admin_copilot_start_handler),
+        )
+        .route(
+            "/api/admin/copilot/poll",
+            post(admin_config::admin_copilot_poll_handler),
+        )
+        .route(
+            "/api/admin/models",
+            post(admin_config::admin_models_handler),
+        )
         .layer(axum_mw::from_fn_with_state(state.clone(), auth_middleware));
 
     async fn cors_middleware(
@@ -846,6 +1050,26 @@ pub async fn run(config: RuneConfig, opts: NotesOptions) {
         .route("/api/me", get(api::me_handler))
         .route("/api/usage", get(api::usage_handler))
         .route("/api/auth/config", get(oauth::auth_config_handler))
+        .route(
+            "/api/setup/complete",
+            post(admin_config::setup_complete_handler),
+        )
+        .route(
+            "/api/setup/verify-token",
+            post(admin_config::setup_verify_token_handler),
+        )
+        .route(
+            "/api/setup/models",
+            post(admin_config::setup_models_handler),
+        )
+        .route(
+            "/api/setup/copilot/start",
+            post(admin_config::setup_copilot_start_handler),
+        )
+        .route(
+            "/api/setup/copilot/poll",
+            post(admin_config::setup_copilot_poll_handler),
+        )
         .route("/auth/github", get(oauth::oauth_start_handler))
         .route("/auth/github/callback", get(oauth::oauth_callback_handler))
         .route(
@@ -896,23 +1120,58 @@ pub async fn run(config: RuneConfig, opts: NotesOptions) {
         .route("/oauth/revoke", post(oauth_pkce::oauth_revoke_handler));
 
     #[cfg(feature = "line")]
-    let app = if state
-        .config
-        .notes
-        .line
-        .iter()
-        .any(|c| !c.channel_secret.is_empty() && !c.nickname.is_empty())
-    {
-        app.route(
-            "/webhook/line/{nickname}",
-            post(line::line_webhook_named_handler),
-        )
-    } else {
-        app
-    };
+    let app = app.route(
+        "/webhook/line/{nickname}",
+        post(line::line_webhook_named_handler),
+    );
+
+    async fn setup_guard_middleware(
+        State(state): State<ServerState>,
+        req: axum::http::Request<axum::body::Body>,
+        next: axum::middleware::Next,
+    ) -> axum::response::Response {
+        if !state.needs_setup() {
+            return next.run(req).await;
+        }
+        let path = req.uri().path();
+        let allowed = path == "/"
+            || path == "/api/auth/config"
+            || path == "/api/setup/complete"
+            || path == "/api/setup/verify-token"
+            || path == "/api/setup/models"
+            || path == "/api/setup/copilot/start"
+            || path == "/api/setup/copilot/poll"
+            || path == "/favicon.ico"
+            || path == "/favicon.svg"
+            || path.starts_with("/assets/")
+            || path.starts_with("/assets-bin/");
+        if allowed {
+            return next.run(req).await;
+        }
+        if path.starts_with("/api/")
+            || path.starts_with("/mcp")
+            || path.starts_with("/oauth/")
+            || path.starts_with("/.well-known/")
+            || path.starts_with("/webhook/")
+        {
+            return (
+                StatusCode::SERVICE_UNAVAILABLE,
+                axum::Json(serde_json::json!({
+                    "ok": false,
+                    "error": "Initial setup required"
+                })),
+            )
+                .into_response();
+        }
+        axum::response::Redirect::temporary("/").into_response()
+    }
 
     let app = app
         .merge(api_routes)
+        .layer(axum_mw::from_fn_with_state(
+            state.clone(),
+            setup_guard_middleware,
+        ))
         .layer(axum_mw::from_fn(cors_middleware))
         .with_state(state.clone());
 
@@ -920,6 +1179,24 @@ pub async fn run(config: RuneConfig, opts: NotesOptions) {
     info!("Rune notes starting on http://{}", addr);
 
     println!("  ᚱ Rune Notes → http://{}", addr);
+    if needs_setup {
+        println!(
+            "  ⚙ Initial setup required (no config found at {})",
+            opts.config_path.display()
+        );
+        println!(
+            "    Open http://{} in your browser to configure Rune Notes.",
+            addr
+        );
+        if let Some(ref token) = setup_token {
+            println!(
+                "  🔑 One-time Setup Token (required for non-localhost / proxied access): {}",
+                token
+            );
+            use std::io::Write;
+            let _ = std::io::stdout().flush();
+        }
+    }
     #[cfg(feature = "line")]
     if !config.notes.line.is_empty() {
         let active_bots: Vec<_> = config
@@ -1008,13 +1285,14 @@ async fn login_handler(State(state): State<ServerState>) -> impl IntoResponse {
     match static_files::get("login.html") {
         Some(content) => {
             let mut html = content;
-            if let Some(ref title) = state.config.notes.title {
+            let cfg = state.config_snapshot();
+            if let Some(ref title) = cfg.notes.title {
                 html = html.replace(
                     "<title>ᚱᚢᚾᛖ — Sign In</title>",
                     &format!("<title>{}</title>", api::html_escape(title)),
                 );
             }
-            if let Some(ref desc) = state.config.notes.desc {
+            if let Some(ref desc) = cfg.notes.desc {
                 html = html.replace(
                     r#"<meta name="description" content="Sign in to Rune Notes">"#,
                     &format!(
@@ -1375,7 +1653,8 @@ mod tests {
         let db = ChatDb::open(std::path::Path::new(":memory:")).expect("in-memory db");
 
         ServerState {
-            config,
+            config: std::sync::Arc::new(std::sync::RwLock::new(config)),
+            config_meta: std::sync::Arc::new(crate::serve::ConfigMeta::default()),
             sessions: oauth::SessionStore::new(),
             files: Arc::new(RwLock::new(std::collections::HashMap::new())),
             active_file: Arc::new(RwLock::new(String::new())),
@@ -1816,6 +2095,7 @@ mod tests {
         let opts = NotesOptions {
             port: 8080,
             bind: IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)),
+            ..Default::default()
         };
         assert_eq!(opts.port, 8080);
         assert_eq!(opts.bind, IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)));
@@ -1876,7 +2156,8 @@ mod tests {
             .unwrap_or_else(|| config.model.clone());
 
         let state = ServerState {
-            config: config.clone(),
+            config: std::sync::Arc::new(std::sync::RwLock::new(config.clone())),
+            config_meta: std::sync::Arc::new(crate::serve::ConfigMeta::default()),
             sessions: oauth::SessionStore::new(),
             files: Arc::new(RwLock::new(std::collections::HashMap::new())),
             active_file: Arc::new(RwLock::new(String::new())),
@@ -1910,7 +2191,8 @@ mod tests {
         let db = ChatDb::open(std::path::Path::new(":memory:")).expect("in-memory db");
 
         let state = ServerState {
-            config: RuneConfig::default(),
+            config: std::sync::Arc::new(std::sync::RwLock::new(RuneConfig::default())),
+            config_meta: std::sync::Arc::new(crate::serve::ConfigMeta::default()),
             sessions: oauth::SessionStore::new(),
             files: Arc::new(RwLock::new(std::collections::HashMap::new())),
             active_file: Arc::new(RwLock::new("main.md".into())),
@@ -1950,7 +2232,8 @@ mod tests {
         let db = ChatDb::open(std::path::Path::new(":memory:")).expect("in-memory db");
 
         let state = ServerState {
-            config: RuneConfig::default(),
+            config: std::sync::Arc::new(std::sync::RwLock::new(RuneConfig::default())),
+            config_meta: std::sync::Arc::new(crate::serve::ConfigMeta::default()),
             sessions: oauth::SessionStore::new(),
             files: Arc::new(RwLock::new(std::collections::HashMap::new())),
             active_file: Arc::new(RwLock::new(String::new())),
@@ -2015,6 +2298,7 @@ mod tests {
         let opts = NotesOptions {
             port: 19527, // Use a fixed high port unlikely to conflict
             bind: IpAddr::V4(Ipv4Addr::LOCALHOST),
+            ..Default::default()
         };
 
         // run() binds and serves; we cancel after 100ms

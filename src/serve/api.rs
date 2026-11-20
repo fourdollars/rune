@@ -770,8 +770,8 @@ pub async fn events_handler(
         is_admin,
         is_guest,
         login: login.clone(),
-        persona_files_enabled: state.config.notes.persona_files,
-        cron_jobs_enabled: state.config.notes.cron_jobs,
+        persona_files_enabled: state.config_snapshot().notes.persona_files,
+        cron_jobs_enabled: state.config_snapshot().notes.cron_jobs,
     });
 
     // Model list — show effective model and metadata for this note
@@ -1940,7 +1940,8 @@ pub async fn system_prompt_get_handler(
 ) -> Json<serde_json::Value> {
     if note_id.is_empty() {
         // Return global system prompt
-        let global = build_system_prompt(&state.config).await;
+        let cfg_snap = state.config_snapshot();
+        let global = build_system_prompt(&cfg_snap).await;
         return Json(serde_json::json!({
             "ok": true,
             "note_id": null,
@@ -1999,12 +2000,13 @@ pub async fn dir_browse_handler(
 }
 
 pub async fn skills_handler(State(state): State<ServerState>) -> Json<ApiResponse> {
-    if !state.config.notes.agent_skills {
+    let cfg_snap = state.config_snapshot();
+    if !cfg_snap.notes.agent_skills {
         return Json(ApiResponse::with_data(serde_json::json!({
             "skills": []
         })));
     }
-    let search_paths = vec![std::path::PathBuf::from(&state.config.skills_dir)];
+    let search_paths = vec![std::path::PathBuf::from(&cfg_snap.skills_dir)];
     let loader = SkillLoader::new(search_paths);
     let skills = loader.list_skills();
     let data = serde_json::json!({
@@ -2159,7 +2161,7 @@ pub async fn goal_set_handler(
 
         // Create the LoopEngine
         let loops_dir = state_clone.data_dir.join("loops");
-        let mut loop_cfg = state_clone.config.clone();
+        let mut loop_cfg = state_clone.config_snapshot();
         if let Some(ref m) = model_override {
             loop_cfg.model = m.clone();
         }
@@ -2858,13 +2860,9 @@ pub async fn public_notes_list_handler(
         items.push_str("<p class='empty'>No public notes available.</p>");
     }
 
-    let title = state
-        .config
-        .notes
-        .title
-        .as_deref()
-        .unwrap_or("Public Notes");
-    let desc = state.config.notes.desc.as_deref();
+    let cfg_snap = state.config_snapshot();
+    let title = cfg_snap.notes.title.as_deref().unwrap_or("Public Notes");
+    let desc = cfg_snap.notes.desc.as_deref();
 
     let title_escaped = html_escape(title);
     let desc_meta = match desc {
@@ -3487,8 +3485,8 @@ pub async fn me_handler(
             "login": s.login,
             "role": s.role.as_str(),
             "avatar_url": s.avatar_url,
-            "persona_files_enabled": state.config.notes.persona_files,
-            "cron_jobs_enabled": state.config.notes.cron_jobs,
+            "persona_files_enabled": state.config_snapshot().notes.persona_files,
+            "cron_jobs_enabled": state.config_snapshot().notes.cron_jobs,
         }))
         .into_response();
     }
@@ -3505,8 +3503,8 @@ pub async fn me_handler(
                 "login": token_info.login,
                 "role": token_info.role.as_str(),
                 "avatar_url": "",
-                "persona_files_enabled": state.config.notes.persona_files,
-                "cron_jobs_enabled": state.config.notes.cron_jobs,
+                "persona_files_enabled": state.config_snapshot().notes.persona_files,
+                "cron_jobs_enabled": state.config_snapshot().notes.cron_jobs,
             }))
             .into_response();
         }
@@ -3527,7 +3525,7 @@ async fn handle_chat_message(
     session_id: String,
     nickname: String,
 ) {
-    let config = state.config.clone();
+    let config = state.config_snapshot();
     // Use per-session effective model (session override > note override > global default)
     let active_model = state
         .effective_model_for_session(&note_id, &session_id)
@@ -4067,11 +4065,11 @@ pub async fn build_effective_note_system_prompt(
         if let Some(ref p) = *room_prompt {
             p.clone()
         } else {
-            build_system_prompt(&state.config).await
+            build_system_prompt(&state.config_snapshot()).await
         }
     };
 
-    if !state.config.notes.persona_files {
+    if !state.config_snapshot().notes.persona_files {
         return (base_prompt, Vec::new());
     }
 
@@ -4156,8 +4154,8 @@ pub async fn persona_status_handler(
     }
     Json(serde_json::json!({
         "ok": true,
-        "persona_files_enabled": state.config.notes.persona_files,
-        "cron_jobs_enabled": state.config.notes.cron_jobs,
+        "persona_files_enabled": state.config_snapshot().notes.persona_files,
+        "cron_jobs_enabled": state.config_snapshot().notes.cron_jobs,
         "files": files,
     }))
 }
@@ -4182,8 +4180,8 @@ pub async fn cron_jobs_list_handler(
                 "ok": true,
                 "jobs": jobs,
                 "running_job_ids": running_job_ids,
-                "cron_jobs_enabled": state.config.notes.cron_jobs,
-                "persona_files_enabled": state.config.notes.persona_files,
+                "cron_jobs_enabled": state.config_snapshot().notes.cron_jobs,
+                "persona_files_enabled": state.config_snapshot().notes.persona_files,
             }))
         }
         Err(e) => Json(serde_json::json!({
@@ -4988,7 +4986,10 @@ mod tests {
     fn mock_state(_token: Option<String>, _admin_token: Option<String>) -> ServerState {
         let (admin_broadcast_tx, _) = broadcast::channel(16);
         ServerState {
-            config: crate::config::RuneConfig::default(),
+            config: std::sync::Arc::new(std::sync::RwLock::new(
+                crate::config::RuneConfig::default(),
+            )),
+            config_meta: std::sync::Arc::new(crate::serve::ConfigMeta::default()),
             sessions: crate::serve::oauth::SessionStore::new(),
             files: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
             active_file: Arc::new(tokio::sync::RwLock::new(String::new())),
@@ -5086,7 +5087,8 @@ mod integration_tests {
         let db_path = tmp.path().join("test.db");
         let db = ChatDb::open(&db_path).unwrap();
         ServerState {
-            config: RuneConfig::default(),
+            config: std::sync::Arc::new(std::sync::RwLock::new(RuneConfig::default())),
+            config_meta: std::sync::Arc::new(crate::serve::ConfigMeta::default()),
             sessions: crate::serve::oauth::SessionStore::new(),
             files: Arc::new(RwLock::new(std::collections::HashMap::new())),
             active_file: Arc::new(RwLock::new(String::new())),
@@ -6055,7 +6057,10 @@ mod integration_tests {
         let _ = db.set_file_public("note-b", "doc.md", false);
 
         let state = crate::serve::ServerState {
-            config: crate::config::RuneConfig::default(),
+            config: std::sync::Arc::new(std::sync::RwLock::new(
+                crate::config::RuneConfig::default(),
+            )),
+            config_meta: std::sync::Arc::new(crate::serve::ConfigMeta::default()),
             sessions: crate::serve::oauth::SessionStore::new(),
             files: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
             active_file: Arc::new(tokio::sync::RwLock::new(String::new())),
@@ -6133,7 +6138,8 @@ mod isolation_tests {
         let db_path = tmp.path().join("test.db");
         let db = ChatDb::open(&db_path).unwrap();
         let state = ServerState {
-            config: RuneConfig::default(),
+            config: std::sync::Arc::new(std::sync::RwLock::new(RuneConfig::default())),
+            config_meta: std::sync::Arc::new(crate::serve::ConfigMeta::default()),
             sessions: crate::serve::oauth::SessionStore::new(),
             files: Arc::new(RwLock::new(HashMap::new())),
             active_file: Arc::new(RwLock::new(String::new())),
@@ -6222,7 +6228,8 @@ mod isolation_tests {
         let model_id = "gpt-5-mini";
         let expected_cw: u64 = 131072;
         let state = ServerState {
-            config: RuneConfig::default(),
+            config: std::sync::Arc::new(std::sync::RwLock::new(RuneConfig::default())),
+            config_meta: std::sync::Arc::new(crate::serve::ConfigMeta::default()),
             sessions: crate::serve::oauth::SessionStore::new(),
             files: Arc::new(RwLock::new(HashMap::new())),
             active_file: Arc::new(RwLock::new(String::new())),
@@ -6250,7 +6257,7 @@ mod isolation_tests {
         let active_model = state.effective_model("note-x").await;
         assert_eq!(active_model, model_id);
         // Simulate what handle_chat_message does: look up ModelInfo and override cfg
-        let mut cfg = state.config.clone();
+        let mut cfg = state.config_snapshot();
         let models = state.models.read().await;
         if let Some(model_info) = models.iter().find(|m| m.id == active_model) {
             if let Some(cw) = model_info.context_window {
@@ -6269,8 +6276,8 @@ mod isolation_tests {
         // When ModelInfo.context_window is None, cfg.context_window keeps its default
         let (state, _tmp) = make_state();
         let active_model = state.effective_model("note-x").await;
-        let default_cw = state.config.context_window;
-        let mut cfg = state.config.clone();
+        let default_cw = state.config_snapshot().context_window;
+        let mut cfg = state.config_snapshot();
         let models = state.models.read().await;
         if let Some(model_info) = models.iter().find(|m| m.id == active_model) {
             if let Some(cw) = model_info.context_window {
@@ -6508,7 +6515,10 @@ mod isolation_tests {
         let (admin_broadcast_tx, _) = broadcast::channel(256);
         let db = crate::serve::db::ChatDb::open(&tmp.path().join("t.db")).unwrap();
         let state = crate::serve::ServerState {
-            config: crate::config::RuneConfig::default(),
+            config: std::sync::Arc::new(std::sync::RwLock::new(
+                crate::config::RuneConfig::default(),
+            )),
+            config_meta: std::sync::Arc::new(crate::serve::ConfigMeta::default()),
             sessions: crate::serve::oauth::SessionStore::new(),
             files: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
             active_file: Arc::new(tokio::sync::RwLock::new(String::new())),
@@ -6583,7 +6593,10 @@ mod isolation_tests {
         let (admin_broadcast_tx, _) = broadcast::channel(256);
         let db = crate::serve::db::ChatDb::open(&tmp.path().join("t.db")).unwrap();
         let state = crate::serve::ServerState {
-            config: crate::config::RuneConfig::default(),
+            config: std::sync::Arc::new(std::sync::RwLock::new(
+                crate::config::RuneConfig::default(),
+            )),
+            config_meta: std::sync::Arc::new(crate::serve::ConfigMeta::default()),
             sessions: crate::serve::oauth::SessionStore::new(),
             files: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
             active_file: Arc::new(tokio::sync::RwLock::new(String::new())),
@@ -6656,7 +6669,10 @@ mod isolation_tests {
         let _ = db.create_note("private-note", "private-note", None);
 
         let state = crate::serve::ServerState {
-            config: crate::config::RuneConfig::default(),
+            config: std::sync::Arc::new(std::sync::RwLock::new(
+                crate::config::RuneConfig::default(),
+            )),
+            config_meta: std::sync::Arc::new(crate::serve::ConfigMeta::default()),
             sessions: crate::serve::oauth::SessionStore::new(),
             files: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
             active_file: Arc::new(tokio::sync::RwLock::new(String::new())),
@@ -6727,7 +6743,10 @@ mod isolation_tests {
         let _ = db.set_note_public("public-note", true);
 
         let state = crate::serve::ServerState {
-            config: crate::config::RuneConfig::default(),
+            config: std::sync::Arc::new(std::sync::RwLock::new(
+                crate::config::RuneConfig::default(),
+            )),
+            config_meta: std::sync::Arc::new(crate::serve::ConfigMeta::default()),
             sessions: crate::serve::oauth::SessionStore::new(),
             files: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
             active_file: Arc::new(tokio::sync::RwLock::new(String::new())),
@@ -6820,7 +6839,10 @@ mod isolation_tests {
         std::fs::write(md_dir.join("private.md"), "# Private").unwrap();
 
         let state = crate::serve::ServerState {
-            config: crate::config::RuneConfig::default(),
+            config: std::sync::Arc::new(std::sync::RwLock::new(
+                crate::config::RuneConfig::default(),
+            )),
+            config_meta: std::sync::Arc::new(crate::serve::ConfigMeta::default()),
             sessions: crate::serve::oauth::SessionStore::new(),
             files: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
             active_file: Arc::new(tokio::sync::RwLock::new(String::new())),
@@ -6897,7 +6919,10 @@ mod isolation_tests {
         // Note stays private (public=false by default)
 
         let state = crate::serve::ServerState {
-            config: crate::config::RuneConfig::default(),
+            config: std::sync::Arc::new(std::sync::RwLock::new(
+                crate::config::RuneConfig::default(),
+            )),
+            config_meta: std::sync::Arc::new(crate::serve::ConfigMeta::default()),
             sessions: crate::serve::oauth::SessionStore::new(),
             files: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
             active_file: Arc::new(tokio::sync::RwLock::new(String::new())),
@@ -6964,7 +6989,10 @@ mod isolation_tests {
         std::fs::write(md_dir.join("hello.md"), "# pub-note").unwrap();
 
         let state = crate::serve::ServerState {
-            config: crate::config::RuneConfig::default(),
+            config: std::sync::Arc::new(std::sync::RwLock::new(
+                crate::config::RuneConfig::default(),
+            )),
+            config_meta: std::sync::Arc::new(crate::serve::ConfigMeta::default()),
             sessions: crate::serve::oauth::SessionStore::new(),
             files: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
             active_file: Arc::new(tokio::sync::RwLock::new(String::new())),
@@ -7025,7 +7053,8 @@ mod isolation_tests {
         config.notes.desc = Some("Collection of public research & notes".to_string());
 
         let state = crate::serve::ServerState {
-            config,
+            config: std::sync::Arc::new(std::sync::RwLock::new(config)),
+            config_meta: std::sync::Arc::new(crate::serve::ConfigMeta::default()),
             sessions: crate::serve::oauth::SessionStore::new(),
             files: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
             active_file: Arc::new(tokio::sync::RwLock::new(String::new())),
@@ -7105,7 +7134,10 @@ mod isolation_tests {
         std::fs::write(md_dir.join("README.md"), "# Linux Kernel Overview").unwrap();
 
         let state = crate::serve::ServerState {
-            config: crate::config::RuneConfig::default(),
+            config: std::sync::Arc::new(std::sync::RwLock::new(
+                crate::config::RuneConfig::default(),
+            )),
+            config_meta: std::sync::Arc::new(crate::serve::ConfigMeta::default()),
             sessions: crate::serve::oauth::SessionStore::new(),
             files: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
             active_file: Arc::new(tokio::sync::RwLock::new(String::new())),
@@ -7246,7 +7278,10 @@ mod isolation_tests {
         std::fs::write(md_dir.join("doc.md"), "# Hello").unwrap();
 
         let state = crate::serve::ServerState {
-            config: crate::config::RuneConfig::default(),
+            config: std::sync::Arc::new(std::sync::RwLock::new(
+                crate::config::RuneConfig::default(),
+            )),
+            config_meta: std::sync::Arc::new(crate::serve::ConfigMeta::default()),
             sessions: crate::serve::oauth::SessionStore::new(),
             files: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
             active_file: Arc::new(tokio::sync::RwLock::new(String::new())),
@@ -7319,7 +7354,10 @@ mod isolation_tests {
             .unwrap();
 
         let state = crate::serve::ServerState {
-            config: crate::config::RuneConfig::default(),
+            config: std::sync::Arc::new(std::sync::RwLock::new(
+                crate::config::RuneConfig::default(),
+            )),
+            config_meta: std::sync::Arc::new(crate::serve::ConfigMeta::default()),
             sessions: crate::serve::oauth::SessionStore::new(),
             files: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
             active_file: Arc::new(tokio::sync::RwLock::new(String::new())),
@@ -7382,7 +7420,8 @@ mod isolation_tests {
         config.api_key = Some("dummy-key".to_string());
 
         let state = crate::serve::ServerState {
-            config,
+            config: std::sync::Arc::new(std::sync::RwLock::new(config)),
+            config_meta: std::sync::Arc::new(crate::serve::ConfigMeta::default()),
             sessions: crate::serve::oauth::SessionStore::new(),
             files: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
             active_file: Arc::new(tokio::sync::RwLock::new(String::new())),
@@ -7491,7 +7530,10 @@ mod isolation_tests {
         let _ = db.create_note("private-note", "private-note", None);
 
         let state = crate::serve::ServerState {
-            config: crate::config::RuneConfig::default(),
+            config: std::sync::Arc::new(std::sync::RwLock::new(
+                crate::config::RuneConfig::default(),
+            )),
+            config_meta: std::sync::Arc::new(crate::serve::ConfigMeta::default()),
             sessions: crate::serve::oauth::SessionStore::new(),
             files: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
             active_file: Arc::new(tokio::sync::RwLock::new(String::new())),
@@ -7574,7 +7616,10 @@ mod isolation_tests {
         let _ = db.set_file_public("pub-note", "secret.md", false);
 
         let state = crate::serve::ServerState {
-            config: crate::config::RuneConfig::default(),
+            config: std::sync::Arc::new(std::sync::RwLock::new(
+                crate::config::RuneConfig::default(),
+            )),
+            config_meta: std::sync::Arc::new(crate::serve::ConfigMeta::default()),
             sessions: crate::serve::oauth::SessionStore::new(),
             files: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
             active_file: Arc::new(tokio::sync::RwLock::new(String::new())),
@@ -7806,8 +7851,8 @@ mod isolation_tests {
 
     #[tokio::test]
     async fn test_skills_handler_when_enabled() {
-        let (mut state, tmp) = make_state();
-        state.config.notes.agent_skills = true;
+        let (state, tmp) = make_state();
+        state.config.write().unwrap().notes.agent_skills = true;
         let skills_dir = tmp.path().join("skills");
         std::fs::create_dir_all(skills_dir.join("test-skill")).unwrap();
         std::fs::write(
@@ -7815,7 +7860,7 @@ mod isolation_tests {
             "---\nname: test-skill\ndescription: A test skill\n---\nBody",
         )
         .unwrap();
-        state.config.skills_dir = skills_dir.to_string_lossy().to_string();
+        state.config.write().unwrap().skills_dir = skills_dir.to_string_lossy().to_string();
 
         let resp = super::skills_handler(axum::extract::State(state)).await;
         assert_eq!(resp.ok, true);
@@ -7829,8 +7874,8 @@ mod isolation_tests {
 
     #[tokio::test]
     async fn test_skills_handler_disabled_when_agent_skills_false() {
-        let (mut state, tmp) = make_state();
-        state.config.notes.agent_skills = false;
+        let (state, tmp) = make_state();
+        state.config.write().unwrap().notes.agent_skills = false;
         let skills_dir = tmp.path().join("skills");
         std::fs::create_dir_all(skills_dir.join("test-skill")).unwrap();
         std::fs::write(
@@ -7838,7 +7883,7 @@ mod isolation_tests {
             "---\nname: test-skill\ndescription: A test skill\n---\nBody",
         )
         .unwrap();
-        state.config.skills_dir = skills_dir.to_string_lossy().to_string();
+        state.config.write().unwrap().skills_dir = skills_dir.to_string_lossy().to_string();
 
         let resp = super::skills_handler(axum::extract::State(state)).await;
         assert_eq!(resp.ok, true);
@@ -7867,8 +7912,8 @@ mod isolation_tests {
 
     #[tokio::test]
     async fn test_build_effective_note_system_prompt_enabled_all_files_order() {
-        let (mut state, _tmp) = make_state();
-        state.config.notes.persona_files = true;
+        let (state, _tmp) = make_state();
+        state.config.write().unwrap().notes.persona_files = true;
         let note_id = "test-note-all";
         let note_dir = state.note_markdown_dir(note_id);
         std::fs::create_dir_all(&note_dir).unwrap();
@@ -7913,8 +7958,8 @@ mod isolation_tests {
 
     #[tokio::test]
     async fn test_build_effective_note_system_prompt_partial_and_empty_skipped() {
-        let (mut state, _tmp) = make_state();
-        state.config.notes.persona_files = true;
+        let (state, _tmp) = make_state();
+        state.config.write().unwrap().notes.persona_files = true;
         let note_id = "test-note-partial";
         let note_dir = state.note_markdown_dir(note_id);
         std::fs::create_dir_all(&note_dir).unwrap();
@@ -7934,8 +7979,8 @@ mod isolation_tests {
 
     #[tokio::test]
     async fn test_build_effective_note_system_prompt_truncation() {
-        let (mut state, _tmp) = make_state();
-        state.config.notes.persona_files = true;
+        let (state, _tmp) = make_state();
+        state.config.write().unwrap().notes.persona_files = true;
         let note_id = "test-note-truncation";
         let note_dir = state.note_markdown_dir(note_id);
         std::fs::create_dir_all(&note_dir).unwrap();

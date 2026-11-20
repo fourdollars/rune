@@ -106,7 +106,11 @@ async fn async_main() {
                     None
                 }
             });
-            let mut cfg = config::load_without_clap_path(config_path.map(std::path::Path::new))
+            let resolved_config_path = config_path
+                .map(std::path::PathBuf::from)
+                .or_else(|| env::var("RUNE_CONFIG").ok().map(std::path::PathBuf::from))
+                .unwrap_or_else(|| config::data_dir().join("rune.toml"));
+            let mut cfg = config::load_without_clap_path(Some(resolved_config_path.as_path()))
                 .unwrap_or_else(|e| {
                     eprintln!("warning: config load failed: {}", e);
                     config::RuneConfig::default()
@@ -130,6 +134,8 @@ async fn async_main() {
                     .as_deref()
                     .and_then(|b| b.parse().ok())
                     .unwrap_or(IpAddr::V4(Ipv4Addr::LOCALHOST)),
+                config_path: resolved_config_path,
+                mount_overrides: serve::MountOverrides::default(),
             };
 
             let mut mount_home: Option<String> = None;
@@ -187,6 +193,11 @@ async fn async_main() {
             }
 
             config::apply_mount_flags(&mut cfg.policy, mount_home.as_deref(), &mount_rw, &mount_ro);
+            opts.mount_overrides = serve::MountOverrides {
+                mount_home,
+                mount_rw,
+                mount_ro,
+            };
 
             serve::run(cfg, opts).await;
             return;

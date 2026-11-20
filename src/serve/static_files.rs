@@ -25,6 +25,7 @@ static ASSETS: LazyLock<HashMap<&'static str, Vec<u8>>> = LazyLock::new(|| {
     m.insert("favicon.svg", decompress(zst_asset!("favicon.svg")));
     for path in [
         "js/actions.js",
+        "js/admin-settings.js",
         "js/api.js",
         "js/autocomplete.js",
         "js/bootstrap.js",
@@ -63,6 +64,7 @@ static ASSETS: LazyLock<HashMap<&'static str, Vec<u8>>> = LazyLock::new(|| {
     ] {
         let compressed: &'static [u8] = match path {
             "js/actions.js" => zst_asset!("js/actions.js"),
+            "js/admin-settings.js" => zst_asset!("js/admin-settings.js"),
             "js/api.js" => zst_asset!("js/api.js"),
             "js/autocomplete.js" => zst_asset!("js/autocomplete.js"),
             "js/bootstrap.js" => zst_asset!("js/bootstrap.js"),

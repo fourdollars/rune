@@ -141,14 +141,532 @@
             display: none;
         }
         .login-loading.visible { display: block; }
+
+        /* First-run setup wizard */
+        .login-box.setup-mode {
+            width: min(560px, calc(100vw - 32px));
+            max-height: calc(100dvh - 32px);
+            overflow-y: auto;
+            text-align: left;
+            padding: 28px 28px;
+        }
+        .login-box.setup-mode .login-title,
+        .login-box.setup-mode .login-subtitle {
+            text-align: center;
+        }
+        .setup-form {
+            display: none;
+            flex-direction: column;
+            gap: 14px;
+        }
+        .setup-section {
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 12px 14px;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            background: var(--bg-surface);
+        }
+        .setup-section-title {
+            font-size: 12px;
+            font-weight: 700;
+            color: var(--text-primary);
+            text-transform: uppercase;
+            letter-spacing: 0.4px;
+        }
+        .setup-field {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+        }
+        .setup-field label {
+            font-size: 11px;
+            font-weight: 600;
+            color: var(--text-secondary);
+        }
+        .setup-field input,
+        .setup-field select {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            color: var(--text-primary);
+            font-size: 13px;
+            padding: 8px 10px;
+            outline: none;
+            width: 100%;
+            box-sizing: border-box;
+        }
+        .setup-field input:focus,
+        .setup-field select:focus {
+            border-color: var(--accent);
+        }
+        .setup-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 10px;
+        }
+        @media (max-width: 520px) {
+            .setup-grid { grid-template-columns: 1fr; }
+        }
+        .setup-check-row {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 13px;
+            color: var(--text-primary);
+            cursor: pointer;
+        }
+        .setup-check-row input[type="checkbox"] {
+            width: auto;
+            margin: 0;
+        }
+        .setup-hint {
+            font-size: 11px;
+            color: var(--text-muted);
+            line-height: 1.4;
+        }
+        .setup-subfields {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            padding-left: 12px;
+            border-left: 2px solid var(--border);
+        }
+        .setup-subfields.hidden { display: none; }
+        .copilot-device-box {
+            display: none;
+            flex-direction: column;
+            gap: 8px;
+            padding: 10px 12px;
+            border-radius: 6px;
+            border: 1px solid var(--border);
+            background: var(--bg-secondary);
+        }
+        .copilot-device-box.visible { display: flex; }
+        .copilot-device-row {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            flex-wrap: wrap;
+        }
+        .copilot-code-badge {
+            font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+            font-size: 16px;
+            font-weight: 700;
+            letter-spacing: 2px;
+            padding: 4px 10px;
+            border-radius: 5px;
+            background: var(--bg-surface);
+            border: 1px solid var(--border);
+            color: var(--accent);
+        }
+        .copilot-btn-sm {
+            background: var(--bg-surface);
+            border: 1px solid var(--border);
+            border-radius: 5px;
+            color: var(--text-primary);
+            font-size: 12px;
+            font-weight: 600;
+            padding: 6px 10px;
+            cursor: pointer;
+            text-decoration: none;
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+        }
+        .copilot-btn-sm:hover { border-color: var(--accent); }
+        .copilot-status { font-size: 12px; color: var(--text-muted); }
+        .copilot-status.ok { color: #3fb950; }
+        .copilot-status.err { color: var(--error, #f85149); }
+
+        /* Multi-step wizard stepper & navigation */
+        .wizard-stepper {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            margin-bottom: 4px;
+            flex-wrap: wrap;
+        }
+        .wizard-step-pill {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            font-size: 11px;
+            font-weight: 600;
+            padding: 5px 10px;
+            border-radius: 999px;
+            border: 1px solid var(--border);
+            color: var(--text-muted);
+            background: var(--bg-surface);
+            flex: 1;
+            justify-content: center;
+            min-width: 0;
+            white-space: nowrap;
+        }
+        .wizard-step-pill.active {
+            color: #ffffff;
+            background: var(--accent);
+            border-color: var(--accent);
+        }
+        .wizard-step-pill.done {
+            color: #3fb950;
+            border-color: rgba(63, 185, 80, 0.45);
+        }
+        .setup-step { display: none; }
+        .setup-step.active { display: flex; flex-direction: column; gap: 10px; }
+        .wizard-nav {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 10px;
+            margin-top: 4px;
+        }
+        .wizard-btn-secondary {
+            background: var(--bg-surface);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            color: var(--text-primary);
+            font-size: 13px;
+            font-weight: 600;
+            padding: 10px 16px;
+            cursor: pointer;
+        }
+        .wizard-btn-secondary:hover { border-color: var(--accent); }
+        .wizard-nav-right {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-left: auto;
+        }
+        .wizard-summary {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+            padding: 10px 12px;
+            border-radius: 6px;
+            background: var(--bg-secondary);
+            border: 1px solid var(--border);
+            font-size: 12px;
+            color: var(--text-secondary);
+        }
+        .wizard-summary strong { color: var(--text-primary); }
+
+        /* Provider cards */
+        .provider-card-grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 8px;
+        }
+        @media (max-width: 520px) {
+            .provider-card-grid { grid-template-columns: repeat(2, 1fr); }
+        }
+        .provider-card {
+            display: flex;
+            flex-direction: column;
+            align-items: flex-start;
+            gap: 2px;
+            padding: 10px;
+            border-radius: 7px;
+            border: 1px solid var(--border);
+            background: var(--bg-secondary);
+            color: var(--text-primary);
+            cursor: pointer;
+            text-align: left;
+            transition: border-color 0.15s, background 0.15s;
+        }
+        .provider-card:hover { border-color: var(--accent); }
+        .provider-card.selected {
+            border-color: var(--accent);
+            background: rgba(99, 102, 241, 0.12);
+        }
+        .provider-card-name { font-size: 13px; font-weight: 700; }
+        .provider-card-desc { font-size: 11px; color: var(--text-muted); }
+
+        /* Model picker */
+        .model-picker-toolbar {
+            display: flex;
+            gap: 8px;
+            align-items: center;
+        }
+        .model-picker-toolbar input { flex: 1; }
+        .model-chips {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 6px;
+        }
+        .model-chip {
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+            padding: 3px 8px;
+            border-radius: 999px;
+            font-size: 11px;
+            font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+            background: rgba(99, 102, 241, 0.15);
+            border: 1px solid var(--accent);
+            color: var(--text-primary);
+        }
+        .model-chip button {
+            background: none;
+            border: none;
+            color: inherit;
+            cursor: pointer;
+            padding: 0 2px;
+            font-size: 13px;
+            line-height: 1;
+        }
+        .model-list-box {
+            max-height: 200px;
+            overflow-y: auto;
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            background: var(--bg-secondary);
+            display: flex;
+            flex-direction: column;
+        }
+        .model-list-item {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 7px 10px;
+            border-bottom: 1px solid var(--border);
+            font-size: 12px;
+            cursor: pointer;
+        }
+        .model-list-item:last-child { border-bottom: none; }
+        .model-list-item:hover { background: var(--bg-surface); }
+        .model-list-item input[type="checkbox"] { width: auto; margin: 0; }
+        .model-id-text {
+            font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+            flex: 1;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+        .model-badge {
+            font-size: 10px;
+            padding: 1px 6px;
+            border-radius: 999px;
+            background: var(--bg-surface);
+            border: 1px solid var(--border);
+            color: var(--text-muted);
+            white-space: nowrap;
+        }
+        .model-list-empty {
+            padding: 16px 12px;
+            text-align: center;
+            font-size: 12px;
+            color: var(--text-muted);
+        }
     </style>
 </head>
 <body>
-    <div class="login-box">
+    <div class="login-box" id="login-box">
         <div class="login-title">ᚱᚢᚾᛖ</div>
-        <div class="login-subtitle">Sign in to access your notes</div>
+        <div class="login-subtitle" id="login-subtitle">Sign in to access your notes</div>
         <div class="login-error" id="login-error"></div>
         <div class="login-loading" id="login-loading">Checking session…</div>
+
+        <form id="setup-form" class="setup-form" onsubmit="handleSetupSubmit(event)">
+            <div id="wizard-stepper" class="wizard-stepper" aria-label="Setup steps"></div>
+
+            <div id="setup-token-section" class="setup-section setup-step" data-step="token">
+                <div class="setup-section-title">Setup Token</div>
+                <div class="setup-hint">Because Rune Notes is accessed over a non-localhost address or reverse proxy, paste the one-time setup token printed in your server console.</div>
+                <div class="setup-field">
+                    <label for="setup-token">One-time Setup Token (from server console)</label>
+                    <input type="password" id="setup-token" placeholder="Paste the token printed by rune notes" autocomplete="off" />
+                </div>
+            </div>
+
+            <div class="setup-section setup-step" data-step="provider">
+                <div class="setup-section-title">Choose AI Provider</div>
+                <input type="hidden" id="setup-provider" value="openrouter" />
+                <div class="provider-card-grid" id="setup-provider-cards" role="radiogroup" aria-label="AI Provider">
+                    <button type="button" class="provider-card selected" data-provider="openrouter" onclick="selectSetupProvider('openrouter')">
+                        <span class="provider-card-name">OpenRouter</span>
+                        <span class="provider-card-desc">Multi-model API</span>
+                    </button>
+                    <button type="button" class="provider-card" data-provider="github-copilot" onclick="selectSetupProvider('github-copilot')">
+                        <span class="provider-card-name">GitHub Copilot</span>
+                        <span class="provider-card-desc">OAuth Device Flow</span>
+                    </button>
+                    <button type="button" class="provider-card" data-provider="gemini" onclick="selectSetupProvider('gemini')">
+                        <span class="provider-card-name">Google Gemini</span>
+                        <span class="provider-card-desc">Gemini API Key</span>
+                    </button>
+                    <button type="button" class="provider-card" data-provider="ollama" onclick="selectSetupProvider('ollama')">
+                        <span class="provider-card-name">Ollama</span>
+                        <span class="provider-card-desc">Local models</span>
+                    </button>
+                    <button type="button" class="provider-card" data-provider="openai" onclick="selectSetupProvider('openai')">
+                        <span class="provider-card-name">OpenAI / Custom</span>
+                        <span class="provider-card-desc">OpenAI-compatible</span>
+                    </button>
+                    <button type="button" class="provider-card" data-provider="anthropic" onclick="selectSetupProvider('anthropic')">
+                        <span class="provider-card-name">Anthropic</span>
+                        <span class="provider-card-desc">Claude API</span>
+                    </button>
+                </div>
+
+                <div id="setup-copilot-box" class="copilot-device-box">
+                    <div class="copilot-device-row">
+                        <button type="button" id="setup-copilot-start-btn" class="copilot-btn-sm" onclick="startSetupCopilotFlow()">Sign in with GitHub Copilot (Device Flow)</button>
+                        <button type="button" id="setup-copilot-cancel-btn" class="copilot-btn-sm" style="display:none;" onclick="cancelSetupCopilotFlow()">Cancel</button>
+                    </div>
+                    <div id="setup-copilot-code-row" class="copilot-device-row" style="display:none;">
+                        <span id="setup-copilot-user-code" class="copilot-code-badge"></span>
+                        <button type="button" class="copilot-btn-sm" onclick="copySetupCopilotCode()">Copy Code</button>
+                        <a id="setup-copilot-verify-link" class="copilot-btn-sm" href="https://github.com/login/device" target="_blank" rel="noopener noreferrer">Open GitHub Device Page ↗</a>
+                    </div>
+                    <div id="setup-copilot-status" class="copilot-status"></div>
+                </div>
+
+                <div class="setup-field" id="setup-api-key-field">
+                    <label for="setup-api-key" id="setup-api-key-label">API Key</label>
+                    <input type="password" id="setup-api-key" placeholder="sk-or-..." autocomplete="off" />
+                </div>
+
+                <div class="setup-field" id="setup-base-url-field" style="display:none;">
+                    <label for="setup-base-url">Base URL</label>
+                    <input type="text" id="setup-base-url" placeholder="http://localhost:11434/v1" />
+                </div>
+
+                <label class="setup-check-row" id="setup-zdr-field">
+                    <input type="checkbox" id="setup-openrouter-zdr" />
+                    <span>Enforce OpenRouter Zero Data Retention (ZDR)</span>
+                </label>
+            </div>
+
+            <div class="setup-section setup-step" data-step="model">
+                <div class="setup-section-title">Select Model(s) &amp; Thinking</div>
+                <div class="model-picker-toolbar">
+                    <div class="setup-field" style="flex:1;">
+                        <input type="text" id="setup-model-search" placeholder="Search detected models..." oninput="renderSetupModelList()" autocomplete="off" />
+                    </div>
+                    <button type="button" id="setup-detect-models-btn" class="copilot-btn-sm" onclick="detectSetupModels()">Re-detect</button>
+                </div>
+                <div id="setup-model-status" class="setup-hint"></div>
+                <div id="setup-model-chips" class="model-chips"></div>
+                <div id="setup-model-list" class="model-list-box">
+                    <div class="model-list-empty">Detecting models from provider…</div>
+                </div>
+                <div class="setup-grid">
+                    <div class="setup-field">
+                        <label for="setup-model">Selected / Custom Model(s) (comma-separated)</label>
+                        <input type="text" id="setup-model" placeholder="Leave blank for auto-discovery" oninput="syncChipsFromSetupModelInput()" />
+                    </div>
+                    <div class="setup-field">
+                        <label for="setup-thinking">Default Thinking Level</label>
+                        <select id="setup-thinking">
+                            <option value="">Provider default</option>
+                            <option value="off">Off</option>
+                            <option value="low">Low</option>
+                            <option value="medium">Medium</option>
+                            <option value="high">High</option>
+                        </select>
+                    </div>
+                </div>
+            </div>
+
+            <div class="setup-section setup-step" data-step="auth">
+                <div class="setup-section-title">Authentication (Admin Access Required)</div>
+                <label class="setup-check-row">
+                    <input type="checkbox" id="setup-local-enabled" checked onchange="toggleSetupAuthSections()" />
+                    <span>Enable Local Username / Password Login</span>
+                </label>
+                <div id="setup-local-fields" class="setup-subfields">
+                    <div class="setup-field">
+                        <label for="setup-local-admins">Admins (comma-separated <code>user:password</code>)</label>
+                        <input type="text" id="setup-local-admins" placeholder="admin:changeme" />
+                    </div>
+                    <div class="setup-grid">
+                        <div class="setup-field">
+                            <label for="setup-local-users">Users (optional)</label>
+                            <input type="text" id="setup-local-users" placeholder="alice:secret" />
+                        </div>
+                        <div class="setup-field">
+                            <label for="setup-local-guests">Guests (optional)</label>
+                            <input type="text" id="setup-local-guests" placeholder="guest:readonly" />
+                        </div>
+                    </div>
+                </div>
+
+                <label class="setup-check-row">
+                    <input type="checkbox" id="setup-github-enabled" onchange="toggleSetupAuthSections()" />
+                    <span>Enable GitHub OAuth Login</span>
+                </label>
+                <div id="setup-github-fields" class="setup-subfields hidden">
+                    <div class="setup-grid">
+                        <div class="setup-field">
+                            <label for="setup-github-client-id">GitHub Client ID</label>
+                            <input type="text" id="setup-github-client-id" placeholder="Ov23li..." />
+                        </div>
+                        <div class="setup-field">
+                            <label for="setup-github-client-secret">GitHub Client Secret</label>
+                            <input type="password" id="setup-github-client-secret" placeholder="Client secret" autocomplete="off" />
+                        </div>
+                    </div>
+                    <div class="setup-field">
+                        <label for="setup-github-admins">GitHub Admins (comma-separated logins or <code>org:org/team</code>)</label>
+                        <input type="text" id="setup-github-admins" placeholder="your-github-username" />
+                    </div>
+                    <div class="setup-grid">
+                        <div class="setup-field">
+                            <label for="setup-github-users">GitHub Users (optional)</label>
+                            <input type="text" id="setup-github-users" placeholder="org:my-org" />
+                        </div>
+                        <div class="setup-field">
+                            <label for="setup-github-guests">GitHub Guests (optional)</label>
+                            <input type="text" id="setup-github-guests" placeholder="" />
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="setup-section setup-step" data-step="notes">
+                <div class="setup-section-title">Notes Options &amp; Review</div>
+                <div class="setup-grid">
+                    <div class="setup-field">
+                        <label for="setup-notes-title">Site Title (optional)</label>
+                        <input type="text" id="setup-notes-title" placeholder="Rune Notes" />
+                    </div>
+                    <div class="setup-field">
+                        <label for="setup-notes-desc">Description (optional)</label>
+                        <input type="text" id="setup-notes-desc" placeholder="Collaborative markdown notes" />
+                    </div>
+                </div>
+                <div class="setup-grid">
+                    <label class="setup-check-row">
+                        <input type="checkbox" id="setup-agent-skills" />
+                        <span>Enable Agent Skills</span>
+                    </label>
+                    <label class="setup-check-row">
+                        <input type="checkbox" id="setup-persona-files" />
+                        <span>Enable Persona Files</span>
+                    </label>
+                    <label class="setup-check-row">
+                        <input type="checkbox" id="setup-cron-jobs" />
+                        <span>Enable Cron Jobs</span>
+                    </label>
+                    <label class="setup-check-row">
+                        <input type="checkbox" id="setup-embedding-enabled" />
+                        <span>Enable Semantic Embedding</span>
+                    </label>
+                </div>
+                <div id="wizard-summary" class="wizard-summary"></div>
+                <div class="setup-hint">Generates <code>~/.rune/rune.toml</code> (0600) and initializes Rune Notes immediately.</div>
+            </div>
+
+            <div class="wizard-nav">
+                <button type="button" id="setup-back-btn" class="wizard-btn-secondary" style="display:none;" onclick="prevSetupStep()">← Back</button>
+                <div class="wizard-nav-right">
+                    <button type="button" id="setup-next-btn" class="local-btn" onclick="nextSetupStep()">Next →</button>
+                    <button type="submit" id="setup-submit-btn" class="local-btn" style="display:none;">Save Configuration &amp; Start</button>
+                </div>
+            </div>
+        </form>
         
         <a id="github-signin-btn" class="github-btn" href="/auth/github">
             <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
@@ -253,12 +771,616 @@
         }
     }
 
+    function splitCsv(val) {
+        return String(val || '').split(',').map(s => s.trim()).filter(Boolean);
+    }
+
+    function toggleSetupAuthSections() {
+        const localOn = document.getElementById('setup-local-enabled').checked;
+        const ghOn = document.getElementById('setup-github-enabled').checked;
+        document.getElementById('setup-local-fields').classList.toggle('hidden', !localOn);
+        document.getElementById('setup-github-fields').classList.toggle('hidden', !ghOn);
+    }
+
+    let setupCopilotPollTimer = null;
+    let setupCopilotActive = false;
+
+    function cancelSetupCopilotFlow() {
+        setupCopilotActive = false;
+        if (setupCopilotPollTimer) { clearTimeout(setupCopilotPollTimer); setupCopilotPollTimer = null; }
+        const cancelBtn = document.getElementById('setup-copilot-cancel-btn');
+        const startBtn = document.getElementById('setup-copilot-start-btn');
+        const codeRow = document.getElementById('setup-copilot-code-row');
+        if (cancelBtn) cancelBtn.style.display = 'none';
+        if (startBtn) startBtn.disabled = false;
+        if (codeRow) codeRow.style.display = 'none';
+    }
+
+    let setupDetectedModels = [];
+    let setupDetectedKey = '';
+
+    function formatCtx(tokens) {
+        if (!tokens) return '';
+        if (tokens >= 1000000) return `${Math.round(tokens / 100000) / 10}M`;
+        return `${Math.round(tokens / 1000)}k`;
+    }
+
+    function selectSetupProvider(provider) {
+        const input = document.getElementById('setup-provider');
+        if (input) input.value = provider;
+        document.querySelectorAll('#setup-provider-cards .provider-card').forEach(card => {
+            card.classList.toggle('selected', card.dataset.provider === provider);
+        });
+        onSetupProviderChange();
+    }
+
+    function onSetupProviderChange() {
+        const provider = document.getElementById('setup-provider')?.value || 'openrouter';
+        const isCopilot = provider === 'github-copilot';
+        const isOpenRouter = provider === 'openrouter';
+        const isOllama = provider === 'ollama';
+        const showBaseUrl = isOllama || provider === 'openai' || provider === 'anthropic';
+
+        const box = document.getElementById('setup-copilot-box');
+        if (box) box.classList.toggle('visible', isCopilot);
+        if (!isCopilot) cancelSetupCopilotFlow();
+
+        const apiKeyField = document.getElementById('setup-api-key-field');
+        const apiKeyLabel = document.getElementById('setup-api-key-label');
+        const apiKeyInput = document.getElementById('setup-api-key');
+        if (apiKeyField) apiKeyField.style.display = isOllama ? 'none' : 'flex';
+        const keyHints = {
+            openrouter: ['OpenRouter API Key', 'sk-or-...'],
+            'github-copilot': ['GitHub Copilot Token (auto-filled by Device Flow above, or paste manually)', 'ghu_... or ghp_...'],
+            gemini: ['Google Gemini API Key', 'AIza...'],
+            openai: ['OpenAI / Custom API Key', 'sk-...'],
+            anthropic: ['Anthropic API Key', 'sk-ant-...'],
+        };
+        if (keyHints[provider]) {
+            if (apiKeyLabel) apiKeyLabel.textContent = keyHints[provider][0];
+            if (apiKeyInput) apiKeyInput.placeholder = keyHints[provider][1];
+        }
+
+        const baseUrlField = document.getElementById('setup-base-url-field');
+        const baseUrlInput = document.getElementById('setup-base-url');
+        if (baseUrlField) baseUrlField.style.display = showBaseUrl ? 'flex' : 'none';
+        if (baseUrlInput) {
+            baseUrlInput.placeholder = isOllama
+                ? 'http://localhost:11434/v1'
+                : 'Optional custom endpoint URL';
+            if (isOllama && !baseUrlInput.value.trim()) {
+                baseUrlInput.value = 'http://localhost:11434/v1';
+            } else if (!showBaseUrl) {
+                baseUrlInput.value = '';
+            }
+        }
+
+        const zdrField = document.getElementById('setup-zdr-field');
+        if (zdrField) zdrField.style.display = isOpenRouter ? 'flex' : 'none';
+        if (!isOpenRouter) {
+            const zdrChk = document.getElementById('setup-openrouter-zdr');
+            if (zdrChk) zdrChk.checked = false;
+        }
+        setupDetectedKey = '';
+    }
+
+    function getSelectedSetupModels() {
+        return splitCsv(document.getElementById('setup-model')?.value || '');
+    }
+
+    function setSelectedSetupModels(list) {
+        const input = document.getElementById('setup-model');
+        if (input) input.value = list.join(', ');
+        renderSetupModelChips();
+        renderSetupModelList();
+        updateSetupThinkingOptions();
+    }
+
+    function toggleSetupModelSelection(modelId) {
+        const selected = getSelectedSetupModels();
+        const idx = selected.indexOf(modelId);
+        if (idx >= 0) selected.splice(idx, 1);
+        else selected.push(modelId);
+        setSelectedSetupModels(selected);
+    }
+
+    function syncChipsFromSetupModelInput() {
+        renderSetupModelChips();
+        renderSetupModelList();
+        updateSetupThinkingOptions();
+    }
+
+    function renderSetupModelChips() {
+        const host = document.getElementById('setup-model-chips');
+        if (!host) return;
+        const selected = getSelectedSetupModels();
+        host.replaceChildren();
+        for (const id of selected) {
+            const chip = document.createElement('span');
+            chip.className = 'model-chip';
+            chip.appendChild(document.createTextNode(id));
+            const btn = document.createElement('button');
+            btn.type = 'button';
+            btn.textContent = '×';
+            btn.setAttribute('aria-label', `Remove ${id}`);
+            btn.onclick = () => toggleSetupModelSelection(id);
+            chip.appendChild(btn);
+            host.appendChild(chip);
+        }
+    }
+
+    function updateSetupThinkingOptions() {
+        const sel = document.getElementById('setup-thinking');
+        if (!sel) return;
+        const currentVal = sel.value;
+        const selected = getSelectedSetupModels();
+        const firstInfo = selected.length > 0
+            ? setupDetectedModels.find(m => m.id === selected[0])
+            : setupDetectedModels[0];
+        const efforts = (firstInfo && Array.isArray(firstInfo.reasoning_efforts) && firstInfo.reasoning_efforts.length > 0)
+            ? firstInfo.reasoning_efforts
+            : ['off', 'low', 'medium', 'high'];
+
+        sel.replaceChildren();
+        const defOpt = document.createElement('option');
+        defOpt.value = '';
+        defOpt.textContent = 'Provider default';
+        sel.appendChild(defOpt);
+        for (const e of efforts) {
+            const opt = document.createElement('option');
+            opt.value = e;
+            opt.textContent = e.charAt(0).toUpperCase() + e.slice(1);
+            sel.appendChild(opt);
+        }
+        if (currentVal && efforts.includes(currentVal)) sel.value = currentVal;
+    }
+
+    function renderSetupModelList() {
+        const host = document.getElementById('setup-model-list');
+        if (!host) return;
+        const q = (document.getElementById('setup-model-search')?.value || '').trim().toLowerCase();
+        const selectedSet = new Set(getSelectedSetupModels());
+        const filtered = setupDetectedModels.filter(m => !q || m.id.toLowerCase().includes(q));
+        host.replaceChildren();
+        if (filtered.length === 0) {
+            const empty = document.createElement('div');
+            empty.className = 'model-list-empty';
+            empty.textContent = setupDetectedModels.length === 0
+                ? 'No models detected. You can enter model ID(s) manually below or leave blank for auto-discovery.'
+                : 'No matching models.';
+            host.appendChild(empty);
+            return;
+        }
+        for (const m of filtered.slice(0, 150)) {
+            const row = document.createElement('label');
+            row.className = 'model-list-item';
+            const cb = document.createElement('input');
+            cb.type = 'checkbox';
+            cb.checked = selectedSet.has(m.id);
+            cb.onchange = () => toggleSetupModelSelection(m.id);
+            row.appendChild(cb);
+            const idSpan = document.createElement('span');
+            idSpan.className = 'model-id-text';
+            idSpan.textContent = m.id;
+            idSpan.title = m.id;
+            row.appendChild(idSpan);
+            const ctx = formatCtx(m.context_window);
+            if (ctx) {
+                const badge = document.createElement('span');
+                badge.className = 'model-badge';
+                badge.textContent = ctx;
+                row.appendChild(badge);
+            }
+            if (Array.isArray(m.reasoning_efforts) && m.reasoning_efforts.length > 0) {
+                const badge = document.createElement('span');
+                badge.className = 'model-badge';
+                badge.textContent = 'thinking';
+                row.appendChild(badge);
+            }
+            host.appendChild(row);
+        }
+    }
+
+    async function detectSetupModels(force = true) {
+        const provider = document.getElementById('setup-provider')?.value || 'openrouter';
+        const apiKey = document.getElementById('setup-api-key')?.value.trim() || null;
+        const baseUrl = document.getElementById('setup-base-url')?.value.trim() || null;
+        const zdr = provider === 'openrouter' && !!document.getElementById('setup-openrouter-zdr')?.checked;
+        const cacheKey = JSON.stringify([provider, apiKey, baseUrl, zdr]);
+        if (!force && cacheKey === setupDetectedKey && setupDetectedModels.length > 0) {
+            renderSetupModelChips();
+            renderSetupModelList();
+            return;
+        }
+
+        const statusEl = document.getElementById('setup-model-status');
+        const btn = document.getElementById('setup-detect-models-btn');
+        const host = document.getElementById('setup-model-list');
+        if (btn) btn.disabled = true;
+        if (statusEl) statusEl.textContent = `Detecting models from ${provider}…`;
+        if (host) {
+            host.replaceChildren();
+            const loading = document.createElement('div');
+            loading.className = 'model-list-empty';
+            loading.textContent = 'Querying provider for available models…';
+            host.appendChild(loading);
+        }
+
+        try {
+            const resp = await fetch('/api/setup/models', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    setup_token: document.getElementById('setup-token')?.value.trim() || null,
+                    provider,
+                    api_key: apiKey,
+                    base_url: baseUrl,
+                    openrouter_zdr: zdr,
+                }),
+                credentials: 'include'
+            });
+            const data = await resp.json();
+            if (resp.ok && data.ok) {
+                setupDetectedModels = Array.isArray(data.models) ? data.models : [];
+                setupDetectedKey = cacheKey;
+                if (statusEl) {
+                    statusEl.textContent = setupDetectedModels.length > 0
+                        ? `Detected ${setupDetectedModels.length} model(s). Select one or more (or leave empty to allow all).`
+                        : 'No models returned by provider. You can still type model ID(s) manually below.';
+                }
+            } else {
+                setupDetectedModels = [];
+                if (statusEl) statusEl.textContent = (data && data.error) || 'Model detection failed — enter model ID(s) manually.';
+            }
+        } catch {
+            setupDetectedModels = [];
+            if (statusEl) statusEl.textContent = 'Network error detecting models — enter model ID(s) manually.';
+        } finally {
+            if (btn) btn.disabled = false;
+            renderSetupModelChips();
+            renderSetupModelList();
+            updateSetupThinkingOptions();
+        }
+    }
+
+    async function copySetupCopilotCode() {
+        const code = document.getElementById('setup-copilot-user-code')?.textContent || '';
+        if (!code) return;
+        try { await navigator.clipboard.writeText(code); } catch {}
+        const status = document.getElementById('setup-copilot-status');
+        if (status) status.textContent = 'Code copied! Paste it on GitHub to authorize.';
+    }
+
+    async function startSetupCopilotFlow() {
+        cancelSetupCopilotFlow();
+        const status = document.getElementById('setup-copilot-status');
+        const startBtn = document.getElementById('setup-copilot-start-btn');
+        const cancelBtn = document.getElementById('setup-copilot-cancel-btn');
+        const codeRow = document.getElementById('setup-copilot-code-row');
+        const setSt = (msg, cls = '') => {
+            if (!status) return;
+            status.textContent = msg;
+            status.className = 'copilot-status' + (cls ? ' ' + cls : '');
+        };
+
+        setSt('Requesting device code from GitHub…');
+        if (startBtn) startBtn.disabled = true;
+
+        const setupToken = document.getElementById('setup-token')?.value.trim() || null;
+        try {
+            const resp = await fetch('/api/setup/copilot/start', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ setup_token: setupToken }),
+                credentials: 'include'
+            });
+            const data = await resp.json();
+            if (!resp.ok || !data.ok) {
+                setSt(data.error || 'Failed to start GitHub device flow', 'err');
+                if (startBtn) startBtn.disabled = false;
+                return;
+            }
+            document.getElementById('setup-copilot-user-code').textContent = data.user_code;
+            const link = document.getElementById('setup-copilot-verify-link');
+            if (link && data.verification_uri) link.href = data.verification_uri;
+            if (codeRow) codeRow.style.display = 'flex';
+            if (cancelBtn) cancelBtn.style.display = 'inline-flex';
+            setSt('Open GitHub, enter the code above, and authorize. Waiting…');
+
+            setupCopilotActive = true;
+            let intervalMs = Math.max(5, data.interval || 5) * 1000;
+            const deviceCode = data.device_code;
+
+            const poll = async () => {
+                if (!setupCopilotActive) return;
+                try {
+                    const pResp = await fetch('/api/setup/copilot/poll', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            setup_token: document.getElementById('setup-token')?.value.trim() || null,
+                            device_code: deviceCode,
+                        }),
+                        credentials: 'include'
+                    });
+                    const pData = await pResp.json();
+                    if (!setupCopilotActive) return;
+                    if (!pResp.ok || !pData.ok) {
+                        cancelSetupCopilotFlow();
+                        setSt(pData.error || 'Authorization failed', 'err');
+                        return;
+                    }
+                    if (pData.status === 'authorized' && pData.access_token) {
+                        document.getElementById('setup-api-key').value = pData.access_token;
+                        setupDetectedKey = '';
+                        cancelSetupCopilotFlow();
+                        setSt('✓ Authorized! Click Next → to detect and select your Copilot model(s).', 'ok');
+                        return;
+                    }
+                    if (pData.status === 'expired') {
+                        cancelSetupCopilotFlow();
+                        setSt('Device code expired. Please try again.', 'err');
+                        return;
+                    }
+                    if (pData.status === 'denied') {
+                        cancelSetupCopilotFlow();
+                        setSt('Authorization denied on GitHub.', 'err');
+                        return;
+                    }
+                    if (pData.status === 'slow_down') {
+                        intervalMs = Math.max(intervalMs + 5000, (pData.interval || 10) * 1000);
+                    }
+                } catch {
+                    // transient network error, keep polling
+                }
+                if (setupCopilotActive) {
+                    setupCopilotPollTimer = setTimeout(poll, intervalMs);
+                }
+            };
+            setupCopilotPollTimer = setTimeout(poll, intervalMs);
+        } catch {
+            setSt('Network error starting GitHub device flow', 'err');
+            if (startBtn) startBtn.disabled = false;
+        }
+    }
+
+    let setupSteps = ['provider', 'model', 'auth', 'notes'];
+    let setupStepIndex = 0;
+
+    const STEP_LABELS = {
+        token: 'Token',
+        provider: 'Provider',
+        model: 'Model',
+        auth: 'Auth',
+        notes: 'Finish',
+    };
+
+    function isValidLocalEntry(entry) {
+        const idx = entry.indexOf(':');
+        return idx > 0 && idx < entry.length - 1;
+    }
+
+    async function validateSetupStep(stepId) {
+        setError('');
+        if (stepId === 'token') {
+            const token = document.getElementById('setup-token').value.trim();
+            if (!token) {
+                setError('Please enter the one-time setup token printed in the server console.');
+                return false;
+            }
+            const nextBtn = document.getElementById('setup-next-btn');
+            if (nextBtn) { nextBtn.disabled = true; nextBtn.style.opacity = '0.5'; }
+            try {
+                const resp = await fetch('/api/setup/verify-token', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ setup_token: token }),
+                    credentials: 'include'
+                });
+                const data = await resp.json();
+                if (!resp.ok || !data.ok) {
+                    setError((data && data.error) || 'Invalid setup token');
+                    return false;
+                }
+            } catch {
+                setError('Network error verifying setup token');
+                return false;
+            } finally {
+                if (nextBtn) { nextBtn.disabled = false; nextBtn.style.opacity = ''; }
+            }
+        }
+        if (stepId === 'auth') {
+            const localOn = document.getElementById('setup-local-enabled').checked;
+            const localAdmins = splitCsv(document.getElementById('setup-local-admins').value);
+            const localUsers = splitCsv(document.getElementById('setup-local-users').value);
+            const localGuests = splitCsv(document.getElementById('setup-local-guests').value);
+            if (localOn) {
+                for (const entry of [...localAdmins, ...localUsers, ...localGuests]) {
+                    if (!isValidLocalEntry(entry)) {
+                        setError(`Invalid local account "${entry}": expected "username:password".`);
+                        return false;
+                    }
+                }
+            }
+            const hasLocalAdmin = localOn && localAdmins.some(isValidLocalEntry);
+
+            const ghOn = document.getElementById('setup-github-enabled').checked;
+            const ghId = document.getElementById('setup-github-client-id').value.trim();
+            const ghSecret = document.getElementById('setup-github-client-secret').value.trim();
+            const ghAdmins = splitCsv(document.getElementById('setup-github-admins').value);
+            const hasGhAdmin = ghOn && !!ghId && !!ghSecret && ghAdmins.length > 0;
+
+            if (!hasLocalAdmin && !hasGhAdmin) {
+                setError('Please configure at least one admin account (Local admin "username:password" or GitHub OAuth with Client ID, Client Secret, and Admin login).');
+                return false;
+            }
+        }
+        return true;
+    }
+
+    function updateWizardSummary() {
+        const host = document.getElementById('wizard-summary');
+        if (!host) return;
+        const provider = document.getElementById('setup-provider').value || 'openrouter';
+        const hasKey = !!document.getElementById('setup-api-key').value.trim();
+        const model = document.getElementById('setup-model').value.trim() || 'auto-detect';
+        const authMethods = [];
+        const localOn = document.getElementById('setup-local-enabled').checked;
+        const localCount = splitCsv(document.getElementById('setup-local-admins').value).length
+            + splitCsv(document.getElementById('setup-local-users').value).length
+            + splitCsv(document.getElementById('setup-local-guests').value).length;
+        if (localOn && localCount > 0) authMethods.push(`Local (${localCount} account${localCount > 1 ? 's' : ''})`);
+        if (document.getElementById('setup-github-enabled').checked && document.getElementById('setup-github-client-id').value.trim()) {
+            authMethods.push('GitHub OAuth');
+        }
+        host.replaceChildren();
+        const lines = [
+            ['Provider: ', `${provider} (${hasKey ? 'API key set' : 'no API key'}, model: ${model})`],
+            ['Auth: ', authMethods.join(' + ') || 'None'],
+        ];
+        for (const [k, v] of lines) {
+            const div = document.createElement('div');
+            const strong = document.createElement('strong');
+            strong.textContent = k;
+            div.appendChild(strong);
+            div.appendChild(document.createTextNode(v));
+            host.appendChild(div);
+        }
+    }
+
+    function renderSetupStep() {
+        const currentStep = setupSteps[setupStepIndex];
+        const stepper = document.getElementById('wizard-stepper');
+        if (stepper) {
+            stepper.replaceChildren();
+            setupSteps.forEach((step, idx) => {
+                const pill = document.createElement('div');
+                pill.className = 'wizard-step-pill'
+                    + (idx === setupStepIndex ? ' active' : '')
+                    + (idx < setupStepIndex ? ' done' : '');
+                pill.textContent = `${idx + 1}. ${STEP_LABELS[step] || step}`;
+                stepper.appendChild(pill);
+            });
+        }
+
+        document.querySelectorAll('#setup-form .setup-step').forEach(section => {
+            section.classList.toggle('active', section.dataset.step === currentStep);
+        });
+
+        const isFirst = setupStepIndex === 0;
+        const isLast = setupStepIndex === setupSteps.length - 1;
+        document.getElementById('setup-back-btn').style.display = isFirst ? 'none' : 'inline-flex';
+        document.getElementById('setup-next-btn').style.display = isLast ? 'none' : 'inline-flex';
+        document.getElementById('setup-submit-btn').style.display = isLast ? 'inline-flex' : 'none';
+        document.getElementById('login-subtitle').textContent =
+            `Initial Setup — Step ${setupStepIndex + 1} of ${setupSteps.length}: ${STEP_LABELS[currentStep] || ''}`;
+
+        if (currentStep === 'model') detectSetupModels(false);
+        if (currentStep === 'notes') updateWizardSummary();
+    }
+
+    async function nextSetupStep() {
+        const currentStep = setupSteps[setupStepIndex];
+        if (!(await validateSetupStep(currentStep))) return;
+        if (setupStepIndex < setupSteps.length - 1) {
+            setupStepIndex += 1;
+            renderSetupStep();
+        }
+    }
+
+    function prevSetupStep() {
+        setError('');
+        if (setupStepIndex > 0) {
+            setupStepIndex -= 1;
+            renderSetupStep();
+        }
+    }
+
+    async function handleSetupSubmit(event) {
+        event.preventDefault();
+        if (setupStepIndex < setupSteps.length - 1) {
+            nextSetupStep();
+            return;
+        }
+        setError('');
+        const submitBtn = document.getElementById('setup-submit-btn');
+        if (submitBtn) { submitBtn.disabled = true; submitBtn.style.opacity = '0.5'; }
+
+        const notesModel = document.getElementById('setup-model').value.trim();
+        const payload = {
+            setup_token: document.getElementById('setup-token').value.trim() || null,
+            provider: document.getElementById('setup-provider').value || null,
+            api_key: document.getElementById('setup-api-key').value.trim() || null,
+            base_url: document.getElementById('setup-base-url').value.trim() || null,
+            model: notesModel ? notesModel.split(',')[0].trim() : null,
+            notes_model: notesModel || null,
+            thinking: document.getElementById('setup-thinking').value || null,
+            openrouter_zdr: document.getElementById('setup-openrouter-zdr').checked,
+            embedding_enabled: document.getElementById('setup-embedding-enabled').checked,
+            notes_title: document.getElementById('setup-notes-title').value.trim() || null,
+            notes_desc: document.getElementById('setup-notes-desc').value.trim() || null,
+            agent_skills: document.getElementById('setup-agent-skills').checked,
+            persona_files: document.getElementById('setup-persona-files').checked,
+            cron_jobs: document.getElementById('setup-cron-jobs').checked,
+            local_enabled: document.getElementById('setup-local-enabled').checked,
+            local_admins: splitCsv(document.getElementById('setup-local-admins').value),
+            local_users: splitCsv(document.getElementById('setup-local-users').value),
+            local_guests: splitCsv(document.getElementById('setup-local-guests').value),
+            github_enabled: document.getElementById('setup-github-enabled').checked,
+            github_client_id: document.getElementById('setup-github-client-id').value.trim() || null,
+            github_client_secret: document.getElementById('setup-github-client-secret').value.trim() || null,
+            github_admins: splitCsv(document.getElementById('setup-github-admins').value),
+            github_users: splitCsv(document.getElementById('setup-github-users').value),
+            github_guests: splitCsv(document.getElementById('setup-github-guests').value),
+        };
+
+        try {
+            const resp = await fetch('/api/setup/complete', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload),
+                credentials: 'include'
+            });
+            const data = await resp.json();
+            if (resp.ok && data.ok) {
+                if (data.auto_logged_in) {
+                    localStorage.setItem('rune_session_id', 'local_session');
+                    window.location.href = data.redirect || '/edit/';
+                } else {
+                    window.location.href = data.redirect || '/';
+                }
+                return;
+            }
+            setError(data.error || 'Failed to save configuration');
+        } catch {
+            setError('Network error while saving configuration');
+        } finally {
+            if (submitBtn) { submitBtn.disabled = false; submitBtn.style.opacity = ''; }
+        }
+    }
+
     (async function loadAuthConfig() {
         try {
             const resp = await fetch('/api/auth/config');
             if (resp.ok) {
                 const data = await resp.json();
                 if (data.ok) {
+                    if (data.setup_required) {
+                        document.getElementById('login-box').classList.add('setup-mode');
+                        document.getElementById('setup-form').style.display = 'flex';
+                        document.getElementById('github-signin-btn').style.display = 'none';
+                        document.getElementById('local-login-form').style.display = 'none';
+                        document.getElementById('login-divider').style.display = 'none';
+                        const guestLink = document.querySelector('.login-guest-link');
+                        if (guestLink) guestLink.style.display = 'none';
+                        setupSteps = data.setup_token_required
+                            ? ['token', 'provider', 'model', 'auth', 'notes']
+                            : ['provider', 'model', 'auth', 'notes'];
+                        setupStepIndex = 0;
+                        selectSetupProvider('openrouter');
+                        renderSetupStep();
+                        return;
+                    }
                     const showGithub = !!data.github;
                     const showLocal = !!data.local;
                     const oauthProviders = Array.isArray(data.oauth) ? data.oauth : [];

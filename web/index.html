@@ -305,6 +305,200 @@
         </div>
     </div>
 
+    <div id="admin-settings-modal" class="modal-overlay hidden">
+        <div class="modal modal-admin-settings" role="dialog" aria-modal="true" aria-labelledby="admin-settings-title">
+            <div class="admin-settings-header">
+                <h2 id="admin-settings-title">Server Settings</h2>
+                <button type="button" class="btn-icon" data-action="hide-admin-settings" data-icon="x" title="Close" aria-label="Close"></button>
+            </div>
+            <div class="admin-settings-tabs" role="tablist">
+                <button type="button" role="tab" class="admin-tab-btn active" data-action="switch-admin-tab" data-admin-tab="provider" aria-selected="true">Provider &amp; Models</button>
+                <button type="button" role="tab" class="admin-tab-btn" data-action="switch-admin-tab" data-admin-tab="notes" aria-selected="false">Notes &amp; Auth</button>
+            </div>
+            <div id="admin-settings-status" class="admin-settings-status hidden"></div>
+
+            <div class="admin-settings-body">
+                <div class="admin-settings-panel" data-admin-panel="provider">
+                    <div class="admin-form-grid">
+                        <label class="admin-field">
+                            <span>Provider</span>
+                            <select id="admin-cfg-provider" data-action="admin-provider-change">
+                                <option value="">Auto-detect</option>
+                                <option value="openrouter">OpenRouter</option>
+                                <option value="github-copilot">GitHub Copilot</option>
+                                <option value="gemini">Google Gemini</option>
+                                <option value="openai">OpenAI / Custom</option>
+                                <option value="anthropic">Anthropic</option>
+                                <option value="ollama">Ollama</option>
+                            </select>
+                        </label>
+                        <label class="admin-field">
+                            <span>Default Thinking Level</span>
+                            <select id="admin-cfg-thinking">
+                                <option value="">Provider default</option>
+                                <option value="off">Off</option>
+                                <option value="low">Low</option>
+                                <option value="medium">Medium</option>
+                                <option value="high">High</option>
+                            </select>
+                        </label>
+                    </div>
+                    <label class="admin-field">
+                        <span>API Key</span>
+                        <input type="password" id="admin-cfg-api-key" placeholder="•••••••• (leave blank to keep existing)" autocomplete="off" />
+                    </label>
+                    <div id="admin-copilot-box" class="admin-copilot-box hidden">
+                        <div class="admin-copilot-row">
+                            <button type="button" id="admin-copilot-start-btn" class="btn-secondary" data-action="start-admin-copilot">Sign in with GitHub Copilot (Device Flow)</button>
+                            <button type="button" id="admin-copilot-cancel-btn" class="btn-secondary hidden" data-action="cancel-admin-copilot">Cancel</button>
+                        </div>
+                        <div id="admin-copilot-code-row" class="admin-copilot-row hidden">
+                            <span id="admin-copilot-user-code" class="admin-copilot-code"></span>
+                            <button type="button" class="btn-secondary" data-action="copy-admin-copilot-code">Copy Code</button>
+                            <a id="admin-copilot-verify-link" class="btn-secondary" href="https://github.com/login/device" target="_blank" rel="noopener noreferrer">Open GitHub Device Page ↗</a>
+                        </div>
+                        <div id="admin-copilot-status" class="admin-copilot-status"></div>
+                    </div>
+                    <div class="admin-form-grid">
+                        <label class="admin-field">
+                            <span>Default Model</span>
+                            <input type="text" id="admin-cfg-model" placeholder="e.g. openrouter/auto" />
+                        </label>
+                        <label class="admin-field">
+                            <span>Notes Allowed Models (comma-separated)</span>
+                            <input type="text" id="admin-cfg-notes-model" placeholder="Leave blank for auto-discovery" />
+                        </label>
+                    </div>
+                    <div class="admin-model-detect-box">
+                        <div class="admin-copilot-row">
+                            <button type="button" id="admin-detect-models-btn" class="btn-secondary" data-action="detect-admin-models">Detect Models</button>
+                            <input type="text" id="admin-model-search" class="admin-model-search hidden" placeholder="Filter detected models..." autocomplete="off" />
+                            <span id="admin-model-detect-status" class="admin-copilot-status"></span>
+                        </div>
+                        <div id="admin-model-list" class="admin-model-list hidden"></div>
+                    </div>
+                    <div class="admin-form-grid">
+                        <label class="admin-field" id="admin-cfg-base-url-field">
+                            <span>Base URL (optional)</span>
+                            <input type="text" id="admin-cfg-base-url" placeholder="e.g. http://localhost:11434/v1" />
+                        </label>
+                        <label class="admin-field">
+                            <span>Skills Directory</span>
+                            <input type="text" id="admin-cfg-skills-dir" placeholder="~/skills" />
+                        </label>
+                    </div>
+                    <div class="admin-form-grid">
+                        <label class="admin-check-field" id="admin-cfg-zdr-field">
+                            <input type="checkbox" id="admin-cfg-openrouter-zdr" />
+                            <span>OpenRouter Zero Data Retention (ZDR)</span>
+                        </label>
+                        <label class="admin-check-field">
+                            <input type="checkbox" id="admin-cfg-embedding-enabled" />
+                            <span>Enable Semantic Embedding</span>
+                        </label>
+                    </div>
+                    <label class="admin-field">
+                        <span>Embedding Model (optional)</span>
+                        <input type="text" id="admin-cfg-embedding-model" placeholder="text-embedding-3-small" />
+                    </label>
+                </div>
+
+                <div class="admin-settings-panel hidden" data-admin-panel="notes">
+                    <div class="admin-form-grid">
+                        <label class="admin-field">
+                            <span>Site Title</span>
+                            <input type="text" id="admin-cfg-notes-title" placeholder="Rune Notes" />
+                        </label>
+                        <label class="admin-field">
+                            <span>Description</span>
+                            <input type="text" id="admin-cfg-notes-desc" placeholder="Collaborative markdown notes" />
+                        </label>
+                    </div>
+                    <div class="admin-form-grid">
+                        <label class="admin-field">
+                            <span>Bind Address (restart required)</span>
+                            <input type="text" id="admin-cfg-notes-bind" placeholder="127.0.0.1" />
+                        </label>
+                        <label class="admin-field">
+                            <span>Port (restart required)</span>
+                            <input type="number" id="admin-cfg-notes-port" placeholder="9527" />
+                        </label>
+                    </div>
+                    <div class="admin-form-checks">
+                        <label class="admin-check-field">
+                            <input type="checkbox" id="admin-cfg-agent-skills" />
+                            <span>Agent Skills</span>
+                        </label>
+                        <label class="admin-check-field">
+                            <input type="checkbox" id="admin-cfg-persona-files" />
+                            <span>Persona Files</span>
+                        </label>
+                        <label class="admin-check-field">
+                            <input type="checkbox" id="admin-cfg-cron-jobs" />
+                            <span>Cron Jobs</span>
+                        </label>
+                    </div>
+                    <hr class="admin-divider" />
+                    <label class="admin-check-field">
+                        <input type="checkbox" id="admin-cfg-local-enabled" data-action="toggle-admin-auth-sections" />
+                        <span>Enable Local Username / Password Login</span>
+                    </label>
+                    <div id="admin-cfg-local-fields" class="admin-subfields">
+                        <label class="admin-field">
+                            <span>Local Admins (<code>username</code> keeps existing password, or <code>username:newpassword</code>)</span>
+                            <input type="text" id="admin-cfg-local-admins" placeholder="admin or admin:newpass" />
+                        </label>
+                        <div class="admin-form-grid">
+                            <label class="admin-field">
+                                <span>Local Users</span>
+                                <input type="text" id="admin-cfg-local-users" placeholder="alice or alice:newpass" />
+                            </label>
+                            <label class="admin-field">
+                                <span>Local Guests</span>
+                                <input type="text" id="admin-cfg-local-guests" placeholder="guest or guest:newpass" />
+                            </label>
+                        </div>
+                    </div>
+                    <label class="admin-check-field">
+                        <input type="checkbox" id="admin-cfg-github-enabled" data-action="toggle-admin-auth-sections" />
+                        <span>Enable GitHub OAuth Login</span>
+                    </label>
+                    <div id="admin-cfg-github-fields" class="admin-subfields hidden">
+                        <div class="admin-form-grid">
+                            <label class="admin-field">
+                                <span>GitHub Client ID</span>
+                                <input type="text" id="admin-cfg-github-client-id" />
+                            </label>
+                            <label class="admin-field">
+                                <span>GitHub Client Secret</span>
+                                <input type="password" id="admin-cfg-github-client-secret" placeholder="•••••••• (leave blank to keep existing)" autocomplete="off" />
+                            </label>
+                        </div>
+                        <label class="admin-field">
+                            <span>GitHub Admins</span>
+                            <input type="text" id="admin-cfg-github-admins" />
+                        </label>
+                        <div class="admin-form-grid">
+                            <label class="admin-field">
+                                <span>GitHub Users</span>
+                                <input type="text" id="admin-cfg-github-users" />
+                            </label>
+                            <label class="admin-field">
+                                <span>GitHub Guests</span>
+                                <input type="text" id="admin-cfg-github-guests" />
+                            </label>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="modal-actions admin-settings-actions">
+                <button type="button" class="btn-secondary" data-action="hide-admin-settings">Close</button>
+                <button type="button" class="btn-primary" data-action="save-admin-settings">Save &amp; Reload</button>
+            </div>
+        </div>
+    </div>
+
     <div id="session-modal" class="modal-overlay hidden">
         <div class="modal modal-session" role="dialog" aria-modal="true" aria-labelledby="session-modal-title">
             <div class="session-modal-header">
@@ -359,6 +553,7 @@
                         <button id="btn-command-palette" class="explorer-action-btn" data-action="open-command-palette" data-icon="command" title="Command palette (Ctrl+K)" aria-label="Command palette"></button>
                     </div>
                     <div class="explorer-actions-group">
+                        <button id="btn-admin-settings" class="explorer-action-btn hidden" data-action="show-admin-settings" data-icon="settings" title="Server settings" aria-label="Server settings"></button>
                         <button id="btn-logout" class="explorer-action-btn" data-action="show-logout-dialog" data-icon="logout" title="Logout" aria-label="Log out"></button>
                     </div>
                 </div>

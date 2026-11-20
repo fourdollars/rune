@@ -39,6 +39,7 @@ const COMMANDS = [
     { label: 'Archive chat', icon: 'archive', section: 'AI & Chat', run: () => showArchiveDialog() },
 
     // Account
+    { label: 'Server settings', icon: 'settings', admin: true, section: 'Account', run: () => showAdminSettings() },
     { label: 'Log out', icon: 'logout', section: 'Account', run: () => showLogoutDialog() },
 ];
 

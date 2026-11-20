@@ -24,6 +24,7 @@ import './notes.js';
 import './emoji-data.js';
 import './emoji.js';
 import './settings.js';
+import './admin-settings.js';
 import './editor-modes.js';
 import './responsive.js';
 import './palette.js';

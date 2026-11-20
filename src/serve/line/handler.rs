@@ -32,8 +32,8 @@ pub async fn line_webhook_named_handler(
     headers: HeaderMap,
     raw_body: Bytes,
 ) -> Response {
-    let bot_cfg = state
-        .config
+    let cfg_snap = state.config_snapshot();
+    let bot_cfg = cfg_snap
         .notes
         .line
         .iter()
@@ -116,7 +116,7 @@ pub async fn process_webhook_payload(
     cache: ProfileCache,
 ) {
     let bot_cfg = state
-        .config
+        .config_snapshot()
         .notes
         .line
         .iter()
@@ -558,7 +558,7 @@ async fn execute_line_agent_and_reply(
     reply_token: Option<String>,
     line_client: LineClient,
 ) {
-    let config = state.config.clone();
+    let config = state.config_snapshot();
     let active_model = state
         .effective_model_for_session(&note_id, &session_id)
         .await;
@@ -893,7 +893,8 @@ pub fn extract_source_id(event: &crate::serve::line::types::WebhookEvent) -> &st
 /// Asynchronously resolves missing friendly titles for LINE sessions (e.g. from 1-on-1 or groups)
 /// and updates `chat_sessions` table and broadcasts updated list if any title was resolved.
 pub async fn resolve_missing_session_titles(state: &ServerState, note_id: &str) {
-    let bot_cfg = match state.config.notes.line.iter().find(|b| {
+    let cfg_snap = state.config_snapshot();
+    let bot_cfg = match cfg_snap.notes.line.iter().find(|b| {
         resolve_line_note_id(&b.nickname) == note_id && !b.channel_access_token.is_empty()
     }) {
         Some(cfg) => cfg.clone(),
@@ -1026,7 +1027,8 @@ mod tests {
         }
 
         ServerState {
-            config,
+            config: std::sync::Arc::new(std::sync::RwLock::new(config)),
+            config_meta: std::sync::Arc::new(crate::serve::ConfigMeta::default()),
             sessions: oauth::SessionStore::new(),
             files: Arc::new(RwLock::new(HashMap::new())),
             active_file: Arc::new(RwLock::new(String::new())),
@@ -1098,13 +1100,19 @@ mod tests {
     #[tokio::test]
     async fn test_line_webhook_named_handler_success() {
         let secret = "my_named_secret";
-        let mut state = create_test_state_with_line(secret);
-        state.config.notes.line.push(LineNotesConfig {
-            nickname: "CIBot".to_string(),
-            channel_secret: "ci_secret".to_string(),
-            channel_access_token: "ci_token".to_string(),
-            ..Default::default()
-        });
+        let state = create_test_state_with_line(secret);
+        state
+            .config
+            .write()
+            .unwrap()
+            .notes
+            .line
+            .push(LineNotesConfig {
+                nickname: "CIBot".to_string(),
+                channel_secret: "ci_secret".to_string(),
+                channel_access_token: "ci_token".to_string(),
+                ..Default::default()
+            });
 
         let body_bytes = br#"{"destination":"U_CI_BOT","events":[]}"#;
         let sig = compute_signature("ci_secret", body_bytes);
@@ -1241,7 +1249,7 @@ mod tests {
         {
             let mut state = create_test_state_with_line("secret123");
             state.data_dir = temp_dir.path().to_path_buf();
-            if let Some(ref mut bot) = state.config.notes.line.first_mut() {
+            if let Some(ref mut bot) = state.config.write().unwrap().notes.line.first_mut() {
                 bot.log = false;
                 bot.anonymous = false;
                 bot.guests = vec!["U_GUEST_1".to_string()];
@@ -1278,7 +1286,7 @@ mod tests {
         {
             let mut state = create_test_state_with_line("secret123");
             state.data_dir = temp_dir.path().to_path_buf();
-            if let Some(ref mut bot) = state.config.notes.line.first_mut() {
+            if let Some(ref mut bot) = state.config.write().unwrap().notes.line.first_mut() {
                 bot.log = true;
                 bot.anonymous = false;
                 bot.guests = vec!["U_GUEST_2".to_string()];
@@ -1343,7 +1351,7 @@ mod tests {
         {
             let mut state = create_test_state_with_line("secret123");
             state.data_dir = temp_dir.path().to_path_buf();
-            if let Some(ref mut bot) = state.config.notes.line.first_mut() {
+            if let Some(ref mut bot) = state.config.write().unwrap().notes.line.first_mut() {
                 bot.log = true;
                 bot.anonymous = true;
             }
@@ -1404,7 +1412,7 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let mut state = create_test_state_with_line("secret123");
         state.data_dir = temp_dir.path().to_path_buf();
-        if let Some(ref mut bot) = state.config.notes.line.first_mut() {
+        if let Some(ref mut bot) = state.config.write().unwrap().notes.line.first_mut() {
             bot.log = true;
             bot.guests = vec!["U_GUEST_123".to_string()];
         }
@@ -1460,7 +1468,7 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let mut state = create_test_state_with_line("secret123");
         state.data_dir = temp_dir.path().to_path_buf();
-        if let Some(ref mut line_cfg) = state.config.notes.line.first_mut() {
+        if let Some(ref mut line_cfg) = state.config.write().unwrap().notes.line.first_mut() {
             line_cfg.log = true;
             line_cfg.groups = vec!["C_ALLOWED_GROUP".to_string()];
             line_cfg.keywords = vec!["@bot".to_string(), "rune".to_string()];
@@ -1536,7 +1544,7 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let mut state = create_test_state_with_line("secret123");
         state.data_dir = temp_dir.path().to_path_buf();
-        if let Some(ref mut line_cfg) = state.config.notes.line.first_mut() {
+        if let Some(ref mut line_cfg) = state.config.write().unwrap().notes.line.first_mut() {
             line_cfg.log = true;
             line_cfg.groups = vec!["C_GROUP_ORDER".to_string()];
         }
@@ -1608,12 +1616,12 @@ mod tests {
     async fn test_process_webhook_custom_access_denied_message() {
         use crate::serve::line::types::{EventMessage, EventSource, WebhookEvent};
 
-        let mut state = create_test_state_with_line("secret123");
-        if let Some(ref mut bot) = state.config.notes.line.first_mut() {
+        let state = create_test_state_with_line("secret123");
+        if let Some(ref mut bot) = state.config.write().unwrap().notes.line.first_mut() {
             bot.access_denied_message = "Sorry {user_id}, you do not have permission.".to_string();
         }
 
-        let denied_msg = state.config.notes.line[0]
+        let denied_msg = state.config_snapshot().notes.line[0]
             .access_denied_message
             .replace("{user_id}", "U_STRANGER_123");
         assert_eq!(
@@ -1758,8 +1766,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_line_webhook_auto_session_title() {
-        let mut state = create_test_state_with_line("secret123");
-        state.config.notes.line[0].groups = vec!["C12345678".to_string()];
+        let state = create_test_state_with_line("secret123");
+        state.config.write().unwrap().notes.line[0].groups = vec!["C12345678".to_string()];
         state
             .chat_db
             .create_note("LineBot", "LineBot", None)
@@ -1840,12 +1848,15 @@ mod tests {
 
     #[tokio::test]
     async fn test_process_webhook_group_unregistered_user_skipped() {
-        let mut state = create_test_state_with_line("secret123");
-        state.config.notes.line[0].groups = vec!["C_WHITELIST_GROUP".to_string()];
-        state.config.notes.line[0].keywords = vec!["@bot".to_string()];
-        state.config.notes.line[0].admins = vec!["U_REGISTERED_ADMIN".to_string()];
-        state.config.notes.line[0].users = vec!["U_REGISTERED_USER".to_string()];
-        state.config.notes.line[0].guests = vec!["U_REGISTERED_GUEST".to_string()];
+        let state = create_test_state_with_line("secret123");
+        {
+            let mut cfg = state.config.write().unwrap();
+            cfg.notes.line[0].groups = vec!["C_WHITELIST_GROUP".to_string()];
+            cfg.notes.line[0].keywords = vec!["@bot".to_string()];
+            cfg.notes.line[0].admins = vec!["U_REGISTERED_ADMIN".to_string()];
+            cfg.notes.line[0].users = vec!["U_REGISTERED_USER".to_string()];
+            cfg.notes.line[0].guests = vec!["U_REGISTERED_GUEST".to_string()];
+        }
         state
             .chat_db
             .create_note("LineBot", "LineBot", None)
@@ -1913,10 +1924,13 @@ mod tests {
 
     #[tokio::test]
     async fn test_unauthorized_events_do_not_create_sessions_or_leak_metadata() {
-        let mut state = create_test_state_with_line("secret123");
-        state.config.notes.line[0].groups = vec!["C_ALLOWED".to_string()];
-        state.config.notes.line[0].keywords = vec!["@bot".to_string()];
-        state.config.notes.line[0].admins = vec!["U_ADMIN".to_string()];
+        let state = create_test_state_with_line("secret123");
+        {
+            let mut cfg = state.config.write().unwrap();
+            cfg.notes.line[0].groups = vec!["C_ALLOWED".to_string()];
+            cfg.notes.line[0].keywords = vec!["@bot".to_string()];
+            cfg.notes.line[0].admins = vec!["U_ADMIN".to_string()];
+        }
         state
             .chat_db
             .create_note("LineBot", "LineBot", None)
@@ -1995,7 +2009,7 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let mut state = create_test_state_with_line("secret123");
         state.data_dir = temp_dir.path().to_path_buf();
-        if let Some(ref mut bot) = state.config.notes.line.first_mut() {
+        if let Some(ref mut bot) = state.config.write().unwrap().notes.line.first_mut() {
             bot.log = true;
             bot.timezone = "+08:00".to_string();
             bot.admins = vec!["U_TZ_ADMIN".to_string()];

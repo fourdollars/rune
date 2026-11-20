@@ -660,25 +660,57 @@ pub fn load() -> anyhow::Result<RuneConfig> {
     Ok(cfg)
 }
 
+/// Validate a raw TOML configuration string against Rune's schema.
+pub fn validate_toml_str(content: &str) -> Result<(), String> {
+    toml::from_str::<PartialConfig>(content)
+        .map(|_| ())
+        .map_err(|e| e.to_string())
+}
+
+/// Load configuration strictly from a specific TOML file path (with env var overrides).
+/// Used when reloading a known config file so unrelated files in CWD or `$HOME` do not shadow it.
+pub fn load_without_clap_from_file(path: &std::path::Path) -> anyhow::Result<RuneConfig> {
+    let file_cfg = load_toml(path);
+    load_without_clap_inner(file_cfg.as_ref(), None, None)
+}
+
 /// Load configuration without clap CLI arg parsing.
 /// Used by `rune serve` to avoid clap choking on unknown subcommands.
-/// Reads: env vars > ./rune.toml > .rune/rune.toml > ~/.rune/rune.toml > defaults
+/// Reads: env vars > override_path (if given) > ./rune.toml > .rune/rune.toml > ~/.rune/rune.toml > defaults
 pub fn load_without_clap_path(
     override_path: Option<&std::path::Path>,
 ) -> anyhow::Result<RuneConfig> {
     if let Some(path) = override_path {
-        if let Some(partial) = load_toml(path) {
-            let mut cfg = load_without_clap()?;
-            if let Some(notes) = partial.notes {
-                cfg.notes = notes;
-            }
-            return Ok(cfg);
+        if path.exists() {
+            return load_without_clap_from_file(path);
         }
     }
     load_without_clap()
 }
 
 pub fn load_without_clap() -> anyhow::Result<RuneConfig> {
+    // Load TOML files
+    let cwd_cfg = env::current_dir()
+        .ok()
+        .map(|cwd| cwd.join("rune.toml"))
+        .and_then(|p| load_toml(&p));
+    let local_cfg = env::current_dir()
+        .ok()
+        .map(|cwd| cwd.join(".rune").join("rune.toml"))
+        .and_then(|p| load_toml(&p));
+    let user_cfg = env::var("HOME")
+        .ok()
+        .map(|h| PathBuf::from(h).join(".rune").join("rune.toml"))
+        .and_then(|p| load_toml(&p));
+
+    load_without_clap_inner(cwd_cfg.as_ref(), local_cfg.as_ref(), user_cfg.as_ref())
+}
+
+fn load_without_clap_inner(
+    cwdc: Option<&PartialConfig>,
+    lc: Option<&PartialConfig>,
+    uc: Option<&PartialConfig>,
+) -> anyhow::Result<RuneConfig> {
     let env_partial = PartialConfig {
         model: env::var("RUNE_MODEL").ok(),
         api_key: env::var("RUNE_API_KEY").ok(),
@@ -731,23 +763,6 @@ pub fn load_without_clap() -> anyhow::Result<RuneConfig> {
         .ok()
         .and_then(|v| parse_boolish(&v));
 
-    // Load TOML files
-    let cwd_cfg = env::current_dir()
-        .ok()
-        .map(|cwd| cwd.join("rune.toml"))
-        .and_then(|p| load_toml(&p));
-    let local_cfg = env::current_dir()
-        .ok()
-        .map(|cwd| cwd.join(".rune").join("rune.toml"))
-        .and_then(|p| load_toml(&p));
-    let user_cfg = env::var("HOME")
-        .ok()
-        .map(|h| PathBuf::from(h).join(".rune").join("rune.toml"))
-        .and_then(|p| load_toml(&p));
-
-    let cwdc = cwd_cfg.as_ref();
-    let lc = local_cfg.as_ref();
-    let uc = user_cfg.as_ref();
     let defaults = RuneConfig::default();
 
     let policy = cwdc

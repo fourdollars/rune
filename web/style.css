@@ -4197,3 +4197,284 @@ input:checked + .toggle-slider:before {
 }
 
 
+
+/* ─── Admin Server Settings Modal ─── */
+.modal-admin-settings {
+    width: min(640px, calc(100vw - 32px));
+    max-height: calc(100dvh - 48px);
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.admin-settings-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+}
+
+.admin-settings-header h2 {
+    margin: 0;
+}
+
+.admin-settings-tabs {
+    display: flex;
+    gap: 6px;
+    border-bottom: 1px solid var(--border);
+    padding-bottom: 8px;
+}
+
+.admin-tab-btn {
+    background: none;
+    border: 1px solid transparent;
+    border-radius: 6px;
+    color: var(--text-secondary);
+    font-size: 12px;
+    font-weight: 600;
+    padding: 6px 12px;
+    cursor: pointer;
+}
+
+.admin-tab-btn:hover {
+    color: var(--text-primary);
+    background: var(--bg-hover, rgba(255, 255, 255, 0.06));
+}
+
+.admin-tab-btn.active {
+    color: var(--text-primary);
+    background: var(--bg-surface);
+    border-color: var(--border);
+}
+
+.admin-settings-status {
+    font-size: 12px;
+    padding: 8px 10px;
+    border-radius: 6px;
+    background: var(--bg-surface);
+    color: var(--text-secondary);
+    border: 1px solid var(--border);
+}
+
+.admin-settings-status.success {
+    color: #3fb950;
+    border-color: rgba(63, 185, 80, 0.4);
+    background: rgba(63, 185, 80, 0.1);
+}
+
+.admin-settings-status.warning {
+    color: #d29922;
+    border-color: rgba(210, 153, 34, 0.4);
+    background: rgba(210, 153, 34, 0.1);
+}
+
+.admin-settings-status.error {
+    color: var(--error, #f85149);
+    border-color: rgba(248, 81, 73, 0.4);
+    background: rgba(248, 81, 73, 0.1);
+}
+
+.admin-settings-body {
+    overflow-y: auto;
+    flex: 1;
+    padding-right: 4px;
+}
+
+.admin-settings-panel {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.admin-form-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+}
+
+@media (max-width: 560px) {
+    .admin-form-grid {
+        grid-template-columns: 1fr;
+    }
+}
+
+.admin-form-checks {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 14px;
+}
+
+.admin-field {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    font-size: 12px;
+    color: var(--text-secondary);
+}
+
+.admin-field input,
+.admin-field select,
+.admin-field textarea {
+    background: var(--bg-surface);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--text-primary);
+    font-size: 13px;
+    padding: 7px 10px;
+    outline: none;
+    width: 100%;
+    box-sizing: border-box;
+}
+
+.admin-field input:focus,
+.admin-field select:focus,
+.admin-field textarea:focus {
+    border-color: var(--accent);
+}
+
+.admin-check-field {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 13px;
+    color: var(--text-primary);
+    cursor: pointer;
+}
+
+.admin-check-field input[type="checkbox"] {
+    width: auto;
+    margin: 0;
+}
+
+.admin-subfields {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding-left: 12px;
+    border-left: 2px solid var(--border);
+}
+
+.admin-divider {
+    border: none;
+    border-top: 1px solid var(--border);
+    margin: 4px 0;
+}
+
+.admin-settings-actions {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 8px;
+}
+
+.admin-copilot-box {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding: 10px 12px;
+    border-radius: 6px;
+    border: 1px solid var(--border);
+    background: var(--bg-surface);
+}
+
+.admin-copilot-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
+.admin-copilot-row a.btn-secondary {
+    text-decoration: none;
+    display: inline-flex;
+    align-items: center;
+}
+
+.admin-copilot-code {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 16px;
+    font-weight: 700;
+    letter-spacing: 2px;
+    padding: 4px 10px;
+    border-radius: 5px;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
+    color: var(--accent);
+}
+
+.admin-copilot-status {
+    font-size: 12px;
+    color: var(--text-muted);
+}
+
+.admin-copilot-status.success {
+    color: #3fb950;
+}
+
+.admin-copilot-status.error {
+    color: var(--error, #f85149);
+}
+
+.admin-model-detect-box {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.admin-model-search {
+    background: var(--bg-surface);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--text-primary);
+    font-size: 12px;
+    padding: 5px 8px;
+    outline: none;
+    flex: 1;
+    min-width: 140px;
+}
+
+.admin-model-list {
+    max-height: 160px;
+    overflow-y: auto;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--bg-surface);
+    display: flex;
+    flex-direction: column;
+}
+
+.admin-model-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 10px;
+    border-bottom: 1px solid var(--border);
+    font-size: 12px;
+    cursor: pointer;
+}
+
+.admin-model-item:last-child {
+    border-bottom: none;
+}
+
+.admin-model-item input[type="checkbox"] {
+    width: auto;
+    margin: 0;
+}
+
+.admin-model-id {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.admin-model-badge {
+    font-size: 10px;
+    padding: 1px 6px;
+    border-radius: 999px;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
+    color: var(--text-muted);
+}

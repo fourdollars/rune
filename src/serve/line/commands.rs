@@ -257,7 +257,7 @@ pub async fn format_context_command(state: &ServerState, note_id: &str) -> Strin
             .iter()
             .find(|m| m.id == active_model)
             .and_then(|m| m.context_window)
-            .unwrap_or(state.config.context_window as u64)
+            .unwrap_or(state.config_snapshot().context_window as u64)
     };
 
     let pct = if context_window > 0 {
@@ -393,7 +393,8 @@ mod tests {
         config.model = "test-model".to_string();
 
         ServerState {
-            config,
+            config: std::sync::Arc::new(std::sync::RwLock::new(config)),
+            config_meta: std::sync::Arc::new(crate::serve::ConfigMeta::default()),
             sessions: oauth::SessionStore::new(),
             files: Arc::new(RwLock::new(HashMap::new())),
             active_file: Arc::new(RwLock::new(String::new())),

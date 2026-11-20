@@ -59,7 +59,8 @@ pub async fn handle_mcp_post(
                 if let Some(tok_info) = state.oauth_tokens.get(token).await {
                     Some(tok_info.role)
                 } else if let Some((u, p)) = token.split_once(':') {
-                    if let Some(ref local_cfg) = state.config.notes.local.as_ref() {
+                    let cfg_snap = state.config_snapshot();
+                    if let Some(ref local_cfg) = cfg_snap.notes.local.as_ref() {
                         crate::serve::oauth::verify_local_credentials(u, p, local_cfg)
                     } else {
                         None
@@ -143,7 +144,7 @@ pub async fn handle_mcp_post(
         let header_method = headers.get("mcp-method").and_then(|v| v.to_str().ok());
         let header_name = headers.get("mcp-name").and_then(|v| v.to_str().ok());
 
-        let validation = if state.config.notes.mcp_lenient_legacy_clients {
+        let validation = if state.config_snapshot().notes.mcp_lenient_legacy_clients {
             validate_header_body_consistency_lenient(
                 header_protocol_version,
                 header_method,
@@ -532,7 +533,10 @@ mod tests {
         let db_path = tmp.path().join("test.db");
         let db = crate::serve::ChatDb::open(&db_path).unwrap();
         let state = ServerState {
-            config: crate::config::RuneConfig::default(),
+            config: std::sync::Arc::new(std::sync::RwLock::new(
+                crate::config::RuneConfig::default(),
+            )),
+            config_meta: std::sync::Arc::new(crate::serve::ConfigMeta::default()),
             sessions: crate::serve::oauth::SessionStore::new(),
             files: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
             active_file: Arc::new(tokio::sync::RwLock::new(String::new())),

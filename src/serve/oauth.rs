@@ -768,8 +768,8 @@ pub async fn oauth_start_handler(
     State(state): State<ServerState>,
     Query(params): Query<OAuthStartParams>,
 ) -> Response {
-    let cfg = match state.config.notes.github.as_ref() {
-        Some(c) => c.clone(),
+    let cfg = match state.config_snapshot().notes.github {
+        Some(c) => c,
         None => {
             return (
                 StatusCode::SERVICE_UNAVAILABLE,
@@ -840,8 +840,8 @@ pub async fn oauth_callback_handler(
         return Redirect::to("/auth/denied?error=csrf_mismatch").into_response();
     }
 
-    let cfg = match state.config.notes.github.as_ref() {
-        Some(c) => c.clone(),
+    let cfg = match state.config_snapshot().notes.github {
+        Some(c) => c,
         None => return Redirect::to("/auth/denied?error=not_configured").into_response(),
     };
 
@@ -1290,9 +1290,12 @@ pub fn verify_local_credentials(
 }
 
 /// `GET /api/auth/config` — check which auth methods are enabled.
-pub async fn auth_config_handler(State(state): State<ServerState>) -> Response {
-    let github_enabled = state.config.notes.github.is_some();
-    let local_enabled = state.config.notes.local.is_some();
+pub async fn auth_config_handler(State(state): State<ServerState>, headers: HeaderMap) -> Response {
+    let cfg = state.config_snapshot();
+    let github_enabled = cfg.notes.github.is_some();
+    let local_enabled = cfg.notes.local.is_some();
+    let setup_required = state.needs_setup();
+    let setup_token_required = crate::serve::request_requires_setup_token(&state, &headers);
     let oauth = {
         let providers = state.oauth_providers.read().await;
         let mut list = providers
@@ -1308,6 +1311,8 @@ pub async fn auth_config_handler(State(state): State<ServerState>) -> Response {
     };
     axum::Json(serde_json::json!({
         "ok": true,
+        "setup_required": setup_required,
+        "setup_token_required": setup_token_required,
         "github": github_enabled,
         "local": local_enabled,
         "oauth": oauth
@@ -1327,7 +1332,8 @@ pub async fn local_login_handler(
     State(state): State<ServerState>,
     axum::Json(req): axum::Json<LocalLoginRequest>,
 ) -> Response {
-    let local_cfg = match state.config.notes.local.as_ref() {
+    let cfg_snap = state.config_snapshot();
+    let local_cfg = match cfg_snap.notes.local.as_ref() {
         Some(c) => c,
         None => {
             return (
@@ -1790,7 +1796,10 @@ mod tests {
     async fn test_logout_handler_default_redirect() {
         let (admin_broadcast_tx, _) = tokio::sync::broadcast::channel(16);
         let state = ServerState {
-            config: crate::config::RuneConfig::default(),
+            config: std::sync::Arc::new(std::sync::RwLock::new(
+                crate::config::RuneConfig::default(),
+            )),
+            config_meta: std::sync::Arc::new(crate::serve::ConfigMeta::default()),
             sessions: SessionStore::new(),
             files: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
             active_file: Arc::new(tokio::sync::RwLock::new(String::new())),
@@ -1839,7 +1848,10 @@ mod tests {
     async fn test_logout_handler_custom_redirect_uri() {
         let (admin_broadcast_tx, _) = tokio::sync::broadcast::channel(16);
         let state = ServerState {
-            config: crate::config::RuneConfig::default(),
+            config: std::sync::Arc::new(std::sync::RwLock::new(
+                crate::config::RuneConfig::default(),
+            )),
+            config_meta: std::sync::Arc::new(crate::serve::ConfigMeta::default()),
             sessions: SessionStore::new(),
             files: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
             active_file: Arc::new(tokio::sync::RwLock::new(String::new())),
@@ -1919,7 +1931,10 @@ mod tests {
             .await;
 
         let state = ServerState {
-            config: crate::config::RuneConfig::default(),
+            config: std::sync::Arc::new(std::sync::RwLock::new(
+                crate::config::RuneConfig::default(),
+            )),
+            config_meta: std::sync::Arc::new(crate::serve::ConfigMeta::default()),
             sessions: sessions.clone(),
             files: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
             active_file: Arc::new(tokio::sync::RwLock::new(String::new())),
@@ -1964,7 +1979,10 @@ mod tests {
             .await;
 
         let state = ServerState {
-            config: crate::config::RuneConfig::default(),
+            config: std::sync::Arc::new(std::sync::RwLock::new(
+                crate::config::RuneConfig::default(),
+            )),
+            config_meta: std::sync::Arc::new(crate::serve::ConfigMeta::default()),
             sessions: sessions.clone(),
             files: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
             active_file: Arc::new(tokio::sync::RwLock::new(String::new())),
@@ -2017,7 +2035,8 @@ mod tests {
             guests: vec![],
         });
         let state = ServerState {
-            config,
+            config: std::sync::Arc::new(std::sync::RwLock::new(config)),
+            config_meta: std::sync::Arc::new(crate::serve::ConfigMeta::default()),
             sessions: sessions.clone(),
             files: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
             active_file: Arc::new(tokio::sync::RwLock::new(String::new())),

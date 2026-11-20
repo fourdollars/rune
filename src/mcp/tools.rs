@@ -775,7 +775,8 @@ mod tests {
         let db_path = tmp.path().join("test.db");
         let db = ChatDb::open(&db_path).unwrap();
         ServerState {
-            config: RuneConfig::default(),
+            config: std::sync::Arc::new(std::sync::RwLock::new(RuneConfig::default())),
+            config_meta: std::sync::Arc::new(crate::serve::ConfigMeta::default()),
             sessions: crate::serve::oauth::SessionStore::new(),
             files: Arc::new(RwLock::new(std::collections::HashMap::new())),
             active_file: Arc::new(RwLock::new(String::new())),
