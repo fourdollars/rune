@@ -271,7 +271,6 @@ globalThis.updateUsageIndicator = function updateUsageIndicator() {
     const popoverTitle = document.querySelector('.quota-popover-title');
     const popoverRemaining = document.getElementById('quota-popover-remaining');
     const popoverPlan = document.getElementById('quota-popover-plan');
-    const popoverTokens = document.getElementById('quota-popover-tokens');
     const popoverPercent = document.getElementById('quota-popover-percent');
     const progressFill = document.getElementById('quota-progress-fill');
 
@@ -316,10 +315,6 @@ globalThis.updateUsageIndicator = function updateUsageIndicator() {
 
     if (popoverPlan) {
         popoverPlan.textContent = providerUsage.plan_name || providerUsage.provider || '—';
-    }
-
-    if (popoverTokens) {
-        popoverTokens.textContent = (providerUsage.session_tokens || 0).toLocaleString();
     }
 
     if (progressFill) {
