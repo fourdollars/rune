@@ -2492,7 +2492,6 @@ const PUBLIC_PREVIEW_HTML: &str = r##"<!DOCTYPE html>
 <script src="/assets/katex-auto-render.min.js"></script>
 <script src="/assets/marked.min.js"></script>
 <script src="/assets/highlight.min.js"></script>
-<script src="/assets-bin/mermaid.min.js"></script>
 <script>
 (async function() {
   const rawUrl = '/raw/{{NOTE}}/{{FILE}}';
@@ -2780,25 +2779,36 @@ const PUBLIC_PREVIEW_HTML: &str = r##"<!DOCTYPE html>
     }
     document.getElementById('loading').style.display = 'none';
     content.style.display = '';
-    if (typeof mermaid !== 'undefined') {
-      const renderMermaidDiagrams = () => {
-        document.querySelectorAll('.mermaid').forEach(async (el) => {
-          const src = el.dataset.src || '';
-          if (!src) return;
-          const uid = 'mermaid-' + Math.random().toString(36).slice(2);
-          el.id = uid;
-          try { const {svg} = await mermaid.render(uid + '-svg', src); el.innerHTML = svg; } catch(e) {}
+    if (document.querySelector('.mermaid')) {
+      try {
+        if (typeof mermaid === 'undefined') {
+          await new Promise((resolve, reject) => {
+            const s = document.createElement('script');
+            s.src = '/assets-bin/mermaid.min.js';
+            s.onload = resolve;
+            s.onerror = reject;
+            document.head.appendChild(s);
+          });
+        }
+        const renderMermaidDiagrams = () => {
+          document.querySelectorAll('.mermaid').forEach(async (el) => {
+            const src = el.dataset.src || '';
+            if (!src) return;
+            const uid = 'mermaid-' + Math.random().toString(36).slice(2);
+            el.id = uid;
+            try { const {svg} = await mermaid.render(uid + '-svg', src); el.innerHTML = svg; } catch(e) {}
+          });
+        };
+        mermaid.initialize({
+          startOnLoad: false,
+          theme: window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'default'
         });
-      };
-      mermaid.initialize({
-        startOnLoad: false,
-        theme: window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'default'
-      });
-      renderMermaidDiagrams();
-      window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', function(e) {
-        mermaid.initialize({ startOnLoad: false, theme: e.matches ? 'dark' : 'default' });
         renderMermaidDiagrams();
-      });
+        window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', function(e) {
+          mermaid.initialize({ startOnLoad: false, theme: e.matches ? 'dark' : 'default' });
+          renderMermaidDiagrams();
+        });
+      } catch(e) {}
     }
   } catch(e) {
     document.getElementById('loading').textContent = 'Error: ' + e.message;
@@ -7250,6 +7260,19 @@ mod isolation_tests {
             PUBLIC_PREVIEW_HTML
                 .contains(r#"highlight-light.min.css" media="(prefers-color-scheme: light)""#),
             "PUBLIC_PREVIEW_HTML: highlight-light.min.css must be loaded for light mode"
+        );
+    }
+
+    #[test]
+    fn test_public_preview_html_lazy_loads_mermaid() {
+        use super::PUBLIC_PREVIEW_HTML;
+        assert!(
+            !PUBLIC_PREVIEW_HTML.contains(r#"<script src="/assets-bin/mermaid.min.js"></script>"#),
+            "PUBLIC_PREVIEW_HTML must not synchronously block on 5.3MB mermaid.min.js"
+        );
+        assert!(
+            PUBLIC_PREVIEW_HTML.contains("'/assets-bin/mermaid.min.js'"),
+            "PUBLIC_PREVIEW_HTML must lazy-load /assets-bin/mermaid.min.js when .mermaid exists"
         );
     }
 

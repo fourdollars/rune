@@ -4,8 +4,17 @@
 //! and stored as raw bytes in the binary. On first access (LazyLock init),
 //! they are decompressed entirely into memory — no files are written to disk.
 
+use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::sync::LazyLock;
+
+/// Pre-decompressed static web asset together with its compile-time zstd
+/// payload and content-derived ETag.
+pub struct StaticAsset {
+    pub bytes: Vec<u8>,
+    pub zstd_bytes: &'static [u8],
+    pub etag: String,
+}
 
 /// Expands to the zstd-compressed bytes of a web asset embedded in the binary.
 macro_rules! zst_asset {
@@ -14,15 +23,22 @@ macro_rules! zst_asset {
     };
 }
 
-fn decompress(data: &'static [u8]) -> Vec<u8> {
-    zstd::decode_all(data).expect("embedded asset decompression failed")
+fn build_asset(zstd_bytes: &'static [u8]) -> StaticAsset {
+    let bytes = zstd::decode_all(zstd_bytes).expect("embedded asset decompression failed");
+    let digest = Sha256::digest(&bytes);
+    let etag = format!("\"{}\"", &hex::encode(digest)[..16]);
+    StaticAsset {
+        bytes,
+        zstd_bytes,
+        etag,
+    }
 }
 
-static ASSETS: LazyLock<HashMap<&'static str, Vec<u8>>> = LazyLock::new(|| {
-    let mut m: HashMap<&'static str, Vec<u8>> = HashMap::new();
-    m.insert("index.html", decompress(zst_asset!("index.html")));
-    m.insert("login.html", decompress(zst_asset!("login.html")));
-    m.insert("favicon.svg", decompress(zst_asset!("favicon.svg")));
+static ASSETS: LazyLock<HashMap<&'static str, StaticAsset>> = LazyLock::new(|| {
+    let mut m: HashMap<&'static str, StaticAsset> = HashMap::new();
+    m.insert("index.html", build_asset(zst_asset!("index.html")));
+    m.insert("login.html", build_asset(zst_asset!("login.html")));
+    m.insert("favicon.svg", build_asset(zst_asset!("favicon.svg")));
     for path in [
         "js/actions.js",
         "js/admin-settings.js",
@@ -102,52 +118,60 @@ static ASSETS: LazyLock<HashMap<&'static str, Vec<u8>>> = LazyLock::new(|| {
             "js/tree-actions.js" => zst_asset!("js/tree-actions.js"),
             _ => unreachable!(),
         };
-        m.insert(path, decompress(compressed));
+        m.insert(path, build_asset(compressed));
     }
-    m.insert("style.css", decompress(zst_asset!("style.css")));
-    m.insert("marked.min.js", decompress(zst_asset!("marked.min.js")));
+    m.insert("style.css", build_asset(zst_asset!("style.css")));
+    m.insert("marked.min.js", build_asset(zst_asset!("marked.min.js")));
     m.insert(
         "highlight.min.js",
-        decompress(zst_asset!("highlight.min.js")),
+        build_asset(zst_asset!("highlight.min.js")),
     );
     m.insert(
         "highlight-dark.min.css",
-        decompress(zst_asset!("highlight-dark.min.css")),
+        build_asset(zst_asset!("highlight-dark.min.css")),
     );
     m.insert(
         "highlight-light.min.css",
-        decompress(zst_asset!("highlight-light.min.css")),
+        build_asset(zst_asset!("highlight-light.min.css")),
     );
-    m.insert("katex.min.css", decompress(zst_asset!("katex.min.css")));
-    m.insert("katex.min.js", decompress(zst_asset!("katex.min.js")));
+    m.insert("katex.min.css", build_asset(zst_asset!("katex.min.css")));
+    m.insert("katex.min.js", build_asset(zst_asset!("katex.min.js")));
     m.insert(
         "katex-auto-render.min.js",
-        decompress(zst_asset!("katex-auto-render.min.js")),
+        build_asset(zst_asset!("katex-auto-render.min.js")),
     );
-    m.insert("codemirror.css", decompress(zst_asset!("codemirror.css")));
-    m.insert("codemirror.js", decompress(zst_asset!("codemirror.min.js")));
+    m.insert("codemirror.css", build_asset(zst_asset!("codemirror.css")));
+    m.insert(
+        "codemirror.js",
+        build_asset(zst_asset!("codemirror.min.js")),
+    );
     m.insert(
         "codemirror-modes.js",
-        decompress(zst_asset!("codemirror-modes.min.js")),
+        build_asset(zst_asset!("codemirror-modes.min.js")),
     );
     m.insert(
         "codemirror-markdown.js",
-        decompress(zst_asset!("codemirror-markdown.min.js")),
+        build_asset(zst_asset!("codemirror-markdown.min.js")),
     );
-    m.insert("mermaid.min.js", decompress(zst_asset!("mermaid.min.js")));
+    m.insert("mermaid.min.js", build_asset(zst_asset!("mermaid.min.js")));
     m
 });
+
+/// Returns a reference to the cached static asset entry (zero-copy).
+pub fn get_asset(path: &str) -> Option<&'static StaticAsset> {
+    ASSETS.get(path)
+}
 
 /// Returns the decompressed text content of a static web asset.
 pub fn get(path: &str) -> Option<String> {
     ASSETS
         .get(path)
-        .map(|b| String::from_utf8_lossy(b).into_owned())
+        .map(|a| String::from_utf8_lossy(&a.bytes).into_owned())
 }
 
 /// Returns the decompressed bytes of a static web asset.
 pub fn get_bytes(path: &str) -> Option<Vec<u8>> {
-    ASSETS.get(path).cloned()
+    ASSETS.get(path).map(|a| a.bytes.clone())
 }
 
 #[cfg(test)]

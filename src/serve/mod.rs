@@ -1335,59 +1335,110 @@ fn mime_for(path: &str) -> &'static str {
     }
 }
 
-async fn favicon_handler() -> impl IntoResponse {
-    match static_files::get("favicon.svg") {
-        Some(content) => (
-            StatusCode::OK,
-            [(axum::http::header::CONTENT_TYPE, "image/svg+xml")],
-            content,
-        )
-            .into_response(),
-        None => StatusCode::NOT_FOUND.into_response(),
+const STATIC_CACHE_CONTROL: &str = "public, max-age=3600, must-revalidate";
+
+fn accepts_zstd(headers: &axum::http::HeaderMap) -> bool {
+    headers
+        .get(header::ACCEPT_ENCODING)
+        .and_then(|v| v.to_str().ok())
+        .map(|val| {
+            val.split(',').any(|part| {
+                part.split(';')
+                    .next()
+                    .unwrap_or("")
+                    .trim()
+                    .eq_ignore_ascii_case("zstd")
+            })
+        })
+        .unwrap_or(false)
+}
+
+fn matches_if_none_match(headers: &axum::http::HeaderMap, etag: &str) -> bool {
+    let Some(raw) = headers
+        .get(header::IF_NONE_MATCH)
+        .and_then(|v| v.to_str().ok())
+    else {
+        return false;
+    };
+    raw.split(',').any(|candidate| {
+        let c = candidate.trim();
+        c == "*" || c == etag || c.strip_prefix("W/") == Some(etag)
+    })
+}
+
+fn serve_static_asset(
+    req_headers: &axum::http::HeaderMap,
+    path: &str,
+    cache_control: &'static str,
+) -> axum::response::Response {
+    let Some(asset) = static_files::get_asset(path) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+
+    if matches_if_none_match(req_headers, &asset.etag) {
+        let mut resp = StatusCode::NOT_MODIFIED.into_response();
+        let headers = resp.headers_mut();
+        if let Ok(etag_val) = header::HeaderValue::from_str(&asset.etag) {
+            headers.insert(header::ETAG, etag_val);
+        }
+        headers.insert(
+            header::CACHE_CONTROL,
+            header::HeaderValue::from_static(cache_control),
+        );
+        headers.insert(
+            header::VARY,
+            header::HeaderValue::from_static("Accept-Encoding"),
+        );
+        return resp;
     }
+
+    let mime = mime_for(path);
+    let use_zstd = accepts_zstd(req_headers);
+    let body: &'static [u8] = if use_zstd {
+        asset.zstd_bytes
+    } else {
+        asset.bytes.as_slice()
+    };
+
+    let mut resp = (StatusCode::OK, body).into_response();
+    let headers = resp.headers_mut();
+    headers.insert(header::CONTENT_TYPE, header::HeaderValue::from_static(mime));
+    headers.insert(
+        header::CACHE_CONTROL,
+        header::HeaderValue::from_static(cache_control),
+    );
+    headers.insert(
+        header::VARY,
+        header::HeaderValue::from_static("Accept-Encoding"),
+    );
+    if let Ok(etag_val) = header::HeaderValue::from_str(&asset.etag) {
+        headers.insert(header::ETAG, etag_val);
+    }
+    if use_zstd {
+        headers.insert(
+            header::CONTENT_ENCODING,
+            header::HeaderValue::from_static("zstd"),
+        );
+    }
+    resp
+}
+
+async fn favicon_handler(req_headers: axum::http::HeaderMap) -> impl IntoResponse {
+    serve_static_asset(&req_headers, "favicon.svg", STATIC_CACHE_CONTROL)
 }
 
 async fn binary_asset_handler(
+    req_headers: axum::http::HeaderMap,
     axum::extract::Path(path): axum::extract::Path<String>,
 ) -> impl IntoResponse {
-    match static_files::get_bytes(&path) {
-        Some(bytes) => {
-            let mime = mime_for(&path);
-            (
-                StatusCode::OK,
-                [(axum::http::header::CONTENT_TYPE, mime)],
-                bytes,
-            )
-                .into_response()
-        }
-        None => StatusCode::NOT_FOUND.into_response(),
-    }
+    serve_static_asset(&req_headers, &path, STATIC_CACHE_CONTROL)
 }
 
 async fn static_handler(
+    req_headers: axum::http::HeaderMap,
     axum::extract::Path(path): axum::extract::Path<String>,
 ) -> impl IntoResponse {
-    let mime = if path.ends_with(".js") {
-        "text/javascript"
-    } else if path.ends_with(".css") {
-        "text/css"
-    } else if path.ends_with(".svg") {
-        "image/svg+xml"
-    } else {
-        "application/octet-stream"
-    };
-
-    match static_files::get(&path) {
-        Some(content) => (
-            [
-                (header::CONTENT_TYPE, mime),
-                (header::CACHE_CONTROL, "no-cache, must-revalidate"),
-            ],
-            content,
-        )
-            .into_response(),
-        None => StatusCode::NOT_FOUND.into_response(),
-    }
+    serve_static_asset(&req_headers, &path, STATIC_CACHE_CONTROL)
 }
 
 fn is_localhost(ip: IpAddr) -> bool {
@@ -2032,6 +2083,90 @@ mod tests {
             .unwrap();
         let resp = app.oneshot(req).await.unwrap();
         assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn test_static_handler_etag_cache_control_and_304() {
+        use axum::http::{Request, StatusCode};
+        use axum::{routing::get, Router};
+        use tower::ServiceExt;
+
+        let app = Router::new().route("/assets/{*path}", get(static_handler));
+        let req = Request::builder()
+            .uri("/assets/js/main.js")
+            .body(axum::body::Body::empty())
+            .unwrap();
+        let resp = app.clone().oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let etag = resp
+            .headers()
+            .get(header::ETAG)
+            .and_then(|v| v.to_str().ok())
+            .expect("missing ETag header")
+            .to_string();
+        assert_eq!(
+            resp.headers()
+                .get(header::CACHE_CONTROL)
+                .and_then(|v| v.to_str().ok()),
+            Some(STATIC_CACHE_CONTROL)
+        );
+        assert_eq!(
+            resp.headers()
+                .get(header::VARY)
+                .and_then(|v| v.to_str().ok()),
+            Some("Accept-Encoding")
+        );
+
+        let req_304 = Request::builder()
+            .uri("/assets/js/main.js")
+            .header(header::IF_NONE_MATCH, etag.as_str())
+            .body(axum::body::Body::empty())
+            .unwrap();
+        let resp_304 = app.oneshot(req_304).await.unwrap();
+        assert_eq!(resp_304.status(), StatusCode::NOT_MODIFIED);
+        assert_eq!(
+            resp_304
+                .headers()
+                .get(header::ETAG)
+                .and_then(|v| v.to_str().ok()),
+            Some(etag.as_str())
+        );
+    }
+
+    #[tokio::test]
+    async fn test_binary_asset_handler_zstd_and_caching() {
+        use axum::http::{Request, StatusCode};
+        use axum::{routing::get, Router};
+        use http_body_util::BodyExt;
+        use tower::ServiceExt;
+
+        let app = Router::new().route("/assets-bin/{*path}", get(binary_asset_handler));
+        let req = Request::builder()
+            .uri("/assets-bin/mermaid.min.js")
+            .header(header::ACCEPT_ENCODING, "gzip, deflate, br, zstd")
+            .body(axum::body::Body::empty())
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        assert_eq!(
+            resp.headers()
+                .get(header::CONTENT_ENCODING)
+                .and_then(|v| v.to_str().ok()),
+            Some("zstd")
+        );
+        assert!(resp.headers().contains_key(header::ETAG));
+        assert!(resp.headers().contains_key(header::CACHE_CONTROL));
+        let compressed_bytes = resp.into_body().collect().await.unwrap().to_bytes();
+        let raw_len = static_files::get_asset("mermaid.min.js")
+            .unwrap()
+            .bytes
+            .len();
+        assert!(
+            compressed_bytes.len() < raw_len / 2,
+            "zstd payload ({}) should be much smaller than raw ({})",
+            compressed_bytes.len(),
+            raw_len
+        );
     }
 
     // ──────────────────────────────────────────────
