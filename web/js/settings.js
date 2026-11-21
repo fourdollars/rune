@@ -656,6 +656,21 @@ globalThis.deleteCronJob = async function deleteCronJob(jobId) {
     }
 };
 
+function formatToolsSummary(tools) {
+    if (!Array.isArray(tools) || tools.length === 0) {
+        return { text: 'None', title: '' };
+    }
+    const counts = new Map();
+    for (const name of tools) {
+        counts.set(name, (counts.get(name) || 0) + 1);
+    }
+    const sorted = Array.from(counts.entries()).sort((a, b) => b[1] - a[1]);
+    const summary = sorted.map(([name, count]) => `${name} x${count}`).join(', ');
+    const text = tools.length > 1 ? `${summary} (${tools.length} total)` : summary;
+    const title = tools.length > 1 ? `Sequence: ${tools.join(' → ')}` : '';
+    return { text, title };
+}
+
 globalThis.viewCronLogs = async function viewCronLogs(jobId) {
     if (!settingsNoteId) return;
     const modal = document.getElementById('cron-logs-modal');
@@ -763,7 +778,7 @@ globalThis.viewCronLogs = async function viewCronLogs(jobId) {
             }
         }
 
-        const toolsStr = (log.tools && log.tools.length > 0) ? log.tools.join(', ') : 'None';
+        const toolsSummary = formatToolsSummary(log.tools);
         const filesStr = (log.files_modified && log.files_modified.length > 0) ? log.files_modified.join(', ') : 'None';
 
         metaBox.innerHTML = `
@@ -775,9 +790,16 @@ globalThis.viewCronLogs = async function viewCronLogs(jobId) {
             <div><strong>Thinking:</strong> <span>${log.thinking || '—'}</span></div>
             <div><strong>Steps:</strong> <span>${log.steps != null ? log.steps : '—'}</span></div>
             <div><strong>Tokens:</strong> <span>${tokensStr}</span></div>
-            <div><strong>Tools Used:</strong> <span>${toolsStr}</span></div>
+            <div><strong>Tools Used:</strong> <span class="log-tools-summary"></span></div>
             <div><strong>Files Modified:</strong> <span>${filesStr}</span></div>
         `;
+        const toolsSpan = metaBox.querySelector('.log-tools-summary');
+        if (toolsSpan) {
+            toolsSpan.textContent = toolsSummary.text;
+            if (toolsSummary.title) {
+                toolsSpan.title = toolsSummary.title;
+            }
+        }
         detailContent.appendChild(metaBox);
 
         if (log.error) {
