@@ -345,7 +345,7 @@
                     </div>
                     <label class="admin-field">
                         <span>API Key</span>
-                        <input type="password" id="admin-cfg-api-key" placeholder="•••••••• (leave blank to keep existing)" autocomplete="off" />
+                        <input type="password" id="admin-cfg-api-key" placeholder="•••••••• (leave blank to keep existing)" autocomplete="new-password" data-1p-ignore="true" data-lpignore="true" />
                     </label>
                     <div id="admin-copilot-box" class="admin-copilot-box hidden">
                         <div class="admin-copilot-row">
@@ -471,7 +471,7 @@
                             </label>
                             <label class="admin-field">
                                 <span>GitHub Client Secret</span>
-                                <input type="password" id="admin-cfg-github-client-secret" placeholder="•••••••• (leave blank to keep existing)" autocomplete="off" />
+                                <input type="password" id="admin-cfg-github-client-secret" placeholder="•••••••• (leave blank to keep existing)" autocomplete="new-password" data-1p-ignore="true" data-lpignore="true" />
                             </label>
                         </div>
                         <label class="admin-field">
@@ -553,7 +553,6 @@
                         <button id="btn-command-palette" class="explorer-action-btn" data-action="open-command-palette" data-icon="command" title="Command palette (Ctrl+K)" aria-label="Command palette"></button>
                     </div>
                     <div class="explorer-actions-group">
-                        <button id="btn-admin-settings" class="explorer-action-btn hidden" data-action="show-admin-settings" data-icon="settings" title="Server settings" aria-label="Server settings"></button>
                         <button id="btn-logout" class="explorer-action-btn" data-action="show-logout-dialog" data-icon="logout" title="Logout" aria-label="Log out"></button>
                     </div>
                 </div>

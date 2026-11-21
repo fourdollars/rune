@@ -179,7 +179,6 @@ globalThis.handleMessage = function handleMessage(msg) {
             break;
         case 'auth_result':
             isAdmin = msg.is_admin;
-            if (typeof updateAdminSettingsButton === 'function') updateAdminSettingsButton();
             isGuest = !!msg.is_guest;
             personaFilesEnabled = !!msg.persona_files_enabled;
             cronJobsEnabled = !!msg.cron_jobs_enabled;

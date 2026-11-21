@@ -66,7 +66,7 @@ function createDOM() {
   });
 
   const ids = [
-    'btn-admin-settings', 'admin-settings-modal',
+    'admin-settings-modal',
     'admin-settings-status', 'admin-cfg-provider', 'admin-cfg-api-key',
     'admin-cfg-base-url', 'admin-cfg-base-url-field', 'admin-cfg-model', 'admin-cfg-notes-model',
     'admin-cfg-thinking', 'admin-cfg-skills-dir', 'admin-cfg-openrouter-zdr', 'admin-cfg-zdr-field',
@@ -84,7 +84,6 @@ function createDOM() {
     'admin-copilot-user-code', 'admin-copilot-verify-link', 'admin-copilot-status',
   ];
   ids.forEach(id => new MockElement('input', id));
-  elements.get('btn-admin-settings').classList.add('hidden');
   elements.get('admin-settings-modal').classList.add('hidden');
 
   const document = {
@@ -187,15 +186,9 @@ async function runTests() {
     .replace(/^import .*?;\s*/gm, '');
   vm.runInContext(adminJs, context);
 
-  // Test 1: Admin button visibility
-  context.updateAdminSettingsButton();
-  assert.strictEqual(elements.get('btn-admin-settings').classList.contains('hidden'), true);
   context.isAdmin = true;
-  context.updateAdminSettingsButton();
-  assert.strictEqual(elements.get('btn-admin-settings').classList.contains('hidden'), false);
-  console.log('✓ Test 1 passed: Admin settings button visible only for admins');
 
-  // Test 2: Opening modal loads config and masks secrets
+  // Test 1: Opening modal loads config and masks secrets
   await context.showAdminSettings();
   assert.strictEqual(elements.get('admin-settings-modal').classList.contains('hidden'), false);
   assert.strictEqual(elements.get('admin-cfg-provider').value, 'openrouter');

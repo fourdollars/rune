@@ -45,7 +45,6 @@ globalThis.getSessionId = function getSessionId() {
             myNickname = data.login || '';
             isAdmin = data.role === 'admin';
             isGuest = data.role === 'guest';
-            if (typeof updateAdminSettingsButton === 'function') updateAdminSettingsButton();
             if (isGuest && localStorage.getItem('rune_panel_right_collapsed') === null) {
                 const panelRight = document.getElementById('panel-right');
                 if (panelRight && !panelRight.classList.contains('collapsed')) {

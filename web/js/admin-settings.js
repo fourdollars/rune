@@ -21,11 +21,6 @@ function setAdminStatus(message, kind = '') {
     el.classList.toggle('hidden', !message);
 }
 
-globalThis.updateAdminSettingsButton = function updateAdminSettingsButton() {
-    const btn = document.getElementById('btn-admin-settings');
-    if (btn) btn.classList.toggle('hidden', !isAdmin);
-};
-
 globalThis.switchAdminSettingsTab = function switchAdminSettingsTab(tab) {
     activeAdminTab = tab || 'provider';
     document.querySelectorAll('#admin-settings-modal [data-admin-tab]').forEach(btn => {
