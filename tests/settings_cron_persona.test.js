@@ -88,6 +88,15 @@ function createDOM() {
     set innerHTML(val) {
       this.children = [];
       this._textContent = String(val);
+      const spanMatches = this._textContent.match(/<span\s+class="([^"]+)"[^>]*><\/span>/g);
+      if (spanMatches) {
+        for (const tag of spanMatches) {
+          const clsMatch = tag.match(/class="([^"]+)"/);
+          const el = new MockElement('span');
+          if (clsMatch) el.className = clsMatch[1];
+          this.appendChild(el);
+        }
+      }
     }
     focus() {}
     setAttribute(k, v) { this.attributes.set(k, String(v)); }
@@ -466,13 +475,16 @@ async function runTests() {
     assert.ok(firstMeta.innerHTML.includes('Tokens:'), 'Should show tokens label');
     assert.ok(firstMeta.innerHTML.includes('50 in / 10 out (60 total)'), 'Should show token breakdown');
     assert.ok(firstMeta.innerHTML.includes('Tools Used:'), 'Should show tools label');
+    assert.strictEqual(firstMeta.querySelector('.log-tools-summary')?.textContent, 'None', 'Should show None when no tools used');
 
     const secondDetail = elements.get('log-detail-1');
     const secondMeta = secondDetail.querySelector('.log-detail-meta');
     assert.ok(secondMeta, 'secondMeta should exist');
     assert.ok(secondMeta.innerHTML.includes('deepseek/deepseek-chat'), 'Should show model in 2nd detail row');
     assert.ok(secondMeta.innerHTML.includes('200 in / 150 out (350 total)'), 'Should show 2nd token breakdown');
-    assert.ok(secondMeta.innerHTML.includes('read_markdown, write_markdown'), 'Should show tools used in 2nd detail row');
+    const secondTools = secondMeta.querySelector('.log-tools-summary');
+    assert.strictEqual(secondTools?.textContent, 'read_markdown x1, write_markdown x1 (2 total)', 'Should show summarized tools used in 2nd detail row');
+    assert.strictEqual(secondTools?.title, 'Sequence: read_markdown → write_markdown', 'Should show tool sequence tooltip in 2nd detail row');
     assert.ok(secondMeta.innerHTML.includes('status.md'), 'Should show modified files');
 
     sandbox.toggleLogDetail(firstRow);
