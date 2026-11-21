@@ -868,4 +868,21 @@ mod tests {
             "#preview svg block rule must exclude Mermaid SVGs so diagrams remain centered"
         );
     }
+
+    #[test]
+    fn test_style_css_cron_logs_light_mode_contrast() {
+        let css = get("style.css").unwrap();
+        assert!(
+            css.contains(".error-td { color: var(--error"),
+            ".error-td must use var(--error) for light-mode readability"
+        );
+        let log_err_pos = css
+            .rfind(".log-detail-error")
+            .expect("style.css missing light-mode .log-detail-error override");
+        let block = &css[log_err_pos..css.len().min(log_err_pos + 160)];
+        assert!(
+            block.contains("#991b1b") && block.contains("#fef2f2"),
+            "light-mode .log-detail-error must use dark red text on light red background"
+        );
+    }
 }
